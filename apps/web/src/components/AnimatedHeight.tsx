@@ -1,6 +1,5 @@
-"use client";
-
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { observeResize } from "../lib/observeResize";
 
 const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 
@@ -22,6 +21,7 @@ export function AnimatedHeight({
     readonly isClipping: boolean;
   }>({ height: null, isClipping: false });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fallback timer that ends clipping when the height transition never reports its end
   useEffect(() => {
     if (!heightState.isClipping) return;
     const timeoutId = window.setTimeout(() => {
@@ -30,8 +30,13 @@ export function AnimatedHeight({
       );
     }, HEIGHT_TRANSITION_FALLBACK_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [heightState.height, heightState.isClipping]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A height change mid-transition starts a new transition, so the fallback timer restarts.
+    heightState.height,
+    heightState.isClipping,
+  ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the content element and observes its size before paint to animate height
   useLayoutEffect(() => {
     if (holdHeight || !enabled) return;
     const element = contentRef.current;
@@ -102,11 +107,9 @@ export function AnimatedHeight({
       window.removeEventListener("pointercancel", onPointerUp);
     };
     updateHeightAfterPaint();
-    if (typeof ResizeObserver === "undefined") return cleanup;
-    const resizeObserver = new ResizeObserver(updateHeightAfterPaint);
-    resizeObserver.observe(element);
+    const stopObserving = observeResize(element, updateHeightAfterPaint);
     return () => {
-      resizeObserver.disconnect();
+      stopObserving();
       cleanup();
     };
   }, [holdHeight, enabled]);
@@ -122,7 +125,10 @@ export function AnimatedHeight({
       style={
         !enabled || heightState.height === null
           ? undefined
-          : { height: heightState.height, overflow: heightState.isClipping ? "hidden" : "visible" }
+          : {
+              height: heightState.height,
+              overflow: holdHeight || heightState.isClipping ? "clip" : "visible",
+            }
       }
       onTransitionEnd={(event) => {
         if (event.target !== event.currentTarget || event.propertyName !== "height") return;

@@ -2,7 +2,7 @@ import type { ContextWindowSnapshot } from "@t3tools/client-runtime/context-wind
 import { memo, useState } from "react";
 import { Modal, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ContextSheetSize } from "../../components/ContextSheetSize";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { contextMeterPresentation } from "./context-meter-presentation";

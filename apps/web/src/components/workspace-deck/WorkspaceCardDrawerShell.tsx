@@ -1,10 +1,10 @@
+import { observeResize } from "~/lib/observeResize";
 import { ChevronDownIcon } from "lucide-react";
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useEffectEvent,
   useId,
@@ -113,6 +113,7 @@ function useAvailableDrawerHeight(providedHeight?: number): number {
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === "undefined" ? 800 : window.innerHeight,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to viewport resize events while this drawer owns its available-height measurement
   useEffect(() => {
     if (providedHeight !== undefined || typeof window === "undefined") return;
     let frame = 0;
@@ -135,6 +136,7 @@ function useAvailableDrawerHeight(providedHeight?: number): number {
 export function WorkspaceCardDrawerShell<TabId extends string>(
   props: WorkspaceCardDrawerShellProps<TabId>,
 ) {
+  const { open, onEscapeBeforeCollapse } = props;
   const translate = useInterfaceTranslator().message;
   const accessibilityId = useId();
   const availableHeight = useAvailableDrawerHeight(props.availableHeight);
@@ -154,8 +156,8 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
   const drawerRef = useRef<HTMLElement | null>(null);
   const returnFocusTargetRef = useRef<HTMLElement | null>(null);
   const resizeStateRef = useRef<DrawerResizeState | null>(null);
-  const visibleRef = useRef(props.open);
-  const previousOpenRef = useRef(props.open);
+  const visibleRef = useRef(open);
+  const previousOpenRef = useRef(open);
   const bounds = resolveWorkspaceCardDrawerHeightBounds(availableHeight);
   const clampedHeight = resolveWorkspaceCardDrawerHeight({
     availableHeight,
@@ -170,17 +172,14 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
   const contentHeightNotificationsEnabled =
     sizingMode === "content" && props.onHeightChange !== undefined;
 
-  useEffect(() => {
-    if (sizingMode !== "resizable") return;
-    setHeight((currentHeight) =>
-      resolveWorkspaceCardDrawerHeight({ availableHeight, requestedHeight: currentHeight }),
-    );
-  }, [availableHeight, sizingMode]);
+  if (sizingMode === "resizable" && height !== clampedHeight) setHeight(clampedHeight);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the parent layout reservation in step with the committed drawer CSS height
   useEffect(() => {
     if (sizingMode === "resizable") notifyHeightChange(clampedHeight);
   }, [clampedHeight, sizingMode]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes content-sized drawer geometry for the parent layout reservation
   useLayoutEffect(() => {
-    if (!contentHeightNotificationsEnabled || !props.open) return;
+    if (!contentHeightNotificationsEnabled || !open) return;
     const drawer = drawerRef.current;
     if (!drawer) return;
 
@@ -193,15 +192,14 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     };
 
     reportHeight();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(reportHeight);
-    observer.observe(drawer, { box: "border-box" });
-    return () => observer.disconnect();
-  }, [contentHeightNotificationsEnabled, props.open]);
+    return observeResize(drawer, reportHeight);
+  }, [contentHeightNotificationsEnabled, open]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the mounted drawer visibility with the owning drawer host
   useEffect(() => {
-    visibleRef.current = props.open;
-    notifyVisibilityChange(props.open);
-  }, [props.open]);
+    visibleRef.current = open;
+    notifyVisibilityChange(open);
+  }, [open]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- unregisters the visible drawer from its host when the DOM subtree unmounts
   useEffect(
     () => () => {
       if (visibleRef.current) notifyVisibilityChange(false);
@@ -209,7 +207,7 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     [],
   );
 
-  const restoreTriggerFocus = useCallback(() => {
+  const restoreTriggerFocus = () => {
     const target = props.returnFocusRef?.current ?? returnFocusTargetRef.current;
     if (!target?.isConnected || typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
@@ -219,17 +217,19 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
         // The trigger can disappear during scope navigation.
       }
     });
-  }, [props.returnFocusRef]);
-  const closeDrawer = useCallback(() => props.onOpenChange(false), [props.onOpenChange]);
+  };
+  const closeDrawer = () => props.onOpenChange(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores browser focus to the trigger after the drawer DOM closes
   useLayoutEffect(() => {
     const wasOpen = previousOpenRef.current;
-    previousOpenRef.current = props.open;
-    if (wasOpen && !props.open) restoreTriggerFocus();
-  }, [props.open, restoreTriggerFocus]);
+    previousOpenRef.current = open;
+    if (wasOpen && !open) restoreTriggerFocus();
+  }, [open, restoreTriggerFocus]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the initial drawer control after mounting its DOM
   useEffect(() => {
-    if (!props.open || typeof document === "undefined") return;
+    if (!open || typeof document === "undefined") return;
     const activeElement = document.activeElement;
     returnFocusTargetRef.current = activeElement instanceof HTMLElement ? activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => {
@@ -239,13 +239,14 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
         ?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(focusFrame);
-  }, [props.open]);
+  }, [open]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the open drawer to document Escape key events
   useEffect(() => {
-    if (!props.open || typeof document === "undefined") return;
+    if (!open || typeof document === "undefined") return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (props.onEscapeBeforeCollapse?.()) {
+      if (onEscapeBeforeCollapse?.()) {
         event.preventDefault();
         return;
       }
@@ -256,9 +257,9 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeDrawer, props.onEscapeBeforeCollapse, props.open]);
+  }, [closeDrawer, onEscapeBeforeCollapse, open]);
 
-  const releaseResize = useCallback((pointerId: number) => {
+  const releaseResize = (pointerId: number) => {
     const state = resizeStateRef.current;
     if (!state || state.pointerId !== pointerId) return null;
     if (state.frame !== null) window.cancelAnimationFrame(state.frame);
@@ -271,7 +272,8 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     document.body.style.userSelect = state.previousBodyUserSelect;
     resizeStateRef.current = null;
     return state;
-  }, []);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases pointer capture and restores document cursor styles if unmounted during resize
   useEffect(
     () => () => {
       const state = resizeStateRef.current;
@@ -280,112 +282,94 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     [releaseResize],
   );
 
-  const onResizePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      if (sizingMode !== "resizable") return;
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        return;
+  const onResizePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (sizingMode !== "resizable") return;
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      return;
+    }
+    resizeStateRef.current = {
+      pointerId: event.pointerId,
+      startHeight: clampedHeight,
+      startY: event.clientY,
+      target: event.currentTarget,
+      pendingHeight: clampedHeight,
+      frame: null,
+      previousBodyCursor: document.body.style.cursor,
+      previousBodyUserSelect: document.body.style.userSelect,
+    };
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  };
+  const onResizePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const state = resizeStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    state.pendingHeight = nextWorkspaceCardDrawerHeightFromPointer({
+      availableHeight,
+      currentY: event.clientY,
+      startHeight: state.startHeight,
+      startY: state.startY,
+    });
+    if (state.frame !== null) return;
+    state.frame = window.requestAnimationFrame(() => {
+      const activeState = resizeStateRef.current;
+      if (!activeState) return;
+      activeState.frame = null;
+      setHeight(activeState.pendingHeight);
+    });
+  };
+  const onResizePointerUp = (event: ReactPointerEvent<HTMLElement>) => {
+    const state = releaseResize(event.pointerId);
+    if (!state) return;
+    const finalHeight = resolveWorkspaceCardDrawerHeight({
+      availableHeight,
+      requestedHeight: state.pendingHeight,
+    });
+    setHeight(finalHeight);
+    if (storageKey !== null) writeStoredHeight(storageKey, finalHeight);
+  };
+  const onResizePointerCancel = (event: ReactPointerEvent<HTMLElement>) => {
+    const state = releaseResize(event.pointerId);
+    if (state) setHeight(state.startHeight);
+  };
+  const setKeyboardHeight = (nextHeight: number) => {
+    const resolvedHeight = resolveWorkspaceCardDrawerHeight({
+      availableHeight,
+      requestedHeight: nextHeight,
+    });
+    setHeight(resolvedHeight);
+    if (storageKey !== null) writeStoredHeight(storageKey, resolvedHeight);
+  };
+  const onResizeKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    const nextHeight = (() => {
+      switch (event.key) {
+        case "ArrowUp":
+          return clampedHeight + HEIGHT_KEYBOARD_STEP;
+        case "ArrowDown":
+          return clampedHeight - HEIGHT_KEYBOARD_STEP;
+        case "PageUp":
+          return clampedHeight + HEIGHT_KEYBOARD_STEP * 4;
+        case "PageDown":
+          return clampedHeight - HEIGHT_KEYBOARD_STEP * 4;
+        case "Home":
+          return bounds.min;
+        case "End":
+          return bounds.max;
+        default:
+          return null;
       }
-      resizeStateRef.current = {
-        pointerId: event.pointerId,
-        startHeight: clampedHeight,
-        startY: event.clientY,
-        target: event.currentTarget,
-        pendingHeight: clampedHeight,
-        frame: null,
-        previousBodyCursor: document.body.style.cursor,
-        previousBodyUserSelect: document.body.style.userSelect,
-      };
-      document.body.style.cursor = "row-resize";
-      document.body.style.userSelect = "none";
-    },
-    [clampedHeight, sizingMode],
-  );
-  const onResizePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = resizeStateRef.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      state.pendingHeight = nextWorkspaceCardDrawerHeightFromPointer({
-        availableHeight,
-        currentY: event.clientY,
-        startHeight: state.startHeight,
-        startY: state.startY,
-      });
-      if (state.frame !== null) return;
-      state.frame = window.requestAnimationFrame(() => {
-        const activeState = resizeStateRef.current;
-        if (!activeState) return;
-        activeState.frame = null;
-        setHeight(activeState.pendingHeight);
-      });
-    },
-    [availableHeight],
-  );
-  const onResizePointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = releaseResize(event.pointerId);
-      if (!state) return;
-      const finalHeight = resolveWorkspaceCardDrawerHeight({
-        availableHeight,
-        requestedHeight: state.pendingHeight,
-      });
-      setHeight(finalHeight);
-      if (storageKey !== null) writeStoredHeight(storageKey, finalHeight);
-    },
-    [availableHeight, releaseResize, storageKey],
-  );
-  const onResizePointerCancel = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = releaseResize(event.pointerId);
-      if (state) setHeight(state.startHeight);
-    },
-    [releaseResize],
-  );
-  const setKeyboardHeight = useCallback(
-    (nextHeight: number) => {
-      const resolvedHeight = resolveWorkspaceCardDrawerHeight({
-        availableHeight,
-        requestedHeight: nextHeight,
-      });
-      setHeight(resolvedHeight);
-      if (storageKey !== null) writeStoredHeight(storageKey, resolvedHeight);
-    },
-    [availableHeight, storageKey],
-  );
-  const onResizeKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLElement>) => {
-      const nextHeight = (() => {
-        switch (event.key) {
-          case "ArrowUp":
-            return clampedHeight + HEIGHT_KEYBOARD_STEP;
-          case "ArrowDown":
-            return clampedHeight - HEIGHT_KEYBOARD_STEP;
-          case "PageUp":
-            return clampedHeight + HEIGHT_KEYBOARD_STEP * 4;
-          case "PageDown":
-            return clampedHeight - HEIGHT_KEYBOARD_STEP * 4;
-          case "Home":
-            return bounds.min;
-          case "End":
-            return bounds.max;
-          default:
-            return null;
-        }
-      })();
-      if (nextHeight === null) return;
-      event.preventDefault();
-      setKeyboardHeight(nextHeight);
-    },
-    [bounds.max, bounds.min, clampedHeight, setKeyboardHeight],
-  );
+    })();
+    if (nextHeight === null) return;
+    event.preventDefault();
+    setKeyboardHeight(nextHeight);
+  };
 
-  if (!props.open) return null;
+  if (!open) return null;
   const showTabs = props.showTabs !== false && props.tabs.length > 0;
   const style =
     sizingMode === "content"

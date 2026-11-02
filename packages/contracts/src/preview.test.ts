@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-
+import { PreviewAutomationHost, PreviewAutomationStatus } from "./previewAutomation.ts";
 import {
   ConfiguredLocalServerUrls,
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
@@ -12,26 +12,61 @@ import {
   PreviewViewportSetting,
 } from "./preview.ts";
 import {
-  PreviewAutomationHost,
   PreviewAutomationError,
   PreviewAutomationOpenInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
-  PreviewAutomationStatus,
 } from "./previewAutomation.ts";
-
-const decodePreviewEvent = Schema.decodeUnknownSync(PreviewEvent);
-const decodeSnapshot = Schema.decodeUnknownSync(PreviewSessionSnapshot);
-const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
-const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
-const decodeConfiguredLocalServerUrls = Schema.decodeUnknownSync(ConfiguredLocalServerUrls);
-const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
-const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
-const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
-const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
-const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
+const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
+const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
+const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
+const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
+const decodeConfiguredLocalServerUrls = Schema.decodeUnknownSync(ConfiguredLocalServerUrls);
+const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
+const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
+const decodeSnapshot = Schema.decodeUnknownSync(PreviewSessionSnapshot);
+const decodePreviewEvent = Schema.decodeUnknownSync(PreviewEvent);
+
+const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+
+describe("PreviewAutomationHost", () => {
+  it("accepts legacy hosts and current operation advertisements", () => {
+    expect(decodeAutomationHost({ clientId: "legacy", environmentId: "environment-1" })).toEqual({
+      clientId: "legacy",
+      environmentId: "environment-1",
+    });
+    expect(
+      decodeAutomationHost({
+        clientId: "current",
+        environmentId: "environment-1",
+        supportedOperations: ["status", "resize"],
+      }).supportedOperations,
+    ).toEqual(["status", "resize"]);
+  });
+});
+
+describe("PreviewAutomationStatus", () => {
+  it("accepts old hosts without viewport data and exposes it from current hosts", () => {
+    const base = {
+      available: true,
+      visible: false,
+      tabId: "preview-t",
+      url: "https://example.com",
+      title: "Example",
+      loading: false,
+    };
+    expect(decodeAutomationStatus(base)).toEqual(base);
+    expect(
+      decodeAutomationStatus({
+        ...base,
+        viewportSetting: { _tag: "preset", presetId: "pixel-8", width: 412, height: 915 },
+        viewport: { width: 412, height: 915 },
+      }).viewport,
+    ).toEqual({ width: 412, height: 915 });
+  });
+});
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
@@ -158,22 +193,6 @@ describe("preview automation tab targeting", () => {
   });
 });
 
-describe("PreviewAutomationHost", () => {
-  it("accepts legacy hosts and current operation advertisements", () => {
-    expect(decodeAutomationHost({ clientId: "legacy", environmentId: "environment-1" })).toEqual({
-      clientId: "legacy",
-      environmentId: "environment-1",
-    });
-    expect(
-      decodeAutomationHost({
-        clientId: "current",
-        environmentId: "environment-1",
-        supportedOperations: ["status", "resize"],
-      }).supportedOperations,
-    ).toEqual(["status", "resize"]);
-  });
-});
-
 describe("PreviewAutomationError", () => {
   it("preserves a typed non-editable target failure", () => {
     const error = decodeAutomationError({
@@ -199,27 +218,6 @@ describe("PreviewAutomationError", () => {
       expect(error.selectorKind).toBe("focused-element");
       expect(error.message).toBe("Preview automation type requires an editable focused element.");
     }
-  });
-});
-
-describe("PreviewAutomationStatus", () => {
-  it("accepts old hosts without viewport data and exposes it from current hosts", () => {
-    const base = {
-      available: true,
-      visible: false,
-      tabId: "preview-t",
-      url: "https://example.com",
-      title: "Example",
-      loading: false,
-    };
-    expect(decodeAutomationStatus(base)).toEqual(base);
-    expect(
-      decodeAutomationStatus({
-        ...base,
-        viewportSetting: { _tag: "preset", presetId: "pixel-8", width: 412, height: 915 },
-        viewport: { width: 412, height: 915 },
-      }).viewport,
-    ).toEqual({ width: 412, height: 915 });
   });
 });
 

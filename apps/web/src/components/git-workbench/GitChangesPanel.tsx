@@ -101,7 +101,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         <aside
           aria-label={translate("git.workbench.changedFilesAria")}
           className={cn(
-            "min-h-0 overflow-auto border-r",
+            "min-h-0 overflow-auto scrollbar-gutter-both border-r",
             detailVisible ? "hidden @3xl/git-changes:block" : "block",
           )}
           data-git-changes-scroll-region="files"
@@ -216,7 +216,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
 
         <main
           className={cn(
-            "min-h-0 overflow-auto",
+            "min-h-0 overflow-auto scrollbar-gutter-both",
             detailVisible ? "block" : "hidden @3xl/git-changes:block",
           )}
           data-git-changes-scroll-region="details"
@@ -466,7 +466,7 @@ function GitChangeDetail({
         </div>
       </div>
       {showDiff ? (
-        <div className="min-h-0 overflow-auto bg-muted/20 font-mono text-xs">
+        <div className="min-h-0 overflow-auto scrollbar-gutter-both bg-muted/20 font-mono text-xs">
           <GitSelectableDiff
             change={change}
             disabled={disabled}

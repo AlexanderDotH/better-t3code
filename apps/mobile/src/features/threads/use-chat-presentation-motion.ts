@@ -1,7 +1,8 @@
+import type { ThreadCheckpointSummary as OrchestrationCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { AppState } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
-import type { EnvironmentId, OrchestrationCheckpointSummary } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -26,6 +27,7 @@ export function useNativeChatPresentationMotion(input: {
   const focused = useIsFocused();
   const [active, setActive] = useState(AppState.currentState === "active");
   const [registry] = useState(createChatMotionAdmission);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe row motion to the native foreground lifecycle.
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
       setActive(state === "active"),
@@ -105,13 +107,6 @@ export function useNativeChatPresentationMotion(input: {
             kind: "status",
             revision: entry.createdAt,
           });
-        } else if (entry.type === "agent-spawn") {
-          items.push({
-            id: entry.id,
-            createdAt: entry.createdAt,
-            kind: "status",
-            revision: `${entry.summary.status}:${entry.summary.tone}`,
-          });
         }
       }
       for (const [messageId, checkpoint] of input.checkpointsByMessage) {
@@ -162,6 +157,7 @@ export function useNativeChatPresentationMotion(input: {
     registry,
     resetKey,
   ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Commit visible rows to the external motion-admission registry before child animations claim them.
   useLayoutEffect(() => observation.observe(), [observation]);
   return {
     motion: enabled ? observation.motion : disabledMotion,

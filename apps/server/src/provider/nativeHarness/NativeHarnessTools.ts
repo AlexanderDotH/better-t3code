@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Platform } from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import type { ProcessRunner } from "../../processRunner.ts";
@@ -53,7 +53,7 @@ export const makeNativeHarnessToolExecutor = Effect.fn("makeNativeHarnessToolExe
 ) {
   const workspaceContext = yield* WorkspaceContext.WorkspaceContext;
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* Platform;
   const extensions = options?.extensions ?? [];
   const executeWorkspaceTool = makeNativeHarnessWorkspaceToolExecutor(
     workspaceContext,
@@ -65,8 +65,8 @@ export const makeNativeHarnessToolExecutor = Effect.fn("makeNativeHarnessToolExe
       ? executeNativeHarnessCommand({ processRunner, platform, input })
       : executeWorkspaceTool(input);
 
-  const execute: NativeHarnessToolExecutor["execute"] = (input) =>
-    Effect.gen(function* () {
+  const execute: NativeHarnessToolExecutor["execute"] = Effect.fn("NativeHarnessTools.execute")(
+    function* (input) {
       const builtin = yield* executeBuiltin(input);
       if (builtin !== undefined) return builtin;
 
@@ -79,10 +79,13 @@ export const makeNativeHarnessToolExecutor = Effect.fn("makeNativeHarnessToolExe
         input.name,
         new NativeHarnessToolError({ detail: `Unknown T3 harness tool '${input.name}'.` }),
       );
-    }).pipe(
-      Effect.catch((cause) => Effect.succeed(failedNativeHarnessToolResult(input.name, cause))),
-      Effect.map(enforceNativeHarnessToolResultLimit),
-    );
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catch((cause) => Effect.succeed(failedNativeHarnessToolResult(input.name, cause))),
+        Effect.map(enforceNativeHarnessToolResultLimit),
+      ),
+  );
 
   return { execute } satisfies NativeHarnessToolExecutor;
 });

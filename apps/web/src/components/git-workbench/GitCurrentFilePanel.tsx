@@ -1,7 +1,5 @@
-import { Editor } from "@pierre/diffs/editor";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { CircleAlert, Save } from "lucide-react";
-
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { WorkspaceFileEditorSurface } from "~/components/files/WorkspaceFileEditorSurface";
@@ -10,7 +8,6 @@ import { useTheme } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
 import type { GitCurrentFileState } from "./GitWorkbench.types";
 import {
@@ -18,7 +15,6 @@ import {
   reconcileGitCurrentFileDraft,
   type GitCurrentFileDraftInput,
 } from "./gitCurrentFileDraft";
-
 interface GitCurrentFilePanelProps {
   readonly file: GitCurrentFileState;
   readonly initialDraft?: GitCurrentFileDraftInput | null | undefined;
@@ -31,7 +27,6 @@ interface GitCurrentFilePanelProps {
   }) => void;
   readonly readOnly: boolean;
 }
-
 export function GitCurrentFilePanel({
   file,
   initialDraft,
@@ -44,38 +39,17 @@ export function GitCurrentFilePanel({
   const [mergedDraft, setMergedDraft] = useState(draft.content);
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
-  const onDraftChangeRef = useRef(onDraftChange);
-  useEffect(() => {
-    onDraftChangeRef.current = onDraftChange;
-  }, [onDraftChange]);
-  const changeDraft = useCallback(
-    (nextFile: { readonly contents: string }) => {
-      const content = nextFile.contents;
-      setDraft((current) => ({ ...current, content }));
-      setMergedDraft(content);
-      onDraftChangeRef.current?.({ content, path: draft.path, revision: draft.revision });
-    },
-    [draft.path, draft.revision],
-  );
-  const editor = useMemo(
-    // Editor stores the callback without invoking it during construction.
-    // oxlint-disable-next-line react/refs
-    () => new Editor<undefined>({ onChange: changeDraft }),
-    [changeDraft],
-  );
-
+  const changeDraft = (nextFile: { readonly contents: string }) => {
+    const content = nextFile.contents;
+    setDraft((current) => ({ ...current, content }));
+    setMergedDraft(content);
+    onDraftChange?.({ content, path: draft.path, revision: draft.revision });
+  };
   const reconciledDraft = reconcileGitCurrentFileDraft(draft, file);
   if (reconciledDraft !== draft) {
     setDraft(reconciledDraft);
     if (file.saveState !== "conflict") setMergedDraft(reconciledDraft.content);
   }
-
-  useEffect(() => {
-    onDraftChange?.({ content: draft.content, path: draft.path, revision: draft.revision });
-  }, [draft.content, draft.path, draft.revision, onDraftChange]);
-
-  useEffect(() => () => editor.cleanUp(), [editor]);
-
   if (file.loading) {
     return (
       <p className="p-6 text-muted-foreground text-sm" role="status">
@@ -83,7 +57,6 @@ export function GitCurrentFilePanel({
       </p>
     );
   }
-
   const save: GitCurrentFilePanelProps["onSave"] = (input) => {
     if (input.resolution === "agent") {
       setDraft(createGitCurrentFileDraft({ ...file, content: input.content }));
@@ -96,7 +69,6 @@ export function GitCurrentFilePanel({
     }
     onSave(input);
   };
-
   if (file.saveState === "conflict") {
     return (
       <GitCurrentFileConflict
@@ -111,7 +83,6 @@ export function GitCurrentFilePanel({
       />
     );
   }
-
   const disabledReason = file.readOnlyReason ?? (readOnly ? translate("git.file.readOnly") : null);
   return (
     <section aria-labelledby="current-file-heading" className="flex min-h-0 flex-1 flex-col">
@@ -147,7 +118,7 @@ export function GitCurrentFilePanel({
       <WorkspaceFileEditorSurface
         ariaLabel={translate("git.file.editAria", { path: file.path })}
         contentEditable={!disabledReason}
-        editor={editor}
+        onEditChange={({ file }) => changeDraft(file)}
         file={{
           cacheKey: `git-workbench:${draft.path}:${draft.revision}`,
           contents: draft.content,
@@ -168,7 +139,6 @@ export function GitCurrentFilePanel({
     </section>
   );
 }
-
 function GitCurrentFileConflict({
   file,
   mergedDraft,
@@ -258,7 +228,6 @@ function GitCurrentFileConflict({
     </section>
   );
 }
-
 function ReadOnlyVersion({ content, label }: { content: string; label: string }) {
   return (
     <label className="flex min-h-40 flex-col gap-1 text-xs">
@@ -274,7 +243,6 @@ function ReadOnlyVersion({ content, label }: { content: string; label: string })
     </label>
   );
 }
-
 const fileSaveLabel = (
   state: GitCurrentFileState["saveState"],
   translate: InterfaceTranslator["message"],

@@ -1,8 +1,9 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { fileThumbnailKind } from "@t3tools/shared/filePreview";
 import { DownloadIcon, EyeIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import type { ChatFileAttachment } from "../../types";
@@ -53,19 +54,17 @@ function AttachmentThumbnail({
   const [visible, setVisible] = useState(() => typeof IntersectionObserver === "undefined");
   const [content, setContent] = useState<{ url: string; text: string } | null>(null);
   const kind = fileThumbnailKind(file);
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: file.id,
-      fileName: file.name,
-      mimeType: file.mimeType,
-      disposition: "inline" as const,
-    }),
-    [file.id, file.name, file.mimeType],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: file.id,
+    fileName: file.name,
+    mimeType: file.mimeType,
+    disposition: "inline" as const,
+  };
   const asset = useAssetUrlState(visible ? environmentId : null, visible ? resource : null);
   const url = asset._tag === "Success" ? asset.url : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load and observe attachment preview resources only while visible.
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -77,6 +76,7 @@ function AttachmentThumbnail({
     return () => observer.disconnect();
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load and observe attachment preview resources only while visible.
   useEffect(() => {
     if (!visible || !url || (kind !== "text" && kind !== "document")) return;
     if (content?.url === url) return;
@@ -93,6 +93,7 @@ function AttachmentThumbnail({
     return () => controller.abort();
   }, [visible, url, kind, content?.url, file.id, onUnavailable]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load and observe attachment preview resources only while visible.
   useEffect(() => {
     if (visible && asset._tag === "Failure") onUnavailable(file.id);
   }, [visible, asset._tag, file.id, onUnavailable]);
@@ -166,9 +167,9 @@ export function MessageAttachmentFiles({
   readonly environmentId: EnvironmentId;
 }) {
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(new Set());
-  const onUnavailable = useCallback((id: string) => {
+  const onUnavailable = useStableCallback((id: string) => {
     setUnavailable((current) => (current.has(id) ? current : new Set([...current, id])));
-  }, []);
+  });
   const previews = files.filter(
     (file) =>
       file.downloadable !== false && fileThumbnailKind(file) !== null && !unavailable.has(file.id),

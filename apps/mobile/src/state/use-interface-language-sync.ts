@@ -13,7 +13,7 @@ import {
   resolveInterfaceLocale,
   type ResolvedInterfaceLanguage,
 } from "@t3tools/shared/interfaceLanguage";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 
@@ -121,6 +121,7 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
   const localLocaleRecord = preferences?.interfaceLocaleSyncRecordV1;
   const localLegacyRecord = preferences?.interfaceLanguageSyncRecord ?? null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh system locale when the native app returns to the foreground.
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") setSystemLocales(readSystemLocales());
@@ -168,6 +169,7 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
     [syncEnvironments],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist the winning synchronized locale record to native storage.
   useEffect(() => {
     const patch = sync.preferencePatch;
     if (patch === null) return;
@@ -177,6 +179,7 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
     savePreferences(patch);
   }, [savePreferences, sync.preferencePatch]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reconcile locale records with connected environments and track their acknowledgements.
   useEffect(() => {
     const connectedEnvironmentIds = new Set(
       syncEnvironments
@@ -258,24 +261,24 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
     });
   }, [sync.plan, syncEnvironments, updateServerSettings]);
 
-  useEffect(() => {
-    const winner = sync.plan.winner;
-    if (winner === null) return;
-    const synchronizedEnvironmentIds = syncEnvironments
-      .filter(
-        (environment) =>
-          environment.connected &&
-          recordMatches(
-            resolveInterfaceLocaleSyncRecord({
-              localeRecord: environment.localeRecord,
-              legacyRecord: environment.legacyRecord,
-            }),
-            winner,
-          ),
-      )
-      .map((environment) => environment.environmentId);
-    setIds(setFailedEnvironmentIds, [], synchronizedEnvironmentIds);
-  }, [sync.plan.winner, syncEnvironments]);
+  const winner = sync.plan.winner;
+  const synchronizedEnvironmentIds = new Set(
+    winner === null
+      ? []
+      : syncEnvironments
+          .filter(
+            (environment) =>
+              environment.connected &&
+              recordMatches(
+                resolveInterfaceLocaleSyncRecord({
+                  localeRecord: environment.localeRecord,
+                  legacyRecord: environment.legacyRecord,
+                }),
+                winner,
+              ),
+          )
+          .map((environment) => environment.environmentId),
+  );
 
   const setPreference = useCallback(
     (preference: InterfaceLocalePreferenceV1) => {
@@ -303,13 +306,9 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
     [localLegacyRecord, savePreferences, sync.plan.winner?.updatedAt],
   );
 
-  const failedEnvironmentLabels = useMemo(
-    () =>
-      failedEnvironmentIds.map(
-        (environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId,
-      ),
-    [failedEnvironmentIds, labelByEnvironmentId],
-  );
+  const failedEnvironmentLabels = failedEnvironmentIds
+    .filter((environmentId) => !synchronizedEnvironmentIds.has(environmentId))
+    .map((environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId);
 
   return {
     preference: sync.preference,

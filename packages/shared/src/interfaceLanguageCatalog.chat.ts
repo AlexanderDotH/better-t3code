@@ -1934,9 +1934,9 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Utilisation signalée par {{reported}} sous-agents sur {{count}}.",
   ],
   "chat.tokens.partial": [
-    "Partial total: the provider has not reported every counter. — means unavailable.",
-    "Teilsumme: Der Provider hat nicht alle Zähler gemeldet. — bedeutet nicht verfügbar.",
-    "Total partiel : le fournisseur n’a pas signalé tous les compteurs. — signifie indisponible.",
+    "Partial total: the provider has not reported every counter. A dash means unavailable.",
+    "Teilsumme: Der Provider hat nicht alle Zähler gemeldet. Ein Strich bedeutet nicht verfügbar.",
+    "Total partiel : le fournisseur n’a pas signalé tous les compteurs. Un tiret indique une valeur indisponible.",
   ],
   "chat.tokens.unclassified": [
     "{{count}} additional subagent tokens have no input/output breakdown.",

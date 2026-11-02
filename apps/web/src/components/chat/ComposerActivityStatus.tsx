@@ -110,6 +110,7 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = formatWorkingTimerNow(createdAt);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Update the mounted elapsed-time text without committing the composer.
   useEffect(() => {
     const updateText = () => {
       if (textRef.current) {

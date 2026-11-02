@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Catalog identifiers are synchronous stable hashes of external MCP server names.
 import type { CatalogInput, CatalogMcpConnection, ExtensionCatalogEntry } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as NodeCrypto from "node:crypto";

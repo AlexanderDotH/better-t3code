@@ -1,10 +1,6 @@
-import type {
-  MessageId,
-  MessageReplyReference,
-  OrchestrationMessageRole,
-  OrchestrationSubagentSummary,
-  SubagentId,
-} from "@t3tools/contracts";
+import type { MessageId, MessageReplyReference, SubagentId } from "@t3tools/contracts";
+
+type MessageReplyRole = "user" | "assistant" | "system" | "reasoning";
 
 export const MESSAGE_REPLY_SWIPE_THRESHOLD = 16;
 export const MESSAGE_REPLY_SELECTION_DELAY_MS = 250;
@@ -27,7 +23,7 @@ type MessageReplyPreviewSource = {
 type MessageReplySource = MessageReplyPreviewSource & {
   readonly id: MessageId;
   readonly replyTopicId?: SubagentId | undefined;
-  readonly role: OrchestrationMessageRole;
+  readonly role: MessageReplyRole;
 };
 
 export function hasMessageReplyHorizontalIntent(deltaX: number, deltaY: number): boolean {
@@ -40,10 +36,7 @@ export function hasMessageReplyHorizontalIntent(deltaX: number, deltaY: number):
   );
 }
 
-export function isMessageReplySwipeDirection(
-  deltaX: number,
-  role: OrchestrationMessageRole,
-): boolean {
+export function isMessageReplySwipeDirection(deltaX: number, role: MessageReplyRole): boolean {
   "worklet";
   return (role === "user" && deltaX < 0) || (role === "assistant" && deltaX > 0);
 }
@@ -53,7 +46,7 @@ export function isMessageReplySwipeDirection(
  * taking ownership from native selection. Ambiguous motion remains native.
  */
 export function classifyMessageReplyPointerIntent(input: {
-  readonly role: OrchestrationMessageRole;
+  readonly role: MessageReplyRole;
   readonly deltaX: number;
   readonly deltaY: number;
   readonly elapsedMs: number;
@@ -93,7 +86,7 @@ export function classifyMessageReplyPointerIntent(input: {
 export function shouldTriggerMessageReply(
   deltaX: number,
   deltaY: number,
-  role: OrchestrationMessageRole,
+  role: MessageReplyRole,
 ): boolean {
   "worklet";
   return (
@@ -184,39 +177,5 @@ export function getMessageReplyPreview(
       .slice(0, maxLength - 1)
       .join("")
       .trimEnd() + "…"
-  );
-}
-
-export function isMessageReplyTopicActive(
-  topic: Pick<OrchestrationSubagentSummary, "status" | "messageReply">,
-): boolean {
-  return (
-    topic.messageReply !== undefined &&
-    (topic.status === "starting" || topic.status === "running" || topic.status === "waiting")
-  );
-}
-
-type TimelineMessage = {
-  readonly id: MessageId;
-  readonly replyTopicId?: SubagentId | undefined;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-};
-
-export function mergeMessageReplyTimeline<Message extends TimelineMessage>(
-  messages: ReadonlyArray<Message>,
-  replyMessages: ReadonlyArray<Message> = [],
-): ReadonlyArray<Message> {
-  if (replyMessages.length === 0) return messages;
-  const merged = new Map<string, Message>();
-  for (const message of [...messages, ...replyMessages]) {
-    const key = JSON.stringify([message.replyTopicId ?? null, message.id]);
-    const previous = merged.get(key);
-    if (!previous || Date.parse(message.updatedAt) >= Date.parse(previous.updatedAt)) {
-      merged.set(key, message);
-    }
-  }
-  return Array.from(merged.values()).sort(
-    (left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt),
   );
 }

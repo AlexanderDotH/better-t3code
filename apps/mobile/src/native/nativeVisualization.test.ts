@@ -1,3 +1,4 @@
+import { markdownCodeBlocks } from "./markdownCodeBlocks";
 import { describe, expect, it } from "vite-plus/test";
 import { isClosedNativeVisualization } from "./nativeVisualization";
 
@@ -8,6 +9,9 @@ describe("native visualization fences", () => {
     // These offsets come from the bundled MD4C parser, including a multibyte prefix.
     const source = encode("ü😀\n```mermaid\ngraph TD;A-->B\n```\n");
     expect(isClosedNativeVisualization(source, { beg: 7, end: 32 })).toBe(true);
+    const parsed = markdownCodeBlocks(new TextDecoder().decode(source));
+    expect(parsed[0]?.request.code).toBe("graph TD;A-->B");
+    expect(parsed[0] && isClosedNativeVisualization(source, parsed[0].request)).toBe(true);
   });
 
   it("keeps an unfinished block as code even if another matching block is complete", () => {
@@ -18,6 +22,11 @@ describe("native visualization fences", () => {
       isClosedNativeVisualization(source, { beg: encode(complete).length, end: source.length }),
     ).toBe(false);
     expect(isClosedNativeVisualization(source, {})).toBe(false);
+    const parsed = markdownCodeBlocks(complete + incomplete);
+    expect(parsed.map((block) => isClosedNativeVisualization(source, block.request))).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it("requires the opening fence character and length, including CRLF and quoted blocks", () => {

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { observeResize } from "~/lib/observeResize";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 import {
   COMPOSER_HEIGHT_TRANSITION_EASING,
@@ -41,7 +43,7 @@ export function useComposerRestingTransition(
   const transitionLayoutRequestRef = useRef(0);
   const hasCompletedInitialLayoutRef = useRef(false);
 
-  const clearOverlayPin = useCallback(() => {
+  const clearOverlayPin = useStableCallback(() => {
     // The overlay belongs to the chat view and outlives this composer, so it
     // is remembered from pin time rather than re-resolved through a ref that
     // React may already have detached during unmount.
@@ -53,9 +55,9 @@ export function useComposerRestingTransition(
     pinned.element.style.removeProperty("display");
     pinned.element.style.removeProperty("flex-direction");
     pinned.element.style.removeProperty("justify-content");
-  }, []);
+  });
 
-  const clearTransitionStyles = useCallback(() => {
+  const clearTransitionStyles = useStableCallback(() => {
     const element = elementRef.current;
     const footer = element?.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
     element?.style.removeProperty("overflow");
@@ -69,10 +71,10 @@ export function useComposerRestingTransition(
     footer?.style.removeProperty("right");
     footer?.style.removeProperty("height");
     clearOverlayPin();
-  }, [clearOverlayPin]);
+  });
 
-  const transitionToCurrentGeometry = useCallback(
-    (stateChanged: boolean, contentChanged = false) => {
+  const transitionToCurrentGeometry = useStableCallback(
+    (stateChanged: boolean, contentChanged: boolean = false) => {
       const element = elementRef.current;
       const surface = element?.querySelector<HTMLElement>('[data-chat-composer-surface="true"]');
       if (!element || !surface) return;
@@ -165,11 +167,7 @@ export function useComposerRestingTransition(
         element.style.overflow = "clip";
         surface.style.height = "100%";
 
-        // Pinning the overlay at the destination height keeps the resize
-        // observer quiet for the tween; bottom alignment keeps the animating
-        // surface glued to the overlay's stable bottom edge. The pin lasts
-        // only for the tween so later attachment, thread, font, and viewport
-        // changes remain natural.
+        // Pin the destination height until the tween settles so ResizeObserver cannot move the viewport.
         if (overlay && overlayHeight !== null && occlusionHeight !== null) {
           overlay.style.height = `${String(overlayHeight)}px`;
           overlay.style.display = "flex";
@@ -272,14 +270,7 @@ export function useComposerRestingTransition(
             );
           }
 
-          // The footer controls teleport between the composer footer and the
-          // context strip below it in a single commit. Fading the arriving
-          // cluster in along its direction of travel reads as one continuous
-          // move instead of a pop. Collapsing controls land in empty strip
-          // space and can appear immediately, but expanding controls return
-          // to the bottom row the prompt still occupies while the surface is
-          // short, so they stay hidden through the first half of the tween
-          // and fade in once the geometry has mostly settled.
+          // Delay returning controls until the expanding prompt leaves their destination.
           const arrivingControls = nextIsCollapsed
             ? restingControlsRef.current
             : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
@@ -366,15 +357,9 @@ export function useComposerRestingTransition(
         actionFromBottom: nextActionTop === null ? null : nextRect.bottom - nextActionTop,
       };
     },
-    [
-      animationDurationMs,
-      animationsActive,
-      clearTransitionStyles,
-      onOverlayHeightChange,
-      restingControlsRef,
-    ],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retarget the composer DOM animation and release its observers on unmount.
   useLayoutEffect(() => {
     isCollapsedRef.current = isCollapsed;
     const requestId = transitionLayoutRequestRef.current + 1;
@@ -398,6 +383,7 @@ export function useComposerRestingTransition(
   // for example when an unfocused thread crosses the phone breakpoint. The
   // chat view pairs overlay heights with that flag, so republish the natural
   // height for the new flag. A transition in flight publishes its own.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retarget the composer DOM animation and release its observers on unmount.
   useLayoutEffect(() => {
     if (previousRestingRef.current === isResting) return;
     previousRestingRef.current = isResting;
@@ -406,6 +392,7 @@ export function useComposerRestingTransition(
     if (overlay) onOverlayHeightChange(overlay.getBoundingClientRect().height);
   }, [isCollapsed, isResting, onOverlayHeightChange]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retarget the composer DOM animation and release its observers on unmount.
   useLayoutEffect(() => {
     const element = elementRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
@@ -422,7 +409,7 @@ export function useComposerRestingTransition(
     element.addEventListener("pointerdown", startPointer);
     window.addEventListener("pointerup", endPointer);
     window.addEventListener("pointercancel", endPointer);
-    const observer = new ResizeObserver((entries) => {
+    const stopObserving = observeResize(body ? [element, body] : element, (entries) => {
       if (animationRef.current) {
         if (body && entries.some((entry) => entry.target === body)) {
           const bodyRect = body.getBoundingClientRect();
@@ -472,16 +459,15 @@ export function useComposerRestingTransition(
         actionFromBottom: actionTop === undefined ? null : elementRect.bottom - actionTop,
       };
     });
-    observer.observe(element);
-    if (body) observer.observe(body);
     return () => {
-      observer.disconnect();
+      stopObserving();
       element.removeEventListener("pointerdown", startPointer);
       window.removeEventListener("pointerup", endPointer);
       window.removeEventListener("pointercancel", endPointer);
     };
   }, [transitionToCurrentGeometry, animateContentChanges]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retarget the composer DOM animation and release its observers on unmount.
   useEffect(() => {
     // Host discovery and width measurement settle through layout updates on
     // mount. Treat that bootstrap as initial geometry so an existing thread

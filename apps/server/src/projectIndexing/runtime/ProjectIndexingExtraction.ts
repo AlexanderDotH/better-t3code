@@ -118,10 +118,12 @@ export const liveProjectIndexExtraction: ProjectIndexExtractionBridge = {
   resolveBatches: ({ root, store, revision }) =>
     Stream.unwrap(
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line abortControllerInEffect:off -- The async iterator outlives this setup fiber; its stream scope owns cancellation.
         const controller = new AbortController();
         yield* Effect.addFinalizer(() => Effect.sync(() => controller.abort()));
+        const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
         const runRead = <A, E>(effect: Effect.Effect<A, E>) =>
-          Effect.runPromise(effect.pipe(Effect.provideService(References.TracerEnabled, false)));
+          runPromise(effect.pipe(Effect.provideService(References.TracerEnabled, false)));
         return Stream.fromAsyncIterable(
           resolveProjectBatches({
             root,

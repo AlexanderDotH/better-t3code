@@ -1,4 +1,5 @@
-import { act, createElement, useLayoutEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { Fragment, createElement, useLayoutEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -32,48 +33,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-class StreamingMotionTestNode {
-  parentNode: StreamingMotionTestNode | null = null;
-  childNodes: StreamingMotionTestNode[] = [];
-  readonly nodeName: string;
-  readonly tagName: string;
-  readonly namespaceURI = "http://www.w3.org/1999/xhtml";
-  readonly style = {};
-
-  constructor(
-    name: string,
-    readonly ownerDocument: StreamingMotionTestNode | null = null,
-    readonly nodeType = 1,
-  ) {
-    this.nodeName = name.toUpperCase();
-    this.tagName = this.nodeName;
-  }
-
-  set textContent(_value: string) {
-    this.childNodes = [];
-  }
-
-  appendChild(child: StreamingMotionTestNode) {
-    child.parentNode = this;
-    this.childNodes.push(child);
-    return child;
-  }
-
-  removeChild(child: StreamingMotionTestNode) {
-    this.childNodes.splice(this.childNodes.indexOf(child), 1);
-    child.parentNode = null;
-    return child;
-  }
-
-  createElement(name: string) {
-    return new StreamingMotionTestNode(name, this);
-  }
-
-  addEventListener() {}
-  removeEventListener() {}
-  setAttribute() {}
-}
-
 function installStreamingMotionTestDom() {
   const motionListeners = new Set<() => void>();
   const motionQuery = {
@@ -83,11 +42,10 @@ function installStreamingMotionTestDom() {
   };
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextFrameId = 0;
-  const document = new StreamingMotionTestNode("#document", null, 9);
+  const document = { visibilityState: "visible", addEventListener() {}, removeEventListener() {} };
   const window = {
     document,
     matchMedia: () => motionQuery,
-    HTMLIFrameElement: StreamingMotionTestNode,
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
     setTimeout: globalThis.setTimeout,
@@ -105,8 +63,6 @@ function installStreamingMotionTestDom() {
   };
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", window);
-  vi.stubGlobal("HTMLIFrameElement", window.HTMLIFrameElement);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   return {
     callbacks,
     document,
@@ -589,14 +545,16 @@ describe("streaming motion commit lifecycle", () => {
 
   it("retires the completed reveal without an animation-frame loop", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-    const { callbacks, document } = installStreamingMotionTestDom();
-    const { createRoot } = await import("react-dom/client");
-    const root = createRoot(document.createElement("div") as unknown as Element);
+    const { callbacks } = installStreamingMotionTestDom();
+    let root!: ReactTestRenderer;
+    await act(() => {
+      root = create(createElement(Fragment));
+    });
     const snapshots: StreamingTextMotionSnapshot[] = [];
     const onSnapshot = (snapshot: StreamingTextMotionSnapshot) => snapshots.push(snapshot);
     try {
       await act(() =>
-        root.render(
+        root.update(
           createElement(StreamingTextMotionHarness, {
             text: "",
             isStreaming: true,
@@ -605,7 +563,7 @@ describe("streaming motion commit lifecycle", () => {
         ),
       );
       await act(() =>
-        root.render(
+        root.update(
           createElement(StreamingTextMotionHarness, {
             text: "Final",
             isStreaming: false,
@@ -615,7 +573,9 @@ describe("streaming motion commit lifecycle", () => {
       );
       expect(snapshots.at(-1)?.frames).toHaveLength(1);
       expect(callbacks.size).toBe(0);
-      await act(() => vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS));
+      await act(() => {
+        vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS);
+      });
       expect(snapshots.at(-1)?.frames).toHaveLength(0);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -625,16 +585,18 @@ describe("streaming motion commit lifecycle", () => {
 
   it("publishes motion with each text commit without waiting for another animation frame", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-    const { callbacks, document } = installStreamingMotionTestDom();
-    const { createRoot } = await import("react-dom/client");
-    const root = createRoot(document.createElement("div") as unknown as Element);
+    const { callbacks } = installStreamingMotionTestDom();
+    let root!: ReactTestRenderer;
+    await act(() => {
+      root = create(createElement(Fragment));
+    });
     const snapshots: StreamingTextMotionSnapshot[] = [];
     const onSnapshot = (snapshot: StreamingTextMotionSnapshot) => snapshots.push(snapshot);
 
     try {
       for (const text of ["", "A", "AB", "ABC"]) {
         await act(() =>
-          root.render(
+          root.update(
             createElement(StreamingTextMotionHarness, { text, isStreaming: true, onSnapshot }),
           ),
         );
@@ -642,11 +604,13 @@ describe("streaming motion commit lifecycle", () => {
         expect(callbacks.size).toBe(0);
       }
       expect(snapshots.at(-1)?.frames.map((frame) => frame.sourceStart)).toEqual([0, 1, 2]);
-      await act(() => vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS));
+      await act(() => {
+        vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS);
+      });
       expect(snapshots.at(-1)?.frames).toHaveLength(3);
       expect(vi.getTimerCount()).toBe(0);
       await act(() =>
-        root.render(
+        root.update(
           createElement(StreamingTextMotionHarness, {
             text: "ABC",
             isStreaming: false,
@@ -662,22 +626,24 @@ describe("streaming motion commit lifecycle", () => {
 
   it("stops active work immediately when reduced motion is enabled", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const { callbacks, document, setReducedMotion } = installStreamingMotionTestDom();
-    const { createRoot } = await import("react-dom/client");
-    const root = createRoot(document.createElement("div") as unknown as Element);
+    const { callbacks, setReducedMotion } = installStreamingMotionTestDom();
+    let root!: ReactTestRenderer;
+    await act(() => {
+      root = create(createElement(Fragment));
+    });
     try {
       await act(() =>
-        root.render(createElement(StreamingTextMotionHarness, { text: "", isStreaming: true })),
+        root.update(createElement(StreamingTextMotionHarness, { text: "", isStreaming: true })),
       );
       await act(() =>
-        root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true })),
+        root.update(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true })),
       );
       expect(callbacks.size).toBe(0);
       await act(() => setReducedMotion(true));
       expect(callbacks.size).toBe(0);
       expect(vi.getTimerCount()).toBe(0);
       await act(() =>
-        root.render(createElement(StreamingTextMotionHarness, { text: "AB", isStreaming: true })),
+        root.update(createElement(StreamingTextMotionHarness, { text: "AB", isStreaming: true })),
       );
       expect(callbacks.size).toBe(0);
       expect(vi.getTimerCount()).toBe(0);

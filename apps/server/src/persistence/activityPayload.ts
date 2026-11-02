@@ -9,7 +9,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-export function compactActivityPayload(value: unknown): unknown {
+function compactActivityPayload(value: unknown): unknown {
   const payload = record(value);
   const canonical = record(payload?.canonicalPayload);
   if (

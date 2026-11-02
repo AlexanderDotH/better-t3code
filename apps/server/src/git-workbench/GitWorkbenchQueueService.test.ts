@@ -1,4 +1,4 @@
-import { ThreadId, TurnId } from "@t3tools/contracts";
+import { ThreadId, TurnId, RunId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -162,6 +162,60 @@ it.effect("creates, replaces, and broadcasts one workflow per worktree to every 
     expect(Option.getOrNull(yield* queue.get(scope))?.id).toBe(replacement.id);
   }).pipe(Effect.provide(queueLayer(runtime)), Effect.scoped);
 });
+
+it.effect(
+  "persists a V2 run capture and waits through newer active runs before releasing it",
+  () => {
+    const runtime = runtimeHarness();
+    return Effect.gen(function* () {
+      const queue = yield* GitWorkbenchQueue;
+      const runId = RunId.make("captured-v2-run");
+      const created = yield* queue.createOrReplace(
+        createInput({ turnId: null, preconditions: { ...preconditions, capturedRunId: runId } }),
+      );
+      expect(created.status).toBe("waiting_for_turn");
+      const persisted = yield* queue.get(scope);
+      expect(Option.getOrNull(persisted)?.preconditions.capturedRunId).toBe(runId);
+      expect(Option.getOrNull(persisted)?.turnId).toBeNull();
+      const edited = yield* queue.edit({
+        scope,
+        workflowId: created.id,
+        expectedRevision: created.revision,
+        workflow: selectionDelivery,
+        preconditions,
+      });
+      expect(edited.preconditions.capturedRunId).toBe(runId);
+      yield* queue.recover();
+      yield* queue.handleQuiescence({
+        type: "turn.processing.quiesced",
+        threadId: ThreadId.make("thread-1"),
+        runId: RunId.make("newer-v2-run"),
+        checkpointTurnCount: 2,
+        createdAt: "2026-11-02T00:00:00.000Z",
+      });
+      expect(runtime.executed).toEqual([]);
+      expect(Option.getOrNull(yield* queue.get(scope))?.status).toBe("waiting_for_turn");
+      runtime.setTurnQuiesced(true);
+      yield* queue.handleQuiescence({
+        type: "turn.processing.quiesced",
+        threadId: ThreadId.make("other-thread"),
+        runId,
+        checkpointTurnCount: 2,
+        createdAt: "2026-11-02T00:00:00.000Z",
+      });
+      expect(runtime.executed).toEqual([]);
+      yield* queue.handleQuiescence({
+        type: "turn.processing.quiesced",
+        threadId: ThreadId.make("thread-1"),
+        runId: RunId.make("newer-v2-run"),
+        checkpointTurnCount: 2,
+        createdAt: "2026-11-02T00:00:00.000Z",
+      });
+      expect(runtime.executed).toEqual([created.id]);
+      expect(Option.isNone(yield* queue.get(scope))).toBe(true);
+    }).pipe(Effect.provide(queueLayer(runtime)));
+  },
+);
 
 it.effect("requires an explicit replacement decision for an occupied worktree", () => {
   const runtime = runtimeHarness();

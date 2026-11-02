@@ -6,16 +6,15 @@ import {
   ProjectMemoryError,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
   WorkspaceContextUnavailableError,
   type ProjectMemoryReadResponse,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import * as ProjectMemoryPolicy from "../../../projectMemory/ProjectMemoryPolicy.ts";
 import * as ProjectMemoryStore from "../../../projectMemory/ProjectMemoryStore.ts";
 import { invokeProjectMemory } from "./handlers.ts";
@@ -25,36 +24,32 @@ const projectId = ProjectId.make("project-memory");
 const checkpointRef = CheckpointRef.make("refs/checkpoints/latest");
 const invocation = McpInvocationContext.McpInvocationContext.of({
   environmentId: EnvironmentId.make("environment-project-memory"),
-  threadId,
-  providerSessionId: "provider-session-project-memory",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  thread: {
+    threadId,
+    providerSessionId: "provider-session-project-memory",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
+  requestNamespace: "provider-session-project-memory",
   capabilities: new Set(["workspace"]),
   issuedAt: 1,
 });
 
-const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-  getThreadCheckpointContext: () =>
-    Effect.succeed(
-      Option.some({
-        threadId,
-        projectId,
-        workspaceRoot: "/workspace/canonical-project",
-        worktreePath: "/workspace/canonical-project/.t3/worktrees/feature",
-        checkpointsEnabled: true,
-        checkpoints: [
-          {
-            turnId: TurnId.make("turn-project-memory"),
-            checkpointTurnCount: 1,
-            checkpointRef,
-            status: "ready" as const,
-            files: [],
-            assistantMessageId: null,
-            completedAt: "2026-08-31T00:00:00.000Z",
-          },
-        ],
-      }),
-    ),
+const projectStore = Layer.mock(ProjectStoreV2)({
+  get: () =>
+    Effect.succeedSome({ projectId, workspaceRoot: "/workspace/canonical-project" } as never),
 });
+const projection = Layer.mock(OrchestratorV2)({
+  getThreadShell: () =>
+    Effect.succeed({
+      id: threadId,
+      projectId,
+      deletedAt: null,
+      worktreePath: "/workspace/canonical-project/.t3/worktrees/feature",
+    } as never),
+  getThreadRecords: () =>
+    Effect.succeed({ checkpoints: [{ ref: checkpointRef, status: "ready" }] } as never),
+}).pipe(Layer.provideMerge(projectStore));
 
 const readResult: ProjectMemoryReadResponse = {
   mode: "project",
@@ -208,9 +203,9 @@ it.effect(
 );
 
 it.effect("fails closed when the authenticated thread has no project context", () => {
-  const missing = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-    getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-  });
+  const missing = Layer.mock(OrchestratorV2)({ getThreadShell: () => Effect.succeed(null) }).pipe(
+    Layer.provideMerge(projectStore),
+  );
   const policy = ProjectMemoryPolicy.ProjectMemoryPolicy.of({
     resolve: () => Effect.succeed({ actor: "root" }),
   });

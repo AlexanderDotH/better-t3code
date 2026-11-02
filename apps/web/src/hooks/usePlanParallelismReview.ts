@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   buildPlanParallelismReviewCacheKey,
   cachedPlanParallelismReview,
@@ -13,6 +13,8 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 
+import { useStableCallback } from "./useStableCallback";
+
 interface InternalReviewState extends PlanParallelismReviewState {
   readonly cacheKey: string | null;
 }
@@ -21,14 +23,11 @@ export function usePlanParallelismReview(
   input: PlanParallelismReviewHookInput,
 ): PlanParallelismReviewState {
   const review = useAtomCommand(serverEnvironment.reviewPlanParallelism, { reportFailure: false });
-  const reviewPlan = useCallback<ReviewPlanParallelism>(
-    async (environmentId, input) => {
-      const result = await review({ environmentId, input });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      return result.value;
-    },
-    [review],
-  );
+  const reviewPlan: ReviewPlanParallelism = useStableCallback(async (environmentId, input) => {
+    const result = await review({ environmentId, input });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    return result.value;
+  });
   const {
     enabled,
     environmentId,
@@ -38,37 +37,23 @@ export function usePlanParallelismReview(
     reviewerSelection,
     threadId,
   } = input;
-  const setup = useMemo(
-    () =>
-      resolvePlanParallelismReviewSetup({
-        enabled,
-        environmentId,
-        implementationProvider,
-        plan,
-        reviewerProvider,
-        reviewerSelection,
-        threadId,
-      }),
-    [
-      enabled,
-      environmentId,
-      implementationProvider,
-      plan,
-      reviewerProvider,
-      reviewerSelection,
-      threadId,
-    ],
-  );
+  const setup = resolvePlanParallelismReviewSetup({
+    enabled,
+    environmentId,
+    implementationProvider,
+    plan,
+    reviewerProvider,
+    reviewerSelection,
+    threadId,
+  });
   const descriptor = setup.descriptor;
-  const cacheKey = useMemo(
-    () => (descriptor ? buildPlanParallelismReviewCacheKey(descriptor) : null),
-    [descriptor],
-  );
+  const cacheKey = descriptor ? buildPlanParallelismReviewCacheKey(descriptor) : null;
   const [reviewState, setReviewState] = useState<InternalReviewState>({
     cacheKey: null,
     ...IDLE_REVIEW_STATE,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- request the provider review for the mounted plan and ignore stale replies after its selection changes
   useEffect(() => {
     if (!descriptor || !cacheKey) {
       return;

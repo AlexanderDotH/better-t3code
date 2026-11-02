@@ -103,7 +103,7 @@ export function formatDeepPlanForDisplay(
           "",
           ...plan.decisions.map(
             (decision) =>
-              `- ${decision.text}${decision.rationale ? ` — ${decision.rationale}` : ""}${citations(decision.sources)}`,
+              `- ${decision.text}${decision.rationale ? `: ${decision.rationale}` : ""}${citations(decision.sources)}`,
           ),
         ]
       : []),

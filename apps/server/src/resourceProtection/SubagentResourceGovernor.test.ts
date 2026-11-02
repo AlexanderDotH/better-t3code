@@ -1,10 +1,13 @@
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import {
   makeBetterT3SettingsV1,
+  DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Platform } from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -114,6 +117,30 @@ const driveToProviderTreeThrottle = Effect.fnUntraced(function* (
   );
 });
 
+const liveSettingsLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const current = yield* Ref.make({
+      ...DEFAULT_SERVER_SETTINGS,
+      betterT3Environment: makeBetterT3SettingsV1("clean-install"),
+    });
+    const changes = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+    yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
+    return Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Ref.get(current),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+      updateSettings: (patch) =>
+        Ref.updateAndGet(current, (previous) => ({
+          ...previous,
+          betterT3Environment: {
+            ...previous.betterT3Environment,
+            ...patch.betterT3Environment,
+            flags: { ...previous.betterT3Environment.flags, ...patch.betterT3Environment?.flags },
+          },
+        })).pipe(Effect.tap((updated) => PubSub.publish(changes, updated))),
+    });
+  }),
+);
+
 describe("SubagentResourceGovernor", () => {
   it.effect("wires settings changes into reversible live admission policy", () =>
     Effect.scoped(
@@ -150,7 +177,7 @@ describe("SubagentResourceGovernor", () => {
           layerLive.pipe(
             Layer.provideMerge(
               Layer.mergeAll(
-                Layer.succeed(HostProcessPlatform, "linux"),
+                Layer.succeed(Platform, "linux"),
                 NativeTelemetryClient.layerTest({
                   health: Effect.succeed({
                     status: "healthy",
@@ -161,9 +188,7 @@ describe("SubagentResourceGovernor", () => {
                     sampleIntervalMs: 1_000,
                   }),
                 }),
-                ServerSettings.layerTest({
-                  betterT3Environment: makeBetterT3SettingsV1("clean-install"),
-                }),
+                liveSettingsLayer,
               ),
             ),
           ),
@@ -1401,7 +1426,6 @@ describe("SubagentResourceGovernor", () => {
           affectedThreadIdsTruncated: false,
         });
       }),
-    30_000,
   );
 
   it.effect("refuses to signal a PID whose observed start time no longer matches", () =>

@@ -22,6 +22,10 @@
   display: none;
 }
 
+[data-chat-composer-form]:has([data-composer-banner-surface]) > [data-chat-composer-idle-divider] {
+  display: none;
+}
+
 @utility composer-floating-bubble-host {
   display: grid;
   width: calc(100% - 2.75rem);

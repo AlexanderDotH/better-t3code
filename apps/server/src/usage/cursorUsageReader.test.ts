@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { CursorKeychainTimeoutError } from "../provider/cursorCredentialStore.ts";
+import { CursorKeychainTimeoutError } from "@t3tools/provider-cursor/server/macKeychainPassword";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 
 describe("readCursorAccountUsage", () => {

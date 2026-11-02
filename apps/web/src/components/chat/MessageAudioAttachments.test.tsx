@@ -1,6 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { AssetUrlState } from "../../assets/assetUrls";
@@ -23,6 +22,7 @@ vi.mock("../../hooks/useInterfaceTranslator", () => ({
   useInterfaceTranslator: () => ({ message: (key: string) => key }),
 }));
 
+const SIGNED_URL_EXPIRES_AT = 4_000_000_000_000;
 const environmentId = EnvironmentId.make("remote-environment");
 const attachment: ChatAudioAttachment = {
   type: "audio",
@@ -34,7 +34,6 @@ const attachment: ChatAudioAttachment = {
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   assets.state = { _tag: "Loading" };
   assets.resolve.mockClear();
   assets.refresh.mockReset();
@@ -77,11 +76,19 @@ describe("MessageAudioAttachments", () => {
       mimeType: attachment.mimeType,
     });
 
-    assets.state = { _tag: "Success", url: "https://remote.test/audio?signature=first" };
+    assets.state = {
+      _tag: "Success",
+      expiresAt: SIGNED_URL_EXPIRES_AT,
+      url: "https://remote.test/audio?signature=first",
+    };
     await renderAttachments();
     const player = renderer!.root.findByType("audio");
     await act(async () => player.props.onPlay());
-    assets.state = { _tag: "Success", url: "https://remote.test/audio?signature=next" };
+    assets.state = {
+      _tag: "Success",
+      expiresAt: SIGNED_URL_EXPIRES_AT,
+      url: "https://remote.test/audio?signature=next",
+    };
     await renderAttachments();
     expect(renderer!.root.findByType("audio").props.src).toContain("signature=first");
 
@@ -90,7 +97,11 @@ describe("MessageAudioAttachments", () => {
   });
 
   it("recovers a playback error by requesting a new signed URL and keeps failures visible", async () => {
-    assets.state = { _tag: "Success", url: "https://remote.test/audio?signature=expired" };
+    assets.state = {
+      _tag: "Success",
+      expiresAt: SIGNED_URL_EXPIRES_AT,
+      url: "https://remote.test/audio?signature=expired",
+    };
     await renderAttachments();
     await act(async () => renderer!.root.findByType("audio").props.onError());
     expect(renderer!.root.findAllByType("audio")).toHaveLength(0);
@@ -103,7 +114,11 @@ describe("MessageAudioAttachments", () => {
     expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
 
     assets.refresh.mockImplementationOnce(async () => {
-      assets.state = { _tag: "Success", url: "https://remote.test/audio?signature=fresh" };
+      assets.state = {
+        _tag: "Success",
+        expiresAt: SIGNED_URL_EXPIRES_AT,
+        url: "https://remote.test/audio?signature=fresh",
+      };
     });
     await act(async () => renderer!.root.findByType("button").props.onClick());
     expect(assets.refresh).toHaveBeenCalledTimes(2);

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 export type ClaudeGatewayEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -314,8 +314,8 @@ function buildCatalog(standardPayload: unknown, richPayload: unknown): ClaudeGat
   return { profiles };
 }
 
-function fetchCatalogJson(connection: GatewayConnection, url: string, timeoutMs: number) {
-  return Effect.gen(function* () {
+const fetchCatalogJson = Effect.fn("ClaudeGatewayCatalog.fetchCatalogJson")(
+  function* (connection: GatewayConnection, url: string, _timeoutMs: number) {
     const client = yield* HttpClient.HttpClient;
     let request = HttpClientRequest.get(url).pipe(
       HttpClientRequest.setHeader("accept", "application/json"),
@@ -331,12 +331,14 @@ function fetchCatalogJson(connection: GatewayConnection, url: string, timeoutMs:
     const response = yield* client.execute(request);
     if (response.status < 200 || response.status >= 300) return undefined;
     return yield* response.json;
-  }).pipe(
-    Effect.timeoutOption(timeoutMs),
-    Effect.map(Option.getOrUndefined),
-    Effect.orElseSucceed(() => undefined),
-  );
-}
+  },
+  (effect, _connection, _url, timeoutMs) =>
+    effect.pipe(
+      Effect.timeoutOption(timeoutMs),
+      Effect.map(Option.getOrUndefined),
+      Effect.orElseSucceed(() => undefined),
+    ),
+);
 
 export const loadClaudeGatewayCatalog = Effect.fn("loadClaudeGatewayCatalog")(function* (
   options: ClaudeGatewayCatalogLoadOptions,

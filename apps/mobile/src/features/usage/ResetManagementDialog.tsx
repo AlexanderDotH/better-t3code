@@ -1,3 +1,4 @@
+import { serverEnvironment } from "../../state/server";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -21,18 +22,17 @@ import { Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-
 import { Circle, Line, Path, Svg, Text as SvgText } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolveClassNames } from "uniwind";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { environmentPresentations } from "../../state/presentation";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu as ControlPillMenu } from "../../components/ui/Menu";
 import { ResetCredits } from "./UsageLimitsSection";
 
 function RecommendationGauge({ recommendation }: { readonly recommendation: ResetRecommendation }) {
-  const low = StyleSheet.flatten(useResolveClassNames("text-primary-text")).color;
-  const warning = StyleSheet.flatten(useResolveClassNames("text-warning-foreground")).color;
-  const danger = StyleSheet.flatten(useResolveClassNames("text-danger-foreground")).color;
-  const muted = StyleSheet.flatten(useResolveClassNames("text-foreground-muted")).color;
-  const foreground = StyleSheet.flatten(useResolveClassNames("text-foreground")).color;
+  const low = StyleSheet.flatten(useResolveClassNames("text-primary-text"))?.color;
+  const warning = StyleSheet.flatten(useResolveClassNames("text-warning-foreground"))?.color;
+  const danger = StyleSheet.flatten(useResolveClassNames("text-danger-foreground"))?.color;
+  const muted = StyleSheet.flatten(useResolveClassNames("text-foreground-muted"))?.color;
+  const foreground = StyleSheet.flatten(useResolveClassNames("text-foreground"))?.color;
   const colors = { low, moderate: warning, high: danger, unavailable: muted };
   const point = resetGaugePoint(recommendation.score ?? 0, 66);
   return (
@@ -88,7 +88,7 @@ function RecommendationGauge({ recommendation }: { readonly recommendation: Rese
             fontSize={22}
             fontWeight="600"
           >
-            {recommendation.score ?? "—"}
+            {recommendation.score ?? "–"}
           </SvgText>
         </Svg>
       </View>
@@ -261,7 +261,7 @@ function AccountDetails({
   );
 }
 
-export function ResetManagementDialog({
+function ResetManagementDialog({
   report,
   environmentId,
   onClose,
@@ -271,14 +271,10 @@ export function ResetManagementDialog({
   readonly onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const [selectedId, setSelectedId] = useState(report.accounts[0]?.id);
   const [openedAt] = useState(Date.now);
-  const accounts = liveResetAccounts(
-    report,
-    presentations.get(environmentId)?.serverConfig,
-    openedAt,
-  );
+  const accounts = liveResetAccounts(report, serverConfig, openedAt);
   const initial = report.accounts[0];
   const account =
     accounts.find((entry) => entry.id === selectedId) ??

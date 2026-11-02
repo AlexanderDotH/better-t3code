@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { animate } from "motion/mini";
 import { spring } from "motion";
 import { createChatMessageArrival } from "./chatMessageArrival";
@@ -107,7 +108,7 @@ function collectContents(
     const summary = row.assistantTurnDiffSummary;
     for (const file of summary.files) {
       contents.push({
-        id: fileMotionId(summary.turnId, file.path),
+        id: fileMotionId(summary.runId, file.path),
         createdAt: summary.completedAt,
         kind: "result",
         ready: true,
@@ -147,7 +148,6 @@ function rowContainsContent(row: MessagesTimelineRow, id: string): boolean {
   if (row.kind === "work" || row.kind === "work-live") {
     return row.groupedEntries.some((entry) => entry.id === id);
   }
-  if (row.kind === "activity-group") return row.entries.some((entry) => entry.id === id);
   return false;
 }
 
@@ -172,11 +172,6 @@ export function useChatPresentationMotion({
   viewport: HTMLElement | null;
 }) {
   const stateRef = useRef<ChatPresentationMotionState | null>(null);
-  const [streamBaseline, setStreamBaseline] = useState<{
-    identity: string;
-    mode: ChatVisualMode;
-    connected: boolean;
-  } | null>(null);
   const animationsRef = useRef(
     new Map<HTMLElement, ReturnType<typeof startPresentationAnimation>>(),
   );
@@ -186,49 +181,27 @@ export function useChatPresentationMotion({
   const arrivalRef = useRef<ReturnType<typeof createChatMessageArrival> | null>(null);
   const textMotionRef = useRef(textMotion);
   const visibilityResetRef = useRef(false);
-  const projectContents = useMemo(() => createContentsProjection(), []);
-  const contents = useMemo(
-    () => (mode === "better-t3" && (enabled || textMotion) ? projectContents(entries, rows) : []),
-    [mode, enabled, textMotion, entries, rows, projectContents],
-  );
-  const visibilityReset = visibilityResetRef.current;
-  const next = useMemo(
-    () =>
-      advanceChatPresentationMotion(visibilityReset ? null : stateRef.current, {
-        identity,
-        mode,
-        enabled: mode === "better-t3" && (enabled || textMotion),
-        visible: motionVisible(),
-        connected,
-        contents,
-      }),
-    [identity, mode, enabled, textMotion, connected, contents, visibilityReset],
-  );
-  const streamingMotionReady =
-    streamBaseline?.identity === identity &&
-    streamBaseline.mode === mode &&
-    streamBaseline.connected &&
-    connected;
-  const canAnimateInitialText = useCallback(
-    (id: string) => {
-      if (!textMotion || !next.state.active || !motionVisible()) return false;
-      if (
-        stateRef.current !== next.state &&
-        next.admitted.some((content) => content.id === id && content.kind === "assistant")
-      )
-        return true;
-      const pending = pendingRef.current.get(id);
-      return pending?.content.kind === "assistant" && performance.now() < pending.expiresAt;
-    },
-    [next, textMotion],
-  );
+  const [projectContents] = useState(createContentsProjection);
+  const streamingMotionReady = mode === "better-t3" && textMotion && connected;
+  const canAnimateInitialText = useStableCallback((id: string) => {
+    if (!textMotion || !stateRef.current?.active || !motionVisible()) return false;
+    const pending = pendingRef.current.get(id);
+    return pending?.content.kind === "assistant" && performance.now() < pending.expiresAt;
+  });
 
   useCommitEffect(() => {
-    setStreamBaseline(mode === "better-t3" ? { identity, mode, connected } : null);
-  }, [identity, mode, connected]);
-
-  useCommitEffect(() => {
+    const contents =
+      mode === "better-t3" && (enabled || textMotion) ? projectContents(entries, rows) : [];
+    const visibilityReset = visibilityResetRef.current;
     const previous = stateRef.current;
+    const next = advanceChatPresentationMotion(visibilityReset ? null : previous, {
+      identity,
+      mode,
+      enabled: mode === "better-t3" && (enabled || textMotion),
+      visible: motionVisible(),
+      connected,
+      contents,
+    });
     const fresh = previous !== next.state;
     visibilityResetRef.current = false;
     stateRef.current = next.state;
@@ -289,7 +262,7 @@ export function useChatPresentationMotion({
             if (row.kind !== "message" || !row.assistantTurnDiffSummary) continue;
             const summary = row.assistantTurnDiffSummary;
             const file = summary.files.find(
-              (candidate) => fileMotionId(summary.turnId, candidate.path) === id,
+              (candidate) => fileMotionId(summary.runId, candidate.path) === id,
             );
             if (!file) continue;
             element = [
@@ -306,7 +279,7 @@ export function useChatPresentationMotion({
             if (source?.kind === "work") {
               row = rows.findLast(
                 (candidate) =>
-                  candidate.kind === "work-toggle" && candidate.turnId === source.entry.turnId,
+                  candidate.kind === "work-toggle" && candidate.runId === source.entry.runId,
               );
             }
           }
@@ -365,8 +338,9 @@ export function useChatPresentationMotion({
       observer.disconnect();
       clearTimeout(timeout);
     };
-  }, [next, identity, mode, enabled, textMotion, entries, rows, viewport, visibilityReset]);
+  }, [identity, mode, enabled, textMotion, entries, rows, viewport, connected, projectContents]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own and release the viewport animation resources and visibility listeners.
   useEffect(() => {
     const animations = animationsRef.current;
     const cancel = () => {
@@ -385,13 +359,14 @@ export function useChatPresentationMotion({
       reducedMotion?.removeEventListener?.("change", cancel);
     };
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own and release the viewport animation resources and visibility listeners.
   useEffect(
     () => () => {
       arrivalRef.current?.dispose();
       arrivalRef.current = null;
       pendingRef.current.clear();
     },
-    [viewport, identity],
+    [],
   );
   return { streamingMotionReady, canAnimateInitialText };
 }

@@ -260,8 +260,9 @@ it.live("reuses unchanged files when the branch changes", () =>
   ),
 );
 
-for (const scenario of ["changed", "unchanged", "manual"] as const) {
-  it.live(`reconciles saved indexes on recovery: ${scenario}`, () =>
+it.live.each(["changed", "unchanged", "manual"] as const)(
+  "reconciles saved indexes on recovery: %s",
+  (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
         const root = yield* temporaryWorkspace;
@@ -294,48 +295,45 @@ for (const scenario of ["changed", "unchanged", "manual"] as const) {
         else assert.strictEqual(completed.revision, initial.revision);
       }),
     ),
-  );
-}
+);
 
-for (const notifyWatcher of [false, true]) {
-  it.live(
-    `recovers a source edit during extraction with watcher notification ${notifyWatcher}`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* temporaryWorkspace;
-          const harness = yield* makeHarness(root);
-          yield* harness.runtime.updateSettings({ projectId, patch: { enabled: true } });
-          const gate = yield* harness.holdExtractedResult;
-          const started = yield* harness.runtime.start({ projectId });
-          yield* Deferred.await(gate.entered);
-          const updatedSource = "export function updatedFixture() { return 2; }\n";
-          yield* Effect.promise(() =>
-            NodeFSP.writeFile(NodePath.join(root, "source.ts"), updatedSource),
-          );
-          if (notifyWatcher) for (let i = 0; i < 3; i++) yield* harness.fireWatcher();
-          yield* Deferred.succeed(gate.release, undefined);
-          const completed = yield* harness.runtime.drain({ projectId });
-          assert.strictEqual(completed.state, "ready");
-          assert.strictEqual(completed.revision, started.revision + 1);
-          assert.isUndefined(completed.lastError);
-          assert.deepStrictEqual(harness.extractedFiles, ["source.ts", "source.ts"]);
-          const reader = yield* openExistingKnowledgeKvStore({ workspaceRoot: root });
-          assert.isNotNull(reader);
-          assert.strictEqual(
-            (yield* reader!.getRecord("files", "source.ts", completed.revision))?.contentHash,
-            NodeCrypto.createHash("sha256").update(updatedSource).digest("hex"),
-          );
-          const entities = yield* reader!.listRecords({
-            kind: "entities",
-            revision: completed.revision,
-          });
-          assert.isTrue(entities.items.some((entity) => entity.name === "updatedFixture"));
-          assert.isFalse(entities.items.some((entity) => entity.name === "fixture"));
-        }),
-      ),
-  );
-}
+it.live.each([false, true])(
+  "recovers a source edit during extraction with watcher notification %s",
+  (notifyWatcher) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryWorkspace;
+        const harness = yield* makeHarness(root);
+        yield* harness.runtime.updateSettings({ projectId, patch: { enabled: true } });
+        const gate = yield* harness.holdExtractedResult;
+        const started = yield* harness.runtime.start({ projectId });
+        yield* Deferred.await(gate.entered);
+        const updatedSource = "export function updatedFixture() { return 2; }\n";
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(root, "source.ts"), updatedSource),
+        );
+        if (notifyWatcher) for (let i = 0; i < 3; i++) yield* harness.fireWatcher();
+        yield* Deferred.succeed(gate.release, undefined);
+        const completed = yield* harness.runtime.drain({ projectId });
+        assert.strictEqual(completed.state, "ready");
+        assert.strictEqual(completed.revision, started.revision + 1);
+        assert.isUndefined(completed.lastError);
+        assert.deepStrictEqual(harness.extractedFiles, ["source.ts", "source.ts"]);
+        const reader = yield* openExistingKnowledgeKvStore({ workspaceRoot: root });
+        assert.isNotNull(reader);
+        assert.strictEqual(
+          (yield* reader!.getRecord("files", "source.ts", completed.revision))?.contentHash,
+          NodeCrypto.createHash("sha256").update(updatedSource).digest("hex"),
+        );
+        const entities = yield* reader!.listRecords({
+          kind: "entities",
+          revision: completed.revision,
+        });
+        assert.isTrue(entities.items.some((entity) => entity.name === "updatedFixture"));
+        assert.isFalse(entities.items.some((entity) => entity.name === "fixture"));
+      }),
+    ),
+);
 
 it.live("publishes unaffected files when a source changes with automatic refresh disabled", () =>
   Effect.scoped(

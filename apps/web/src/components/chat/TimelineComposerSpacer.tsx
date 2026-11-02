@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { useLayoutEffect, useRef } from "react";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { COMPOSER_HEIGHT_TRANSITION_EASING } from "../composerFooterLayout";
@@ -17,6 +18,7 @@ export function TimelineComposerSpacer({
   const animation = useRef<Animation | null>(null);
   const { active } = usePanelAnimationSettings();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the spacer DOM animation and resize subscription in step with the composer.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -47,14 +49,14 @@ export function TimelineComposerSpacer({
     };
   }, [active, transitionDurationMs, height]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the spacer DOM animation and resize subscription in step with the composer.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(onHeightChange);
-    observer.observe(element);
-    return () => observer.disconnect();
+    return observeResize(element, onHeightChange);
   }, [onHeightChange]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the spacer DOM animation and resize subscription in step with the composer.
   useLayoutEffect(
     () => () => {
       animation.current?.cancel();

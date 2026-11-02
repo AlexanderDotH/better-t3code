@@ -1,71 +1,21 @@
+import * as Invocation from "./McpInvocationContext.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
-  CLAUDE_DRIVER_KIND,
-  CODEX_DRIVER_KIND,
-  CURSOR_DRIVER_KIND,
-  EnvironmentId,
   DeepPlanRunId,
-  GROK_DRIVER_KIND,
-  OPENCODE_DRIVER_KIND,
-  ProviderDriverKind,
+  DeepPlanSourceId,
+  EnvironmentId,
   ProviderInstanceId,
-  makeBetterT3SettingsV1,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
-import { replyContext, replyOwnerThreadId } from "./testFixtures/messageReply.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
-
-it.effect(
-  "binds existing credentials to the current Deep Plan without leaking the binding to other threads",
-  () =>
-    Effect.gen(function* () {
-      const registry = yield* makeRegistry(() => 1_000);
-      const threadId = ThreadId.make("deep-plan-owner");
-      const otherId = ThreadId.make("other-thread");
-      const issue = (id: ThreadId) =>
-        registry.issue({
-          threadId: id,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          provider: CODEX_DRIVER_KIND,
-          workspaceWriteEnabled: true,
-        });
-      const issued = yield* issue(threadId);
-      const other = yield* issue(otherId);
-      const token = issued.config.authorizationHeader.slice("Bearer ".length);
-      const otherToken = other.config.authorizationHeader.slice("Bearer ".length);
-      const binding = {
-        runId: DeepPlanRunId.make("run"),
-        runThreadId: threadId,
-        approvedPlanVersion: null,
-        phase: "planning" as const,
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
-      };
-      yield* registry.bindDeepPlan(threadId, binding);
-      const planning = yield* registry.resolve(token);
-      expect(planning?.deepPlan).toEqual(binding);
-      expect(planning?.capabilities.has("deep-plan")).toBe(true);
-      expect((yield* registry.resolve(otherToken))?.deepPlan).toBeUndefined();
-      const execution = { ...binding, approvedPlanVersion: 1, phase: "execution" as const };
-      yield* registry.bindDeepPlan(threadId, execution);
-      expect((yield* registry.resolve(token))?.deepPlan).toEqual(execution);
-      yield* registry.bindDeepPlan(threadId, undefined);
-      const ordinary = yield* registry.resolve(token);
-      expect(ordinary?.deepPlan).toBeUndefined();
-      expect(ordinary?.capabilities.has("deep-plan")).toBe(false);
-      expect(ordinary?.capabilities.has("workspace-write")).toBe(true);
-    }),
-);
-
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
   HttpServer.HttpServer.of({
     address: NetAddress.inetAddressFromIpStringUnsafe(hostname, port),
@@ -77,11 +27,7 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (
-  now: () => number,
-  httpServer = fakeHttpServer,
-  optionalFeature?: "knowledge.graph" | "agent.projectCoordination" | "agent.generalSubagents",
-) =>
+const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
   McpSessionRegistry.__testing
     .make({
       now,
@@ -90,17 +36,7 @@ const makeRegistry = (
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(
-        ServerSettings.ServerSettingsService.layerTest(
-          optionalFeature
-            ? {
-                betterT3Environment: makeBetterT3SettingsV1("clean-install", {
-                  [optionalFeature]: true,
-                }),
-              }
-            : {},
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
-      ),
+      Effect.provide(NodeServices.layer),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
@@ -111,15 +47,24 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
-      provider: CODEX_DRIVER_KIND,
       capabilities: new Set(["preview"]),
     });
-    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace");
+    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     expect(token.length).toBeGreaterThan(20);
 
     const resolved = yield* registry.resolve(token);
-    expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.thread.threadId).toBe(threadId);
+    expect(resolved?.capabilities).toEqual(
+      new Set([
+        "preview",
+        "orchestration",
+        "worktree",
+        "pull-requests",
+        "workspace",
+        "coordination",
+      ]),
+    );
 
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
@@ -128,132 +73,56 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
-it.effect("scopes transient workspace-only credentials to a durable parent thread", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const ownerThreadId = ThreadId.make("fetch:parent-thread:run-1:0");
-    const workspaceContextThreadId = ThreadId.make("parent-thread");
-    const issued = yield* registry.issue({
-      threadId: ownerThreadId,
-      workspaceContextThreadId,
-      workspaceOnly: true,
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      provider: CODEX_DRIVER_KIND,
-    });
-    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    const resolved = yield* registry.resolve(token);
-
-    expect(issued.config.threadId).toBe(ownerThreadId);
-    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-only");
-    expect(resolved?.threadId).toBe(workspaceContextThreadId);
-    expect(Array.from(resolved?.capabilities ?? [])).toEqual(["workspace"]);
-    expect(resolved?.capabilities.has("workspace-write")).toBe(false);
-
-    yield* registry.revokeThread(ownerThreadId);
-    expect(yield* registry.resolve(token)).toBeUndefined();
-  }),
-);
-
-it.effect("selects writable workspace profiles only when explicitly authorized", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const cases = [
-      [{}, "/mcp/workspace-write"],
-      [{ projectMemoryEnabled: false }, "/mcp/workspace-write-no-memory"],
-      [{ previewEnabled: false, workspaceOnly: false }, "/mcp/workspace-write-no-preview"],
-      [
-        { previewEnabled: false, workspaceOnly: false, projectMemoryEnabled: false },
-        "/mcp/workspace-write-no-preview-no-memory",
-      ],
-      [{ previewEnabled: false, workspaceOnly: true }, "/mcp/workspace-write-only"],
-      [
-        { previewEnabled: false, workspaceOnly: true, projectMemoryEnabled: false },
-        "/mcp/workspace-write-only-no-memory",
-      ],
-    ] as const;
-
-    for (const [profile, endpoint] of cases) {
-      const credential = yield* registry.issue({
-        threadId: ThreadId.make(`thread-${endpoint}`),
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        provider: CODEX_DRIVER_KIND,
-        workspaceWriteEnabled: true,
-        ...profile,
-      });
-      const token = credential.config.authorizationHeader.replace(/^Bearer\s+/, "");
-      const scope = yield* registry.resolve(token);
-
-      expect(credential.config.endpoint).toBe(`http://127.0.0.1:43123${endpoint}`);
-      expect(scope?.capabilities.has("workspace")).toBe(true);
-      expect(scope?.capabilities.has("workspace-write")).toBe(true);
-    }
-
-    const previewOnly = yield* registry.issue({
-      threadId: ThreadId.make("thread-grok-write-request"),
-      providerInstanceId: ProviderInstanceId.make("grok"),
-      provider: GROK_DRIVER_KIND,
-      workspaceWriteEnabled: true,
-    });
-    const previewOnlyToken = previewOnly.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    expect(previewOnly.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
-    expect((yield* registry.resolve(previewOnlyToken))?.capabilities.has("workspace-write")).toBe(
-      false,
-    );
-  }),
-);
-
-it.effect("omits project memory from every workspace profile when it is not activated", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const cases = [
-      [{ previewEnabled: false }, "/mcp/workspace-only-no-memory"],
-      [{ previewEnabled: false, workspaceOnly: false }, "/mcp/workspace-no-preview-no-memory"],
-      [{ previewEnabled: true }, "/mcp/workspace-no-memory"],
-    ] as const;
-
-    for (const [profile, endpoint] of cases) {
-      const credential = yield* registry.issue({
-        threadId: ThreadId.make(`thread-${endpoint}`),
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        provider: CODEX_DRIVER_KIND,
-        projectMemoryEnabled: false,
-        ...profile,
-      });
-
-      expect(credential.config.endpoint).toBe(`http://127.0.0.1:43123${endpoint}`);
-    }
-  }),
-);
-
-it.effect("grants requested pull-requests and gates browser and device access independently", () =>
+it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
     const withPreview = yield* registry.issue({
       threadId: ThreadId.make("thread-preview"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(["preview", "pull-requests"]),
+      capabilities: new Set(["preview"]),
     });
     const withoutPreview = yield* registry.issue({
       threadId: ThreadId.make("thread-no-preview"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(["pull-requests"]),
+      capabilities: new Set(),
     });
     const withDevice = yield* registry.issue({
       threadId: ThreadId.make("thread-device"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(["device", "pull-requests"]),
+      capabilities: new Set(["device"]),
     });
     const capabilitiesOf = (issued: typeof withPreview) =>
       registry
         .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
         .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
-    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
-    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
+    expect(yield* capabilitiesOf(withPreview)).toEqual([
+      "coordination",
+      "orchestration",
+      "preview",
+      "pull-requests",
+      "workspace",
+      "worktree",
+    ]);
+    expect(yield* capabilitiesOf(withoutPreview)).toEqual([
+      "coordination",
+      "orchestration",
+      "pull-requests",
+      "workspace",
+      "worktree",
+    ]);
+    expect(yield* capabilitiesOf(withDevice)).toEqual([
+      "coordination",
+      "device",
+      "orchestration",
+      "pull-requests",
+      "workspace",
+      "worktree",
+    ]);
   }),
 );
 
+// regression: #3114 use bound host for MCP endpoint
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
@@ -268,8 +137,8 @@ it.effect("builds MCP endpoints from the bound server host", () =>
       const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer(hostname));
       const issued = yield* registry.issue({
         threadId: ThreadId.make(`thread-${hostname}`),
-        providerInstanceId: ProviderInstanceId.make("grok"),
-        provider: GROK_DRIVER_KIND,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview"]),
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }
@@ -283,36 +152,11 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-2"),
       providerInstanceId: ProviderInstanceId.make("claude"),
-      provider: CLAUDE_DRIVER_KIND,
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
     expect(yield* registry.resolve(token)).toBeUndefined();
-  }),
-);
-
-it.effect("keeps a credential alive across turns that never touch an MCP tool", () =>
-  Effect.gen(function* () {
-    let timestamp = 1_000;
-    const registry = yield* makeRegistry(() => timestamp);
-    const threadId = ThreadId.make("thread-3");
-    const issued = yield* registry.issue({
-      threadId,
-      providerInstanceId: ProviderInstanceId.make("claude"),
-      provider: CLAUDE_DRIVER_KIND,
-      capabilities: new Set(["preview"]),
-    });
-    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-
-    // Well past the liveness window in total, but each turn reports in before
-    // it lapses — this is the long-session case that used to lose the toolkit.
-    for (let turn = 0; turn < 10; turn += 1) {
-      timestamp += 99;
-      yield* registry.touch(threadId);
-    }
-
-    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
   }),
 );
 
@@ -323,7 +167,6 @@ it.effect("does not keep credentials of other threads alive", () =>
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-4"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      provider: CODEX_DRIVER_KIND,
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -336,132 +179,113 @@ it.effect("does not keep credentials of other threads alive", () =>
   }),
 );
 
-it.effect("issues workspace credentials only to MCP-capable coding providers", () =>
+it.effect("only a trusted touch restores an expired token with its original scope", () =>
   Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const cases = [
-      [CODEX_DRIVER_KIND, "workspace"],
-      [CLAUDE_DRIVER_KIND, "workspace"],
-      [CURSOR_DRIVER_KIND, "workspace"],
-      [OPENCODE_DRIVER_KIND, "workspace"],
-      [GROK_DRIVER_KIND, "preview"],
-      [ProviderDriverKind.make("customAgent"), "preview"],
-    ] as const;
-
-    for (const [provider, expectedProfile] of cases) {
-      const issued = yield* registry.issue({
-        threadId: ThreadId.make(`thread-${provider}`),
-        providerInstanceId: ProviderInstanceId.make(`instance-${provider}`),
-        provider,
-      });
-      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-      const resolved = yield* registry.resolve(token);
-
-      expect(
-        issued.config.endpoint.endsWith(
-          expectedProfile === "workspace" ? "/mcp/workspace" : "/mcp",
-        ),
-      ).toBe(true);
-      expect(resolved?.capabilities.has("preview")).toBe(true);
-      expect(resolved?.capabilities.has("workspace")).toBe(expectedProfile === "workspace");
-    }
-  }),
-);
-
-it.effect("uses core Codex tools unless optional groups are explicitly requested", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const codingThreadId = ThreadId.make("thread-preview-disabled-codex");
-    const codingCredential = yield* registry.issue({
-      threadId: codingThreadId,
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      provider: CODEX_DRIVER_KIND,
-      previewEnabled: false,
-    });
-    const codingToken = codingCredential.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    const codingScope = yield* registry.resolve(codingToken);
-
-    expect(codingCredential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-only");
-    expect(Array.from(codingScope?.capabilities ?? [])).toEqual(["workspace"]);
-
-    const explicitFullCredential = yield* registry.issue({
-      threadId: ThreadId.make("thread-explicit-full-codex"),
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      provider: CODEX_DRIVER_KIND,
-      previewEnabled: false,
-      workspaceOnly: false,
-    });
-    const explicitFullToken = explicitFullCredential.config.authorizationHeader.replace(
-      /^Bearer\s+/,
-      "",
-    );
-    const explicitFullScope = yield* registry.resolve(explicitFullToken);
-
-    expect(explicitFullCredential.config.endpoint).toBe(
-      "http://127.0.0.1:43123/mcp/workspace-no-preview",
-    );
-    expect(Array.from(explicitFullScope?.capabilities ?? [])).toEqual([
-      "workspace",
-      "coordination",
-    ]);
-
-    const nonWorkspaceCredential = yield* registry.issue({
-      threadId: ThreadId.make("thread-preview-disabled-grok"),
-      providerInstanceId: ProviderInstanceId.make("grok"),
-      provider: GROK_DRIVER_KIND,
-      previewEnabled: false,
-    });
-    const nonWorkspaceToken = nonWorkspaceCredential.config.authorizationHeader.replace(
-      /^Bearer\s+/,
-      "",
-    );
-    const nonWorkspaceScope = yield* registry.resolve(nonWorkspaceToken);
-
-    expect(nonWorkspaceCredential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/coordination");
-    expect(Array.from(nonWorkspaceScope?.capabilities ?? [])).toEqual(["coordination"]);
-  }),
-);
-
-it.effect("selects the full relevant profile when an optional coding group is enabled", () =>
-  Effect.gen(function* () {
-    for (const feature of [
-      "knowledge.graph",
-      "agent.projectCoordination",
-      "agent.generalSubagents",
-    ] as const) {
-      const registry = yield* makeRegistry(() => 1_000, fakeHttpServer, feature);
-      const credential = yield* registry.issue({
-        threadId: ThreadId.make(`thread-${feature}`),
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        provider: CODEX_DRIVER_KIND,
-        previewEnabled: false,
-      });
-      expect(credential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-no-preview");
-    }
-  }),
-);
-
-it.effect("retains authenticated reply execution metadata when the parent session is revoked", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const parentThreadId = ThreadId.make("reply-parent");
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-idle");
     const issued = yield* registry.issue({
-      threadId: replyOwnerThreadId,
-      workspaceContextThreadId: parentThreadId,
-      messageReply: replyContext,
-      workspaceOnly: false,
-      workspaceWriteEnabled: true,
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      provider: CODEX_DRIVER_KIND,
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    yield* registry.revokeThread(parentThreadId);
-    expect(yield* registry.resolve(token)).toMatchObject({
-      ownerThreadId: replyOwnerThreadId,
-      threadId: parentThreadId,
-      messageReply: replyContext,
+    const scope = yield* registry.resolve(token);
+    expect(scope).toBeDefined();
+
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    const otherThreadId = ThreadId.make("thread-active");
+    const other = yield* registry.issue({
+      threadId: otherThreadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device"]),
     });
-    yield* registry.revokeThread(replyOwnerThreadId);
+    yield* registry.touch(otherThreadId);
+    expect(
+      (yield* registry.resolve(other.config.authorizationHeader.replace(/^Bearer\s+/, "")))?.thread
+        .threadId,
+    ).toBe(otherThreadId);
+    expect(yield* registry.resolve("unknown-token")).toBeUndefined();
+    expect(yield* registry.resolve(token)).toBeUndefined();
+
+    yield* registry.touch(threadId);
+    expect(yield* registry.resolve(token)).toEqual(scope);
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect.each(["provider-session", "thread", "all"] as const)(
+  "never restores an expired token after %s revocation",
+  (revocation) =>
+    Effect.gen(function* () {
+      let timestamp = 1_000;
+      const registry = yield* makeRegistry(() => timestamp);
+      const threadId = ThreadId.make("thread-revoked");
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview"]),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+      timestamp += 101;
+      yield* {
+        "provider-session": registry.revokeProviderSession(issued.config.providerSessionId),
+        thread: registry.revokeThread(threadId),
+        all: registry.revokeAll,
+      }[revocation];
+      yield* registry.touch(threadId);
+      expect(yield* registry.resolve(token)).toBeUndefined();
+    }),
+);
+
+it.effect("keeps source-worker grants bound to their owner and planning thread", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const workerThreadId = ThreadId.make("source-worker");
+    const runThreadId = ThreadId.make("plan-owner");
+    const binding = {
+      runId: DeepPlanRunId.make("plan-run"),
+      runThreadId,
+      approvedPlanVersion: null,
+      phase: "planning" as const,
+      readOnly: true,
+      sourceAnalysis: { workerThreadId, sourceIds: [DeepPlanSourceId.make("frozen-source")] },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "synthetic-model" },
+    };
+    const issued = yield* registry.issue({
+      threadId: workerThreadId,
+      providerInstanceId: binding.modelSelection.instanceId,
+      workspaceContextThreadId: runThreadId,
+      deepPlan: binding,
+      workspaceWriteEnabled: true,
+      projectMemoryEnabled: false,
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const scope = yield* registry.resolve(token);
+    expect(scope).toMatchObject({
+      ownerThreadId: workerThreadId,
+      workspaceContextThreadId: runThreadId,
+      thread: { threadId: workerThreadId },
+      deepPlan: binding,
+      projectMemoryEnabled: false,
+    });
+    const read = yield* Invocation.requireWorkspaceMcpCapability().pipe(
+      Effect.provideService(Invocation.McpInvocationContext, scope!),
+    );
+    expect(read.threadId).toBe(runThreadId);
+    const denied = yield* Invocation.requireWorkspaceWriteMcpCapability().pipe(
+      Effect.provideService(Invocation.McpInvocationContext, scope!),
+      Effect.flip,
+    );
+    expect(denied.reason).toBe("credential_not_authorized");
+    yield* registry.revokeThread(runThreadId);
+    expect(yield* registry.resolve(token)).toBeDefined();
+    yield* registry.bindDeepPlan(workerThreadId, undefined);
+    expect((yield* registry.resolve(token))?.capabilities.has("deep-plan")).toBe(false);
+    yield* registry.revokeThread(workerThreadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );

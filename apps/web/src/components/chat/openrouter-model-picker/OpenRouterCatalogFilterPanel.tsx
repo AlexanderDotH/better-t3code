@@ -108,7 +108,7 @@ function CatalogFilterButton({
     <button
       type="button"
       className={cn(
-        "relative inline-flex h-6 shrink-0 cursor-pointer items-center justify-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 text-3xs font-medium text-muted-foreground outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-97 [&_svg]:-mx-0.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 pointer-coarse:h-11 pointer-coarse:px-3",
+        "relative inline-flex h-6 shrink-0 cursor-pointer items-center justify-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 text-3xs font-medium text-muted-foreground outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-97 [&_svg]:-mx-0.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 pointer-coarse:h-11 pointer-coarse:px-3",
         appearance === "reset"
           ? "px-1.5 hover:bg-accent hover:text-foreground"
           : "hover:border-border/60 hover:bg-background/60 hover:text-foreground",

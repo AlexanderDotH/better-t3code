@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Real Git fixtures exercise the operation service through an independent synchronous driver.
@@ -26,7 +26,7 @@ function realGit(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv) 
     cwd,
     encoding: "utf8",
     env: {
-      ...HostProcessEnvironment.defaultValue(),
+      ...HostProcess.Environment.defaultValue(),
       ...env,
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "commit.gpgsign",

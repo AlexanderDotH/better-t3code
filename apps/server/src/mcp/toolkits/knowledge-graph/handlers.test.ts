@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -35,9 +36,13 @@ const result: KnowledgeGraphQueryResultV1 = {
 function invocation(capabilities: ReadonlySet<McpInvocationContext.McpCapability>) {
   return McpInvocationContext.McpInvocationContext.of({
     environmentId: EnvironmentId.make("environment-knowledge-graph"),
-    threadId,
-    providerSessionId: "provider-session-knowledge-graph",
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    thread: {
+      threadId,
+      providerSessionId: "provider-session-knowledge-graph",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
+    requestNamespace: "provider-session-knowledge-graph",
     capabilities,
     issuedAt: 1,
   });
@@ -106,7 +111,7 @@ it.effect("rejects scope overrides and oversized traversal before reading graph 
       expect(error).toMatchObject({ reason: { _tag: "ToolParameterValidationError" } });
     }
   }).pipe(
-    Effect.provide(KnowledgeGraphToolkitHandlersLive),
+    Effect.provide(McpToolAccess.HandlersLayer.layer(KnowledgeGraphToolkitHandlersLive)),
     Effect.provideService(
       McpInvocationContext.McpInvocationContext,
       invocation(new Set(["workspace"])),

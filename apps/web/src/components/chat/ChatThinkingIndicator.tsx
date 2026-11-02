@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState, type CSSProperties } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useRef, useState, type CSSProperties } from "react";
 import { useChatWidthMotion } from "./ChatSizeMotion";
 import {
   CHAT_THINKING_CYCLE_MS,
@@ -14,13 +15,10 @@ export function ChatThinkingIndicator({ motion }: { motion: boolean }) {
   const [phraseIndex, setPhraseIndex] = useState(0);
   const cycles = useRef(0);
   const widthRef = useChatWidthMotion<HTMLSpanElement>(phraseIndex, motion);
-  const attach = useCallback(
-    (element: HTMLSpanElement | null) => {
-      widthRef.current = element;
-      return motion ? observeVisibleAnimation(element) : undefined;
-    },
-    [motion, widthRef],
-  );
+  const attach = useStableCallback((element: HTMLSpanElement | null) => {
+    widthRef.current = element;
+    return motion ? observeVisibleAnimation(element) : undefined;
+  });
   const characters = Array.from(
     translate(CHAT_THINKING_PHRASE_KEYS[phraseIndex]!).normalize("NFC"),
   );
@@ -52,6 +50,7 @@ export function ChatThinkingIndicator({ motion }: { motion: boolean }) {
       <span aria-hidden className="better-chat-thinking-word" key={phraseIndex}>
         {characters.map((character, index) => (
           <span
+            // oxlint-disable-next-line react/no-array-index-key -- each glyph keeps its position while the phrase animates
             key={index}
             className="better-chat-thinking-character"
             data-character={character}

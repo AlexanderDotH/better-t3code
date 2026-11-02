@@ -3,7 +3,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useRef,
 } from "react";
@@ -105,11 +104,11 @@ function changeSummary(
   return translate("git.workbench.noChanges");
 }
 
-export function GitCompactCard(props: GitCompactCardProps) {
+export function GitCompactCard({ expandButtonRef, ...props }: GitCompactCardProps) {
   const translate = useInterfaceTranslator().message;
   const pullHandleRef = useRef<HTMLDivElement | null>(null);
   const pullStateRef = useRef<PullState | null>(null);
-  const resetPull = useCallback((releaseCapture = true) => {
+  const resetPull = (releaseCapture = true) => {
     const handle = pullHandleRef.current;
     const pull = pullStateRef.current;
     pullStateRef.current = null;
@@ -120,71 +119,60 @@ export function GitCompactCard(props: GitCompactCardProps) {
     } catch {
       // Native cancellation can release capture before React receives its cleanup event.
     }
-  }, []);
-  const pullResult = useCallback(
-    (pull: PullState, event: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) =>
-      shouldExpandGitCompactPull({
-        button: pull.button,
-        cancelled,
-        endX: event.clientX,
-        endY: event.clientY,
-        isPrimary: pull.isPrimary,
-        startX: pull.startX,
-        startY: pull.startY,
-      }),
-    [],
-  );
+  };
+  const pullResult = (
+    pull: PullState,
+    event: ReactPointerEvent<HTMLDivElement>,
+    cancelled: boolean,
+  ) =>
+    shouldExpandGitCompactPull({
+      button: pull.button,
+      cancelled,
+      endX: event.clientX,
+      endY: event.clientY,
+      isPrimary: pull.isPrimary,
+      startX: pull.startX,
+      startY: pull.startY,
+    });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases native pointer capture and clears the pull handle's DOM indicator when expansion disables the gesture
   useEffect(() => {
     if (props.expanded || props.expansionBlocked) resetPull();
     return resetPull;
   }, [props.expanded, props.expansionBlocked, resetPull]);
 
-  const handlePullStart = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (props.expanded || props.expansionBlocked || !event.isPrimary || event.button !== 0)
-        return;
-      event.preventDefault();
-      pullStateRef.current = {
-        button: event.button,
-        isPrimary: event.isPrimary,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-      };
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic pointers may not support capture; the gesture still works inside the handle.
-      }
-    },
-    [props.expanded, props.expansionBlocked],
-  );
-  const handlePullMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const pull = pullStateRef.current;
-      if (!pull || pull.pointerId !== event.pointerId) return;
-      event.currentTarget.toggleAttribute("data-pull-ready", pullResult(pull, event, false));
-    },
-    [pullResult],
-  );
-  const handlePullEnd = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const pull = pullStateRef.current;
-      if (!pull || pull.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      const shouldExpand = pullResult(pull, event, false);
-      resetPull();
-      if (shouldExpand && !props.expansionBlocked) props.onExpand();
-    },
-    [props.expansionBlocked, props.onExpand, pullResult, resetPull],
-  );
-  const handlePullCancel = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (pullStateRef.current?.pointerId === event.pointerId) resetPull(false);
-    },
-    [resetPull],
-  );
+  const handlePullStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (props.expanded || props.expansionBlocked || !event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    pullStateRef.current = {
+      button: event.button,
+      isPrimary: event.isPrimary,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointers may not support capture; the gesture still works inside the handle.
+    }
+  };
+  const handlePullMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pull = pullStateRef.current;
+    if (!pull || pull.pointerId !== event.pointerId) return;
+    event.currentTarget.toggleAttribute("data-pull-ready", pullResult(pull, event, false));
+  };
+  const handlePullEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pull = pullStateRef.current;
+    if (!pull || pull.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const shouldExpand = pullResult(pull, event, false);
+    resetPull();
+    if (shouldExpand && !props.expansionBlocked) props.onExpand();
+  };
+  const handlePullCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (pullStateRef.current?.pointerId === event.pointerId) resetPull(false);
+  };
 
   return (
     <article
@@ -239,7 +227,7 @@ export function GitCompactCard(props: GitCompactCardProps) {
               <TooltipTrigger
                 render={
                   <button
-                    ref={props.expandButtonRef}
+                    ref={expandButtonRef}
                     type="button"
                     className="git-compact-card__header-action"
                     aria-label={translate("git.workbench.expand")}

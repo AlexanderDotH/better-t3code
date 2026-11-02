@@ -1,3 +1,4 @@
+import { copyThreadTranscript } from "@t3tools/client-runtime/thread-transcript";
 import { useRoute, type RouteProp } from "@react-navigation/native";
 import {
   isAtomCommandInterrupted,
@@ -12,8 +13,8 @@ import {
   AndroidScreenScaffold,
   ScreenScaffoldScrollView,
 } from "../../components/AndroidScreenScaffold";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentServerConfig, useThreadShells } from "../../state/entities";
@@ -42,7 +43,7 @@ export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
   );
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
   const [busy, setBusy] = useState(false);
-  const exportThreadTranscript = useAtomCommand(orchestrationEnvironment.exportThreadTranscript, {
+  const exportThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
   const supported = supportsMobileTranscriptPortability(
@@ -71,7 +72,13 @@ export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
         return;
       }
       try {
-        await Clipboard.setStringAsync(result.value.content);
+        await copyThreadTranscript({
+          threadId: result.value.threadId,
+          exportThreadTranscript: async () => result.value,
+          writeText: async (text) => {
+            if (!(await Clipboard.setStringAsync(text))) throw new Error("Clipboard write failed.");
+          },
+        });
       } catch {
         Alert.alert(
           translator.message("settings.betterT3.mobile.transcript.failedTitle"),

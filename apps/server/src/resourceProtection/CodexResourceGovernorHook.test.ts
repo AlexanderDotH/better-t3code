@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The hook accepts a native Readable as its stdin boundary.
 import * as NodeStream from "node:stream";
 
 import { describe, expect, it } from "vite-plus/test";

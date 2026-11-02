@@ -6,7 +6,6 @@ import {
 
 type InteractionModeProvider = Pick<ServerProvider, "showInteractionModeToggle">;
 
-/** Normalize saved T3 mode choices without changing native slash commands. */
 export function resolveProviderInteractionMode(
   provider: InteractionModeProvider | null | undefined,
   interactionMode: ProviderInteractionMode | null | undefined,
@@ -25,10 +24,10 @@ export function resolveLegacyPlanModeEnabled(input: {
 }
 
 export function resolvePendingTaskInteractionMode(input: {
-  readonly preferenceLoaded: boolean;
+  readonly preferenceLoaded?: boolean;
+  readonly queuedInteractionMode?: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
   readonly draftInteractionMode: ProviderInteractionMode | undefined;
-  readonly queuedInteractionMode: ProviderInteractionMode | undefined;
   readonly provider?: InteractionModeProvider | null;
 }): ProviderInteractionMode {
   if (
@@ -39,14 +38,9 @@ export function resolvePendingTaskInteractionMode(input: {
   if (input.provider?.showInteractionModeToggle === false) {
     return DEFAULT_PROVIDER_INTERACTION_MODE;
   }
-  if (input.planModeEnabled) {
-    return input.draftInteractionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
-  }
-  if (!input.preferenceLoaded) {
-    // Only an existing queued task may retain its previous mode while the
-    // preference is unknown. A fresh draft still defaults to Build so a stale
-    // persisted Plan selection cannot bypass a disabled preference at launch.
+  if (input.preferenceLoaded === false)
     return input.queuedInteractionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
-  }
-  return DEFAULT_PROVIDER_INTERACTION_MODE;
+  return input.planModeEnabled
+    ? (input.draftInteractionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
+    : DEFAULT_PROVIDER_INTERACTION_MODE;
 }

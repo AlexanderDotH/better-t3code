@@ -13,7 +13,7 @@ import {
   type GeminiClientFactory,
 } from "../provider/GeminiClient.ts";
 import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
-import { resolveGeminiThinkingConfig } from "../provider/Layers/GeminiProvider.ts";
+import { resolveGeminiThinkingConfig } from "../provider/GeminiProvider.ts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
@@ -25,14 +25,14 @@ import {
   buildThreadTitlePrompt,
   buildThreadMetadataPrompt,
   buildTranscriptTranslationPrompt,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
   toJsonSchemaObject,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 const GEMINI_TEXT_GENERATION_TIMEOUT_MS = 180_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -48,31 +48,31 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
   environment: NodeJS.ProcessEnv = process.env,
   clientFactory: GeminiClientFactory = makeGeminiClient,
 ) => {
-  const runGeminiJson = <S extends Schema.Top>({
-    operation,
-    prompt,
-    outputSchemaJson,
-    modelSelection,
-  }: {
-    operation:
-      | "decisionGeneration"
-      | "decideAutoReasoning"
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadMetadata"
-      | "generateThreadTitle"
-      | "translateTranscriptToEnglish"
-      | "improvePrompt"
-      | "reviewPlanParallelism"
-      | "summarizeContext"
-      | "planFetchExploration";
-    cwd: string;
-    prompt: string;
-    outputSchemaJson: S;
-    modelSelection: ModelSelection;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
+  const runGeminiJson = Effect.fn("GeminiTextGeneration.runGeminiJson")(
+    function* <S extends Schema.Top>({
+      operation,
+      prompt,
+      outputSchemaJson,
+      modelSelection,
+    }: {
+      operation:
+        | "decisionGeneration"
+        | "decideAutoReasoning"
+        | "generateCommitMessage"
+        | "generatePrContent"
+        | "generateBranchName"
+        | "generateThreadMetadata"
+        | "generateThreadTitle"
+        | "translateTranscriptToEnglish"
+        | "improvePrompt"
+        | "reviewPlanParallelism"
+        | "summarizeContext"
+        | "planFetchExploration";
+      cwd: string;
+      prompt: string;
+      outputSchemaJson: S;
+      modelSelection: ModelSelection;
+    }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
       if (!settings.enabled) {
         return yield* new TextGenerationError({
           operation,
@@ -143,17 +143,20 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
             ),
         }),
       );
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Gemini text generation failed.",
-              cause,
-            }),
+    },
+    (effect, { operation }) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Gemini text generation failed.",
+                cause,
+              }),
+        ),
       ),
-    );
+  );
 
   const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
     Effect.fn("GeminiTextGeneration.decideAutoReasoning")(function* (input) {
@@ -331,6 +334,13 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
 
   return Effect.succeed({
     decisionGeneration,
+    generateReviewGuide: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateReviewGuide",
+          detail: "This provider does not support repository review guides.",
+        }),
+      ),
     summarizeContext: makeContextSummarizer((input) =>
       runGeminiJson({
         ...input,

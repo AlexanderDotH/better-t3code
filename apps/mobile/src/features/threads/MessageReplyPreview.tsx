@@ -2,11 +2,11 @@ import { getMessageReplyPreview } from "@t3tools/client-runtime/messageReplies";
 import type { MessageReplyReference } from "@t3tools/contracts";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
-export const MESSAGE_REPLY_PREVIEW_MIN_HEIGHT = 52;
+const MESSAGE_REPLY_PREVIEW_MIN_HEIGHT = 52;
 
 export const MessageReplyPreview = memo(function MessageReplyPreview(props: {
   readonly reference: MessageReplyReference;

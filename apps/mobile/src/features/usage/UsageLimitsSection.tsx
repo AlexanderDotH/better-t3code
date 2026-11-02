@@ -1,132 +1,127 @@
-import { useEffectEvent } from "react";
-import { Linking } from "react-native";
-import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
-import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ProviderConsumeResetCreditOutcome,
-  ProviderConsumeResetCreditInput,
-  ServerProvider,
-  ServerProviderResetCredits,
-  ServerProviderUsageWindow,
-  UsageProviderKind,
+import * as Dialog from "../../components/ui/Dialog";
+import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderConsumeResetCreditOutcome,
+  type ProviderConsumeResetCreditInput,
+  type ServerProvider,
+  type ServerProviderResetCredits,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
-  DAILY_USAGE_PACE_LABELS,
-  USAGE_PACE_BAR_DESCRIPTION,
-  dailyUsagePace,
-  displayLimitWindows,
   formatDuration,
   formatResetsIn,
   limitsNotice,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
-  usagePaceBarSegments,
-  usageWindowLabel,
 } from "@t3tools/shared/usageLimits";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
-import { AccessibilityInfo, Alert, AppState, Pressable, ScrollView, View } from "react-native";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { type ReactNode, useContext, useRef, useState } from "react";
+import { Atom } from "effect/reactivity";
+import { Linking, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useProviderColors } from "./usageProviders";
+import { useNowMinuteMs } from "../../lib/clock";
+import {
+  environmentIdsKey,
+  limitsAutoRefreshSetAtom,
+  limitsRefreshFailuresAtom,
+  refreshEnvironmentLimits,
+} from "./usageLimitsRefresh";
+import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
 type Driver = ServerProvider["driver"];
 
-function ScrollingPaceLabel({ label, tone }: { label: string; tone: string }) {
-  const ref = useRef<ScrollView>(null);
-  const [width, setWidth] = useState(0);
-  const [contentWidth, setContentWidth] = useState(0);
-  useEffect(() => {
-    const overflow = contentWidth - width;
-    if (width === 0 || overflow <= 0) return;
-    let cancelled = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    void AccessibilityInfo.isReduceMotionEnabled().then((reducedMotion) => {
-      if (cancelled || reducedMotion) return;
-      for (const [delay, x] of [
-        [2000, overflow],
-        [6000, 0],
-      ] as const) {
-        timers.push(
-          setTimeout(() => {
-            if (AppState.currentState === "active") ref.current?.scrollTo({ x, animated: true });
-          }, delay),
-        );
-      }
-    });
-    return () => {
-      cancelled = true;
-      timers.forEach(clearTimeout);
-    };
-  }, [width, contentWidth]);
-  return (
-    <ScrollView
-      ref={ref}
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      onContentSizeChange={setContentWidth}
-      contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}
-    >
-      <Text numberOfLines={1} className={`text-center text-[11px] ${tone}`}>
-        {label}
-      </Text>
-    </ScrollView>
-  );
-}
-
-/** The series colour the usage chart uses for this driver, so the two views read as one. */
 function useBarColor(driver: Driver): string | null {
   const colors = useProviderColors();
-  const kind: UsageProviderKind | null =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : null;
+  const kind = usageProviderKind(driver);
   return kind ? colors[kind] : null;
 }
 
-/**
- * Quota remaining, with pace and reset information beneath the bar.
- */
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
   readonly color: string | null;
   readonly now: number;
 }) {
   const { window, now } = props;
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const pacingEnabled =
-    !AsyncResult.isSuccess(preferences) || preferences.value.usagePacingEnabled !== false;
-  const showPaceBar = pacingEnabled && window.kind === "weekly";
   const remaining = remainingPercent(window);
-  const pace = pacingEnabled && window.kind !== "weekly" ? paceOf(window, now) : null;
+  const timeLeft = paceRemainingPercent(window, now);
+  const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
+  const [barWidth, setBarWidth] = useState(0);
+  const tickX =
+    timeLeft === null || barWidth < 6
+      ? null
+      : Math.min(Math.max((barWidth * timeLeft) / 100, 3), barWidth - 3);
+  const bar = (
+    <View
+      className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"
+      style={barWidth > 0 ? { width: barWidth } : undefined}
+    >
+      <View
+        className={
+          remaining <= 10
+            ? "h-full rounded-full bg-red-500"
+            : remaining <= 30
+              ? "h-full rounded-full bg-amber-500"
+              : "h-full rounded-full bg-foreground"
+        }
+        style={[
+          { flex: remaining },
+          remaining > 30 && props.color ? { backgroundColor: props.color } : null,
+        ]}
+      />
+      <View style={{ flex: 100 - remaining }} />
+    </View>
+  );
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-foreground">{usageWindowLabel(window)}</Text>
+        <Text className="text-sm text-foreground">{window.label}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
           {remaining}% left
         </Text>
       </View>
-      <View className="h-3 justify-center">
-        <View
-          className={`${showPaceBar ? "h-3" : "h-1.5"} flex-row overflow-hidden rounded-full bg-subtle`}
-        >
+      <View
+        className="h-3 justify-center"
+        onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
+      >
+        {tickX === null ? (
+          bar
+        ) : (
+          <View className="h-1.5">
+            {/* Clip the same full-width bar so neither fill proportions nor corner radii change. */}
+            {(
+              [
+                [0, tickX - 3],
+                [tickX + 3, barWidth],
+              ] as const
+            ).map(([start, end]) => (
+              <View
+                key={start}
+                className="absolute top-0 bottom-0 overflow-hidden"
+                style={{ left: start, width: end - start }}
+              >
+                <View style={{ marginLeft: -start }}>{bar}</View>
+              </View>
+            ))}
+          </View>
+        )}
+        {tickX !== null ? (
           <View
-            className="h-full rounded-full bg-foreground"
-            style={[{ flex: remaining }, props.color ? { backgroundColor: props.color } : null]}
+            className="absolute top-px bottom-px w-0.5 rounded-full bg-foreground"
+            style={{ left: tickX - 1 }}
           />
-          <View style={{ flex: 100 - remaining }} />
-          <UsagePaceBar window={window} now={now} baseColor={props.color} />
-        </View>
+        ) : null}
       </View>
       {pace || resetsIn ? (
         <View className="flex-row justify-between gap-3">
@@ -135,201 +130,6 @@ function WindowRow(props: {
         </View>
       ) : null}
     </View>
-  );
-}
-
-function UsageOverdrawHatching() {
-  const patternId = useId().replace(/:/g, "");
-  return (
-    <Svg width="100%" height="100%" accessible={false}>
-      <Defs>
-        <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
-          <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke="white" strokeWidth={1} opacity={0.35} />
-        </Pattern>
-      </Defs>
-      <Rect width="100%" height="100%" fill={`url(#${patternId})`} />
-    </Svg>
-  );
-}
-
-export function UsagePaceBar({
-  window,
-  now,
-  baseColor = null,
-  shape = "pill",
-}: {
-  readonly window: ServerProviderUsageWindow;
-  readonly now: number;
-  readonly baseColor?: string | null;
-  readonly shape?: "pill" | "segment";
-}) {
-  const result = useAtomValue(mobilePreferencesAtom);
-  const preferences = AsyncResult.isSuccess(result) ? result.value : {};
-  const pace =
-    preferences.usagePacingEnabled !== false
-      ? dailyUsagePace(window, now, preferences.usagePacingWorkdayHours ?? 8)
-      : null;
-  if (pace?.todayUsedPercent == null) return null;
-  const segments = usagePaceBarSegments(window, pace);
-  const scale = segments.widthPercent > 0 ? 100 / segments.widthPercent : 0;
-  const adjacentPercent =
-    segments.regularPercent + segments.catchUpPercent + segments.overdrawPercent;
-  const color =
-    pace.status === "exceeded"
-      ? "bg-danger-foreground"
-      : pace.status === "fast"
-        ? "bg-warning-foreground"
-        : pace.status === "good"
-          ? "bg-adaptive-emerald-700-300"
-          : "bg-foreground-tertiary";
-  const rounding = shape === "segment" ? "rounded-r-md" : "rounded-r-full";
-  return (
-    <View
-      pointerEvents="none"
-      accessibilityRole="progressbar"
-      accessibilityLabel={
-        pace.todayBalancePercent < 0
-          ? "Today's allowance overdrawn"
-          : pace.catchUpPercent > 0
-            ? "Today's allowance remaining, including catch-up"
-            : "Today's allowance remaining"
-      }
-      accessibilityValue={{
-        min: -100,
-        max: 100,
-        now: pace.todayBalancePercent,
-        text: `${pace.todayRemainingPercent.toFixed(1)}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${pace.todayOverdrawPercent.toFixed(1)}% overdrawn today; already spent from the weekly quota.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`,
-      }}
-      className="absolute inset-y-0"
-      style={{
-        right: `${100 - segments.widthPercent}%`,
-        width: `${segments.widthPercent}%`,
-      }}
-    >
-      <View
-        accessible={false}
-        className={`absolute inset-0 flex-row overflow-hidden ${shape === "segment" ? "rounded-md" : "rounded-full"}`}
-      >
-        {segments.reservedPercent > 0 ? (
-          <View
-            className="min-w-0 bg-foreground"
-            style={{
-              flex: segments.reservedPercent,
-              ...(baseColor ? { backgroundColor: baseColor } : {}),
-            }}
-          />
-        ) : null}
-        {segments.regularPercent > 0 ? (
-          <View className={`min-w-0 ${color}`} style={{ flex: segments.regularPercent }} />
-        ) : null}
-        {segments.catchUpPercent > 0 ? (
-          <View
-            className={`min-w-0 opacity-50 ${color}`}
-            style={{ flex: segments.catchUpPercent }}
-          />
-        ) : null}
-        {segments.overdrawPercent > 0 ? (
-          <View className={`min-w-0 ${color}`} style={{ flex: segments.overdrawPercent }}>
-            <UsageOverdrawHatching />
-          </View>
-        ) : null}
-        {segments.reservedPercent > 0 && adjacentPercent > 0 ? (
-          <View
-            className={`absolute inset-y-0 bg-foreground ${rounding}`}
-            style={{
-              left: `${segments.reservedPercent * scale}%`,
-              width: `${Math.min(segments.reservedPercent, adjacentPercent) * scale}%`,
-              maxWidth: 6,
-              ...(baseColor ? { backgroundColor: baseColor } : {}),
-            }}
-          />
-        ) : null}
-        {segments.regularPercent > 0 && segments.catchUpPercent > 0 ? (
-          <View
-            className={`absolute inset-y-0 ${rounding} ${color}`}
-            style={{
-              left: `${(segments.reservedPercent + segments.regularPercent) * scale}%`,
-              width: `${Math.min(segments.regularPercent, segments.catchUpPercent) * scale}%`,
-              maxWidth: 6,
-            }}
-          />
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
-export function UsagePaceDetails({
-  window,
-  now,
-}: {
-  readonly window: ServerProviderUsageWindow;
-  readonly now: number;
-}) {
-  const result = useAtomValue(mobilePreferencesAtom);
-  const preferences = AsyncResult.isSuccess(result) ? result.value : {};
-  const pace = dailyUsagePace(window, now, preferences.usagePacingWorkdayHours ?? 8);
-  if (preferences.usagePacingEnabled === false || !pace) return null;
-  const balance =
-    pace.todayUsedPercent === null
-      ? null
-      : pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0
-        ? `${pace.todayOverdrawPercent.toFixed(1)}% overdrawn today`
-        : `${pace.todayRemainingPercent.toFixed(1)}% left today`;
-  const warning = pace.status === "fast" || pace.status === "exceeded";
-  const label =
-    warning && pace.paceOverPercent !== null
-      ? `${DAILY_USAGE_PACE_LABELS[pace.status]} (${pace.paceOverPercent.toFixed(1)}% over pace)`
-      : DAILY_USAGE_PACE_LABELS[pace.status];
-  const details = [
-    ...(balance !== null ? [USAGE_PACE_BAR_DESCRIPTION] : []),
-    ...(pace.todayBudgetUsedPercent !== null
-      ? [`${pace.todayBudgetUsedPercent.toFixed(1)}% of today's allowance used`]
-      : []),
-    ...(pace.todayUsedPercent !== null
-      ? [
-          `Daily budget: ${pace.dailyBudgetPercent.toFixed(1)}% · ${pace.workdayHours}-hour pace`,
-          `${pace.todayUsedPercent.toFixed(1)}% observed today · ${pace.hourlyBudgetPercent.toFixed(1)}% per hour`,
-        ]
-      : [
-          "Daily pace needs usage history covering the start of today. The bar shows the reported weekly quota remaining.",
-        ]),
-    ...(pace.catchUpRemainingPercent > 0
-      ? [`${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left`]
-      : []),
-    ...(pace.status === "estimating" ? ["Measuring pace for the first 15 minutes."] : []),
-  ].join("\n");
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${label}.${balance !== null ? ` ${balance}. ${pace.dailyBudgetPercent.toFixed(1)}% budget today.` : ""}${pace.catchUpRemainingPercent > 0 ? ` ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left.` : ""} Show pace details`}
-      onPress={() => Alert.alert(label, details)}
-      className="min-h-[44px] justify-center gap-0.5 active:opacity-60"
-    >
-      {balance !== null ? (
-        <Text className="w-full text-center text-[11px] tabular-nums text-foreground-muted">
-          <Text className={pace.status === "exceeded" ? "text-danger-foreground" : undefined}>
-            {balance}
-          </Text>
-          {" · "}
-          {pace.dailyBudgetPercent.toFixed(1)}% budget today
-          {pace.catchUpRemainingPercent > 0
-            ? ` · ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left`
-            : null}
-        </Text>
-      ) : null}
-      <ScrollingPaceLabel
-        key={label}
-        label={label}
-        tone={
-          pace.status === "exceeded"
-            ? "text-danger-foreground"
-            : warning
-              ? "text-warning-foreground"
-              : "text-foreground-tertiary"
-        }
-      />
-    </Pressable>
   );
 }
 
@@ -356,26 +156,24 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
   );
 }
 
-/** One account: icon, name and plan on a single line, then its windows. */
 export function AccountLimits(props: {
   readonly driver: Driver;
+  readonly accentColor?: string | undefined;
   readonly label: string;
   readonly instanceLabel: string;
   readonly detail: string | undefined;
   readonly limits: ServerProvider["usageLimits"];
   readonly now: number;
   readonly first: boolean;
-  /** Tighter padding for the composer card. */
   readonly dense?: boolean;
-  /** Sits at the end of the heading row, such as a close control. */
   readonly trailing?: ReactNode;
   readonly footer?: ReactNode;
 }) {
   const { limits, now, dense = false } = props;
-  const color = useBarColor(props.driver);
+  const providerColor = useBarColor(props.driver);
+  const color = normalizeProviderAccentColor(props.accentColor) ?? providerColor;
   if (!limits) return null;
   const notice = limitsNotice(limits);
-  const windows = displayLimitWindows({ driver: props.driver, windows: limits.windows });
   const externalUsage = limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
@@ -403,7 +201,7 @@ export function AccountLimits(props: {
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (
         <View className="gap-3">
-          {windows.map((window) => (
+          {limits.windows.map((window) => (
             <WindowRow key={window.id} window={window} color={color} now={now} />
           ))}
         </View>
@@ -418,9 +216,6 @@ export function AccountLimits(props: {
         </Pressable>
       ) : null}
       {props.footer}
-      {!notice
-        ? windows.map((window) => <UsagePaceDetails key={window.id} window={window} now={now} />)
-        : null}
     </View>
   );
 }
@@ -432,20 +227,15 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/**
- * Banked reset credits with a confirmed redeem action. Redeeming spends a
- * credit the provider granted the user, so it goes through the native
- * confirm alert rather than firing on a bare tap.
- */
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
-  /** A smaller pill for the composer card. */
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -464,6 +254,7 @@ export function ResetCredits(props: {
         }`;
 
   const redeem = async () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
@@ -480,7 +271,8 @@ export function ResetCredits(props: {
   };
 
   const confirm = () => {
-    Alert.alert(
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    Dialog.alert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
       [
@@ -496,13 +288,13 @@ export function ResetCredits(props: {
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: busy }}
-          disabled={busy}
+          accessibilityState={{ disabled: busy || !canManageProviders }}
+          disabled={busy || !canManageProviders}
           onPress={confirm}
           className={
             dense
-              ? "rounded-full bg-subtle-strong px-2.5 py-1"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5"
+              ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
           }
         >
           <Text
@@ -516,99 +308,64 @@ export function ResetCredits(props: {
           </Text>
         </Pressable>
       ) : null}
+      {!canManageProviders ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot manage provider accounts.
+        </Text>
+      ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
   );
 }
 
-/**
- * Re-probes every provider (and usage-limit source) on each connected
- * environment; the fresh snapshots then arrive over the config stream.
- * Countdowns and pace anchor to `now` rather than ticking, so a refresh also
- * re-anchors the clock: quota and elapsed time move together, or not at all.
- * Environments whose probe failed are named, since their rows keep showing
- * the previous quota with nothing else to say so.
- */
+const IDLE_ATOM = Atom.make(undefined);
+
 export function useRefreshLimits(
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   active = false,
 ) {
+  const registry = useContext(RegistryContext);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNowMinuteMs();
   const [refreshing, setRefreshing] = useState(false);
   const refreshingRef = useRef(false);
-  const [failedEnvironments, setFailedEnvironments] = useState<
-    readonly { environmentId: EnvironmentId; label: string }[]
-  >([]);
-  const refresh = async (automatic = false, afterPending = false) => {
-    const connected = [...presentations].filter(
-      ([environmentId, presentation]) =>
-        presentation.connection.phase === "connected" &&
-        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+  const selected = [...presentations].filter(
+    ([environmentId]) =>
+      selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
+  );
+  const connectedIds = selected
+    .filter(([, presentation]) => presentation.connection.phase === "connected")
+    .map(([environmentId]) => environmentId);
+  const connectedKey = environmentIdsKey(connectedIds);
+  useAtomMount(active && connectedKey !== "" ? limitsAutoRefreshSetAtom(connectedKey) : IDLE_ATOM);
+  const failedIds = new Set(
+    useAtomValue(limitsRefreshFailuresAtom(environmentIdsKey(selected.map(([id]) => id)))),
+  );
+  const failedLabels = selected
+    .filter(([environmentId]) => failedIds.has(environmentId))
+    .map(([, presentation]) => presentation.entry.target.label);
+
+  const refresh = (afterPending: boolean) =>
+    Promise.all(
+      connectedIds.map((environmentId) =>
+        refreshEnvironmentLimits(registry, environmentId, { afterPending }),
+      ),
     );
-    try {
-      await Promise.all(
-        connected.map(async ([environmentId, presentation]) => {
-          const result = await refreshUsageLimits(
-            environmentId,
-            () => refreshProviders({ environmentId, input: {} }),
-            automatic,
-            afterPending,
-          );
-          if (result === undefined) return;
-          setFailedEnvironments((previous) => [
-            ...previous.filter((failed) => failed.environmentId !== environmentId),
-            ...(result._tag === "Failure"
-              ? [{ environmentId, label: presentation.entry.target.label }]
-              : []),
-          ]);
-        }),
-      );
-    } finally {
-      setNow(Date.now());
-    }
-  };
-  // Always toggles `refreshing`, even with nothing to probe: Android's
-  // RefreshControl keeps its spinner up until it sees true then false.
+  // Android RefreshControl needs a true-to-false cycle to stop, even with nothing to probe.
   const refreshManually = async () => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setRefreshing(true);
-    try {
-      await refresh();
-    } finally {
+    await refresh(false).finally(() => {
       refreshingRef.current = false;
       setRefreshing(false);
-    }
+    });
   };
-  const connectedLimitsEnvironments = [...presentations]
-    .filter(
-      ([environmentId, presentation]) =>
-        presentation.connection.phase === "connected" &&
-        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
-    )
-    .map(([environmentId]) => environmentId)
-    .sort()
-    .join(",");
-  const autoRefreshLimits = useEffectEvent(() => refresh(true));
-  useEffect(() => {
-    if (active && connectedLimitsEnvironments) void autoRefreshLimits();
-  }, [active, connectedLimitsEnvironments]);
-
-  const failedLabels = failedEnvironments
-    .filter(
-      ({ environmentId }) =>
-        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
-    )
-    .map(({ label }) => label);
   return {
     now,
     refreshing,
     failedLabels,
     refresh: refreshManually,
-    refreshAfterEnable: () => refresh(false, true),
+    refreshAfterEnable: () => refresh(true),
   };
 }

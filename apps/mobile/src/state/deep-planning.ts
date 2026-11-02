@@ -6,10 +6,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEEP_PLAN_WS_METHODS,
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   type DeepPlanRun,
   type ModelSelection,
@@ -27,7 +27,7 @@ import { uuidv4 } from "../lib/uuid";
 export const deepPlanningEnvironment = {
   dispatchCommand: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "mobile:deep-plan:dispatch-command",
-    tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+    tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   }),
   catalogSources: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "mobile:deep-plan:catalog-sources",

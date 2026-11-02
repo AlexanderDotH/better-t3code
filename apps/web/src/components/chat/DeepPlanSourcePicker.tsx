@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { deepPlanSourceRefKey } from "@t3tools/client-runtime/deep-planning";
 import type { DeepPlanSourceRef, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { MessageSquareIcon, PlusIcon, XIcon } from "lucide-react";
@@ -45,12 +45,9 @@ export function DeepPlanSourcePicker({
   const translate = useInterfaceTranslator().message;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const selectedKeys = useMemo(() => new Set(selected.map(deepPlanSourceRefKey)), [selected]);
-  const optionByKey = useMemo(
-    () => new Map(options.map((option) => [deepPlanSourceRefKey(option.ref), option])),
-    [options],
-  );
-  const groups = useMemo(() => {
+  const selectedKeys = new Set(selected.map(deepPlanSourceRefKey));
+  const optionByKey = new Map(options.map((option) => [deepPlanSourceRefKey(option.ref), option]));
+  const groups = (() => {
     const result = new Map<string, { label: string; options: DeepPlanSourceOption[] }>();
     const needle = query.trim().toLocaleLowerCase();
     for (const option of options) {
@@ -70,7 +67,7 @@ export function DeepPlanSourcePicker({
       result.set(key, group);
     }
     return [...result.entries()];
-  }, [options, query]);
+  })();
   const belongsToCurrentProject = (ref: DeepPlanSourceRef) =>
     currentProject !== null &&
     ref.environmentId === currentProject.environmentId &&
@@ -208,7 +205,7 @@ export function DeepPlanSourcePicker({
                   return (
                     <label
                       key={deepPlanSourceRefKey(option.ref)}
-                      className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs/4 hover:bg-accent focus-within:ring-2 focus-within:ring-ring pointer-coarse:min-h-11"
+                      className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs/4 hover:bg-accent focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring pointer-coarse:min-h-11"
                     >
                       <Checkbox
                         aria-label={option.title}

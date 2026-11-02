@@ -3,7 +3,6 @@ import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import { GitWorkbenchQueue, type GitWorkbenchQueueShape } from "./GitWorkbenchQueueService.ts";
 import {
@@ -20,15 +19,17 @@ it.effect("recovers persisted workflows before consuming production quiescence e
       createOrReplace: () => Effect.die("not used"),
       edit: () => Effect.die("not used"),
       cancel: () => Effect.die("not used"),
-      get: () => Effect.succeed(Option.none()),
+      get: () => Effect.succeedNone,
       subscribe: () => Effect.die("not used"),
       drain: () => Effect.die("not used"),
       recover: () => Effect.sync(() => calls.push("recover")).pipe(Effect.asVoid),
       handleQuiescence: (event) =>
-        Effect.sync(() => calls.push(`turn:${event.turnId}`)).pipe(
-          Effect.andThen(Deferred.succeed(consumed, event.turnId)),
-          Effect.asVoid,
-        ),
+        event.turnId === undefined
+          ? Effect.die("This fixture expects a native turn receipt.")
+          : Effect.sync(() => calls.push(`turn:${event.turnId}`)).pipe(
+              Effect.andThen(Deferred.succeed(consumed, event.turnId)),
+              Effect.asVoid,
+            ),
     };
     const layer = GitWorkbenchQueueReactorLive.pipe(
       Layer.provideMerge(TurnQuiescenceNotifierLive),

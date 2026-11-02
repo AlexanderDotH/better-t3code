@@ -1,6 +1,6 @@
-import type { OrchestrationCheckpointSummary } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary as OrchestrationCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Pressable, View } from "react-native";
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { ChatPresentationMotion } from "./ChatPresentationMotion";

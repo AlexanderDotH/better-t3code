@@ -16,9 +16,8 @@ export interface SidebarThreadActivityPartition<T> {
 
 function sidebarThreadRequiresAttention(thread: SidebarThreadSummary): boolean {
   return (
-    thread.session?.status === "starting" ||
-    thread.session?.status === "running" ||
-    thread.latestTurn?.state === "running" ||
+    (thread.runtime !== null &&
+      ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)) ||
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
     thread.hasActionableProposedPlan

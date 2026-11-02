@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -17,12 +18,17 @@ const invoke = Effect.fn("GeneralSubagentToolkit.invoke")(function* <A>(
   operation: (
     coordinator: GeneralSubagentCoordinator["Service"],
     caller: {
-      readonly parentThreadId: McpInvocationContext.McpInvocationScope["threadId"];
-      readonly callerProviderInstanceId: McpInvocationContext.McpInvocationScope["providerInstanceId"];
+      readonly parentThreadId: import("@t3tools/contracts").ThreadId;
+      readonly callerProviderInstanceId: import("@t3tools/contracts").ProviderInstanceId;
     },
   ) => Effect.Effect<A, GeneralSubagentError>,
 ) {
-  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  const invocation = McpInvocationContext.workspaceThreadScope(
+    yield* McpInvocationContext.requireThreadScope(
+      yield* McpInvocationContext.McpInvocationContext,
+      "Subagents",
+    ),
+  );
   const coordinator = yield* GeneralSubagentCoordinator;
   return yield* operation(coordinator, {
     parentThreadId: invocation.threadId,
@@ -60,15 +66,15 @@ const invokeGeneralSubagentWaitAgent = (input: GeneralSubagentWaitInput) =>
 const invokeGeneralSubagentInterrupt = (input: GeneralSubagentInterruptInput) =>
   invoke((coordinator, caller) => coordinator.interruptAgent({ ...caller, ...input }));
 
-export const GeneralSubagentToolkitHandlersLive = GeneralSubagentToolkit.toLayer({
-  subagent_models: invokeGeneralSubagentModels,
-  subagent_spawn: invokeGeneralSubagentSpawn,
-  subagent_wait: invokeGeneralSubagentWait,
-  subagent_cancel: invokeGeneralSubagentCancel,
-  list_agents: invokeGeneralSubagentList,
-  spawn_agent: invokeGeneralSubagentSpawnAgent,
-  send_message: invokeGeneralSubagentSendMessage,
-  followup_task: invokeGeneralSubagentFollowUp,
-  wait_agent: invokeGeneralSubagentWaitAgent,
-  interrupt_agent: invokeGeneralSubagentInterrupt,
+export const GeneralSubagentToolkitHandlersLive = McpToolAccess.toLayer(GeneralSubagentToolkit, {
+  subagent_models: McpToolAccess.readsAsCaller(invokeGeneralSubagentModels),
+  subagent_spawn: McpToolAccess.actsAsCaller(invokeGeneralSubagentSpawn),
+  subagent_wait: McpToolAccess.actsAsCaller(invokeGeneralSubagentWait),
+  subagent_cancel: McpToolAccess.actsAsCaller(invokeGeneralSubagentCancel),
+  list_agents: McpToolAccess.actsAsCaller(invokeGeneralSubagentList),
+  spawn_agent: McpToolAccess.actsAsCaller(invokeGeneralSubagentSpawnAgent),
+  send_message: McpToolAccess.actsAsCaller(invokeGeneralSubagentSendMessage),
+  followup_task: McpToolAccess.actsAsCaller(invokeGeneralSubagentFollowUp),
+  wait_agent: McpToolAccess.actsAsCaller(invokeGeneralSubagentWaitAgent),
+  interrupt_agent: McpToolAccess.actsAsCaller(invokeGeneralSubagentInterrupt),
 });

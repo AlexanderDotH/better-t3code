@@ -17,7 +17,7 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 import { ProviderUsageLimitsUpdate } from "./providerUsageLimits.ts";
-import { ProviderApprovalOption } from "./orchestration.ts";
+import { ProviderApprovalOption } from "./providerPolicy.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -74,28 +74,11 @@ const RuntimeThreadState = Schema.Literals([
 ]);
 export type RuntimeThreadState = typeof RuntimeThreadState.Type;
 
-const RuntimeTurnState = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
-export type RuntimeTurnState = typeof RuntimeTurnState.Type;
+const RuntimeSessionExitKind = Schema.Literals(["graceful", "error"]);
+export type RuntimeSessionExitKind = typeof RuntimeSessionExitKind.Type;
 
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
 export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
-
-const RuntimeItemStatus = Schema.Literals(["inProgress", "completed", "failed", "declined"]);
-export type RuntimeItemStatus = typeof RuntimeItemStatus.Type;
-
-const RuntimeContentStreamKind = Schema.Literals([
-  "assistant_text",
-  "reasoning_text",
-  "reasoning_summary_text",
-  "plan_text",
-  "command_output",
-  "file_change_output",
-  "unknown",
-]);
-export type RuntimeContentStreamKind = typeof RuntimeContentStreamKind.Type;
-
-const RuntimeSessionExitKind = Schema.Literals(["graceful", "error"]);
-export type RuntimeSessionExitKind = typeof RuntimeSessionExitKind.Type;
 
 const RuntimeErrorClass = Schema.Literals([
   "provider_error",
@@ -105,6 +88,12 @@ const RuntimeErrorClass = Schema.Literals([
   "unknown",
 ]);
 export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
+
+const RuntimeTurnState = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
+export type RuntimeTurnState = typeof RuntimeTurnState.Type;
+
+const RuntimeItemStatus = Schema.Literals(["inProgress", "completed", "failed", "declined"]);
+export type RuntimeItemStatus = typeof RuntimeItemStatus.Type;
 
 const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",
@@ -296,6 +285,12 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
   autoCompactThreshold: Schema.optional(PositiveInt),
+  cost: Schema.optional(
+    Schema.Struct({
+      amount: Schema.Number.check(Schema.isFinite()),
+      currency: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(32)),
+    }),
+  ),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 
@@ -380,6 +375,14 @@ const TurnTokenUsageCommonFields = {
   cacheCreationTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
   hasSubagents: Schema.Boolean,
+  // Native model ids the provider reported for the main agent's work. Absent means unknown.
+  models: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
+  // The provider ran a local command; its counters describe that result, not model work.
+  localCommand: Schema.optional(Schema.Boolean),
+  // Provider-ledger counts beyond the main agent, such as native subagents and compaction.
+  otherUsage: Schema.optional(
+    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+  ),
 };
 export const TurnTokenUsage = Schema.Union([
   Schema.Struct({
@@ -490,55 +493,11 @@ export const ToolActivitySource = Schema.Struct({
 });
 export type ToolActivitySource = typeof ToolActivitySource.Type;
 
-export const ItemLifecyclePayload = Schema.Struct({
-  itemType: CanonicalItemType,
-  status: Schema.optional(RuntimeItemStatus),
-  title: Schema.optional(TrimmedNonEmptyStringSchema),
-  detail: Schema.optional(TrimmedNonEmptyStringSchema),
-  toolSurface: Schema.optional(ToolActivitySurface),
-  toolIcon: Schema.optional(ToolActivityIcon),
-  toolSource: Schema.optional(ToolActivitySource),
-  data: Schema.optional(Schema.Unknown),
-  /**
-   * Owning agent when this item ran inside a subagent (resolved from the
-   * SDK's parent_tool_use_id). Clients re-home attributed items out of the
-   * main timeline and into the owning agent's Agents-surface row.
-   */
-  agentId: Schema.optional(TrimmedNonEmptyStringSchema),
-  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
-
-const ContentDeltaPayload = Schema.Struct({
-  streamKind: RuntimeContentStreamKind,
-  delta: Schema.String,
-  contentIndex: Schema.optional(Schema.Int),
-  summaryIndex: Schema.optional(Schema.Int),
-});
-export type ContentDeltaPayload = typeof ContentDeltaPayload.Type;
-
-const RequestOpenedPayload = Schema.Struct({
-  requestType: CanonicalRequestType,
-  detail: Schema.optional(TrimmedNonEmptyStringSchema),
-  appName: Schema.optional(TrimmedNonEmptyStringSchema),
-  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
-  args: Schema.optional(Schema.Unknown),
-});
-export type RequestOpenedPayload = typeof RequestOpenedPayload.Type;
-
-const RequestResolvedPayload = Schema.Struct({
-  requestType: CanonicalRequestType,
-  decision: Schema.optional(TrimmedNonEmptyStringSchema),
-  resolution: Schema.optional(Schema.Unknown),
-});
-export type RequestResolvedPayload = typeof RequestResolvedPayload.Type;
-
 const UserInputQuestionOption = Schema.Struct({
   label: TrimmedNonEmptyStringSchema,
   description: Schema.String,
   value: Schema.optional(Schema.String),
 });
-export type UserInputQuestionOption = typeof UserInputQuestionOption.Type;
 
 export const UserInputQuestion = Schema.Struct({
   id: TrimmedNonEmptyStringSchema,
@@ -546,6 +505,7 @@ export const UserInputQuestion = Schema.Struct({
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
+  initialAnswer: Schema.optional(Schema.String),
   multiSelect: Schema.optional(Schema.Boolean).pipe(
     Schema.withConstructorDefault(Effect.succeed(false)),
   ),
@@ -563,12 +523,7 @@ const UserInputResolvedPayload = Schema.Struct({
 });
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
-/**
- * Typed per-task usage rollup. Field names match the orchestration-v2 subagent
- * usage vocabulary (#4779) so the eventual migration is a rename, not a remap.
- * Claude reports per-activation deltas; Codex reports cumulative totals — the
- * merge strategy is provider-specific and lives in client-runtime.
- */
+// Claude emits per-activation deltas; Codex emits cumulative totals, so clients merge by provider.
 export const RuntimeTaskUsage = Schema.Struct({
   totalTokens: NonNegativeInt,
   inputTokens: Schema.optional(NonNegativeInt),
@@ -601,24 +556,17 @@ export type TaskRunHandles = typeof TaskRunHandles.Type;
  * the server liveness registry, ingestion's agentKind stamp, and the client
  * fold's legacy fallback all classify with these sets.
  */
-export const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
+const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
   "monitor",
   "monitor_mcp",
   "local_bash",
   "shell",
 ]);
 /** Task types that are neither agents nor watch loops (plan-mode bookkeeping). */
-export const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream"]);
+const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream"]);
 
-/**
- * Agent-vs-background classification, stamped by ingestion as `agentKind` so
- * persisted rows are self-describing. A deliberate denylist: the SDK's
- * agent-flavored type names drift (subagent, local_agent, local_workflow, …)
- * and an allowlist silently dropped real subagents when "local_agent"
- * appeared. A task launched from inside a subagent (agentId set) is
- * agent-internal background work UNLESS it is itself agent-flavored — a
- * nested agent can outlive its parent and stays in the roster.
- */
+// SDK agent names drift, so only known non-agent types are excluded.
+// Nested agents remain visible after their parent ends.
 export function classifyTaskAgentKind(input: {
   readonly taskType?: string | undefined;
   readonly agentId?: string | undefined;
@@ -889,6 +837,59 @@ const RuntimeErrorPayload = Schema.Struct({
   detail: Schema.optional(Schema.Unknown),
 });
 export type RuntimeErrorPayload = typeof RuntimeErrorPayload.Type;
+
+const RuntimeContentStreamKind = Schema.Literals([
+  "assistant_text",
+  "reasoning_text",
+  "reasoning_summary_text",
+  "plan_text",
+  "command_output",
+  "file_change_output",
+  "unknown",
+]);
+export type RuntimeContentStreamKind = typeof RuntimeContentStreamKind.Type;
+export const ItemLifecyclePayload = Schema.Struct({
+  itemType: CanonicalItemType,
+  status: Schema.optional(RuntimeItemStatus),
+  title: Schema.optional(TrimmedNonEmptyStringSchema),
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  toolSurface: Schema.optional(ToolActivitySurface),
+  toolIcon: Schema.optional(ToolActivityIcon),
+  toolSource: Schema.optional(ToolActivitySource),
+  data: Schema.optional(Schema.Unknown),
+  /**
+   * Owning agent when this item ran inside a subagent (resolved from the
+   * SDK's parent_tool_use_id). Clients re-home attributed items out of the
+   * main timeline and into the owning agent's Agents-surface row.
+   */
+  agentId: Schema.optional(TrimmedNonEmptyStringSchema),
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
+
+const ContentDeltaPayload = Schema.Struct({
+  streamKind: RuntimeContentStreamKind,
+  delta: Schema.String,
+  contentIndex: Schema.optional(Schema.Int),
+  summaryIndex: Schema.optional(Schema.Int),
+});
+export type ContentDeltaPayload = typeof ContentDeltaPayload.Type;
+
+const RequestOpenedPayload = Schema.Struct({
+  requestType: CanonicalRequestType,
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  appName: Schema.optional(TrimmedNonEmptyStringSchema),
+  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+  args: Schema.optional(Schema.Unknown),
+});
+export type RequestOpenedPayload = typeof RequestOpenedPayload.Type;
+
+const RequestResolvedPayload = Schema.Struct({
+  requestType: CanonicalRequestType,
+  decision: Schema.optional(TrimmedNonEmptyStringSchema),
+  resolution: Schema.optional(Schema.Unknown),
+});
+export type RequestResolvedPayload = typeof RequestResolvedPayload.Type;
 
 const ProviderRuntimeSessionStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,

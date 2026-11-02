@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -39,23 +39,27 @@ interface WorkspaceDeckStyle extends CSSProperties {
   "--workspace-card-deck-expanded-height"?: string;
 }
 
-function usePrefersReducedMotion(): boolean {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
-    typeof window === "undefined" || !window.matchMedia
-      ? false
-      : window.matchMedia(REDUCED_MOTION_QUERY).matches,
+function readReducedMotionPreference(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(REDUCED_MOTION_QUERY).matches
   );
+}
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mediaQuery = window.matchMedia(REDUCED_MOTION_QUERY);
-    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches);
-    updatePreference();
-    mediaQuery.addEventListener?.("change", updatePreference);
-    return () => mediaQuery.removeEventListener?.("change", updatePreference);
-  }, []);
+function subscribeReducedMotionPreference(onChange: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  query.addEventListener?.("change", onChange);
+  return () => query.removeEventListener?.("change", onChange);
+}
 
-  return prefersReducedMotion;
+function usePrefersReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotionPreference,
+    readReducedMotionPreference,
+    () => false,
+  );
 }
 
 function workspaceDeckStyle(input: {
@@ -87,7 +91,22 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
     expandedCard: props.expandedCard,
     resetKey: props.resetKey,
   });
-  const lifecycle = useWorkspaceCardDeckMorphLifecycle({
+  const {
+    activeCardRef,
+    captureMorphRequest,
+    cleanupActiveMorph,
+    collapsingCard,
+    deckRef,
+    expandedCardRef,
+    frozenCompactHeight,
+    onMotionEnd,
+    onViewportTransitionEnd,
+    pendingMorphCaptureRef,
+    pendingMorphIntentRef,
+    registerMorphHost,
+    registerPeekSlot,
+    transition,
+  } = useWorkspaceCardDeckMorphLifecycle({
     activeCard: view.activeCard,
     cardIds: view.cardIds,
     compactHeightReferenceCard: view.compactHeightCard,
@@ -101,21 +120,21 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
     resetKey: props.resetKey,
     selectionMode: props.selectionMode,
   });
-  const interactionLocked = lifecycle.collapsingCard !== null || props.selectionLocked === true;
+  const interactionLocked = collapsingCard !== null || props.selectionLocked === true;
   const requestActivation = useWorkspaceCardDeckActivation({
-    activeCardRef: lifecycle.activeCardRef,
-    captureMorphRequest: lifecycle.captureMorphRequest,
-    cleanupActiveMorph: lifecycle.cleanupActiveMorph,
-    expandedCardRef: lifecycle.expandedCardRef,
+    activeCardRef: activeCardRef,
+    captureMorphRequest: captureMorphRequest,
+    cleanupActiveMorph: cleanupActiveMorph,
+    expandedCardRef: expandedCardRef,
     interactionLocked,
     onRequestCard: props.onRequestCard,
-    pendingMorphCaptureRef: lifecycle.pendingMorphCaptureRef,
-    pendingMorphIntentRef: lifecycle.pendingMorphIntentRef,
+    pendingMorphCaptureRef: pendingMorphCaptureRef,
+    pendingMorphIntentRef: pendingMorphIntentRef,
   });
   const compactHeight = resolveWorkspaceDeckCompactHeight({
     activeCard: view.activeCard,
     cardIds: view.cardIds,
-    frozenHeight: lifecycle.frozenCompactHeight,
+    frozenHeight: frozenCompactHeight,
     referenceCard: view.compactHeightCard,
     measurements: measurements.measurements,
   });
@@ -131,16 +150,16 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
 
   return (
     <div
-      ref={lifecycle.deckRef}
+      ref={deckRef}
       className={cn("workspace-card-deck", props.className)}
       data-workspace-card-deck="true"
       data-active-card={view.activeCard}
-      data-deck-collapsing={lifecycle.collapsingCard ?? undefined}
+      data-deck-collapsing={collapsingCard ?? undefined}
       data-expanded-card={props.expandedCard ?? undefined}
-      data-deck-transition={lifecycle.transition?.direction}
-      data-deck-motion={lifecycle.transition?.motion}
-      data-deck-transition-token={lifecycle.transition?.token}
-      onAnimationEnd={lifecycle.onMotionEnd}
+      data-deck-transition={transition?.direction}
+      data-deck-motion={transition?.motion}
+      data-deck-transition-token={transition?.token}
+      onAnimationEnd={onMotionEnd}
     >
       <div
         className="workspace-card-deck__viewport"
@@ -148,14 +167,14 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
         data-natural-height={
           (view.activeCard === view.compactHeightCard &&
             props.expandedCard !== view.activeCard &&
-            lifecycle.collapsingCard === null &&
-            lifecycle.transition === null) ||
+            collapsingCard === null &&
+            transition === null) ||
           undefined
         }
         data-expanded={props.expandedCard === view.activeCard ? "true" : undefined}
-        data-collapsing={lifecycle.collapsingCard !== null ? "true" : undefined}
-        onTransitionCancel={lifecycle.onViewportTransitionEnd}
-        onTransitionEnd={lifecycle.onViewportTransitionEnd}
+        data-collapsing={collapsingCard !== null ? "true" : undefined}
+        onTransitionCancel={onViewportTransitionEnd}
+        onTransitionEnd={onViewportTransitionEnd}
         style={style}
       >
         {props.cards
@@ -168,10 +187,10 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
               activeCard={view.activeCard}
               card={card}
               expandedCard={props.expandedCard}
-              transition={lifecycle.transition}
+              transition={transition}
               recordFocusedElement={navigation.recordFocusedElement}
               registerIntrinsicElement={measurements.registerIntrinsicElement}
-              registerMorphHost={lifecycle.registerMorphHost}
+              registerMorphHost={registerMorphHost}
               registerSection={navigation.registerSection}
             />
           ))}
@@ -183,7 +202,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
         onRequestActivation={requestActivation}
         peeks={view.peekCards}
         recordKeyboardActivation={navigation.recordKeyboardActivation}
-        registerPeekSlot={lifecycle.registerPeekSlot}
+        registerPeekSlot={registerPeekSlot}
       />
     </div>
   );

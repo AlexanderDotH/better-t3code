@@ -1,6 +1,6 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { type Atom } from "effect/unstable/reactivity";
+import { type Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
@@ -40,7 +40,7 @@ export function createKnowledgeGraphEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.knowledgeGraphSubscribe>) =>
         subscribe(WS_METHODS.knowledgeGraphSubscribe, input).pipe(
-          Stream.scan(EMPTY_KNOWLEDGE_GRAPH_CLIENT_STATE, applyKnowledgeGraphStreamEvent),
+          Stream.scan(() => EMPTY_KNOWLEDGE_GRAPH_CLIENT_STATE, applyKnowledgeGraphStreamEvent),
         ),
     }),
     query: createEnvironmentRpcQueryAtomFamily(runtime, {

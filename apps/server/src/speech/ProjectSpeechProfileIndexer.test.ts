@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -30,7 +31,7 @@ describe("ProjectSpeechProfileIndexer", () => {
           displayName: "t3tools/t3-speech",
           owner: "t3tools",
           name: "t3-speech",
-          provider: "github",
+          provider: SourceControlProviderKind.make("github"),
         },
         workspaceEntries: [
           { path: "package.json", kind: "file" },

@@ -1,6 +1,6 @@
 import {
   MessageId,
-  OrchestrationProposedPlanId,
+  PlanId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
@@ -17,9 +17,9 @@ describe("thread fork presentation", () => {
     expect(forkBoundaryKey({ kind: "message", messageId: MessageId.make("same") })).toBe(
       "message:same",
     );
-    expect(
-      forkBoundaryKey({ kind: "proposed-plan", planId: OrchestrationProposedPlanId.make("same") }),
-    ).toBe("proposed-plan:same");
+    expect(forkBoundaryKey({ kind: "proposed-plan", planId: PlanId.make("same") })).toBe(
+      "proposed-plan:same",
+    );
   });
   it("builds a worktree spec from ordinary new-thread defaults", () => {
     expect(

@@ -43,9 +43,10 @@ env:
 
 jobs:
   ios:
-    name: iPhone 6.9, iPhone 6.5, and iPad 13
-    if: inputs.platform == 'all' || inputs.platform == 'ios'
-    runs-on: blacksmith-12vcpu-macos-26
+    name: iPhone, iPhone Duo, and iPad 13
+    if: >-
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (inputs.platform == 'all' || inputs.platform == 'ios')
+    runs-on: macos-26
     # Capturing every palette multiplies the device matrix by six, and only the
     # one native build is shared between them.
     timeout-minutes: ${{ inputs.theme == 'all' && 300 || 60 }}
@@ -87,6 +88,9 @@ jobs:
           brew install cameroncooke/axe/axe
           axe --version
 
+      - name: Install foldable simulator controls
+        run: npm install --global agent-device@0.21.25
+
       - name: Capture iOS showcase
         run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}" --theme "${{ inputs.theme }}"
 
@@ -104,8 +108,9 @@ jobs:
 
   android:
     name: Android phone, 7-inch tablet, and 10-inch tablet
-    if: inputs.platform == 'all' || inputs.platform == 'android'
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    if: >-
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (inputs.platform == 'all' || inputs.platform == 'android')
+    runs-on: ubuntu-24.04
     # Capturing every palette multiplies the device matrix by six, and only the
     # one native build is shared between them.
     timeout-minutes: ${{ inputs.theme == 'all' && 300 || 60 }}

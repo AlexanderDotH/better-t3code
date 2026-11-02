@@ -3,7 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 
 export interface NativeHarnessHistoryFiles {
   readonly read: (sessionId: string) => Effect.Effect<string | undefined, PlatformError>;
@@ -26,13 +26,12 @@ export const makeNativeHarnessHistoryFiles = Effect.fn("makeNativeHarnessHistory
   return {
     read: (sessionId: string) => {
       const target = filePath(sessionId);
-      return fileSystem
-        .exists(target)
-        .pipe(
-          Effect.flatMap((exists) =>
-            exists ? fileSystem.readFileString(target) : Effect.sync((): undefined => undefined),
-          ),
-        );
+      return fileSystem.exists(target).pipe(
+        Effect.flatMap((exists) =>
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional protocol results distinguish undefined from void.
+          exists ? fileSystem.readFileString(target) : Effect.succeed(undefined),
+        ),
+      );
     },
     write: (sessionId: string, contents: string) =>
       writeFileStringAtomically({ filePath: filePath(sessionId), contents }).pipe(

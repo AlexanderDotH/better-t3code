@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
@@ -35,7 +35,7 @@ const encodeNodeJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphNod
 const encodePatchJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphPatchV1));
 const encodeStatusJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphStatusV1));
 
-const scope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1)({
+const scope = Schema.decodeSync(KnowledgeGraphScopeV1)({
   version: 1,
   scopeId: KnowledgeGraphScopeId.make("scope-main"),
   environmentId: "environment-1",

@@ -1,466 +1,149 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
-  SubagentId,
+  RunId,
   ThreadId,
-  type OrchestrationMessage,
-  type OrchestrationSubagentDetail,
-  type OrchestrationThread,
-  type OrchestrationThreadShell,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { invokeThreadContext } from "./handlers.ts";
 
-const rootThreadId = ThreadId.make("thread-context-root");
-const projectId = ProjectId.make("thread-context-project");
-const toolItemId = "large-tool-item";
-const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-
-const invocation = McpInvocationContext.McpInvocationContext.of({
-  environmentId: EnvironmentId.make("environment-thread-context"),
-  threadId: rootThreadId,
-  providerSessionId: "provider-session-thread-context",
-  providerInstanceId: ProviderInstanceId.make("codex"),
-  capabilities: new Set(["workspace"]),
-  issuedAt: 1,
-});
-
-function message(index: number, text = `message ${index}`): OrchestrationMessage {
-  return {
-    id: MessageId.make(`message-${String(index).padStart(2, "0")}`),
-    role: index % 2 === 0 ? "user" : "assistant",
-    text,
-    turnId: null,
-    streaming: false,
-    createdAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
-    updatedAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
-  };
-}
-
-function thread(input: {
-  readonly id?: ThreadId;
-  readonly project?: ProjectId;
-  readonly messages?: ReadonlyArray<OrchestrationMessage>;
-  readonly activities?: OrchestrationThread["activities"];
-  readonly sourceThreadId?: ThreadId;
-}): OrchestrationThread {
-  return {
-    id: input.id ?? rootThreadId,
-    projectId: input.project ?? projectId,
-    messages: input.messages ?? [],
-    activities: input.activities ?? [],
-    ...(input.sourceThreadId
-      ? {
-          fork: {
-            provenance: { sourceThreadId: input.sourceThreadId },
-          },
-        }
-      : {}),
-  } as unknown as OrchestrationThread;
-}
-
-function shell(input: {
-  readonly id: ThreadId;
-  readonly project: ProjectId;
-  readonly sourceThreadId?: ThreadId;
-}): OrchestrationThreadShell {
-  return {
-    id: input.id,
-    projectId: input.project,
-    ...(input.sourceThreadId
-      ? { fork: { provenance: { sourceThreadId: input.sourceThreadId } } }
-      : {}),
-  } as unknown as OrchestrationThreadShell;
-}
-
-function projection(input: {
-  readonly root: OrchestrationThread;
-  readonly ancestors?: ReadonlyMap<ThreadId, OrchestrationThreadShell>;
-  readonly subagents?: ReadonlyMap<SubagentId, OrchestrationSubagentDetail>;
-}) {
-  return Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-    getThreadShellById: (requestedThreadId) =>
-      Effect.succeed(
-        requestedThreadId === input.root.id
-          ? Option.some(input.root as unknown as OrchestrationThreadShell)
-          : Option.fromNullishOr(input.ancestors?.get(requestedThreadId)),
-      ),
-    getThreadMessageSourceThreadIds: () =>
-      Effect.succeed([
-        ...new Set(
-          input.root.messages.flatMap((item) =>
-            item.historyOrigin ? [item.historyOrigin.sourceThreadId] : [],
-          ),
-        ),
-      ]),
-    getThreadContextMessagePage: ({ before, limit }) => {
-      const key = (value: { createdAt: string; threadId: ThreadId; messageId: MessageId }) =>
-        [value.createdAt, value.threadId, value.messageId].join("\0");
-      return Effect.succeed(
-        input.root.messages
-          .filter((item) => !item.streaming && item.role !== "system")
-          .map((item) => ({
-            threadId: item.historyOrigin?.sourceThreadId ?? input.root.id,
-            messageId: MessageId.make(item.historyOrigin?.sourceId ?? item.id),
-            role: item.role,
-            text: item.text,
-            createdAt: item.createdAt,
-          }))
-          .filter((item) => before === undefined || key(item) < key(before))
-          .toSorted((left, right) => (key(left) < key(right) ? 1 : key(left) > key(right) ? -1 : 0))
-          .slice(0, limit),
-      );
+const rootId = ThreadId.make("context-root");
+const sourceId = ThreadId.make("context-source");
+const projectId = ProjectId.make("context-project");
+const now = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
+const shell = (id: ThreadId, parent?: ThreadId, project = projectId) =>
+  ({
+    id,
+    projectId: project,
+    lineage: { parentThreadId: parent ?? null, sideChat: false },
+    forkedFrom:
+      parent === undefined
+        ? null
+        : { type: "run", threadId: parent, runId: RunId.make("frozen-run") },
+  }) as OrchestrationV2ThreadShell;
+const message = (position: number, threadId = rootId): OrchestrationV2ProjectedTurnItem =>
+  ({
+    position,
+    sourceThreadId: threadId,
+    sourceItemId: TurnItemId.make(`item-${position}`),
+    visibility: "local",
+    item: {
+      type: "assistant_message",
+      id: TurnItemId.make(`item-${position}`),
+      threadId,
+      messageId: MessageId.make(`message-${position}`),
+      text: `Exact message ${position}`,
+      streaming: false,
+      startedAt: now,
+      updatedAt: now,
     },
-    getThreadToolResultActivity: (_threadId, itemId) =>
-      Effect.succeed(
-        Option.fromNullishOr(
-          input.root.activities.find(
-            (activity) =>
-              activity.kind === "tool.completed" &&
-              typeof activity.payload === "object" &&
-              activity.payload !== null &&
-              "itemId" in activity.payload &&
-              activity.payload.itemId === itemId,
-          ),
+  }) as OrchestrationV2ProjectedTurnItem;
+function setup(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  ancestors = new Map<ThreadId, OrchestrationV2ThreadShell>(),
+) {
+  const reads: number[] = [];
+  const layer = Layer.mergeAll(
+    Layer.succeed(McpInvocationContext, {
+      environmentId: EnvironmentId.make("test"),
+      requestNamespace: "session",
+      issuedAt: 0,
+      capabilities: new Set(["workspace"] as const),
+      client: undefined,
+      thread: {
+        threadId: rootId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "session",
+      },
+    }),
+    Layer.mock(OrchestratorV2)({
+      getThreadShell: (id) =>
+        Effect.succeed(
+          id === rootId
+            ? shell(rootId, ancestors.size > 0 ? sourceId : undefined)
+            : (ancestors.get(id) ?? null),
         ),
-      ),
-    getSubagentDetailById: (requestedThreadId, subagentId) =>
-      Effect.succeed(
-        requestedThreadId === input.root.id
-          ? Option.fromNullishOr(input.subagents?.get(subagentId))
-          : Option.none(),
-      ),
-  });
+      getTimelinePage: (_id, options) => {
+        reads.push(options.limit);
+        const matching = rows.filter((row) =>
+          options.itemId === undefined
+            ? row.position > (options.afterPosition ?? -1)
+            : row.sourceItemId === options.itemId,
+        );
+        return Effect.succeed({
+          items: matching.slice(0, options.limit),
+          totalItems: rows.length,
+          hasMore: matching.length > options.limit,
+        });
+      },
+      getTurnItem: ({ itemId }) =>
+        Effect.succeed(rows.find((row) => row.sourceItemId === itemId)?.item ?? null),
+    }),
+  );
+  return { layer, reads };
 }
 
-const provide = <A, E>(
-  effect: Effect.Effect<
-    A,
-    E,
-    McpInvocationContext.McpInvocationContext | ProjectionSnapshotQuery.ProjectionSnapshotQuery
-  >,
-  query: ReturnType<typeof projection>,
-  activeInvocation: McpInvocationContext.McpInvocationScope = invocation,
-) =>
-  effect.pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, activeInvocation),
-    Effect.provide(query),
-  );
-
-it.effect("paginates exact completed messages newest-first with a stable cursor", () => {
-  const messages = Array.from({ length: 22 }, (_, index) =>
-    message(index, index === 1 ? "exact\n  spacing stays" : `message ${index}`),
-  );
-  const query = projection({ root: thread({ messages }) });
-
+it.effect("pages exact completed V2 messages newest first with bounded reads", () => {
+  const test = setup(Array.from({ length: 45 }, (_, index) => message(index)));
   return Effect.gen(function* () {
     const first = yield* invokeThreadContext({});
-    expect(first.messages).toHaveLength(20);
-    expect(first.messages[0]?.messageId).toBe(MessageId.make("message-21"));
-    expect(first.messages[19]?.messageId).toBe(MessageId.make("message-02"));
-    expect(first.hasMore).toBe(true);
-    expect(first.cursor).not.toBeNull();
-
-    const second = yield* invokeThreadContext({ cursor: first.cursor! });
-    expect(second.messages.map((entry) => entry.messageId)).toEqual([
-      MessageId.make("message-01"),
-      MessageId.make("message-00"),
-    ]);
-    expect(second.messages[0]?.text).toBe("exact\n  spacing stays");
-    expect(second.hasMore).toBe(false);
-    expect(second.cursor).toBeNull();
-  }).pipe((effect) => provide(effect, query));
-});
-
-it.effect(
-  "applies a case-insensitive lexical query and carries it through cursor pagination",
-  () => {
-    const messages = Array.from({ length: 22 }, (_, index) =>
-      message(index, `Needle exact ${index}`),
+    expect(first.messages.map((row) => row.text)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `Exact message ${44 - index}`),
     );
-    const query = projection({ root: thread({ messages }) });
-
-    return Effect.gen(function* () {
-      const first = yield* invokeThreadContext({ query: "nEeDlE" });
-      expect(first.messages).toHaveLength(20);
-      const second = yield* invokeThreadContext({ cursor: first.cursor! });
-      expect(second.query).toBe("nEeDlE");
-      expect(second.messages).toHaveLength(2);
-      expect(second.messages.every((entry) => entry.text.includes("Needle exact"))).toBe(true);
-    }).pipe((effect) => provide(effect, query));
-  },
-);
-
-it.effect("searches Unicode text across bounded pages of unrelated messages", () => {
-  const messages = Array.from({ length: 205 }, (_, index) => {
-    const createdAt = `2026-01-01T00:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`;
-    return {
-      ...message(index, index % 40 === 0 ? "ÄRGER exact" : "unrelated"),
-      createdAt,
-      updatedAt: createdAt,
-    };
-  });
-  return invokeThreadContext({ query: "ärger" }).pipe(
-    Effect.tap((result) =>
-      Effect.sync(() => {
-        expect(result.messages).toHaveLength(6);
-        expect(result.hasMore).toBe(false);
-        expect(result.messages.every((item) => item.text === "ÄRGER exact")).toBe(true);
-      }),
-    ),
-    (effect) => provide(effect, projection({ root: thread({ messages }) })),
-  );
+    const next = yield* invokeThreadContext({ cursor: first.cursor! });
+    expect(next.messages[0]?.text).toBe("Exact message 24");
+    expect(next.messages).toHaveLength(20);
+    const last = yield* invokeThreadContext({ cursor: next.cursor! });
+    expect(last.messages).toHaveLength(5);
+    expect(last.hasMore).toBe(false);
+    expect(Math.max(...test.reads)).toBeLessThanOrEqual(100);
+  }).pipe(Effect.provide(test.layer));
 });
 
-it.effect("keeps inherited message provenance inside same-project fork ancestry", () => {
-  const sourceThreadId = ThreadId.make("thread-context-source");
-  const inherited = {
-    ...message(1, "exact inherited goal"),
-    historyOrigin: {
-      sourceThreadId,
-      sourceId: "source-message-1",
-      ordinal: 0,
-    },
-  };
-  const query = projection({
-    root: thread({ messages: [inherited], sourceThreadId }),
-    ancestors: new Map([[sourceThreadId, shell({ id: sourceThreadId, project: projectId })]]),
-  });
-
-  return invokeThreadContext({}).pipe(
-    Effect.tap((result) =>
-      Effect.sync(() => {
-        expect(result.messages).toEqual([
-          expect.objectContaining({
-            threadId: sourceThreadId,
-            messageId: MessageId.make("source-message-1"),
-            text: "exact inherited goal",
-          }),
-        ]);
-      }),
-    ),
-    (effect) => provide(effect, query),
+it.effect("rejects cross-project fork ancestry before reading timeline content", () => {
+  const test = setup(
+    [message(0, sourceId)],
+    new Map([[sourceId, shell(sourceId, undefined, ProjectId.make("foreign"))]]),
   );
-});
-
-it.effect("denies a fork ancestry edge that crosses projects", () => {
-  const sourceThreadId = ThreadId.make("thread-context-foreign-source");
-  const query = projection({
-    root: thread({ messages: [message(1)], sourceThreadId }),
-    ancestors: new Map([
-      [
-        sourceThreadId,
-        shell({
-          id: sourceThreadId,
-          project: ProjectId.make("foreign-project"),
-        }),
-      ],
-    ]),
-  });
-
-  return invokeThreadContext({}).pipe(
-    Effect.flip,
-    Effect.tap((error) =>
-      Effect.sync(() => {
-        expect(error).toMatchObject({
-          _tag: "ThreadContextError",
-          reason: "cross_project_denied",
-        });
-      }),
-    ),
-    (effect) => provide(effect, query),
-  );
-});
-
-it.effect("retrieves an exact one MiB tool result through paginated references", () => {
-  const output = "x".repeat(1024 * 1024);
-  const payload = {
-    itemType: "command_execution",
-    status: "completed",
-    title: "Large command",
-    detail: "Exited with code 0",
-    data: { stdout: output, stderr: "", exitCode: 0 },
-  };
-  const query = projection({
-    root: thread({
-      activities: [
-        {
-          id: EventId.make("event-large-tool"),
-          tone: "tool",
-          kind: "tool.completed",
-          summary: "Large command",
-          payload: { itemId: toolItemId, canonicalPayload: payload },
-          turnId: null,
-          createdAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    }),
-  });
-
   return Effect.gen(function* () {
-    const chunks: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = yield* invokeThreadContext({
-        ref: `tool-result:${toolItemId}`,
-        ...(cursor ? { cursor } : {}),
-      });
-      expect(page.messages).toEqual([]);
-      expect(page.reference?.ref).toBe(`tool-result:${toolItemId}`);
-      expect(page.reference?.contentType).toBe("application/json");
-      chunks.push(page.reference!.content);
-      cursor = page.cursor ?? undefined;
-      if (!page.hasMore) break;
-    } while (cursor);
-
-    const retrieved = decodeJsonText(chunks.join("")) as typeof payload;
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(retrieved).toEqual(payload);
-    expect(retrieved.data.stdout).toHaveLength(1024 * 1024);
-  }).pipe((effect) => provide(effect, query));
+    const error = yield* invokeThreadContext({}).pipe(Effect.flip);
+    expect(error.reason).toBe("cross_project_denied");
+    expect(test.reads).toEqual([]);
+  }).pipe(Effect.provide(test.layer));
 });
 
-it.effect("retrieves an exact General Subagent transcript reference", () => {
-  const agentId = SubagentId.make("general-agent-1");
-  const transcript = [message(0, "Investigate"), message(1, "Exact\nanswer")];
-  const query = projection({
-    root: thread({}),
-    subagents: new Map([
-      [
-        agentId,
-        {
-          id: agentId,
-          origin: "t3-managed",
-          messages: transcript,
-        } as unknown as OrchestrationSubagentDetail,
-      ],
-    ]),
-  });
-
-  return invokeThreadContext({ ref: `subagent:${agentId}` }).pipe(
-    Effect.tap((result) =>
-      Effect.sync(() => {
-        expect(result.reference).toMatchObject({
-          ref: `subagent:${agentId}`,
-          contentType: "application/json",
-        });
-        expect(decodeJsonText(result.reference!.content)).toEqual(transcript);
-      }),
-    ),
-    (effect) => provide(effect, query),
-  );
-});
-
-it.effect("denies a reference cursor from another project", () => {
-  const payload = {
-    itemType: "mcp_tool_call",
-    status: "completed",
-    data: { value: "x".repeat(40_000) },
-  };
-  const projectA = projection({
-    root: thread({
-      activities: [
-        {
-          id: EventId.make("event-project-a"),
-          tone: "tool",
-          kind: "tool.completed",
-          summary: "Tool",
-          payload: { itemId: toolItemId, canonicalPayload: payload },
-          turnId: null,
-          createdAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    }),
-  });
-  const foreignProjectId = ProjectId.make("thread-context-foreign-project");
-  const foreignThreadId = ThreadId.make("thread-context-foreign-thread");
-  const projectB = projection({
-    root: thread({ id: foreignThreadId, project: foreignProjectId }),
-  });
-  const foreignInvocation = McpInvocationContext.McpInvocationContext.of({
-    ...invocation,
-    threadId: foreignThreadId,
-  });
-
+it.effect("rejects sibling result references and mismatched cursors", () => {
+  const row = {
+    ...message(0),
+    sourceThreadId: ThreadId.make("sibling"),
+    item: { ...message(0).item, type: "dynamic_tool", output: { secret: true } },
+  } as OrchestrationV2ProjectedTurnItem;
+  const test = setup([row]);
   return Effect.gen(function* () {
-    const first = yield* invokeThreadContext({ ref: `tool-result:${toolItemId}` }).pipe((effect) =>
-      provide(effect, projectA),
+    const error = yield* invokeThreadContext({ ref: "tool-result:item-0" }).pipe(Effect.flip);
+    expect(error.reason).toBe("reference_not_found");
+    const cursor = Buffer.from(
+      JSON.stringify({
+        version: 2,
+        rootThreadId: rootId,
+        projectId: "foreign",
+        query: null,
+        beforePosition: 1,
+      }),
+    ).toString("base64url");
+    expect((yield* invokeThreadContext({ cursor }).pipe(Effect.flip)).reason).toBe(
+      "cross_project_denied",
     );
-    expect(first.cursor).not.toBeNull();
-    const denied = yield* invokeThreadContext({
-      ref: `tool-result:${toolItemId}`,
-      cursor: first.cursor!,
-    }).pipe((effect) => provide(effect, projectB, foreignInvocation), Effect.flip);
-    expect(denied).toMatchObject({
-      _tag: "ThreadContextError",
-      reason: "cross_project_denied",
-    });
-  });
-});
-
-it.effect("resolves a tool result inherited from authenticated fork ancestry", () => {
-  const sourceThreadId = ThreadId.make("thread-context-ref-source");
-  const query = projection({
-    root: thread({
-      sourceThreadId,
-      activities: [
-        {
-          id: EventId.make("event-inherited-tool"),
-          tone: "tool",
-          kind: "tool.completed",
-          summary: "Inherited tool",
-          payload: { itemId: toolItemId, canonicalPayload: { data: { secret: true } } },
-          turnId: null,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          historyOrigin: { sourceThreadId, sourceId: "event-inherited-tool", ordinal: 0 },
-        },
-      ],
-    }),
-    ancestors: new Map([[sourceThreadId, shell({ id: sourceThreadId, project: projectId })]]),
-  });
-
-  return invokeThreadContext({ ref: `tool-result:${toolItemId}` }).pipe(
-    Effect.tap((result) =>
-      Effect.sync(() => {
-        expect(decodeJsonText(result.reference!.content)).toEqual({ data: { secret: true } });
-      }),
-    ),
-    (effect) => provide(effect, query),
-  );
-});
-
-it.effect("does not resolve a sibling-only tool result", () => {
-  const sourceThreadId = ThreadId.make("thread-context-shared-ancestor");
-  const siblingThreadId = ThreadId.make("thread-context-sibling");
-  const query = projection({
-    root: thread({ id: siblingThreadId, sourceThreadId }),
-    ancestors: new Map([[sourceThreadId, shell({ id: sourceThreadId, project: projectId })]]),
-  });
-  const siblingInvocation = McpInvocationContext.McpInvocationContext.of({
-    ...invocation,
-    threadId: siblingThreadId,
-  });
-
-  return invokeThreadContext({ ref: `tool-result:${toolItemId}` }).pipe(
-    (effect) => provide(effect, query, siblingInvocation),
-    Effect.flip,
-    Effect.tap((error) =>
-      Effect.sync(() => {
-        expect(error).toMatchObject({
-          _tag: "ThreadContextError",
-          reason: "reference_not_found",
-        });
-      }),
-    ),
-  );
+  }).pipe(Effect.provide(test.layer));
 });

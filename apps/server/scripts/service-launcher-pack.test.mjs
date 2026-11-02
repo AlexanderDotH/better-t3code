@@ -62,4 +62,4 @@ it("imports the relocated standalone launcher without starting its CLI", async (
   } finally {
     await NodeFSP.rm(outputDirectory, { recursive: true, force: true });
   }
-}, 15_000);
+});

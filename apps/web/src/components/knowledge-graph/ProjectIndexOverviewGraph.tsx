@@ -1,6 +1,6 @@
 import type { ProjectIndexController } from "@t3tools/client-runtime/project-indexing";
 import { PROJECT_INDEX_MAX_QUERY_TOKENS, type ProjectIndexQueryResultV1 } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { ProjectIndexGraph } from "./ProjectIndexGraph";
@@ -32,6 +32,7 @@ export function ProjectIndexOverviewGraph({
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const requestVersion = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate pending branch requests when their graph unmounts.
   useEffect(
     () => () => {
       requestVersion.current++;
@@ -39,10 +40,7 @@ export function ProjectIndexOverviewGraph({
     [],
   );
   const overview = snapshot.graph!;
-  const map = useMemo(
-    () => buildProjectIndexMap(overview, branches, expandedSymbols),
-    [overview, branches, expandedSymbols],
-  );
+  const map = buildProjectIndexMap(overview, branches, expandedSymbols);
 
   const select = async (node: ProjectMapNode) => {
     setNotice(null);

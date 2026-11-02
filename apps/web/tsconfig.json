@@ -7,7 +7,7 @@
     "erasableSyntaxOnly": false,
     "verbatimModuleSyntax": false,
     "jsx": "react-jsx",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "paths": {
       "~/*": ["./src/*"]
     },
@@ -27,10 +27,14 @@
   },
   "include": [
     "src",
+    // Browser tests exercise the desktop guest's DOM-only cursor helpers.
+    "../desktop/src/preview/RecordingCursor.ts",
+    "../desktop/src/preview/RecordingInput.ts",
     "vite",
     "vite.config.ts",
     "vercel.ts",
     "test",
+    "scripts/verify-built-boot.ts",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/third-party-licenses.ts"

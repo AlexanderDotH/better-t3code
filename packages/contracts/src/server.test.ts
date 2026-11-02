@@ -1,36 +1,38 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerObservability,
+  ServerProvider,
+  ServerProviders,
+} from "./server.ts";
+import { ServerSettings } from "./settings.ts";
+import {
   ProviderAuthConnectEvent,
   ProviderAuthConnectInput,
   ProviderAuthDisconnectResult,
   ProviderAuthSetCredentialInput,
   ProviderAuthSetCredentialResult,
   ServerConfig,
-  ServerObservability,
-  ServerProvider,
-  ServerProviders,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
-import { ServerSettings } from "./settings.ts";
-
-const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
-const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
-const decodeProviderAuthConnectInput = Schema.decodeUnknownSync(ProviderAuthConnectInput);
-const decodeProviderAuthConnectEvent = Schema.decodeUnknownSync(ProviderAuthConnectEvent);
-const decodeProviderAuthDisconnectResult = Schema.decodeUnknownSync(ProviderAuthDisconnectResult);
-const decodeProviderAuthSetCredentialInput = Schema.decodeUnknownSync(
-  ProviderAuthSetCredentialInput,
-);
+const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
+const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
 const decodeProviderAuthSetCredentialResult = Schema.decodeUnknownSync(
   ProviderAuthSetCredentialResult,
 );
-const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
-const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
-const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+const decodeProviderAuthSetCredentialInput = Schema.decodeUnknownSync(
+  ProviderAuthSetCredentialInput,
+);
+const decodeProviderAuthDisconnectResult = Schema.decodeUnknownSync(ProviderAuthDisconnectResult);
+const decodeProviderAuthConnectEvent = Schema.decodeUnknownSync(ProviderAuthConnectEvent);
+const decodeProviderAuthConnectInput = Schema.decodeUnknownSync(ProviderAuthConnectInput);
+
+const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 
 const baseProviderSnapshot = {
   instanceId: "codex",
@@ -45,6 +47,19 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("preserves installed-version presence through the provider wire codec", () => {
+    const encode = Schema.encodeSync(ServerProvider);
+    for (const installation of [{}, { installedVersion: null }, { installedVersion: "1.2.3" }]) {
+      const decoded = decodeServerProvider({ ...baseProviderSnapshot, ...installation });
+      const wire = JSON.parse(JSON.stringify(encode(decoded)));
+      expect(wire).toMatchObject({ version: "1.0.0", ...installation });
+      expect(Object.hasOwn(wire, "installedVersion")).toBe(
+        Object.hasOwn(installation, "installedVersion"),
+      );
+      expect(decodeServerProvider(wire)).toEqual(decoded);
+    }
+  });
+
   it("decodes visible but non-selectable catalog models with a safe explanation", () => {
     const parsed = decodeServerProvider({
       ...baseProviderSnapshot,
@@ -70,7 +85,6 @@ describe("ServerProvider", () => {
       unavailableReason: "This model does not support tool calling.",
     });
   });
-
   it("decodes subscription auth capabilities, plan, expiry, and rate-limit state", () => {
     const parsed = decodeServerProvider({
       ...baseProviderSnapshot,
@@ -125,7 +139,6 @@ describe("ServerProvider", () => {
       message: "Try again shortly.",
     });
   });
-
   it("decodes a generic API-key credential capability without admitting a credential value", () => {
     const parsed = decodeServerProvider({
       ...baseProviderSnapshot,
@@ -152,7 +165,6 @@ describe("ServerProvider", () => {
       placeholder: "sk-or-v1-...",
     });
   });
-
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -175,7 +187,6 @@ describe("ServerProvider", () => {
     expect(parsed.nativeSubagents).toBeUndefined();
     expect(parsed.fetchWorkers).toBeUndefined();
   });
-
   it("decodes Fetch worker capabilities", () => {
     const parsed = decodeServerProvider({
       instanceId: "claude_work",
@@ -200,7 +211,6 @@ describe("ServerProvider", () => {
       commandExecutionPolicy: "deny",
     });
   });
-
   it("rejects invalid Fetch worker budgets and policies", () => {
     const provider = {
       instanceId: "codex",
@@ -244,7 +254,6 @@ describe("ServerProvider", () => {
       }),
     ).toThrow();
   });
-
   it("decodes native subagent capabilities", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -269,7 +278,6 @@ describe("ServerProvider", () => {
       maxRecommendedSubagents: 4,
     });
   });
-
   it("rejects invalid native subagent capabilities", () => {
     const provider = {
       instanceId: "codex",
@@ -304,7 +312,6 @@ describe("ServerProvider", () => {
       }),
     ).toThrow();
   });
-
   it("defaults one-click update support when decoding older advisory snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -330,7 +337,6 @@ describe("ServerProvider", () => {
 
     expect(parsed.versionAdvisory?.canUpdate).toBe(false);
   });
-
   it("decodes continuation group metadata", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex_personal",
@@ -349,7 +355,6 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
-
   it("decodes optional legacy model metadata", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -372,6 +377,151 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.models[0]?.isLegacy).toBe(true);
+  });
+});
+
+describe("server config forward compatibility", () => {
+  it("drops providers this build cannot decode instead of failing the whole array", () => {
+    const decodedBase = decodeServerProvider(baseProviderSnapshot);
+
+    const parsed = decodeServerProviders([
+      baseProviderSnapshot,
+      { ...baseProviderSnapshot, instanceId: "future", status: "some-future-status" },
+    ]);
+
+    expect(parsed).toEqual([decodedBase]);
+  });
+
+  it("drops usage windows this build cannot decode instead of failing the provider", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [
+          { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+          { id: "future", kind: "some-future-kind", label: "Future", usedPercent: 1 },
+          { id: "bad", kind: "weekly", label: "Weekly", usedPercent: 120 },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows).toEqual([
+      { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+    ]);
+  });
+
+  it("drops config issues with kinds this build does not know", () => {
+    const parsed = decodeUpsertKeybindingResult({
+      keybindings: [],
+      issues: [
+        { kind: "keybindings.invalid-entry", message: "Bad entry", index: 2 },
+        { kind: "keybindings.future-issue", message: "From a newer server" },
+      ],
+    });
+
+    expect(parsed.issues).toEqual([
+      { kind: "keybindings.invalid-entry", message: "Bad entry", index: 2 },
+    ]);
+  });
+  it("drops editor ids this build does not know", () => {
+    const parsed = decodeAvailableEditors(["zed", "some-future-editor", "vscode"]);
+
+    expect(parsed).toEqual(["zed", "vscode"]);
+  });
+});
+
+describe("ServerObservability", () => {
+  it("rejects an unknown endpoint source", () => {
+    expect(() =>
+      decodeServerObservability({
+        logsDirectoryPath: "/tmp/t3/logs",
+        localTracingEnabled: true,
+        otlpTracesUrl: "https://collector.example.com/v1/traces",
+        otlpTracesSource: "cli",
+        otlpTracesEnabled: true,
+        otlpMetricsEnabled: false,
+      }),
+    ).toThrow();
+  });
+
+  it("reads a server from before the log signal as exporting no logs", () => {
+    const parsed = decodeServerObservability({
+      logsDirectoryPath: "/tmp/t3/logs",
+      localTracingEnabled: true,
+      otlpTracesUrl: "https://collector.example.com/v1/traces",
+      otlpTracesEnabled: true,
+      otlpMetricsEnabled: false,
+    });
+
+    expect(parsed.otlpLogsEnabled).toBe(false);
+    expect(parsed.otlpLogsUrl).toBeUndefined();
+  });
+});
+
+describe("resolveEnvironmentMachineKind", () => {
+  const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
+  const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
+  const descriptor = (platform: Record<string, unknown>) =>
+    decodeDescriptor({
+      environmentId: "env-1",
+      label: "Box",
+      platform: { os: "linux", arch: "x64", ...platform },
+      serverVersion: "1.0.0",
+      capabilities: {},
+    });
+
+  it("prefers the user's pick over what the server detected", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({ environmentIcon: "laptop" }),
+      }),
+    ).toBe("laptop");
+  });
+
+  it("drops a machine kind this build does not know instead of failing the descriptor", () => {
+    const parsed = descriptor({ machine: "toaster" });
+
+    expect(parsed.platform.machine).toBeUndefined();
+    expect(
+      resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
+    ).toBe("server");
+  });
+
+  it("uses detection when nothing is picked", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({}),
+      }),
+    ).toBe("mac-mini");
+  });
+  it("uses detection from a bare descriptor before connecting", () => {
+    expect(resolveEnvironmentMachineKind({ environment: descriptor({ machine: "laptop" }) })).toBe(
+      "laptop",
+    );
+  });
+  it("falls back to a server for older servers and before connect", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({}),
+        settings: decodeSettings({}),
+      }),
+    ).toBe("server");
+    expect(resolveEnvironmentMachineKind(null)).toBe("server");
+  });
+});
+
+describe("OtlpEndpointCheckInput", () => {
+  const decode = Schema.decodeUnknownSync(OtlpEndpointCheckInput);
+
+  it("accepts HTTP receivers only", () => {
+    expect(decode({ signal: "traces", url: "https://collector.example.com/v1/traces" }).url).toBe(
+      "https://collector.example.com/v1/traces",
+    );
+    for (const url of ["data:text/plain,ok", "file:///etc/hosts", "collector:4318/v1/traces"]) {
+      expect(() => decode({ signal: "traces", url })).toThrow();
+    }
   });
 });
 
@@ -517,133 +667,5 @@ describe("provider auth lifecycle", () => {
         credential: "   ",
       }),
     ).toThrow();
-  });
-});
-
-describe("server config forward compatibility", () => {
-  it("drops config issues with kinds this build does not know", () => {
-    const parsed = decodeUpsertKeybindingResult({
-      keybindings: [],
-      issues: [
-        { kind: "keybindings.invalid-entry", message: "Bad entry", index: 2 },
-        { kind: "keybindings.future-issue", message: "From a newer server" },
-      ],
-    });
-
-    expect(parsed.issues).toEqual([
-      { kind: "keybindings.invalid-entry", message: "Bad entry", index: 2 },
-    ]);
-  });
-
-  it("drops editor ids this build does not know", () => {
-    const parsed = decodeAvailableEditors(["zed", "some-future-editor", "vscode"]);
-
-    expect(parsed).toEqual(["zed", "vscode"]);
-  });
-
-  // A provider status this build has never seen (a new ServerProviderState,
-  // ServerProviderAuthStatus, etc. member) previously failed the whole
-  // `providers` array, taking every other provider down with it and, since
-  // `providers` sits inside `ServerConfig`, failing the whole config decode —
-  // an older client would drop its connection over one provider it can't
-  // render. Dropping just that element keeps every other provider working.
-  it("drops providers this build cannot decode instead of failing the whole array", () => {
-    const decodedBase = decodeServerProvider(baseProviderSnapshot);
-
-    const parsed = decodeServerProviders([
-      baseProviderSnapshot,
-      { ...baseProviderSnapshot, instanceId: "future", status: "some-future-status" },
-    ]);
-
-    expect(parsed).toEqual([decodedBase]);
-  });
-
-  it("drops usage windows this build cannot decode instead of failing the provider", () => {
-    const parsed = decodeServerProvider({
-      ...baseProviderSnapshot,
-      usageLimits: {
-        checkedAt: "2026-04-10T00:00:00.000Z",
-        windows: [
-          { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
-          { id: "future", kind: "some-future-kind", label: "Future", usedPercent: 1 },
-          { id: "bad", kind: "weekly", label: "Weekly", usedPercent: 120 },
-        ],
-      },
-    });
-
-    expect(parsed.usageLimits?.windows).toEqual([
-      { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
-    ]);
-  });
-});
-
-describe("ServerObservability", () => {
-  it("reads a server from before the log signal as exporting no logs", () => {
-    const parsed = decodeServerObservability({
-      logsDirectoryPath: "/tmp/t3/logs",
-      localTracingEnabled: true,
-      otlpTracesUrl: "https://collector.example.com/v1/traces",
-      otlpTracesEnabled: true,
-      otlpMetricsEnabled: false,
-    });
-
-    expect(parsed.otlpLogsEnabled).toBe(false);
-    expect(parsed.otlpLogsUrl).toBeUndefined();
-  });
-});
-
-describe("resolveEnvironmentMachineKind", () => {
-  const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
-  const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
-  const descriptor = (platform: Record<string, unknown>) =>
-    decodeDescriptor({
-      environmentId: "env-1",
-      label: "Box",
-      platform: { os: "linux", arch: "x64", ...platform },
-      serverVersion: "1.0.0",
-      capabilities: {},
-    });
-
-  it("prefers the user's pick over what the server detected", () => {
-    expect(
-      resolveEnvironmentMachineKind({
-        environment: descriptor({ machine: "mac-mini" }),
-        settings: decodeSettings({ environmentIcon: "laptop" }),
-      }),
-    ).toBe("laptop");
-  });
-
-  it("uses detection when nothing is picked", () => {
-    expect(
-      resolveEnvironmentMachineKind({
-        environment: descriptor({ machine: "mac-mini" }),
-        settings: decodeSettings({}),
-      }),
-    ).toBe("mac-mini");
-  });
-
-  it("uses detection from a bare descriptor before connecting", () => {
-    expect(resolveEnvironmentMachineKind({ environment: descriptor({ machine: "laptop" }) })).toBe(
-      "laptop",
-    );
-  });
-
-  it("falls back to a server for older servers and before connect", () => {
-    expect(
-      resolveEnvironmentMachineKind({
-        environment: descriptor({}),
-        settings: decodeSettings({}),
-      }),
-    ).toBe("server");
-    expect(resolveEnvironmentMachineKind(null)).toBe("server");
-  });
-
-  it("drops a machine kind this build does not know instead of failing the descriptor", () => {
-    const parsed = descriptor({ machine: "toaster" });
-
-    expect(parsed.platform.machine).toBeUndefined();
-    expect(
-      resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
-    ).toBe("server");
   });
 });

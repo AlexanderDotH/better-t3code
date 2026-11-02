@@ -1,3 +1,4 @@
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import {
   KnowledgeGraphOperationError,
   KnowledgeGraphQueryBatchInput,
@@ -7,7 +8,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as SchemaParser from "effect/SchemaParser";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as KnowledgeGraphRuntime from "../../../knowledge-graph/runtime/KnowledgeGraphRuntime.ts";
@@ -49,7 +50,10 @@ export const KnowledgeGraphQueryTool = Tool.make("knowledge_graph_query", {
     "Query the rebuildable project Knowledge Graph for the authenticated thread's canonical project or worktree. The server selects the scope; callers cannot provide a workspace root or mutate graph data.",
   parameters: KnowledgeGraphQueryParameters,
   success: KnowledgeGraphQueryResultV1,
-  failure: Schema.Union([KnowledgeGraphOperationError, WorkspaceContextUnavailableError]),
+  failure: Schema.Union([
+    OrchestratorMcpFailure,
+    Schema.Union([KnowledgeGraphOperationError, WorkspaceContextUnavailableError]),
+  ]),
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     KnowledgeGraphRuntime.KnowledgeGraphRuntime,
@@ -59,6 +63,7 @@ export const KnowledgeGraphQueryTool = Tool.make("knowledge_graph_query", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("workspace"));
 
 export const KnowledgeGraphToolkit = Toolkit.make(KnowledgeGraphQueryTool);

@@ -45,6 +45,7 @@ export function PullRequestJobLogDialog({
   const refresh = query.refresh;
   const complete = query.data?.complete === true;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a running job log on a visibility-aware timer and removes both resources on cleanup
   useEffect(() => {
     if (check.logId === undefined || query.isPending || complete) return;
     const interval = query.error === null ? LOG_REFRESH_INTERVAL_MS : LOG_RETRY_INTERVAL_MS;
@@ -63,6 +64,7 @@ export function PullRequestJobLogDialog({
     };
   }, [check.logId, query.isPending, query.error, complete, refresh]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the log viewport at its bottom while follow mode is enabled
   useEffect(() => {
     if (following && text.length > 0 && scrollRef.current)
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

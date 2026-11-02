@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 export const KNOWLEDGE_STORE_VERSION = 1;
 export const KNOWLEDGE_STORE_APPLICATION_ID = 0x54334b49;

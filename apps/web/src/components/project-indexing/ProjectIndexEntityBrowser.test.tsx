@@ -7,9 +7,14 @@ import {
   type ProjectIndexQueryResultV1,
   type ProjectContextInput,
 } from "@t3tools/contracts";
-import { act, cloneElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestRenderer, type ReactTestRendererJSON } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { cloneElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import {
+  act,
+  create,
+  type ReactTestRenderer,
+  type ReactTestRendererJSON,
+} from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../../hooks/useInterfaceTranslator", async () => {
   const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
@@ -122,9 +127,11 @@ function content(node: ReactTestRendererJSON | ReactTestRendererJSON[] | string 
 }
 
 let renderer: ReactTestRenderer | undefined;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -161,6 +168,7 @@ describe("ProjectIndexEntityBrowser", () => {
                           { path: "src", kind: "directory" as const, fileCount: 4_999 },
                           { path: "README.md", kind: "file" as const, fileCount: 1 },
                         ],
+
                   edges: [],
                 },
               }),
@@ -186,29 +194,37 @@ describe("ProjectIndexEntityBrowser", () => {
         .findAllByType("button")
         .find((button) => button.props["aria-label"] === label)!;
     expect(content(renderer!.toJSON())).toContain("5,000");
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("button")
         .find((button) => button.children.includes("Next page"))!
-        .props.onClick(),
-    );
+        .props.onClick();
+    });
     expect(content(renderer!.toJSON())).toContain("5,000");
-    await act(() => node("src").props.onClick());
+    await act(async () => {
+      await node("src").props.onClick();
+    });
     expect(query).toHaveBeenLastCalledWith(
       expect.objectContaining({ operation: "overview", scopes: ["src"] }),
     );
     expect(node("src").props["aria-expanded"]).toBe(true);
     expect(node("README.md")).toBeDefined();
-    await act(() => node("src/Handler.ts").props.onClick());
+    await act(async () => {
+      await node("src/Handler.ts").props.onClick();
+    });
     expect(query).toHaveBeenLastCalledWith(
       expect.objectContaining({ operation: "overview", scopes: ["src/Handler.ts"] }),
     );
     expect(node("Handler · src/Handler.ts:17")).toBeDefined();
     expect(node("handle · src/Handler.ts:17")).toBeUndefined();
-    await act(() => node("Handler · src/Handler.ts:17").props.onClick());
+    await act(async () => {
+      await node("Handler · src/Handler.ts:17").props.onClick();
+    });
     expect(node("handle · src/Handler.ts:17")).toBeDefined();
     expect(node("README.md")).toBeDefined();
-    await act(() => node("src").props.onClick());
+    await act(async () => {
+      await node("src").props.onClick();
+    });
     expect(node("src").props["aria-expanded"]).toBe(false);
     expect(node("src/Handler.ts")).toBeUndefined();
     expect(node("handle · src/Handler.ts:17")).toBeUndefined();
@@ -246,26 +262,29 @@ describe("ProjectIndexEntityBrowser", () => {
         onOpenSource={() => undefined}
       />
     );
+
     await act(() => {
       renderer = create(render(1));
     });
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("button")
         .find((node) => node.props["aria-label"] === "src")!
-        .props.onClick(),
-    );
-    await act(() => renderer!.update(render(2)));
-    await act(() =>
-      pending.resolve({
+        .props.onClick();
+    });
+    await act(async () => {
+      await renderer!.update(render(2));
+    });
+    await act(async () => {
+      await pending.resolve({
         ...overview,
         graph: {
           ...overview.graph!,
           rootPath: "src",
           nodes: [{ path: "src/obsolete.ts", kind: "file", fileCount: 1 }],
         },
-      }),
-    );
+      });
+    });
     expect(content(renderer!.toJSON())).not.toContain("obsolete.ts");
     expect(content(renderer!.toJSON())).not.toContain("Loading src");
   });
@@ -312,9 +331,13 @@ describe("ProjectIndexEntityBrowser", () => {
     });
     const folder = () =>
       renderer!.root.findAllByType("button").find((node) => node.props["aria-label"] === "src")!;
-    await act(() => folder().props.onClick());
+    await act(async () => {
+      await folder().props.onClick();
+    });
     expect(content(renderer!.toJSON())).toContain("Connection lost");
-    await act(() => folder().props.onClick());
+    await act(async () => {
+      await folder().props.onClick();
+    });
     expect(content(renderer!.toJSON())).toContain("recovered.ts");
     expect(content(renderer!.toJSON())).not.toContain("Connection lost");
   });
@@ -342,15 +365,23 @@ describe("ProjectIndexEntityBrowser", () => {
         />,
       );
     });
-    await act(() =>
-      renderer!.root.findAllByType("input")[0]!.props.onChange({ currentTarget: { value: "old" } }),
-    );
-    await act(() =>
-      renderer!.root.findAllByType("input")[0]!.props.onChange({ currentTarget: { value: "new" } }),
-    );
-    await act(() => newer.resolve(result([entity("FreshFunction")])));
+    await act(async () => {
+      await renderer!.root
+        .findAllByType("input")[0]!
+        .props.onChange({ currentTarget: { value: "old" } });
+    });
+    await act(async () => {
+      await renderer!.root
+        .findAllByType("input")[0]!
+        .props.onChange({ currentTarget: { value: "new" } });
+    });
+    await act(async () => {
+      await newer.resolve(result([entity("FreshFunction")]));
+    });
     expect(content(renderer!.toJSON())).toContain("FreshFunction");
-    await act(() => older.resolve(result([entity("ObsoleteFunction")])));
+    await act(async () => {
+      await older.resolve(result([entity("ObsoleteFunction")]));
+    });
     expect(content(renderer!.toJSON())).toContain("FreshFunction");
     expect(content(renderer!.toJSON())).not.toContain("ObsoleteFunction");
     expect(query.mock.calls[2]?.[0]).toMatchObject({
@@ -382,19 +413,26 @@ describe("ProjectIndexEntityBrowser", () => {
         onOpenSource={openSource}
       />
     );
+
     await act(() => {
       renderer = create(render(0));
     });
     expect(api.query).not.toHaveBeenCalled();
-    await act(() => renderer!.update(render(1)));
+    await act(async () => {
+      await renderer!.update(render(1));
+    });
     expect(query).toHaveBeenCalledTimes(2);
-    await act(() => renderer!.update(render(1)));
+    await act(async () => {
+      await renderer!.update(render(1));
+    });
     expect(query).toHaveBeenCalledTimes(2);
 
     const sourceButton = renderer!.root
       .findAllByType("button")
       .find((button) => button.props["aria-label"] === "ReadProject · src/ReadProject.ts:17");
-    await act(() => sourceButton!.props.onClick());
+    await act(async () => {
+      await sourceButton!.props.onClick();
+    });
     expect(vi.mocked(api.query).mock.calls.map(([request]) => request.operation)).toEqual([
       "entity",
       "callers",
@@ -410,12 +448,16 @@ describe("ProjectIndexEntityBrowser", () => {
     const sourceLink = renderer!.root
       .findAllByType("button")
       .find((button) => button.props["aria-label"] === "src/ReadProject.ts:17:3");
-    await act(() => sourceLink!.props.onClick());
+    await act(async () => {
+      await sourceLink!.props.onClick();
+    });
     expect(openSource).toHaveBeenCalledWith("src/ReadProject.ts", 17);
     const close = renderer!.root
       .findAllByType("button")
       .find((candidate) => candidate.children.includes("Close"))!;
-    await act(() => close.props.onClick());
+    await act(async () => {
+      await close.props.onClick();
+    });
     expect(renderer!.root.findAllByType("article")).toHaveLength(0);
   });
 
@@ -480,11 +522,11 @@ describe("ProjectIndexEntityBrowser", () => {
       "2 matched · 1 changed · 1 missing · 0 unverified",
     );
     expect(content(renderer!.toJSON())).toContain("Indexing did not run tests or other checks.");
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("input")[0]!
-        .props.onChange({ currentTarget: { value: "without proof" } }),
-    );
+        .props.onChange({ currentTarget: { value: "without proof" } });
+    });
     expect(content(renderer!.toJSON())).toContain("CurrentSourceWithoutProof");
     expect(content(renderer!.toJSON())).not.toContain("Verification");
     expect(content(renderer!.toJSON())).not.toContain("Source hashes checked");
@@ -509,6 +551,7 @@ describe("ProjectIndexEntityBrowser", () => {
         onOpenSource={() => undefined}
       />
     );
+
     await act(() => {
       renderer = create(render(0));
     });
@@ -516,7 +559,9 @@ describe("ProjectIndexEntityBrowser", () => {
     expect(renderer!.root.findAllByType("input")).toHaveLength(0);
     expect(content(renderer!.toJSON())).not.toContain("Verification");
 
-    await act(() => renderer!.update(render(1)));
+    await act(async () => {
+      await renderer!.update(render(1));
+    });
     expect(content(renderer!.toJSON())).toContain("PublishedFunction");
     expect(renderer!.root.findAllByType("input")).not.toHaveLength(0);
   });
@@ -550,6 +595,7 @@ describe("ProjectIndexEntityBrowser", () => {
           provenance: "llm",
         },
       ],
+
       imports: [
         {
           id: "import-a",
@@ -565,6 +611,7 @@ describe("ProjectIndexEntityBrowser", () => {
           evidenceIds: [],
         },
       ],
+
       flows: [
         {
           id: "old-ai-flow",
@@ -578,6 +625,7 @@ describe("ProjectIndexEntityBrowser", () => {
           evidenceIds: [],
         },
       ],
+
       rules: [
         {
           id: "rule-a",
@@ -591,6 +639,7 @@ describe("ProjectIndexEntityBrowser", () => {
           evidenceIds: ["rule-source"],
         },
       ],
+
       evidence: [
         {
           id: "rule-source",
@@ -626,7 +675,9 @@ describe("ProjectIndexEntityBrowser", () => {
     const source = renderer!.root
       .findAllByType("button")
       .find((button) => button.props["aria-label"] === "AGENTS.md:17:3")!;
-    await act(() => source.props.onClick());
+    await act(async () => {
+      await source.props.onClick();
+    });
     expect(openSource).toHaveBeenCalledWith("AGENTS.md", 17);
   });
 
@@ -687,7 +738,9 @@ describe("ProjectIndexEntityBrowser", () => {
     const select = renderer!.root
       .findAllByType("button")
       .find((button) => button.props["aria-label"] === "Increment · src/Increment.ts:17")!;
-    await act(() => select.props.onClick());
+    await act(async () => {
+      await select.props.onClick();
+    });
     const article = renderer!.root.findByType("article");
     const button = (label: string) =>
       renderer!.root
@@ -696,34 +749,44 @@ describe("ProjectIndexEntityBrowser", () => {
     expect(content(renderer!.toJSON())).toContain("Load containing entity");
     expect(content(renderer!.toJSON())).not.toContain("entity:opaque-hash");
 
-    await act(() => button("Next page").props.onClick());
+    await act(async () => {
+      await button("Next page").props.onClick();
+    });
     expect(renderer!.root.findByType("article")).toBe(article);
     expect(renderer!.root.findByType("article").props["aria-label"]).toBe("Increment");
-    await act(() => button("Load more entity context").props.onClick());
+    await act(async () => {
+      await button("Load more entity context").props.onClick();
+    });
     expect(renderer!.root.findByType("article")).toBe(article);
     expect(button("Load more entity context").props.disabled).toBe(true);
-    await act(() =>
-      largerPage.resolve({
+    await act(async () => {
+      await largerPage.resolve({
         ...result([target, container]),
         operation: "entity",
         behaviors: [behavior],
         truncated: true,
-      }),
-    );
+      });
+    });
     expect(renderer!.root.findByType("article")).toBe(article);
     expect(content(renderer!.toJSON())).not.toContain("Adds one to the supplied value.");
     expect(content(renderer!.toJSON())).toContain("Defined in Counter");
-    await act(() => button("Load more entity context").props.onClick());
+    await act(async () => {
+      await button("Load more entity context").props.onClick();
+    });
     expect(renderer!.root.findByType("article")).toBe(article);
     expect(
       renderer!.root
         .findAllByType("button")
         .some((candidate) => candidate.children.includes("Load more entity context")),
     ).toBe(false);
-    await act(() => button("Next page").props.onClick());
+    await act(async () => {
+      await button("Next page").props.onClick();
+    });
     expect(renderer!.root.findByType("article")).toBe(article);
     expect(content(renderer!.toJSON())).toContain("Freshness unknown");
-    await act(() => button("First page").props.onClick());
+    await act(async () => {
+      await button("First page").props.onClick();
+    });
     expect(renderer!.root.findByType("article")).toBe(article);
     expect(content(renderer!.toJSON())).not.toContain("Adds one to the supplied value.");
     const entityQueries = vi
@@ -788,12 +851,12 @@ describe("ProjectIndexEntityBrowser", () => {
         />,
       );
     });
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("button")
         .find((button) => button.props["aria-label"] === "Increment · src/Increment.ts:17")!
-        .props.onClick(),
-    );
+        .props.onClick();
+    });
     const article = renderer!.root.findByType("article");
     const graph = article
       .findAllByType("section")
@@ -805,7 +868,9 @@ describe("ProjectIndexEntityBrowser", () => {
       .findAllByType("button")
       .find((button) => button.props["aria-label"] === "Result · src/Result.ts:17")!;
     expect(api.query).toHaveBeenCalledTimes(3);
-    await act(() => callerNode.props.onClick());
+    await act(async () => {
+      await callerNode.props.onClick();
+    });
     expect(renderer!.root.findByType("article").props["aria-label"]).toBe("Result");
     expect(
       vi
@@ -873,12 +938,12 @@ describe("ProjectIndexEntityBrowser", () => {
           />,
         );
       });
-      await act(() =>
-        renderer!.root
+      await act(async () => {
+        await renderer!.root
           .findAllByType("button")
           .find((button) => button.props["aria-label"] === "Increment · src/Increment.ts:17")!
-          .props.onClick(),
-      );
+          .props.onClick();
+      });
       const article = renderer!.root.findByType("article");
       const title = operation === "callers" ? "Callers" : "Callees";
       const section = () =>
@@ -894,10 +959,14 @@ describe("ProjectIndexEntityBrowser", () => {
           .findAllByType("code")
           .some((code) => code.children.includes("FirstRelation()")),
       ).toBe(true);
-      await act(() => button("Next page").props.onClick());
+      await act(async () => {
+        await button("Next page").props.onClick();
+      });
       expect(renderer!.root.findByType("article")).toBe(article);
       expect(section().props["aria-busy"]).toBe(true);
-      await act(() => secondPage.resolve(relationPage(second, null)));
+      await act(async () => {
+        await secondPage.resolve(relationPage(second, null));
+      });
       expect(renderer!.root.findByType("article")).toBe(article);
       expect(
         section()
@@ -909,7 +978,9 @@ describe("ProjectIndexEntityBrowser", () => {
           .findAllByType("code")
           .some((code) => code.children.includes("FirstRelation()")),
       ).toBe(false);
-      await act(() => button("First page").props.onClick());
+      await act(async () => {
+        await button("First page").props.onClick();
+      });
       expect(renderer!.root.findByType("article")).toBe(article);
       expect(
         section()
@@ -965,22 +1036,22 @@ describe("project graph search", () => {
         />,
       );
     });
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("input")[0]!
-        .props.onChange({ currentTarget: { value: "no-such-symbol" } }),
-    );
+        .props.onChange({ currentTarget: { value: "no-such-symbol" } });
+    });
     expect(content(renderer!.toJSON())).toContain("No indexed entities match this search.");
     expect(content(renderer!.toJSON())).toContain("ProjectEntry");
     expect(content(renderer!.toJSON())).toContain(
       "The map above still shows the project overview.",
     );
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("button")
         .find((button) => button.children.includes("Clear search"))!
-        .props.onClick(),
-    );
+        .props.onClick();
+    });
     expect(content(renderer!.toJSON())).not.toContain("No indexed entities match this search.");
     expect(content(renderer!.toJSON())).toContain("ProjectEntry");
     expect(query).toHaveBeenCalledTimes(2);

@@ -1,3 +1,5 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEnvironmentProviders } from "~/state/environments";
 import {
   projectIndexingDefaultsSupported,
   projectIndexingSupported,
@@ -12,7 +14,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -55,6 +57,7 @@ function indexingModelSummary(
   const provider = applyProviderInstanceSettings(
     deriveProviderInstanceEntries(providers),
     settings,
+    null,
   ).find((entry) => entry.instanceId === selection.instanceId);
   const model = getCustomModelOptionsByInstance(
     settings,
@@ -79,14 +82,14 @@ function ProjectIndexDecisionSettings({
 }) {
   const { message } = useInterfaceTranslator();
   const settings = useEnvironmentSettings(environmentId);
-  const environment = useEnvironment(environmentId);
+  const serverProviders = useEnvironmentProviders().get(environmentId) ?? [];
   if (!children) return null;
   return (
     <BetterT3SettingsSubgroup
       groupId="indexing-models"
       summary={indexingModelSummary(
         settings,
-        environment?.serverConfig?.providers ?? [],
+        serverProviders,
         settings.projectIndexingDecisionModelSelection,
         "decision",
         message("settings.betterT3.value.projectIndexDecisionOff"),
@@ -114,14 +117,14 @@ function ProjectIndexDefaultsForm({
   const { message } = useInterfaceTranslator();
   const navigate = useNavigate();
   const settings = useEnvironmentSettings(environment.environmentId);
+  const serverProviders = useEnvironmentProviders().get(environment.environmentId) ?? [];
   const saveSettings = useSettingsCommand(serverEnvironment.updateSettings);
   const [error, setError] = useState<string | null>(null);
   const [checkAttempt, setCheckAttempt] = useState(0);
   const api = bindProjectIndexApi(environment.environmentId);
   const selection = settings.projectIndexingDefaultModelSelection;
-  const checkModel = useCallback(
-    (modelSelection: ProjectIndexModelSelection) => api.checkModel({ modelSelection }),
-    [api],
+  const checkModel = useStableCallback((modelSelection: ProjectIndexModelSelection) =>
+    api.checkModel({ modelSelection }),
   );
   const check = useProjectIndexModelCheck(checkModel, selection, checkAttempt);
   const save = useSettingsMutation({
@@ -210,7 +213,7 @@ function ProjectIndexDefaultsForm({
         summary={[
           indexingModelSummary(
             settings,
-            environment.serverConfig?.providers ?? [],
+            serverProviders,
             selection,
             "text-generation",
             message("projectIndexing.noDefaultModel"),
@@ -221,7 +224,7 @@ function ProjectIndexDefaultsForm({
             ? [
                 indexingModelSummary(
                   settings,
-                  environment.serverConfig?.providers ?? [],
+                  serverProviders,
                   settings.projectIndexingDecisionModelSelection,
                   "decision",
                   message("settings.betterT3.value.projectIndexDecisionOff"),
@@ -242,10 +245,11 @@ function ProjectIndexDefaultsForm({
               control={
                 <div className="flex flex-wrap items-center gap-2">
                   <ProjectIndexModelPicker
+                    environmentId={environment.environmentId}
                     label={message("projectIndexing.defaultModel")}
                     selection={selection}
                     settings={settings}
-                    providers={environment.serverConfig?.providers ?? []}
+                    providers={serverProviders}
                     disabled={!canOperate || save.isPending}
                     onChange={(projectIndexingDefaultModelSelection) =>
                       update({ projectIndexingDefaultModelSelection })

@@ -1,3 +1,4 @@
+import type * as React from "react";
 import type {
   EnvironmentId,
   PullRequestCheck,
@@ -5,17 +6,20 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-
-import { useOpenLink } from "~/browser/useOpenLink";
 import { useState } from "react";
 import { PullRequestJobLogDialog } from "./PullRequestJobLogDialog";
+
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Button } from "../ui/button";
+import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -23,11 +27,7 @@ import {
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
-/**
- * The checks behind the rollup, for a row that only carries the rollup. Mounted by the popup, so
- * the read starts when somebody opens it rather than once per row of a listing — the detail read
- * is a request per pull request, and a page of them at rest would be a hundred.
- */
+// Fetch only on open to avoid per-row requests.
 function LazyChecksBody({
   environmentId,
   reference,
@@ -67,74 +67,91 @@ function ChecksBody({
   onOpenLog: ((check: PullRequestCheck) => void) | undefined;
 }) {
   const openLink = useOpenLink(threadRef);
+  const [showAll, setShowAll] = useState(false);
+  const { attention, running, completed } = groupPullRequestChecks(checks);
+  const canCollapse = attention.length + running.length > 0 && completed.length > 0;
+  const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
+  const hasDetails = visibleChecks.some(
+    (check) => check.url !== null || (check.logId !== undefined && onOpenLog),
+  );
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
   return (
-    <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-      {/* Keyed by position as well as by name: the host is the one that decides how many runs
-          share a name, and a repeated key is a rendering fault rather than a wrong list. */}
-      {checks.map((check, index) => (
-        <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
-          <PullRequestCheckStatusIcon status={check.status} pendingState={check.pendingState} />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="min-w-0 flex-1">
-                  {check.logId !== undefined && onOpenLog ? (
-                    <button
-                      type="button"
-                      className="block max-w-full truncate text-left hover:underline"
-                      onClick={() => onOpenLog(check)}
-                    >
-                      {check.name}
-                    </button>
-                  ) : (
-                    <span className="block truncate">{check.name}</span>
-                  )}
-                  {check.stage ? (
-                    <span className="block truncate text-muted-foreground">{check.stage}</span>
-                  ) : null}
-                </span>
-              }
-            />
-            <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-          </Tooltip>
-          <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check)}
-          </span>
-          {check.url === null && !(check.logId !== undefined && onOpenLog) ? null : (
-            <button
-              type="button"
-              className="shrink-0 text-primary hover:underline"
-              onClick={() => {
-                if (check.logId !== undefined && onOpenLog) {
-                  onOpenLog(check);
-                  return;
-                }
-                if (!check.url) return;
-                void openLink(check.url).catch((error: unknown) => {
-                  console.error(error);
-                  toastManager.add({ type: "error", title: "Unable to open check details" });
-                });
-              }}
-            >
-              {check.logId !== undefined && onOpenLog ? "Logs" : "Details"}
-            </button>
+    <>
+      <ScrollArea className="-me-3 w-auto max-h-64">
+        <ul
+          className={cn(
+            "grid gap-x-2 gap-y-1 pe-3",
+            hasDetails
+              ? "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
+              : "grid-cols-[auto_minmax(0,1fr)_auto]",
           )}
-        </li>
-      ))}
-    </ul>
+        >
+          {visibleChecks.map(
+            (check, index) => (
+              /* oxlint-disable react/no-array-index-key -- Check names can repeat; these status rows have no local state. */ <li
+                key={`${index}:${check.name}`}
+                className="col-span-full grid grid-cols-subgrid items-center text-xs"
+              >
+                <PullRequestCheckStatusIcon
+                  status={check.status}
+                  pendingState={check.pendingState}
+                />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="min-w-0 truncate">
+                        {check.name}
+                        {check.stage ? (
+                          <span className="block text-muted-foreground">{check.stage}</span>
+                        ) : null}
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+                </Tooltip>
+                <span className="justify-self-end whitespace-nowrap text-muted-foreground">
+                  {pullRequestCheckStatusLabel(check)}
+                </span>
+                {check.url === null && !(check.logId !== undefined && onOpenLog) ? null : (
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    onClick={() => {
+                      if (check.logId !== undefined && onOpenLog) {
+                        onOpenLog(check);
+                        return;
+                      }
+                      if (!check.url) return;
+                      void openLink(check.url).catch((error: unknown) => {
+                        console.error(error);
+                        toastManager.add({ type: "error", title: "Unable to open check details" });
+                      });
+                    }}
+                  >
+                    {check.logId !== undefined && onOpenLog ? "Logs" : "Details"}
+                  </button>
+                )}
+              </li>
+            ) /* oxlint-enable react/no-array-index-key */,
+          )}
+        </ul>
+      </ScrollArea>
+      {canCollapse ? (
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-expanded={showAll}
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "Show less" : "Show all"}
+        </Button>
+      ) : null}
+    </>
   );
 }
 
-/**
- * The checks indicator and what it opens, in both places a change request is shown: a listing
- * row, which knows only the rollup, and the detail header, which is already holding every check.
- *
- * `checks` decides between the two. Given them, nothing is read; without them, the popup reads
- * the detail itself, which is why the row must also say which environment it came from.
- */
 export function PullRequestChecksPopover({
   checksState,
   checks,
@@ -142,17 +159,19 @@ export function PullRequestChecksPopover({
   environmentId,
   reference,
   threadRef = null,
+  variant = "icon",
   className,
+  render,
 }: {
   checksState: PullRequestChecksState;
-  /** The checks already in hand, for the detail header. Absent on a listing row. */
   checks?: ReadonlyArray<PullRequestCheck>;
   stale?: boolean;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
-  /** Thread the popover sits beside; a listing row has none. */
   threadRef?: ScopedThreadRef | null;
+  variant?: "icon" | "count";
   className?: string;
+  render?: React.ReactElement;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
   const [open, setOpen] = useState(false);
@@ -165,7 +184,12 @@ export function PullRequestChecksPopover({
           setOpen(false);
         }
       : undefined;
-  // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
+  const incompleteCount =
+    checks?.filter((check) => check.status === "pending" || check.status === "action-required")
+      .length ?? 0;
+  const failedCount =
+    checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
+    0;
   const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <>
@@ -180,29 +204,40 @@ export function PullRequestChecksPopover({
         />
       ) : null}
       <Popover open={open} onOpenChange={setOpen}>
-        {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
-          not valid inside one. The click is stopped here so opening the checks does not also
-          select the row it sits on. */}
         <PopoverTrigger
-          nativeButton={false}
+          nativeButton={variant === "count"}
+          aria-label={
+            variant === "count"
+              ? `Open checks: ${summary ?? presentation.label}`
+              : `Checks: ${presentation.label}`
+          }
           render={
-            <span
-              role="button"
-              tabIndex={0}
-              aria-label={`Checks: ${presentation.label}`}
-              className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
-            />
+            variant === "count" ? (
+              (render ?? <Button variant="ghost" size="sm" className={className} />)
+            ) : (
+              <span
+                role="button"
+                tabIndex={0}
+                className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
+              />
+            )
           }
           onClick={(event) => event.stopPropagation()}
         >
           <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+          {variant === "count" ? (
+            <>
+              {checks !== undefined && incompleteCount > 0 ? (
+                <span className="tabular-nums">
+                  {checks.length - incompleteCount}/{checks.length} checks
+                </span>
+              ) : failedCount > 0 ? (
+                <span className="tabular-nums">{failedCount} failed</span>
+              ) : null}
+            </>
+          ) : null}
         </PopoverTrigger>
-        <PopoverPopup
-          align="start"
-          width="md"
-          side="bottom"
-          onClick={(event) => event.stopPropagation()}
-        >
+        <PopoverPopup align="start" width="md" side="bottom">
           <p className="mb-2 font-medium text-sm">{presentation.label}</p>
           {summary === null ? null : (
             <p className="mb-2 text-muted-foreground text-xs">{summary}</p>
@@ -217,8 +252,8 @@ export function PullRequestChecksPopover({
             <LazyChecksBody
               environmentId={environmentId}
               reference={reference}
-              threadRef={threadRef}
               onOpenLog={onOpenLog}
+              threadRef={threadRef}
             />
           ) : null}
         </PopoverPopup>

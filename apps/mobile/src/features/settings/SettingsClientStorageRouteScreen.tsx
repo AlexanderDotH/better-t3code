@@ -1,15 +1,16 @@
-import { SettingsScreen } from "./components/SettingsScreen";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import * as Dialog from "../../components/ui/Dialog";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
-import { ActivityIndicator, Alert, Pressable, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../components/EnvironmentMachineSymbol";
 import {
   clearClientCacheAtom,
   clientCacheSummaryAtom,
@@ -17,12 +18,11 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsSection } from "./components/SettingsSection";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { SettingsScreen } from "./components/SettingsScreen";
 
 export function SettingsClientStorageRouteScreen() {
-  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
   const clearResult = useAtomValue(clearClientCacheAtom);
@@ -45,36 +45,26 @@ export function SettingsClientStorageRouteScreen() {
     const label =
       savedConnectionsById[environment.environmentId]?.environmentLabel ??
       environment.environmentId;
-    Alert.alert(
-      translator.message("mobile.settings.storage.clearEnvironmentTitle", {
-        environment: label,
-      }),
-      translator.message("mobile.settings.storage.clearEnvironmentDescription"),
-      [
-        { text: translator.message("common.cancel"), style: "cancel" },
-        {
-          text: translator.message("mobile.settings.storage.clearCache"),
-          style: "destructive",
-          onPress: () =>
-            clearCache({ type: "environment", environmentId: environment.environmentId }),
-        },
-      ],
-    );
+    Dialog.confirm({
+      title: `Clear cache for ${label}?`,
+      message:
+        "This removes offline threads, server metadata, and cached branches for this environment. The saved connection and credentials stay intact.",
+      confirmText: "Clear Cache",
+      destructive: true,
+      onConfirm: () =>
+        clearCache({ type: "environment", environmentId: environment.environmentId }),
+    });
   };
 
   const confirmClearAll = () => {
-    Alert.alert(
-      translator.message("mobile.settings.storage.clearAllTitle"),
-      translator.message("mobile.settings.storage.clearAllDescription"),
-      [
-        { text: translator.message("common.cancel"), style: "cancel" },
-        {
-          text: translator.message("mobile.settings.storage.clearAll"),
-          style: "destructive",
-          onPress: () => clearCache({ type: "all" }),
-        },
-      ],
-    );
+    Dialog.confirm({
+      title: "Clear all client caches?",
+      message:
+        "This removes offline data for every environment. Connections, credentials, account data, and app preferences stay intact.",
+      confirmText: "Clear All Caches",
+      destructive: true,
+      onConfirm: () => clearCache({ type: "all" }),
+    });
   };
 
   return (
@@ -86,7 +76,7 @@ export function SettingsClientStorageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
-        <SettingsSection title={translator.message("mobile.settings.storage.environmentCaches")}>
+        <SettingsSection title="Environment caches">
           {AsyncResult.isFailure(summaryResult) ? (
             <View className="items-center gap-2 px-6 py-8">
               <SymbolView
@@ -96,18 +86,16 @@ export function SettingsClientStorageRouteScreen() {
                 type="monochrome"
                 weight="regular"
               />
-              <Text className="text-center text-base text-foreground">
-                {translator.message("mobile.settings.storage.unavailable")}
-              </Text>
+              <Text className="text-center text-base text-foreground">Storage unavailable</Text>
               <Text className="text-center text-sm text-foreground-muted">
-                {translator.message("mobile.settings.storage.restart")}
+                Restart the app and try again.
               </Text>
             </View>
           ) : !summary ? (
             <View className="items-center gap-3 px-6 py-8">
-              <ActivityIndicator />
+              <AppActivityIndicator />
               <Text className="text-center text-sm text-foreground-muted">
-                {translator.message("mobile.settings.storage.inspecting")}
+                Inspecting cached data…
               </Text>
             </View>
           ) : environmentSummaries.length > 0 ? (
@@ -136,49 +124,32 @@ export function SettingsClientStorageRouteScreen() {
                 type="monochrome"
                 weight="regular"
               />
-              <Text className="text-center text-base text-foreground">
-                {translator.message("mobile.settings.storage.none")}
-              </Text>
+              <Text className="text-center text-base text-foreground">No cached data</Text>
               <Text className="text-center text-sm text-foreground-muted">
-                {translator.message("mobile.settings.storage.noneDescription")}
+                Offline cache records will appear here after environments are used.
               </Text>
             </View>
           )}
         </SettingsSection>
 
         <View className="gap-3">
-          <SettingsSection title={translator.message("mobile.settings.storage.actions")}>
-            <Pressable
-              accessibilityRole="button"
+          <SettingsSection title="Actions">
+            <SettingsActionRow
+              icon="trash"
+              label={summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
+              tone="danger"
               disabled={isClearing || !summary || summary.recordCount === 0}
+              loading={isClearing}
               onPress={confirmClearAll}
-              className="flex-row items-center gap-4 p-4 disabled:opacity-40"
-            >
-              <SymbolView
-                name="trash"
-                size={22}
-                tintColorClassName={"accent-danger-foreground"}
-                type="monochrome"
-                weight="regular"
-              />
-              <Text className="flex-1 text-lg tabular-nums text-danger-foreground">
-                {summary
-                  ? translator.message("mobile.settings.storage.clearBytes", {
-                      size: formatBytes(summary.payloadBytes),
-                    })
-                  : translator.message("mobile.settings.storage.clearCaches")}
-              </Text>
-              {isClearing ? (
-                <ActivityIndicator colorClassName={"accent-danger-foreground"} />
-              ) : null}
-            </Pressable>
+            />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            {translator.message("mobile.settings.storage.safety")}
+            Clearing caches never removes environment connections, credentials, account data, or
+            appearance preferences.
           </Text>
           {AsyncResult.isFailure(summaryResult) || AsyncResult.isFailure(clearResult) ? (
             <Text selectable className="px-2 text-sm text-danger-foreground">
-              {translator.message("mobile.settings.storage.temporaryUnavailable")}
+              Client storage is temporarily unavailable. Try again after restarting the app.
             </Text>
           ) : null}
         </View>
@@ -195,35 +166,16 @@ function CacheEnvironmentRow(props: {
   readonly first: boolean;
   readonly onClear: () => void;
 }) {
-  const translator = useMobileInterfaceTranslator();
   return (
-    <View
-      className={
-        props.first
-          ? "flex-row items-center gap-3 p-4"
-          : "border-t border-border flex-row items-center gap-3 p-4"
-      }
-    >
-      <EnvironmentMachineSymbol kind={props.machine} size={22} tintColorClassName="accent-icon" />
-      <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
-        {props.environmentLabel}
-      </Text>
-      <Pressable
-        accessibilityLabel={translator.message(
-          "mobile.settings.storage.clearEnvironmentAccessibility",
-          { environment: props.environmentLabel },
-        )}
-        accessibilityRole="button"
+    <View className={props.first ? undefined : "border-t border-border"}>
+      <SettingsActionRow
+        icon={ENVIRONMENT_MACHINE_SYMBOLS[props.machine]}
+        label={props.environmentLabel}
+        description={`Clear ${formatBytes(props.environment.payloadBytes)} of cached data`}
+        tone="danger"
         disabled={props.disabled}
         onPress={props.onClear}
-        className="rounded-full px-3 py-2 disabled:opacity-40"
-      >
-        <Text className="font-t3-medium tabular-nums text-danger-foreground" numberOfLines={1}>
-          {translator.message("mobile.settings.storage.clearBytes", {
-            size: formatBytes(props.environment.payloadBytes),
-          })}
-        </Text>
-      </Pressable>
+      />
     </View>
   );
 }

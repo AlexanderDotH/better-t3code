@@ -1,11 +1,6 @@
-// @vitest-environment jsdom
+import type { ThreadCheckpointSummary as OrchestrationCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 
-import {
-  CheckpointRef,
-  MessageId,
-  TurnId,
-  type OrchestrationCheckpointSummary,
-} from "@t3tools/contracts";
+import { CheckpointRef, MessageId, RunId } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { act, createElement, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -20,7 +15,7 @@ vi.mock("react-native", () => ({
       props.children,
     ),
 }));
-vi.mock("../../components/AppText", () => ({
+vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => createElement("span", {}, props.children),
 }));
 vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
@@ -37,7 +32,7 @@ import { ChangedFilesSummary } from "./ChangedFilesSummary";
 it("shows three real files, expands in source order, and collapses without losing the review action", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const checkpoint: OrchestrationCheckpointSummary = {
-    turnId: TurnId.make("turn"),
+    runId: RunId.make("turn"),
     checkpointTurnCount: 1,
     checkpointRef: CheckpointRef.make("checkpoint"),
     status: "ready",

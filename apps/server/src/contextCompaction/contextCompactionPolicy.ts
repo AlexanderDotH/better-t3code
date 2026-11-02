@@ -1,9 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - Transcript fingerprints are synchronous and stable across runtimes.
 import * as NodeCrypto from "node:crypto";
-import type {
-  ChatAttachment,
-  OrchestrationMessage,
-  ThreadTokenUsageSnapshot,
-} from "@t3tools/contracts";
+import type { ChatAttachment, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import type { OrchestrationMessage } from "@t3tools/contracts/legacy";
 export { resolveContextCompactionModel } from "@t3tools/shared/model";
 
 export const CONTEXT_PREPARATION_RATIO = 0.45;
@@ -34,7 +32,9 @@ export function contextPrefixLength(messages: ReadonlyArray<OrchestrationMessage
 }
 
 export function contextPrefixFingerprint(
-  messages: ReadonlyArray<OrchestrationMessage>,
+  messages: ReadonlyArray<
+    Pick<OrchestrationMessage, "id" | "role" | "text" | "attachments" | "context" | "streaming">
+  >,
   count: number,
 ) {
   const hash = NodeCrypto.createHash("sha256");

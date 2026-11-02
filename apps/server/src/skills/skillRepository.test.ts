@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import {
   downloadRegistrySkill,
   previewRegistrySkill,
@@ -101,22 +101,20 @@ describe("public GitHub skill installation", () => {
     }).pipe(Effect.provide(FetchHttpClient.layer), fromArchive()),
   );
 
-  for (const file of [
+  it.effect.each([
     { path: "skills/review/link", contents: "../../outside", mode: 0o120777 },
     { path: "skills/review/.git/config", contents: "unsafe" },
-  ]) {
-    it.effect(`rejects an unsafe selected skill entry: ${file.path}`, () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          previewRegistrySkill({ source: "example/skills/frontend-review" }),
-        );
-        expect(error.message).toMatch(/unsafe|symbolic/i);
-      }).pipe(
-        Effect.provide(FetchHttpClient.layer),
-        fromArchive(skillArchive([{ path: "skills/review/SKILL.md", contents: main }, file])),
-      ),
-    );
-  }
+  ])("rejects an unsafe selected skill entry: %s", (file) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        previewRegistrySkill({ source: "example/skills/frontend-review" }),
+      );
+      expect(error.message).toMatch(/unsafe|symbolic/i);
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      fromArchive(skillArchive([{ path: "skills/review/SKILL.md", contents: main }, file])),
+    ),
+  );
 
   it.effect("refuses corrupt archives instead of publishing an incomplete skill", () =>
     Effect.gen(function* () {

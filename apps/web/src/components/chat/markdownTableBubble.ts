@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 interface TableBounds {
   readonly left: number;
   readonly right: number;
@@ -49,13 +50,11 @@ export function observeMarkdownTableBubble(table: HTMLElement, bubble: HTMLEleme
     publish();
   };
   measure();
-  const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-  observer?.observe(table);
-  observer?.observe(bubble);
+  const stopObserving = observeResize([table, bubble], measure);
   return () => {
     if (!active) return;
     active = false;
-    observer?.disconnect();
+    stopObserving();
     group.delete(table);
     publish();
   };

@@ -11,20 +11,19 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import {
-  ChatAttachment,
-  ModelSelection,
-  getProviderAttachmentLimitError,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
   ProviderRequestKind,
   ProviderSandboxMode,
-  ProviderUserInputAnswers,
-  UserInputAttachments,
   RuntimeMode,
-} from "./orchestration.ts";
+} from "./providerPolicy.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import {
+  ChatAttachment,
+  getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+} from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProjectMemoryMode } from "./projectMemory.ts";
 
 const ProviderSessionStatus = Schema.Literals([
@@ -117,8 +116,7 @@ export type ProviderTurnTranscriptHandoff = typeof ProviderTurnTranscriptHandoff
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
-  /** Internal recovery signal. Allows an empty turn only for adapters that
-      explicitly support promptless continuation. */
+  /** Internal recovery: permits empty turns only for adapters supporting promptless continuation. */
   continuation: Schema.optional(Schema.Boolean),
   input: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
@@ -135,39 +133,6 @@ export const ProviderSendTurnInput = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
-
-export const ProviderTurnStartResult = Schema.Struct({
-  threadId: ThreadId,
-  turnId: TurnId,
-  resumeCursor: Schema.optional(Schema.Unknown),
-});
-export type ProviderTurnStartResult = typeof ProviderTurnStartResult.Type;
-
-export const ProviderInterruptTurnInput = Schema.Struct({
-  threadId: ThreadId,
-  turnId: Schema.optional(TurnId),
-});
-export type ProviderInterruptTurnInput = typeof ProviderInterruptTurnInput.Type;
-
-export const ProviderStopSessionInput = Schema.Struct({
-  threadId: ThreadId,
-});
-export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
-
-export const ProviderRespondToRequestInput = Schema.Struct({
-  threadId: ThreadId,
-  requestId: ApprovalRequestId,
-  decision: ProviderApprovalDecision,
-});
-export type ProviderRespondToRequestInput = typeof ProviderRespondToRequestInput.Type;
-
-export const ProviderRespondToUserInputInput = Schema.Struct({
-  threadId: ThreadId,
-  requestId: ApprovalRequestId,
-  answers: ProviderUserInputAnswers,
-  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
-});
-export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
 
 export const ProviderUploadFeedbackInput = Schema.Struct({
   threadId: ThreadId,

@@ -14,12 +14,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { Cause } from "effect";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { serverEnvironment } from "../../state/server";
@@ -53,6 +53,7 @@ function MobileAiEndpointDiscovery(props: {
     (currentEvent?.status === "scanning" || (currentEvent === null && result.waiting));
   const error = AsyncResult.isFailure(result) ? Cause.squash(result.cause) : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Start the environment endpoint scan and cancel that scan when this panel unmounts.
   useEffect(() => {
     serverEnvironment.startAiEndpointDiscovery(registry, {
       environmentId: props.environmentId,
@@ -61,9 +62,7 @@ function MobileAiEndpointDiscovery(props: {
     return () => serverEnvironment.cancelAiEndpointDiscovery(registry, props.environmentId);
   }, [props.environmentId, registry]);
 
-  useEffect(() => {
-    if (currentEvent !== null) setLastEvent(currentEvent);
-  }, [currentEvent]);
+  if (currentEvent !== null && lastEvent !== currentEvent) setLastEvent(currentEvent);
 
   return (
     <View className="gap-3 rounded-2xl bg-subtle p-4">

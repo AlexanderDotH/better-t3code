@@ -1,10 +1,10 @@
 import type {
   ProjectIndexModelSelection,
+  EnvironmentId,
   ServerProvider,
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { supportsModelSelectionPurpose } from "@t3tools/shared/model";
-import { useMemo } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -19,6 +19,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { projectIndexModelLabel } from "./projectIndexModelLabel";
 
 export function ProjectIndexModelPicker({
+  environmentId = null,
   selection,
   settings,
   providers,
@@ -26,6 +27,7 @@ export function ProjectIndexModelPicker({
   onChange,
   label,
 }: {
+  readonly environmentId?: EnvironmentId | null;
   readonly selection: ProjectIndexModelSelection | null;
   readonly settings: UnifiedSettings;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -34,25 +36,17 @@ export function ProjectIndexModelPicker({
   readonly label?: string;
 }) {
   const { message } = useInterfaceTranslator();
-  const entries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
-      ).filter((entry) =>
-        entry.models.some((model) => supportsModelSelectionPurpose(model, "text-generation")),
-      ),
-    [providers, settings],
+  const entries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
+  ).filter((entry) =>
+    entry.models.some((model) => supportsModelSelectionPurpose(model, "text-generation")),
   );
-  const models = useMemo(
-    () =>
-      getCustomModelOptionsByInstance(
-        settings,
-        providers,
-        selection?.instanceId,
-        selection?.model,
-        "text-generation",
-      ),
-    [settings, providers, selection],
+  const models = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    selection?.instanceId,
+    selection?.model,
+    "text-generation",
   );
   const selectedEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
   const selectedEntryAvailable = selectedEntry && isProviderInstancePickerReady(selectedEntry);
@@ -69,6 +63,7 @@ export function ProjectIndexModelPicker({
 
   return (
     <ProviderModelPicker
+      environmentId={environmentId}
       activeInstanceId={activeInstanceId}
       model={selectedEntryAvailable ? (selection?.model ?? "") : ""}
       lockedProvider={null}

@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { VISUALIZATION_CHANNEL } from "@t3tools/client-runtime/visualizations/model";
-import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 const feature = vi.hoisted(() => ({ enabled: false }));
@@ -9,8 +9,11 @@ vi.mock("../hooks/useVisualizationsEnabled", () => ({
   useVisualizationsEnabled: () => feature.enabled,
 }));
 vi.mock("../hooks/useBetterT3Feature", () => ({ useBetterT3DeviceFeature: () => false }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ pullRequestsEnabled: false }) }));
+vi.mock("../hooks/useTheme", () => ({
+  useTheme: () => ({ resolvedTheme: "dark" }),
+  useRenderedAppearance: () => "dark",
+}));
 vi.mock("~/interfaceLanguageSync", () => ({ useInterfaceLanguage: () => ({ language: "en" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
@@ -61,7 +64,6 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 import ChatMarkdown from "./ChatMarkdown";
 
 it("stops the real preview bridge and releases its SVG when the feature switches off", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const messages = Object.assign(new EventTarget(), {
     requestAnimationFrame: vi.fn(() => 1),
     cancelAnimationFrame: vi.fn(),
@@ -105,7 +107,7 @@ it("stops the real preview bridge and releases its SVG when the feature switches
   vi.stubGlobal("fetch", fetch);
   const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:diagram-preview");
   const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
-  const source = "```mermaid\nflowchart LR\nAlpha --> Beta\n```";
+  const source = "```dot\ndigraph { Alpha -> Beta }\n```";
   const markdown = (isStreaming: boolean) => (
     <ChatMarkdown
       text={source}
@@ -130,6 +132,11 @@ it("stops the real preview bridge and releases its SVG when the feature switches
     });
     const request = await requested.promise;
     await act(async () => {
+      renderer!.update(markdown(true));
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(frame.contentWindow.postMessage).toHaveBeenCalledOnce();
+    await act(async () => {
       emit(frame.contentWindow, {
         channel: VISUALIZATION_CHANNEL,
         type: "result",
@@ -147,7 +154,7 @@ it("stops the real preview bridge and releases its SVG when the feature switches
     expect(frame.remove).toHaveBeenCalledOnce();
     expect(revokeUrl).toHaveBeenCalledWith("blob:diagram-preview");
     expect(renderer!.root.findAllByProps({ src: "blob:diagram-preview" })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ "data-language": "mermaid" })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ "data-language": "dot" })).toHaveLength(1);
     await act(async () => {
       emit(frame.contentWindow, {
         channel: VISUALIZATION_CHANNEL,

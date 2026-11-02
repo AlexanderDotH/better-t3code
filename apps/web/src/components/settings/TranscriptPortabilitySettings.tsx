@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useThreadShells } from "../../state/entities";
@@ -24,22 +24,19 @@ export function TranscriptPortabilitySettings({
   const translate = useInterfaceTranslator().message;
   const threads = useThreadShells();
   const { environments } = useEnvironments();
-  const supportedEnvironmentIds = useMemo(
-    () =>
-      new Set(
-        environments
-          .filter(
-            (environment) =>
-              environment.connection.phase === "connected" &&
-              (environment.serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1,
-          )
-          .map((environment) => environment.environmentId),
-      ),
-    [environments],
+  const supportedEnvironmentIds = new Set(
+    environments
+      .filter(
+        (environment) =>
+          environment.connection.phase === "connected" &&
+          (environment.serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1,
+      )
+      .map((environment) => environment.environmentId),
   );
-  const options = useMemo(
-    () => buildTranscriptPortabilityOptions(threads, supportedEnvironmentIds, environmentId),
-    [environmentId, supportedEnvironmentIds, threads],
+  const options = buildTranscriptPortabilityOptions(
+    threads,
+    supportedEnvironmentIds,
+    environmentId,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selected =

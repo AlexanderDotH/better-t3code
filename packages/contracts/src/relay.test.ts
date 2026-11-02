@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import * as Schema from "effect/Schema";
-
-import { RelayApi, RelayDeviceRegistrationRequest } from "./relay.ts";
+import { RelayDeviceRegistrationRequest } from "./relay.ts";
+import * as OpenApi from "effect/http-api/OpenApi";
+import { RelayApi } from "./relay.ts";
 
 const decodeDevice = Schema.decodeUnknownExit(RelayDeviceRegistrationRequest);
 const device = {
@@ -18,24 +18,9 @@ const device = {
     notifyOnFailure: true,
   },
 };
-
 const registration = { ...device, platform: "ios", iosMajorVersion: 18 } as const;
 
 describe("mobile device platforms", () => {
-  it.each([
-    [23, "Failure"],
-    [24, "Success"],
-    [37, "Success"],
-  ])("enforces the Android minimum without an upper bound (API %i)", (androidApiLevel, result) => {
-    expect(decodeDevice({ ...device, platform: "android", androidApiLevel })._tag).toBe(result);
-  });
-
-  it("accepts Android tokens without Apple routing and preserves older iOS registrations", () => {
-    expect(decodeDevice({ ...device, platform: "android", androidApiLevel: 36 })._tag).toBe(
-      "Success",
-    );
-    expect(decodeDevice({ ...device, platform: "ios", iosMajorVersion: 18 })._tag).toBe("Success");
-  });
   it("rejects missing platform versions and Apple activity tokens on Android", () => {
     expect(decodeDevice({ ...device, platform: "ios" })._tag).toBe("Failure");
     expect(decodeDevice({ ...device, platform: "android" })._tag).toBe("Failure");
@@ -47,6 +32,20 @@ describe("mobile device platforms", () => {
         pushToStartToken: "apple-token",
       })._tag,
     ).toBe("Failure");
+  });
+
+  it.each([
+    [23, "Failure"],
+    [24, "Success"],
+    [37, "Success"],
+  ])("enforces the Android minimum without an upper bound (API %i)", (androidApiLevel, result) => {
+    expect(decodeDevice({ ...device, platform: "android", androidApiLevel })._tag).toBe(result);
+  });
+  it("accepts Android tokens without Apple routing and preserves older iOS registrations", () => {
+    expect(decodeDevice({ ...device, platform: "android", androidApiLevel: 36 })._tag).toBe(
+      "Success",
+    );
+    expect(decodeDevice({ ...device, platform: "ios", iosMajorVersion: 18 })._tag).toBe("Success");
   });
 });
 

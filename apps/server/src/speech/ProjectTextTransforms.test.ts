@@ -1,3 +1,4 @@
+const encodeErrorJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -13,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProjectTextTransforms from "./ProjectTextTransforms.ts";
@@ -41,8 +42,8 @@ const voiceTranslationModelSelection = createModelSelection(
 );
 
 function projectionLayer(projectResult: Option.Option<OrchestrationProjectShell>) {
-  return Layer.mock(ProjectionSnapshotQuery, {
-    getProjectShellById: () => Effect.succeed(projectResult),
+  return Layer.mock(ProjectStoreV2, {
+    getShell: () => Effect.succeed(projectResult),
   });
 }
 
@@ -153,9 +154,7 @@ describe("ProjectTextTransforms", () => {
       expect(error.operation).toBe("translate-transcript");
       expect(error.projectId).toBe(projectId);
       expect(error.reason).toBe("The project was not found.");
-      expect(
-        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error),
-      ).not.toContain(inputText);
+      expect(yield* encodeErrorJson(error)).not.toContain(inputText);
     }).pipe(Effect.provide(layer));
   });
 
@@ -183,9 +182,7 @@ describe("ProjectTextTransforms", () => {
       expect(error.operation).toBe("improve-prompt");
       expect(error.reason).toBe("Text generation failed.");
       expect(error.cause).toBeUndefined();
-      expect(
-        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error),
-      ).not.toContain(inputText);
+      expect(yield* encodeErrorJson(error)).not.toContain(inputText);
     }).pipe(Effect.provide(layer));
   });
 

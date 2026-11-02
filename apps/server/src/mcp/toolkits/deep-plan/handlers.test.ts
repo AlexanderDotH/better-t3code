@@ -66,7 +66,12 @@ const run: DeepPlanRun = {
   updatedAt: timestamp,
   pauseReason: null,
 };
-const scope: McpInvocationScope = {
+type TestScope = Omit<McpInvocationScope, "thread" | "client" | "requestNamespace"> & {
+  readonly threadId: ThreadId;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: ProviderInstanceId;
+};
+const scope: TestScope = {
   environmentId: EnvironmentId.make("local"),
   ownerThreadId: threadId,
   threadId,
@@ -111,7 +116,7 @@ const update = { expectedRunId: runId, expectedRevision: 3, operationId: "operat
 function harness(
   options: {
     readonly run?: DeepPlanRun;
-    readonly scope?: McpInvocationScope;
+    readonly scope?: TestScope;
     readonly sources?: Partial<DeepPlanSourcesShape>;
     readonly withRunLock?: DeepPlanWorkflow["Service"]["withRunLock"];
   } = {},
@@ -144,12 +149,22 @@ function harness(
   });
   const provide = <A, E>(
     effect: Effect.Effect<A, E, DeepPlanWorkflow | DeepPlanSources | McpInvocationContext>,
-    invocation: McpInvocationScope = options.scope ?? scope,
+    invocation: TestScope = options.scope ?? scope,
   ) =>
     effect.pipe(
       Effect.provideService(DeepPlanWorkflow, workflow),
       Effect.provideService(DeepPlanSources, sources),
-      Effect.provideService(McpInvocationContext, invocation),
+      Effect.provideService(McpInvocationContext, {
+        ...invocation,
+        requestNamespace: invocation.providerSessionId,
+        client: undefined,
+        thread: {
+          threadId: invocation.ownerThreadId ?? invocation.threadId,
+          providerSessionId: invocation.providerSessionId,
+          providerInstanceId: invocation.providerInstanceId,
+        },
+        workspaceContextThreadId: invocation.threadId,
+      }),
     );
   return { getRun, updateRun, provide };
 }
@@ -170,7 +185,7 @@ function implementing(implementationThreadId = threadId) {
       implementerId: `thread:${implementationThreadId}`,
     },
   };
-  const invocation: McpInvocationScope = {
+  const invocation: TestScope = {
     ...scope,
     ownerThreadId: implementationThreadId,
     threadId: implementationThreadId,
@@ -518,9 +533,7 @@ function frozenSource(id: string): DeepPlanSourceSnapshot {
   };
 }
 
-function sourceWorkerScope(
-  sourceId: import("@t3tools/contracts").DeepPlanSourceId,
-): McpInvocationScope {
+function sourceWorkerScope(sourceId: import("@t3tools/contracts").DeepPlanSourceId): TestScope {
   const workerThreadId = ThreadId.make(`analysis-worker:${sourceId}`);
   return {
     ...scope,

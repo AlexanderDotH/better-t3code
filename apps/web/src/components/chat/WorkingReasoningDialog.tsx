@@ -1,17 +1,9 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { reasoningTitleMarkdown } from "@t3tools/client-runtime/work-log/reasoning";
-import type { ChatVisualMode, TurnId } from "@t3tools/contracts";
+import type { ChatVisualMode, RunId } from "@t3tools/contracts";
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import type { Root, RootContent } from "mdast";
-import {
-  createContext,
-  memo,
-  use,
-  useCallback,
-  useMemo,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { createContext, memo, use, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -28,14 +20,14 @@ export interface WorkingReasoningTrace {
   readonly id: string;
   readonly detail: string;
   readonly streaming: boolean;
-  readonly turnId?: TurnId | null;
+  readonly runId?: RunId | null;
   readonly createdAt?: string;
   readonly updatedAt?: string;
 }
 
 interface ReasoningSelection {
   readonly traces: readonly WorkingReasoningTrace[];
-  readonly turnId?: TurnId;
+  readonly runId?: RunId;
 }
 
 const WorkingReasoningDialogContext = createContext<
@@ -58,7 +50,7 @@ export function WorkingReasoningDialogProvider(props: {
   readonly children: ReactNode;
   readonly entries: readonly WorkLogEntry[];
   readonly messages: readonly ChatMessage[];
-  readonly activeTurnId: TurnId | null;
+  readonly activeRunId: RunId | null;
   readonly isWorking: boolean;
   readonly enabled?: boolean;
   readonly streamIdPrefix: string;
@@ -75,55 +67,45 @@ export function WorkingReasoningDialogProvider(props: {
   if (dialogState.scope !== props.streamIdPrefix || (!enabled && dialogState.selection !== null)) {
     setDialogState({ scope: props.streamIdPrefix, selection: null });
   }
-  const openReasoning = useCallback(
-    (next: ReasoningSelection) => {
-      if (props.enabled !== false) setDialogState({ scope: props.streamIdPrefix, selection: next });
-    },
-    [props.enabled, props.streamIdPrefix],
-  );
-  const onOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) setDialogState({ scope: props.streamIdPrefix, selection: null });
-    },
-    [props.streamIdPrefix],
-  );
+  const openReasoning = useStableCallback((next: ReasoningSelection) => {
+    if (props.enabled !== false) setDialogState({ scope: props.streamIdPrefix, selection: next });
+  });
+  const onOpenChange = useStableCallback((open: boolean) => {
+    if (!open) setDialogState({ scope: props.streamIdPrefix, selection: null });
+  });
   const label = useInterfaceTranslator().message("chat.timeline.thinking");
-  const traces = useMemo(() => {
+  const traces = (() => {
     if (!selection) return [];
     const selectedIds = new Set(selection.traces.map((trace) => trace.id));
-    const matches = (id: string, turnId: TurnId | null | undefined) =>
-      selection.turnId === undefined ? selectedIds.has(id) : turnId === selection.turnId;
-    const canonical = props.messages.filter(
-      (message) => message.role === "reasoning" && matches(message.id, message.turnId),
-    );
-    const traceKey = (turnId: TurnId | null | undefined, detail: string) =>
-      `${turnId ?? ""}:${detail.trim()}`;
+    const matches = (id: string, runId: RunId | null | undefined) =>
+      selection.runId === undefined ? selectedIds.has(id) : runId === selection.runId;
+    const canonical: ChatMessage[] = [];
+    const traceKey = (runId: RunId | null | undefined, detail: string) =>
+      `${runId ?? ""}:${detail.trim()}`;
     const canonicalText = new Set(
-      canonical.map((message) => traceKey(message.turnId, message.text)),
+      canonical.map((message) => traceKey(message.runId, message.text)),
     );
     const next: WorkingReasoningTrace[] = canonical.map((message) => ({
       id: message.id,
       detail: message.text,
-      turnId: message.turnId,
+      runId: message.runId,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
-      streaming:
-        message.streaming && message.turnId !== null && message.turnId === props.activeTurnId,
+      streaming: message.streaming && message.runId !== null && message.runId === props.activeRunId,
     }));
     for (const entry of props.entries) {
       if (
         workEntryIsProviderReasoning(entry) &&
-        matches(entry.id, entry.turnId) &&
-        (selection.turnId === undefined || entry.historyOrigin === undefined) &&
+        matches(entry.id, entry.runId) &&
         entry.detail?.trim() &&
-        !canonicalText.has(traceKey(entry.turnId, entry.detail))
+        !canonicalText.has(traceKey(entry.runId, entry.detail))
       ) {
         next.push({
           id: entry.id,
           detail: entry.detail,
-          turnId: entry.turnId ?? null,
+          runId: entry.runId ?? null,
           createdAt: entry.createdAt,
-          streaming: entry.turnId != null && entry.turnId === props.activeTurnId,
+          streaming: entry.runId != null && entry.runId === props.activeRunId,
         });
       }
     }
@@ -131,17 +113,17 @@ export function WorkingReasoningDialogProvider(props: {
     for (const snapshot of selection.traces) {
       if (
         !currentIds.has(snapshot.id) &&
-        !canonicalText.has(traceKey(snapshot.turnId, snapshot.detail))
+        !canonicalText.has(traceKey(snapshot.runId, snapshot.detail))
       ) {
         next.push({
           ...snapshot,
           streaming:
-            snapshot.streaming && snapshot.turnId != null && snapshot.turnId === props.activeTurnId,
+            snapshot.streaming && snapshot.runId != null && snapshot.runId === props.activeRunId,
         });
       }
     }
     return next.sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? ""));
-  }, [selection, props.entries, props.messages, props.activeTurnId]);
+  })();
 
   return (
     <Dialog open={selection !== null} onOpenChange={onOpenChange}>
@@ -182,7 +164,7 @@ function remarkReasoningTitle(fallback: string) {
 }
 
 /** Parse only the title line, so streamed body appends do not reparse the log label. */
-export const ReasoningTitle = memo(function ReasoningTitle({
+const ReasoningTitle = memo(function ReasoningTitle({
   title,
   fallback,
 }: {
@@ -198,7 +180,7 @@ export const ReasoningTitle = memo(function ReasoningTitle({
 
 export function WorkingReasoningLog(props: {
   readonly traces: readonly WorkingReasoningTrace[];
-  readonly followTurnId?: TurnId;
+  readonly followRunId?: RunId;
   readonly compact?: boolean;
   readonly chatVisualMode?: ChatVisualMode;
 }) {
@@ -222,18 +204,18 @@ export function WorkingReasoningLog(props: {
           onClick={() =>
             openReasoning?.({
               traces: props.traces,
-              ...(props.followTurnId ? { turnId: props.followTurnId } : {}),
+              ...(props.followRunId ? { runId: props.followRunId } : {}),
             })
           }
           data-reasoning-log="true"
           data-presentation-status={better || undefined}
           className={
             props.compact
-              ? "flex min-w-0 w-full items-center justify-center gap-1.5 rounded-md text-2xs text-secondary-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              ? "flex min-w-0 w-full items-center justify-center gap-1.5 rounded-md text-2xs text-secondary-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               : better
                 ? "better-chat-pill-row max-w-full cursor-pointer text-start text-message-foreground focus-visible:outline-2 focus-visible:outline-ring"
                 : cn(
-                    "flex min-h-6 min-w-0 w-full items-center gap-1.5 rounded-md px-0.5 text-start text-secondary-label hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "flex min-h-6 min-w-0 w-full items-center gap-1.5 rounded-md px-0.5 text-start text-secondary-label hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                     props.chatVisualMode === "classic" ? "text-xs" : "text-sm",
                   )
           }

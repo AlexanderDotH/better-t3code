@@ -1,8 +1,9 @@
 "use client";
 
+import { useStableCallback } from "../../hooks/useStableCallback";
+
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
-import { useCallback } from "react";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
@@ -55,40 +56,34 @@ export function ProviderSubscriptionAuthBridge({
     reportFailure: false,
   });
 
-  const refresh = useCallback(async () => {
+  const refresh = useStableCallback(async () => {
     await refreshProviders({ environmentId, input: {} });
-  }, [environmentId, refreshProviders]);
+  });
 
-  const onConnect = useCallback(
-    async (selectedFlow: ProviderAuthFlow) => {
-      const result = await connectProviderAuth({
-        environmentId,
-        input: { instanceId, flow: selectedFlow },
-      });
-      const error = commandFailure(result, `${presentation.providerName} sign-in failed.`);
-      if (error) throw error;
-      await refresh();
-    },
-    [connectProviderAuth, environmentId, instanceId, presentation.providerName, refresh],
-  );
+  const onConnect = useStableCallback(async (selectedFlow: ProviderAuthFlow) => {
+    const result = await connectProviderAuth({
+      environmentId,
+      input: { instanceId, flow: selectedFlow },
+    });
+    const error = commandFailure(result, `${presentation.providerName} sign-in failed.`);
+    if (error) throw error;
+    await refresh();
+  });
 
-  const onSetCredential = useCallback(
-    async (credential: string) => {
-      const result = await setProviderAuthCredential({
-        environmentId,
-        input: { instanceId, credential },
-      });
-      const error = commandFailure(
-        result,
-        `Could not save ${presentation.credential?.label ?? "provider credential"}.`,
-      );
-      if (error) throw error;
-      await refresh();
-    },
-    [environmentId, instanceId, presentation.credential?.label, refresh, setProviderAuthCredential],
-  );
+  const onSetCredential = useStableCallback(async (credential: string) => {
+    const result = await setProviderAuthCredential({
+      environmentId,
+      input: { instanceId, credential },
+    });
+    const error = commandFailure(
+      result,
+      `Could not save ${presentation.credential?.label ?? "provider credential"}.`,
+    );
+    if (error) throw error;
+    await refresh();
+  });
 
-  const onDisconnect = useCallback(async () => {
+  const onDisconnect = useStableCallback(async () => {
     const result = await disconnectProviderAuth({
       environmentId,
       input: { instanceId },
@@ -96,7 +91,7 @@ export function ProviderSubscriptionAuthBridge({
     const error = commandFailure(result, `Could not disconnect ${presentation.providerName}.`);
     if (error) throw error;
     await refresh();
-  }, [disconnectProviderAuth, environmentId, instanceId, presentation.providerName, refresh]);
+  });
 
   return (
     <ProviderSubscriptionAuthControls

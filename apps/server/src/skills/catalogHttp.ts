@@ -2,7 +2,7 @@ import * as ByteSize from "effect/ByteSize";
 import { SkillEngineError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpIncomingMessage } from "effect/unstable/http";
+import { HttpClient, HttpIncomingMessage } from "effect/http";
 
 const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024;
 const decodeCatalogJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));

@@ -1,3 +1,4 @@
+import { useReduceMotionEnabled } from "../../lib/appState";
 import {
   computeKnowledgeGraphLayout,
   deriveKnowledgeGraphView,
@@ -12,14 +13,7 @@ import type {
   KnowledgeGraphSnapshotV1,
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  AccessibilityInfo,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-  type LayoutChangeEvent,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
@@ -32,8 +26,8 @@ import Animated, {
 import Svg, { Line } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   knowledgeGraphNodeKindMessageKey,
@@ -58,22 +52,6 @@ const NODE_KINDS = [
   "architecture",
 ] as const satisfies ReadonlyArray<KnowledgeGraphNodeKind>;
 
-function useReduceMotion(): boolean {
-  const [reduceMotion, setReduceMotion] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (active) setReduceMotion(enabled);
-    });
-    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion);
-    return () => {
-      active = false;
-      subscription.remove();
-    };
-  }, []);
-  return reduceMotion;
-}
-
 function GraphNode(props: {
   readonly nodeId: KnowledgeGraphNodeId;
   readonly label: string;
@@ -94,16 +72,17 @@ function GraphNode(props: {
   const dragStartX = useSharedValue(props.position.x);
   const dragStartY = useSharedValue(props.position.y);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Animate native shared coordinates when the graph layout moves a node.
   useEffect(() => {
     cancelAnimation(x);
     cancelAnimation(y);
     if (props.reduceMotion) {
-      x.value = props.position.x;
-      y.value = props.position.y;
+      x.set(props.position.x);
+      y.set(props.position.y);
       return undefined;
     }
-    x.value = withTiming(props.position.x, { duration: 160 });
-    y.value = withTiming(props.position.y, { duration: 160 });
+    x.set(withTiming(props.position.x, { duration: 160 }));
+    y.set(withTiming(props.position.y, { duration: 160 }));
     return () => {
       cancelAnimation(x);
       cancelAnimation(y);
@@ -112,30 +91,31 @@ function GraphNode(props: {
 
   const drag = useMemo(
     () =>
+      // oxlint-disable-next-line react/capitalized-calls -- This factory constructs a native gesture recognizer.
       Gesture.Pan()
         .minDistance(5)
         .onBegin(() => {
-          dragStartX.value = x.value;
-          dragStartY.value = y.value;
+          dragStartX.set(x.get());
+          dragStartY.set(y.get());
         })
         .onUpdate((event) => {
-          const viewportScale = Math.max(0.5, Math.min(2.5, props.viewportScale.value));
-          x.value = dragStartX.value + event.translationX / viewportScale;
-          y.value = dragStartY.value + event.translationY / viewportScale;
+          const viewportScale = Math.max(0.5, Math.min(2.5, props.viewportScale.get()));
+          x.set(dragStartX.get() + event.translationX / viewportScale);
+          y.set(dragStartY.get() + event.translationY / viewportScale);
         })
         .onEnd((event) => {
           runOnJS(props.onDragEnd)(props.nodeId, {
-            start: { x: dragStartX.value, y: dragStartY.value },
+            start: { x: dragStartX.get(), y: dragStartY.get() },
             translation: { x: event.translationX, y: event.translationY },
-            viewportScale: props.viewportScale.value,
+            viewportScale: props.viewportScale.get(),
           });
         }),
     [dragStartX, dragStartY, props.nodeId, props.onDragEnd, props.viewportScale, x, y],
   );
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateX: x.value - NODE_WIDTH / 2 },
-      { translateY: y.value - NODE_HEIGHT / 2 },
+      { translateX: x.get() - NODE_WIDTH / 2 },
+      { translateY: y.get() - NODE_HEIGHT / 2 },
     ],
   }));
 
@@ -209,7 +189,7 @@ type KnowledgeGraphCanvasProps = {
 
 export function KnowledgeGraphCanvas(props: KnowledgeGraphCanvasProps) {
   const translator = useMobileInterfaceTranslator();
-  const reduceMotion = useReduceMotion();
+  const reduceMotion = useReduceMotionEnabled();
   const [dimensions, setDimensions] = useState({ width: MIN_CANVAS_SIZE, height: MIN_CANVAS_SIZE });
   const [kinds, setKinds] = useState<ReadonlySet<KnowledgeGraphNodeKind>>(new Set());
   const [pinned, setPinned] = useState<ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>>(
@@ -285,42 +265,45 @@ export function KnowledgeGraphCanvas(props: KnowledgeGraphCanvasProps) {
         return next;
       });
     },
-    [dimensions.height, dimensions.width],
+    [dimensions],
   );
 
   const panGesture = useMemo(
     () =>
+      // oxlint-disable-next-line react/capitalized-calls -- This factory constructs a native gesture recognizer.
       Gesture.Pan()
         .onBegin(() => {
-          panStartX.value = translateX.value;
-          panStartY.value = translateY.value;
+          panStartX.set(translateX.get());
+          panStartY.set(translateY.get());
         })
         .onUpdate((event) => {
-          translateX.value = panStartX.value + event.translationX;
-          translateY.value = panStartY.value + event.translationY;
+          translateX.set(panStartX.get() + event.translationX);
+          translateY.set(panStartY.get() + event.translationY);
         }),
     [panStartX, panStartY, translateX, translateY],
   );
   const pinchGesture = useMemo(
     () =>
+      // oxlint-disable-next-line react/capitalized-calls -- This factory constructs a native gesture recognizer.
       Gesture.Pinch()
         .onBegin(() => {
-          pinchStartScale.value = scale.value;
+          pinchStartScale.set(scale.get());
         })
         .onUpdate((event) => {
-          scale.value = Math.max(0.5, Math.min(2.5, pinchStartScale.value * event.scale));
+          scale.set(Math.max(0.5, Math.min(2.5, pinchStartScale.get() * event.scale)));
         }),
     [pinchStartScale, scale],
   );
   const canvasGesture = useMemo(
+    // oxlint-disable-next-line react/capitalized-calls -- This factory combines native gesture recognizers.
     () => Gesture.Simultaneous(panGesture, pinchGesture),
     [panGesture, pinchGesture],
   );
   const graphStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
+      { translateX: translateX.get() },
+      { translateY: translateY.get() },
+      { scale: scale.get() },
     ],
   }));
 
@@ -330,17 +313,18 @@ export function KnowledgeGraphCanvas(props: KnowledgeGraphCanvasProps) {
       cancelAnimation(translateX);
       cancelAnimation(translateY);
       if (reduceMotion) {
-        scale.value = viewport.scale;
-        translateX.value = viewport.translateX;
-        translateY.value = viewport.translateY;
+        scale.set(viewport.scale);
+        translateX.set(viewport.translateX);
+        translateY.set(viewport.translateY);
         return;
       }
-      scale.value = withTiming(viewport.scale, { duration: 140 });
-      translateX.value = withTiming(viewport.translateX, { duration: 140 });
-      translateY.value = withTiming(viewport.translateY, { duration: 140 });
+      scale.set(withTiming(viewport.scale, { duration: 140 }));
+      translateX.set(withTiming(viewport.translateX, { duration: 140 }));
+      translateY.set(withTiming(viewport.translateY, { duration: 140 }));
     },
     [reduceMotion, scale, translateX, translateY],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancel native viewport animations when the canvas unmounts.
   useEffect(
     () => () => {
       cancelAnimation(scale);
@@ -477,9 +461,9 @@ export function KnowledgeGraphCanvas(props: KnowledgeGraphCanvasProps) {
               label={translator.message("knowledgeGraph.zoomIn")}
               onPress={() =>
                 setViewport({
-                  scale: Math.min(2.5, scale.value + 0.25),
-                  translateX: translateX.value,
-                  translateY: translateY.value,
+                  scale: Math.min(2.5, scale.get() + 0.25),
+                  translateX: translateX.get(),
+                  translateY: translateY.get(),
                 })
               }
             />
@@ -488,9 +472,9 @@ export function KnowledgeGraphCanvas(props: KnowledgeGraphCanvasProps) {
               label={translator.message("knowledgeGraph.zoomOut")}
               onPress={() =>
                 setViewport({
-                  scale: Math.max(0.5, scale.value - 0.25),
-                  translateX: translateX.value,
-                  translateY: translateY.value,
+                  scale: Math.max(0.5, scale.get() - 0.25),
+                  translateX: translateX.get(),
+                  translateY: translateY.get(),
                 })
               }
             />

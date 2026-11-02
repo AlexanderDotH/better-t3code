@@ -1,57 +1,35 @@
-import { ThreadId, type ModelSelection } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { CommandId, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import type * as PlatformError from "effect/PlatformError";
-import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-
-import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
-import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
-import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
-import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { OrchestratorV2, type OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
+import {
+  ThreadManagementService,
+  type ThreadManagementError,
+} from "../orchestration-v2/ThreadManagementService.ts";
+import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { planFetchExploration } from "./FetchExplorationPlanner.ts";
 import { buildFetchContext } from "./FetchContext.ts";
-import { makeFetchWorkerLifecycle } from "./FetchWorkerLifecycle.ts";
-import { makeFetchWorkerProjection } from "./FetchWorkerProjection.ts";
-import {
-  type ActiveFetchRun,
-  type ActiveFetchWorker,
-  type FetchHandoffInput,
-  type FetchInterruptInput,
-  type FetchRunInput,
-  type FetchRunResult,
-} from "./FetchWorkerState.ts";
-import { FETCH_ABORT_FORCE_DELAY, makeFetchWorkerTransport } from "./FetchWorkerTransport.ts";
-
-export { FETCH_CONTEXT_MAX_CHARS } from "./FetchContext.ts";
-export type { FetchApprovalAction } from "./FetchWorkerPolicy.ts";
-export type {
-  FetchHandoffInput,
-  FetchInterruptInput,
+import { buildFetchWorkerPrompt } from "./FetchWorkerPolicy.ts";
+import type {
   FetchRunInput,
   FetchRunResult,
+  FetchHandoffInput,
+  FetchInterruptInput,
+  FetchWorkerOutcome,
+} from "./FetchWorkerState.ts";
+export type {
+  FetchRunInput,
+  FetchRunResult,
+  FetchHandoffInput,
+  FetchInterruptInput,
   FetchWorkerAssignment,
   FetchWorkerOutcome,
   FetchWorkerOutcomeStatus,
 } from "./FetchWorkerState.ts";
-export { FETCH_WORKER_TIMEOUT } from "./FetchWorkerLifecycle.ts";
-export { FETCH_ABORT_FORCE_DELAY } from "./FetchWorkerTransport.ts";
-
-export type FetchWorkerCoordinatorError =
-  | OrchestrationDispatchError
-  | ProjectionRepositoryError
-  | PlatformError.PlatformError;
-
+export type FetchWorkerCoordinatorError = OrchestratorV2Error | ThreadManagementError;
 export interface FetchWorkerCoordinatorShape {
   readonly run: (
     input: FetchRunInput,
@@ -71,399 +49,206 @@ export class FetchWorkerCoordinator extends Context.Service<
   FetchWorkerCoordinatorShape
 >()("t3/fetch/FetchWorkerCoordinator") {}
 
-interface RunResultCounts {
-  readonly plannedWorkers: number;
-  readonly completedWorkers: number;
-  readonly successfulWorkers: number;
-}
-
-function resultFor(
-  run: ActiveFetchRun,
-  status: FetchRunResult["status"],
-  warnings: ReadonlyArray<string>,
-  counts: RunResultCounts,
-  context?: string,
-): FetchRunResult {
-  return {
-    runId: run.runId,
-    status,
-    ...(context === undefined ? {} : { context }),
-    warnings,
-    ...counts,
-    providerInstanceId: run.selection.instanceId,
-    providerDriver: run.providerDriver,
-    modelSelection: run.selection,
-  };
-}
-
 const make = Effect.gen(function* () {
+  const orchestration = yield* OrchestratorV2;
+  const threads = yield* ThreadManagementService;
+  const generation = yield* TextGeneration;
   const crypto = yield* Crypto.Crypto;
-  const providerService = yield* ProviderService;
-  const resourceGovernor = Option.getOrUndefined(
-    yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
-  );
-  const orchestrationEngine = yield* OrchestrationEngineService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
-  const textGeneration = yield* TextGeneration.TextGeneration;
-  const coordinatorScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-    Scope.close(scope, Exit.void),
-  );
-  const activeRuns = new Map<ThreadId, ActiveFetchRun>();
-  const workersByThread = new Map<ThreadId, ActiveFetchWorker>();
-  const projection = makeFetchWorkerProjection({
-    crypto,
-    orchestrationEngine,
-    projectionSnapshotQuery,
-    threadBackgroundLiveness,
-  });
-  const transport = makeFetchWorkerTransport({ providerService, resourceGovernor });
-  const workerLifecycle = yield* makeFetchWorkerLifecycle({
-    coordinatorScope,
-    workersByThread,
-    projection,
-    transport,
-  });
-
-  const runPlanner = Effect.fn("FetchWorkerCoordinator.runPlanner")(function* (
-    run: ActiveFetchRun,
-  ) {
-    const execute = (selection: ModelSelection) =>
-      planFetchExploration({
-        cwd: run.input.cwd,
-        userRequest: run.input.userRequest,
-        maxRecommendedWorkers: run.maxRecommendedWorkers,
-        modelSelection: selection,
-      }).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
-    const firstFiber = yield* execute(run.selection).pipe(Effect.forkIn(coordinatorScope));
-    run.plannerFiber = firstFiber;
-    const firstExit = yield* Fiber.await(firstFiber);
-    if (Exit.isFailure(firstExit)) return null;
-    const typedReason = firstExit.value.fallbackReason;
-    if (
-      typedReason !== "model-unavailable" &&
-      typedReason !== "entitlement" &&
-      typedReason !== "rate-limited"
-    ) {
-      return firstExit.value;
-    }
-    if (!run.input.lunaFallback) return firstExit.value;
-    run.selection = run.input.lunaFallback.modelSelection;
-    run.providerDriver = run.input.lunaFallback.providerDriver;
-    run.maxRecommendedWorkers = run.input.lunaFallback.maxRecommendedWorkers;
-    const fallbackFiber = yield* execute(run.selection).pipe(Effect.forkIn(coordinatorScope));
-    run.plannerFiber = fallbackFiber;
-    const fallbackExit = yield* Fiber.await(fallbackFiber);
-    return Exit.isSuccess(fallbackExit) ? fallbackExit.value : null;
-  });
-
-  const runCore: FetchWorkerCoordinatorShape["run"] = Effect.fn("FetchWorkerCoordinator.runCore")(
+  const handoffLock = yield* Semaphore.make(1);
+  const handedOff = new Set<string>();
+  const nextId = () => crypto.randomUUIDv4().pipe(Effect.map(CommandId.make), Effect.orDie);
+  const run: FetchWorkerCoordinatorShape["run"] = Effect.fn("FetchWorkerCoordinator.run")(
     function* (input) {
-      const runId = yield* crypto.randomUUIDv4;
-      const lock = yield* Semaphore.make(1);
-      const active: ActiveFetchRun = {
-        runId,
-        input,
-        lock,
-        selection: input.modelSelection,
-        providerDriver: input.providerDriver,
-        maxRecommendedWorkers: input.maxRecommendedWorkers,
-        phase: "planning",
-        cancelled: false,
-        forceRequested: false,
-        abortProjected: false,
-        abortRuntimeSessionId: null,
-        originalMainRuntimeSessionId: null,
-        plannerFiber: null,
-        watchdogFiber: null,
-        workers: [],
-      };
-      activeRuns.set(input.threadId, active);
+      const parent = yield* orchestration.getThreadRecords(input.threadId, ["runs"]);
+      const parentRun = parent.runs
+        .filter((run) => ["starting", "running", "waiting"].includes(run.status))
+        .at(-1);
+      const counts = { plannedWorkers: 0, completedWorkers: 0, successfulWorkers: 0 };
+      let modelSelection = input.modelSelection;
+      let providerDriver = input.providerDriver;
+      let maxRecommendedWorkers = input.maxRecommendedWorkers;
       const warnings: string[] = [];
-      const emptyCounts = { plannedWorkers: 0, completedWorkers: 0, successfulWorkers: 0 };
-
-      if (input.commandExecutionPolicy !== "deny") {
-        active.phase = "settled";
-        warnings.push(
-          "The selected Fetch provider does not enforce command denial; the main turn will continue.",
-        );
-        return resultFor(active, "unavailable", warnings, emptyCounts);
+      const base = () => ({
+        runId: parentRun?.id ?? "",
+        providerInstanceId: modelSelection.instanceId,
+        providerDriver,
+        modelSelection,
+      });
+      if (!parentRun || parentRun.rootNodeId === null || input.commandExecutionPolicy !== "deny")
+        return {
+          ...base(),
+          ...counts,
+          status: "unavailable",
+          warnings: ["Repository exploration requires an active parent run and command denial."],
+        };
+      const plan = () =>
+        planFetchExploration({
+          cwd: input.cwd,
+          userRequest: input.userRequest,
+          modelSelection,
+          maxRecommendedWorkers,
+        }).pipe(Effect.provideService(TextGeneration, generation));
+      let planning = yield* plan();
+      const typedFallback = (reason: typeof planning.fallbackReason) =>
+        reason === "model-unavailable" || reason === "entitlement" || reason === "rate-limited";
+      if (typedFallback(planning.fallbackReason) && input.lunaFallback !== undefined) {
+        modelSelection = input.lunaFallback.modelSelection;
+        providerDriver = input.lunaFallback.providerDriver;
+        maxRecommendedWorkers = input.lunaFallback.maxRecommendedWorkers;
+        warnings.push("Spark was unavailable; repository exploration used Luna.");
+        planning = yield* plan();
       }
-
-      const planning = yield* runPlanner(active);
-      active.plannerFiber = null;
-      if (active.cancelled || planning === null) {
-        active.phase = "settled";
-        yield* projection.restoreMainSessionReady(active);
-        return resultFor(active, "cancelled", warnings, emptyCounts);
-      }
-      const typedReason = planning.fallbackReason;
-      if (
-        typedReason === "model-unavailable" ||
-        typedReason === "entitlement" ||
-        typedReason === "rate-limited"
-      ) {
-        active.phase = "settled";
-        warnings.push("The selected Fetch model is unavailable; the main turn will continue.");
-        return resultFor(active, "unavailable", warnings, emptyCounts);
-      }
-      if (planning.fallbackReason === "planner-failed") {
-        warnings.push(
-          "Fetch planning failed; the main agent continued without repository workers.",
-        );
-      }
-      if (planning.fallbackReason === "invalid-plan") {
-        warnings.push(
-          "Fetch returned an invalid plan; the main agent continued without repository workers.",
-        );
-      }
-      if (planning.plan.decision === "skip") {
-        active.phase = "settled";
-        return resultFor(active, "skipped", warnings, emptyCounts);
-      }
-
-      active.phase = "workers";
-      active.workers = Array.from(
-        yield* Effect.forEach(planning.plan.workers, (assignment, index) =>
-          workerLifecycle.makeWorker(active, assignment, index),
-        ),
+      if (typedFallback(planning.fallbackReason))
+        return {
+          ...base(),
+          ...counts,
+          status: "unavailable",
+          warnings: [
+            ...warnings,
+            "The selected exploration model is unavailable; the main turn will continue.",
+          ],
+        };
+      if (planning.plan.decision === "skip")
+        return { ...base(), ...counts, status: "skipped", warnings };
+      const tasks = yield* Effect.forEach(planning.plan.workers, (assignment) =>
+        Effect.gen(function* () {
+          const result = yield* orchestration.dispatch({
+            type: "delegated_task.request",
+            commandId: yield* nextId(),
+            parentThreadId: input.threadId,
+            parentRunId: parentRun.id,
+            parentNodeId: parentRun.rootNodeId!,
+            task: buildFetchWorkerPrompt({ userRequest: input.userRequest, ...assignment }),
+            title: `Fetch: ${assignment.scope}`,
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+            fetchWorker: { commandExecutionPolicy: "deny" },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          return result.storedEvents.flatMap(({ event }) =>
+            event.type === "subagent.updated" ? [event.payload] : [],
+          );
+        }),
+      ).pipe(Effect.map((groups) => groups.flat()));
+      const outcomes = yield* Effect.forEach(
+        tasks,
+        (task, index) =>
+          Effect.gen(function* (): Effect.fn.Return<
+            FetchWorkerOutcome,
+            FetchWorkerCoordinatorError
+          > {
+            if (task.childThreadId === null)
+              return {
+                index,
+                scope: planning.plan.workers[index]!.scope,
+                status: "error",
+                findings: "",
+                detail: "The worker has no child thread.",
+              };
+            const result = yield* threads.waitForThread({
+              threadId: task.childThreadId,
+              projectId: parent.thread.projectId,
+              timeoutMs: 180_000,
+              untilDelegatedWorkSettled: true,
+            });
+            if (result.timedOut)
+              yield* threads.dispatch({
+                type: "thread.stop",
+                commandId: yield* nextId(),
+                threadId: task.childThreadId,
+              });
+            const child = yield* orchestration.getThreadRecords(task.childThreadId, ["messages"]);
+            const findings = child.messages
+              .filter((message) => message.role === "assistant")
+              .map((message) => message.text)
+              .join("\n\n");
+            return {
+              index,
+              scope: planning.plan.workers[index]!.scope,
+              status: result.timedOut
+                ? "timed-out"
+                : result.run?.status === "completed"
+                  ? "completed"
+                  : "error",
+              findings,
+            };
+          }),
+        { concurrency: "unbounded" },
       );
-      const outcomes = Array.from(
-        yield* Effect.forEach(active.workers, workerLifecycle.runWorker, { concurrency: 1 }),
-      );
-      active.phase = "settled";
-      const completedWorkers = outcomes.filter(({ status }) => status === "completed").length;
-      if (active.cancelled) {
-        yield* projection.restoreMainSessionReady(active);
-        return resultFor(active, "cancelled", warnings, {
-          plannedWorkers: active.workers.length,
-          completedWorkers,
-          successfulWorkers: 0,
-        });
-      }
       const successfulWorkers = outcomes.filter(
         (outcome) => outcome.status === "completed" && outcome.findings.trim().length > 0,
       ).length;
       const context = buildFetchContext({
-        plannedWorkers: active.workers.length,
-        modelSelection: active.selection,
-        providerDriver: active.providerDriver,
+        plannedWorkers: tasks.length,
+        modelSelection,
+        providerDriver,
         outcomes,
         ...(input.contextMaxChars === undefined ? {} : { maxChars: input.contextMaxChars }),
       });
-      if (successfulWorkers === 0) {
-        warnings.push(
-          "Every Fetch worker failed or returned no findings; the main turn will continue.",
-        );
-      } else if (successfulWorkers < active.workers.length) {
-        warnings.push("Fetch completed with partial results; failed workers were not retried.");
-      }
-      return resultFor(
-        active,
-        "completed",
-        warnings,
-        { plannedWorkers: active.workers.length, completedWorkers, successfulWorkers },
-        context,
-      );
+      return {
+        ...base(),
+        status: "completed",
+        plannedWorkers: tasks.length,
+        completedWorkers: outcomes.filter((outcome) => outcome.status === "completed").length,
+        successfulWorkers,
+        warnings:
+          successfulWorkers === tasks.length
+            ? warnings
+            : [
+                ...warnings,
+                "Repository exploration returned partial results; failed workers remain visible.",
+              ],
+        ...(context === undefined ? {} : { context }),
+      };
     },
   );
-
-  const run: FetchWorkerCoordinatorShape["run"] = (input) =>
-    Effect.uninterruptibleMask((restore) =>
-      restore(runCore(input)).pipe(
-        Effect.catchCause((cause) => {
-          const active = activeRuns.get(input.threadId);
-          if (active === undefined) return Effect.failCause(cause);
-          const registeredWorkers = [...workersByThread.values()].filter(
-            (worker) => worker.run === active,
-          );
-          const interrupted = Cause.hasInterruptsOnly(cause);
-          const cleanup = Effect.uninterruptible(
-            Effect.forEach(
-              registeredWorkers,
-              (worker) =>
-                workerLifecycle.forceStopWorker(worker).pipe(
-                  Effect.andThen(
-                    workerLifecycle
-                      .finalizeWorker(worker, {
-                        index: worker.index,
-                        scope: worker.assignment.scope,
-                        status: interrupted ? "interrupted" : "error",
-                        findings: worker.findings,
-                        detail: interrupted
-                          ? "Fetch coordination was interrupted."
-                          : `Fetch coordination failed internally. ${Cause.pretty(cause).slice(0, 1_000)}`,
-                      })
-                      .pipe(
-                        Effect.catchCause((projectionCause) =>
-                          Effect.logWarning(
-                            "Failed to terminalize a Fetch worker after run failure",
-                            {
-                              threadId: worker.syntheticThreadId,
-                              runtimeSessionId: worker.runtimeSessionId,
-                              cause: Cause.pretty(projectionCause),
-                            },
-                          ),
-                        ),
-                      ),
-                  ),
-                ),
-              { concurrency: "unbounded", discard: true },
-            ).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  active.workers = [];
-                  active.phase = "settled";
-                }),
-              ),
-            ),
-          );
-          if (interrupted) return cleanup.pipe(Effect.andThen(Effect.failCause(cause)));
-          return cleanup.pipe(
-            Effect.as(
-              resultFor(
-                active,
-                "completed",
-                [
-                  `Fetch coordination failed internally; the main turn will continue without findings. ${Cause.pretty(cause).slice(0, 1_000)}`,
-                ],
-                {
-                  plannedWorkers: registeredWorkers.length,
-                  completedWorkers: 0,
-                  successfulWorkers: 0,
-                },
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-
-  const forceRun = Effect.fn("FetchWorkerCoordinator.forceRun")(function* (run: ActiveFetchRun) {
-    run.forceRequested = true;
-    yield* Effect.forEach(run.workers, workerLifecycle.forceStopWorker, {
-      concurrency: "unbounded",
-      discard: true,
-    });
-    yield* Effect.forEach(
-      run.workers,
-      (worker) => workerLifecycle.settleWorker(worker, "interrupted", "Fetch was force-stopped."),
-      { concurrency: "unbounded", discard: true },
-    );
-  });
-
-  const requestInterrupt: FetchWorkerCoordinatorShape["requestInterrupt"] = Effect.fn(
-    "FetchWorkerCoordinator.requestInterrupt",
-  )(function* (input) {
-    const run = activeRuns.get(input.threadId);
-    if (run === undefined) return false;
-    if (
-      input.turnId !== undefined &&
-      run.input.parentTurnId !== undefined &&
-      input.turnId !== run.input.parentTurnId
-    ) {
-      return false;
-    }
-    return yield* run.lock.withPermits(1)(
-      Effect.gen(function* () {
-        if (run.phase === "handoff") return false;
-        if (run.cancelled) {
-          if (!run.forceRequested) {
-            yield* projection.projectAbortPhaseBestEffort(run, input, "force-stopping");
-            yield* forceRun(run);
-          }
+  const handoffToMain = Effect.fn("FetchWorkerCoordinator.handoffToMain")(
+    <A, E, R>(input: FetchHandoffInput, sendMainEffect: Effect.Effect<A, E, R>) =>
+      handoffLock.withPermit(
+        Effect.gen(function* () {
+          const key = `${input.threadId}:${input.runId}`;
+          if (handedOff.has(key)) return false;
+          handedOff.add(key);
+          yield* sendMainEffect;
           return true;
-        }
-        run.cancelled = true;
-        run.phase = "cancelling";
-        yield* projection.projectAbortPhaseBestEffort(run, input, "interrupting");
-        if (run.plannerFiber !== null) {
-          yield* Fiber.interrupt(run.plannerFiber).pipe(
-            Effect.ignore,
-            Effect.forkIn(coordinatorScope),
-          );
-        }
-        yield* Effect.forEach(run.workers, workerLifecycle.interruptWorker, {
-          concurrency: "unbounded",
-          discard: true,
         }).pipe(
-          Effect.catchCause(() => Effect.void),
-          Effect.forkIn(coordinatorScope),
-        );
-        yield* Effect.forEach(
-          run.workers,
-          (worker) => workerLifecycle.settleWorker(worker, "interrupted", "Fetch was cancelled."),
-          { concurrency: "unbounded", discard: true },
-        );
-        const watchdog = yield* Effect.sleep(FETCH_ABORT_FORCE_DELAY).pipe(
-          Effect.flatMap(() =>
-            run.lock.withPermits(1)(
-              run.forceRequested || activeRuns.get(input.threadId) !== run
-                ? Effect.void
-                : projection
-                    .projectAbortPhaseBestEffort(run, input, "force-stopping")
-                    .pipe(Effect.andThen(forceRun(run))),
-            ),
+          Effect.onError(() =>
+            Effect.sync(() => handedOff.delete(`${input.threadId}:${input.runId}`)),
           ),
-          Effect.forkIn(coordinatorScope),
-        );
-        run.watchdogFiber = watchdog;
-        return true;
-      }),
-    );
-  });
-
-  const handoffToMain: FetchWorkerCoordinatorShape["handoffToMain"] = (input, sendMainEffect) => {
-    const run = activeRuns.get(input.threadId);
-    if (run === undefined || run.runId !== input.runId) return Effect.succeed(false);
-    return run.lock.withPermits(1)(
-      Effect.gen(function* () {
-        if (run.runId !== input.runId || activeRuns.get(input.threadId) !== run) return false;
-        if (run.cancelled) {
-          yield* projection.restoreMainSessionReady(run).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to restore the main session after Fetch cancellation", {
-                threadId: input.threadId,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-          );
-          activeRuns.delete(input.threadId);
-          if (run.watchdogFiber !== null) {
-            yield* Fiber.interrupt(run.watchdogFiber).pipe(Effect.ignore);
-          }
-          return false;
-        }
-        run.phase = "handoff";
-        if (run.watchdogFiber !== null) {
-          yield* Fiber.interrupt(run.watchdogFiber).pipe(Effect.ignore);
-        }
-        yield* sendMainEffect.pipe(Effect.forkIn(coordinatorScope));
-        if (activeRuns.get(input.threadId) === run) activeRuns.delete(input.threadId);
-        return true;
-      }),
-    );
-  };
-
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      for (const run of activeRuns.values()) run.cancelled = true;
-    }).pipe(
-      Effect.andThen(workerLifecycle.drain()),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Fetch coordinator shutdown cleanup failed", {
-          cause: Cause.pretty(cause),
-        }),
+        ),
       ),
-    ),
   );
-
-  return {
+  return FetchWorkerCoordinator.of({
     run,
     handoffToMain,
-    requestInterrupt,
-    hasActiveRun: (threadId) => Effect.sync(() => activeRuns.has(threadId)),
-  } satisfies FetchWorkerCoordinatorShape;
+    requestInterrupt: Effect.fn("FetchWorkerCoordinator.requestInterrupt")(function* (input) {
+      const parent = yield* orchestration.getThreadRecords(input.threadId, ["subagents"]);
+      const tasks = parent.subagents.filter(
+        (task) =>
+          task.title?.startsWith("Fetch:") &&
+          ["running", "pending", "waiting"].includes(task.status),
+      );
+      for (const task of tasks)
+        if (task.childThreadId)
+          yield* threads.dispatch({
+            type: "thread.stop",
+            commandId: yield* nextId(),
+            threadId: task.childThreadId,
+          });
+      return tasks.length > 0;
+    }),
+    hasActiveRun: Effect.fn("FetchWorkerCoordinator.hasActiveRun")(function* (threadId) {
+      const parent = yield* orchestration
+        .getThreadRecords(threadId, ["subagents"])
+        .pipe(Effect.orDie);
+      return parent.subagents.some(
+        (task) =>
+          task.title?.startsWith("Fetch:") &&
+          ["running", "pending", "waiting"].includes(task.status),
+      );
+    }),
+  });
 });
-
 export const FetchWorkerCoordinatorLive = Layer.effect(FetchWorkerCoordinator, make);

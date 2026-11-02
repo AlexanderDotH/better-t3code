@@ -1,16 +1,18 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Git state tokens require synchronous SHA-256 fingerprints.
 import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+
 import * as Semaphore from "effect/Semaphore";
 
 import { GitCommandError, ThreadId, type GitWorkbenchSnapshot } from "@t3tools/contracts";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { GitWorkbenchDriver, makeRegisteredGitWorkspace } from "./GitWorkbenchDriver.ts";
 import {
   GitWorkbenchOperations,
@@ -48,7 +50,9 @@ export const GitWorkbenchMutationSchedulerLive = Layer.sync(GitWorkbenchMutation
     return created;
   };
   return GitWorkbenchMutationScheduler.of({
-    withLock: (cwd, effect) => lockFor(cwd).withPermit(effect),
+    withLock: Effect.fn("GitWorkbenchMutationScheduler.withLock")((cwd, effect) =>
+      lockFor(cwd).withPermit(effect),
+    ),
   });
 });
 
@@ -140,7 +144,7 @@ export const GitWorkbenchOperationStateReaderLive = Layer.effect(
   Effect.gen(function* () {
     const driver = yield* GitWorkbenchDriver;
     return GitWorkbenchOperationStateReader.of({
-      read: (cwd) =>
+      read: Effect.fn("GitWorkbenchOperationStateReader.read")((cwd) =>
         driver.getSnapshot(makeRegisteredGitWorkspace(cwd)).pipe(
           Effect.map((snapshot) => ({
             stateToken: snapshot.stateToken,
@@ -161,6 +165,7 @@ export const GitWorkbenchOperationStateReaderLive = Layer.effect(
               }),
           ),
         ),
+      ),
     });
   }),
 );
@@ -170,7 +175,7 @@ export const GitWorkbenchUndoStateReaderLive = Layer.effect(
   Effect.gen(function* () {
     const driver = yield* GitWorkbenchDriver;
     return GitWorkbenchUndoStateReader.of({
-      readStateToken: (cwd) =>
+      readStateToken: Effect.fn("GitWorkbenchUndoStateReader.readStateToken")((cwd) =>
         driver.getSnapshot(makeRegisteredGitWorkspace(cwd)).pipe(
           Effect.flatMap((snapshot) =>
             snapshot.truncated
@@ -194,6 +199,7 @@ export const GitWorkbenchUndoStateReaderLive = Layer.effect(
               }),
           ),
         ),
+      ),
     });
   }),
 );
@@ -204,75 +210,173 @@ export const GitWorkbenchQueueRuntimeLive = Layer.effect(
     const driver = yield* GitWorkbenchDriver;
     const operations = yield* GitWorkbenchOperations;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
-    const projection = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const projection = yield* ProjectionStore.ProjectionStoreV2;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     const scheduler = yield* GitWorkbenchMutationScheduler;
 
-    const inspect: GitWorkbenchQueueRuntime["Service"]["inspect"] = (workflow) =>
+    const inspect: GitWorkbenchQueueRuntime["Service"]["inspect"] = Effect.fn(
+      "GitWorkbenchRuntime.inspect",
+    )((workflow) =>
       Effect.gen(function* () {
         const environmentId = yield* serverEnvironment.getEnvironmentId;
         const snapshot = yield* driver.getSnapshot(
           makeRegisteredGitWorkspace(workflow.scope.worktreeRoot),
         );
         return observedStateFromSnapshot(environmentId, snapshot, workflow.workflow);
-      }).pipe(Effect.mapError((cause) => runtimeError("inspect", cause)));
+      }).pipe(Effect.mapError((cause) => runtimeError("inspect", cause))),
+    );
 
+    const ensureCapturedExecutionQuiesced = Effect.fn(
+      "GitWorkbenchRuntime.ensureCapturedExecutionQuiesced",
+    )(function* (workflow: GitWorkbenchQueuedWorkflow) {
+      const runId = workflow.preconditions.capturedRunId;
+      const executionId = runId ?? workflow.turnId;
+      if (executionId === null) return;
+      const current = yield* projection
+        .getThreadRecords(ThreadId.make(workflow.threadId), [
+          "runs",
+          "attempts",
+          "providerTurns",
+          "checkpoints",
+        ])
+        .pipe(Effect.mapError((cause) => runtimeError("execute", cause)));
+      if (
+        !isCapturedExecutionQuiesced(
+          current,
+          executionId,
+          runId === undefined ? "native-turn" : "run",
+        )
+      )
+        return yield* runtimeError(
+          "execute",
+          new Error("The conversation is unavailable or still finishing its work."),
+        );
+    });
     const execute: GitWorkbenchQueueRuntime["Service"]["execute"] = (workflow) => {
       if (workflow.workflow.kind === "advanced_operation") {
         return scheduler.withLock(
           workflow.scope.worktreeRoot,
-          operations
-            .run({
-              cwd: workflow.scope.worktreeRoot,
-              expectedStateToken: workflow.preconditions.stateToken,
-              action: workflow.workflow.action,
-            })
-            .pipe(
-              Effect.asVoid,
-              Effect.mapError((cause) => runtimeError("execute", cause)),
+          ensureCapturedExecutionQuiesced(workflow).pipe(
+            Effect.andThen(
+              operations
+                .run({
+                  cwd: workflow.scope.worktreeRoot,
+                  expectedStateToken: workflow.preconditions.stateToken,
+                  action: workflow.workflow.action,
+                })
+                .pipe(
+                  Effect.asVoid,
+                  Effect.mapError((cause) => runtimeError("execute", cause)),
+                ),
             ),
+          ),
         );
       }
       return scheduler.withLock(
         workflow.scope.worktreeRoot,
-        gitWorkflow
-          .runStackedAction({
-            actionId: workflow.id,
-            cwd: workflow.scope.worktreeRoot,
-            action: workflow.workflow.createPullRequest
-              ? "commit_push_pr"
-              : workflow.workflow.push
-                ? "commit_push"
-                : "commit",
-            ...(workflow.workflow.commitMessage === undefined
-              ? {}
-              : { commitMessage: workflow.workflow.commitMessage }),
-            commitSelection: workflow.workflow.stage,
-          })
-          .pipe(
-            Effect.asVoid,
-            Effect.mapError((cause) => runtimeError("execute", cause)),
+        ensureCapturedExecutionQuiesced(workflow).pipe(
+          Effect.andThen(
+            gitWorkflow
+              .runStackedAction({
+                actionId: workflow.id,
+                cwd: workflow.scope.worktreeRoot,
+                action: workflow.workflow.createPullRequest
+                  ? "commit_push_pr"
+                  : workflow.workflow.push
+                    ? "commit_push"
+                    : "commit",
+                ...(workflow.workflow.commitMessage === undefined
+                  ? {}
+                  : { commitMessage: workflow.workflow.commitMessage }),
+                commitSelection: workflow.workflow.stage,
+              })
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError((cause) => runtimeError("execute", cause)),
+              ),
           ),
+        ),
       );
     };
 
     const isTurnQuiesced: GitWorkbenchQueueRuntime["Service"]["isTurnQuiesced"] = (
       threadId,
-      turnId,
+      executionId,
+      identity = "native-turn",
     ) =>
-      projection.getThreadDetailById(ThreadId.make(threadId)).pipe(
-        Effect.map(
-          Option.match({
-            onNone: () => false,
-            onSome: (thread) =>
-              thread.latestTurn?.turnId === turnId &&
-              thread.latestTurn.state !== "running" &&
-              thread.checkpoints.some((checkpoint) => checkpoint.turnId === turnId),
-          }),
-        ),
-        Effect.mapError((cause) => runtimeError("is-turn-quiesced", cause)),
-      );
+      projection
+        .getThreadRecords(ThreadId.make(threadId), [
+          "runs",
+          "attempts",
+          "providerTurns",
+          "checkpoints",
+        ])
+        .pipe(
+          Effect.map((thread) => isCapturedExecutionQuiesced(thread, executionId, identity)),
+          Effect.mapError((cause) => runtimeError("is-turn-quiesced", cause)),
+        );
 
     return GitWorkbenchQueueRuntime.of({ inspect, execute, isTurnQuiesced });
   }),
 );
+
+export function isCapturedExecutionQuiesced(
+  projection: {
+    readonly runs: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["runs"][number], "id" | "status">
+    >;
+    readonly checkpoints: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["checkpoints"][number], "runId" | "status">
+    >;
+    readonly attempts: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["attempts"][number], "id" | "runId">
+    >;
+    readonly providerTurns: ReadonlyArray<
+      Pick<
+        OrchestrationV2ThreadProjection["providerTurns"][number],
+        "runAttemptId" | "nativeTurnRef"
+      >
+    >;
+  },
+  executionId: string,
+  identity: "native-turn" | "run",
+): boolean {
+  if (identity === "run") return isRunQuiesced(projection, executionId);
+  const turn = projection.providerTurns.find(
+    (candidate) => candidate.nativeTurnRef?.nativeId === executionId,
+  );
+  const attempt =
+    turn === undefined
+      ? undefined
+      : projection.attempts.find((candidate) => candidate.id === turn.runAttemptId);
+  return attempt !== undefined && isRunQuiesced(projection, attempt.runId);
+}
+
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
+export function isRunQuiesced(
+  projection: {
+    readonly runs: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["runs"][number], "id" | "status">
+    >;
+    readonly checkpoints: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["checkpoints"][number], "runId" | "status">
+    >;
+  },
+  runId: string,
+): boolean {
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  return (
+    run !== undefined &&
+    projection.runs.every((candidate) => TERMINAL_RUN_STATUSES.has(candidate.status)) &&
+    projection.checkpoints.some(
+      (checkpoint) => checkpoint.runId === runId && checkpoint.status === "ready",
+    )
+  );
+}

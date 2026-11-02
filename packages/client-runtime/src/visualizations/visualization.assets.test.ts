@@ -1,8 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Hashes pinned renderer assets in the filesystem test.
 // @effect-diagnostics-next-line nodeBuiltinImport:off - This acceptance test builds the shipped browser assets before executing them.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Read the exact build output bytes for CSP and browser/mobile parity checks.
 import * as NodeFSP from "node:fs/promises";
+// oxlint-disable-next-line t3code/no-dom-test-environment -- Separate realms execute packaged HTML with isolated globals and CSP.
 import { JSDOM, VirtualConsole } from "jsdom";
 import { beforeAll, expect, test } from "vite-plus/test";
 import { VISUALIZATION_EXAMPLES } from "./examples.ts";
@@ -29,16 +31,17 @@ beforeAll(() => {
     cwd: root,
     stdio: "pipe",
   });
-}, 30_000);
+});
 
-for (const [format, exampleId] of [
+test.each([
   ["mermaid", "mermaid-flowchart"],
   ["plantuml", "plantuml-component"],
   ["dot", "dot-directed"],
   ["vega", "vega-lite-selection"],
   ["vega", "vega-custom-analysis"],
-] as const) {
-  test(`${exampleId} shipped HTML boots, renders and exports through the host protocol`, async () => {
+] as const)(
+  "%s/%s shipped HTML boots, renders and exports through the host protocol",
+  async (format, exampleId) => {
     const html = await NodeFSP.readFile(
       new URL(`apps/web/public/visualizations/${format}.html`, root),
       "utf8",
@@ -221,5 +224,5 @@ for (const [format, exampleId] of [
     } finally {
       dom.window.close();
     }
-  }, 30_000);
-}
+  },
+);

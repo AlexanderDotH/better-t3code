@@ -2,12 +2,12 @@ import {
   deriveLatestContextWindowSnapshot,
   type ContextWindowSnapshot,
 } from "@t3tools/client-runtime/context-window";
-import type { OrchestrationThreadActivity, ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 
 export function selectedThreadContextWindowSnapshot(
   selectedThreadId: ThreadId | undefined,
   detailThreadId: ThreadId | undefined,
-  activities: ReadonlyArray<OrchestrationThreadActivity> | undefined,
+  activities: Parameters<typeof deriveLatestContextWindowSnapshot>[0] | undefined,
 ) {
   return selectedThreadId !== undefined && selectedThreadId === detailThreadId && activities
     ? deriveLatestContextWindowSnapshot(activities)

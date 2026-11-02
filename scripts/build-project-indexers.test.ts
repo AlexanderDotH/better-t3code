@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 
@@ -109,7 +109,7 @@ it.effect("uses the Windows Maven command shim with escaped checked-in project a
     };
     let resolvedEnvironment: NodeJS.ProcessEnv | undefined;
     const resolved = yield* resolveProjectIndexerBuildCommand(input).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(SpawnExecutableResolution, (command, platform, env) => {
         expect(command).toBe("mvn");
         expect(platform).toBe("win32");
@@ -118,14 +118,17 @@ it.effect("uses the Windows Maven command shim with escaped checked-in project a
       }),
     );
     expect(resolved.shell).toBe(true);
-    expect(resolved.command).toBe('^"C:\\Build^ Tools\\mvn.cmd^"');
-    expect(resolved.args).toEqual([
-      '^"--batch-mode^"',
-      '^"-f^"',
-      '^"C:\\synthetic^ checkout^ ^&^ inputs\\native\\project-indexer-java\\pom.xml^"',
-      '^"-DskipTests^"',
-      '^"package^"',
-    ]);
+    expect(resolved.command).toBe(
+      [
+        '^"C:\\Build^ Tools\\mvn.cmd^"',
+        '^"--batch-mode^"',
+        '^"-f^"',
+        '^"C:\\synthetic^ checkout^ ^&^ inputs\\native\\project-indexer-java\\pom.xml^"',
+        '^"-DskipTests^"',
+        '^"package^"',
+      ].join(" "),
+    );
+    expect(resolved.args).toEqual([]);
     expect(resolved.cwd).toBe(input.cwd);
     expect(resolved.env).toBe(input.env);
     expect(resolvedEnvironment).toBe(input.env);
@@ -145,7 +148,7 @@ it.effect("runs native Windows and POSIX build tools directly without changing a
         env: { PATH: "", PATHEXT: ".EXE;.CMD" },
       };
       const resolved = yield* resolveProjectIndexerBuildCommand(input).pipe(
-        Effect.provideService(HostProcessPlatform, platform),
+        Effect.provideService(HostProcess.Platform, platform),
         Effect.provideService(SpawnExecutableResolution, () => undefined),
       );
       expect(resolved).toEqual({ ...input, shell: false });

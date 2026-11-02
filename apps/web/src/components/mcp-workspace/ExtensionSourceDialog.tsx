@@ -24,6 +24,7 @@ export function ExtensionSourcePage(props: { environmentId: EnvironmentId; url: 
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the desktop webview, tab lease, navigation listeners, and load timer for this source page.
   useEffect(() => {
     const bridge = previewBridge;
     const container = containerRef.current;

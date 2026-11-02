@@ -6,12 +6,10 @@ import {
   ProviderInstanceConfig,
   ProviderInstanceConfigMap,
   ProviderInstanceId,
-  ProviderInstanceRef,
 } from "./providerInstance.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
 const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
-const decodeProviderInstanceRef = Schema.decodeUnknownSync(ProviderInstanceRef);
 const decodeProviderInstanceConfig = Schema.decodeUnknownSync(ProviderInstanceConfig);
 const decodeProviderInstanceConfigMap = Schema.decodeUnknownSync(ProviderInstanceConfigMap);
 const encodeProviderInstanceConfigMap = Schema.encodeSync(ProviderInstanceConfigMap);
@@ -22,67 +20,36 @@ describe("provider slug validation (shared by driver + instance ids)", () => {
     { schemaName: "ProviderDriverKind", decode: decodeProviderDriverKind },
   ] as const;
 
-  for (const { schemaName, decode } of cases) {
-    describe(schemaName, () => {
-      it.each(["codex", "codex_personal", "codex-work", "claudeAgent", "x", "abc123", "ollama"])(
-        "accepts %s",
-        (id) => {
-          expect(decode(id)).toBe(id);
-        },
-      );
+  describe.each(cases)("$schemaName", ({ decode }) => {
+    it.each(["codex", "codex_personal", "codex-work", "claudeAgent", "x", "abc123", "ollama"])(
+      "accepts %s",
+      (id) => {
+        expect(decode(id)).toBe(id);
+      },
+    );
 
-      it.each([
-        ["empty string", ""],
-        ["leading digit", "1codex"],
-        ["leading dash", "-codex"],
-        ["leading underscore", "_codex"],
-        ["whitespace inside", "codex personal"],
-        ["dot inside", "codex.personal"],
-        ["slash inside", "codex/personal"],
-      ])("rejects %s", (_label, value) => {
-        expect(() => decode(value)).toThrow();
-      });
-
-      it("trims surrounding whitespace before validating", () => {
-        expect(decode("  codex_work  ")).toBe("codex_work");
-      });
-
-      it("rejects ids longer than 64 characters", () => {
-        const tooLong = "a".repeat(65);
-        expect(() => decode(tooLong)).toThrow();
-        const justRight = "a".repeat(64);
-        expect(decode(justRight)).toBe(justRight);
-      });
+    it.each([
+      ["empty string", ""],
+      ["leading digit", "1codex"],
+      ["leading dash", "-codex"],
+      ["leading underscore", "_codex"],
+      ["whitespace inside", "codex personal"],
+      ["dot inside", "codex.personal"],
+      ["slash inside", "codex/personal"],
+    ])("rejects %s", (_label, value) => {
+      expect(() => decode(value)).toThrow();
     });
-  }
-});
 
-describe("ProviderInstanceRef", () => {
-  it("decodes a driver ref", () => {
-    const ref = decodeProviderInstanceRef({
-      instanceId: "codex_work",
-      driver: "codex",
+    it("trims surrounding whitespace before validating", () => {
+      expect(decode("  codex_work  ")).toBe("codex_work");
     });
-    expect(ref.instanceId).toBe("codex_work");
-    expect(ref.driver).toBe("codex");
-  });
 
-  it("decodes a fork-defined driver ref without complaint", () => {
-    const ref = decodeProviderInstanceRef({
-      instanceId: "ollama_local",
-      driver: "ollama",
+    it("rejects ids longer than 64 characters", () => {
+      const tooLong = "a".repeat(65);
+      expect(() => decode(tooLong)).toThrow();
+      const justRight = "a".repeat(64);
+      expect(decode(justRight)).toBe(justRight);
     });
-    expect(ref.instanceId).toBe("ollama_local");
-    expect(ref.driver).toBe("ollama");
-  });
-
-  it("rejects refs whose driver field is not a valid slug", () => {
-    expect(() =>
-      decodeProviderInstanceRef({
-        instanceId: "codex",
-        driver: "1nope",
-      }),
-    ).toThrow();
   });
 });
 

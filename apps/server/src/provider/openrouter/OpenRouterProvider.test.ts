@@ -180,7 +180,7 @@ describe("OpenRouterProvider", () => {
       let validations = 0;
       let catalogRequests = 0;
       const snapshot = yield* checkOpenRouterProviderStatus(SETTINGS, {
-        resolveCredential: Effect.succeed(Option.none()),
+        resolveCredential: Effect.succeedNone,
         validateKey: () =>
           Effect.sync(() => {
             validations++;
@@ -271,7 +271,6 @@ describe("OpenRouterProvider", () => {
       });
       expect(snapshot.message).toContain("OPENROUTER_API_KEY");
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(snapshot)).not.toContain("environment-secret");
     }),
   );

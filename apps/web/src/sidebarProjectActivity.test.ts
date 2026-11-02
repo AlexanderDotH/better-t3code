@@ -1,4 +1,5 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { makeThreadFixture } from "./test-fixtures";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveThreadSidebarLifecycle } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -9,7 +10,7 @@ import {
   resolveSidebarOlderProjectsExpanded,
   SIDEBAR_PROJECT_INACTIVITY_MS,
 } from "./sidebarProjectActivity";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type SidebarThreadSummary } from "./types";
+import { type SidebarThreadSummary } from "./types";
 
 const NOW_MS = Date.parse("2026-07-19T12:00:00.000Z");
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -62,38 +63,21 @@ function makeProject(
       projectId: member.id,
     })),
     remoteEnvironmentLabels: [],
+    pinned: false,
+    archived: false,
   };
 }
 
 function makeThread(overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSummary {
-  const id = overrides.id ?? ThreadId.make("thread-1");
   return {
-    id,
-    environmentId: localEnvironmentId,
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    modelSelection: {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.4",
-    },
-    runtimeMode: DEFAULT_RUNTIME_MODE,
-    interactionMode: DEFAULT_INTERACTION_MODE,
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    pullRequests: [],
-    createdAt: timestampAtAge(0),
-    updatedAt: timestampAtAge(0),
-    archivedAt: null,
-    session: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
-    snoozedAt: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
+    ...makeThreadFixture({
+      environmentId: localEnvironmentId,
+      projectId: ProjectId.make("project-1"),
+      createdAt: timestampAtAge(0),
+      updatedAt: timestampAtAge(0),
+      ...overrides,
+      latestUserMessageAt: null,
+    }),
     ...overrides,
   };
 }
@@ -307,15 +291,11 @@ describe("partitionSidebarProjectsByActivity", () => {
         [
           makeThread({
             ...oldThread,
-            session: {
-              threadId: ThreadId.make("thread-session"),
+            runtime: {
               status: "starting",
               providerName: "Codex",
               providerInstanceId: ProviderInstanceId.make("codex"),
-              runtimeMode: DEFAULT_RUNTIME_MODE,
-              runtimeSessionId: null,
-              activeTurnId: null,
-              abortState: null,
+              activeRunId: null,
               lastError: null,
               updatedAt: oldTimestamp,
             },
@@ -327,9 +307,17 @@ describe("partitionSidebarProjectsByActivity", () => {
         [
           makeThread({
             ...oldThread,
-            latestTurn: {
-              turnId: "turn-running" as never,
-              state: "running",
+            runtime: {
+              status: "running",
+              activeRunId: RunId.make("turn-running"),
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              providerName: "Codex",
+              lastError: null,
+              updatedAt: oldTimestamp,
+            },
+            latestRun: {
+              runId: RunId.make("turn-running"),
+              status: "running",
               requestedAt: oldTimestamp,
               startedAt: oldTimestamp,
               completedAt: null,
@@ -343,15 +331,11 @@ describe("partitionSidebarProjectsByActivity", () => {
         [
           makeThread({
             ...oldThread,
-            session: {
-              threadId: ThreadId.make("thread-session-running"),
+            runtime: {
               status: "running",
               providerName: "Codex",
               providerInstanceId: ProviderInstanceId.make("codex"),
-              runtimeMode: DEFAULT_RUNTIME_MODE,
-              runtimeSessionId: null,
-              activeTurnId: null,
-              abortState: null,
+              activeRunId: null,
               lastError: null,
               updatedAt: oldTimestamp,
             },

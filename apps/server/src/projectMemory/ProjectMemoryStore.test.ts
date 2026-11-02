@@ -330,7 +330,6 @@ it.effect("persists per-project settings and exposes the effective document stat
         "project-settings",
         "settings.json",
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Assert the persisted fields without schema defaults or transformations.
       expect(JSON.parse(yield* fileSystem.readFileString(settingsPath))).toEqual({
         memoryMode: "provider",
         allowAgentWrites: false,

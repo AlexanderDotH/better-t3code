@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Git state tokens require synchronous SHA-256 fingerprints.
 import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
@@ -11,7 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type { TurnProcessingQuiescedReceipt } from "../orchestration/Services/RuntimeReceiptBus.ts";
+import type { TurnProcessingQuiescedReceipt } from "./TurnQuiescenceNotifier.ts";
 import {
   GitWorkbenchQueueScope,
   revalidateQueuedWorkflow,
@@ -48,7 +49,8 @@ export interface GitWorkbenchQueueRuntimeShape {
   ) => Effect.Effect<void, GitWorkbenchQueueRuntimeError>;
   readonly isTurnQuiesced: (
     threadId: string,
-    turnId: string,
+    executionId: string,
+    identity?: "native-turn" | "run",
   ) => Effect.Effect<boolean, GitWorkbenchQueueRuntimeError>;
 }
 
@@ -279,7 +281,10 @@ const make = Effect.gen(function* () {
           scope: input.scope,
           threadId: input.threadId,
           turnId: input.turnId,
-          status: input.turnId === null ? "ready" : "waiting_for_turn",
+          status:
+            input.turnId === null && input.preconditions.capturedRunId === undefined
+              ? "ready"
+              : "waiting_for_turn",
           revision: Option.match(existing, {
             onNone: () => 1,
             onSome: ({ revision }) => revision + 1,
@@ -316,7 +321,12 @@ const make = Effect.gen(function* () {
         const next: QueuedWorkflow = {
           ...current,
           workflow: input.workflow,
-          preconditions: input.preconditions,
+          preconditions: {
+            ...input.preconditions,
+            ...(current.preconditions.capturedRunId === undefined
+              ? {}
+              : { capturedRunId: current.preconditions.capturedRunId }),
+          },
           status: current.status === "waiting_for_turn" ? "waiting_for_turn" : "ready",
           revision: current.revision + 1,
           needsReviewReasons: [],
@@ -385,7 +395,7 @@ const make = Effect.gen(function* () {
       status: "failed",
       needsReviewReasons: [],
       lastError: error.detail,
-    }).pipe(Effect.catchTag("GitWorkbenchQueueRevisionConflictError", () => Effect.void));
+    }).pipe(Effect.catchTags({ GitWorkbenchQueueRevisionConflictError: () => Effect.void }));
   });
 
   const drain: GitWorkbenchQueueShape["drain"] = Effect.fn("GitWorkbenchQueue.drain")(
@@ -393,6 +403,12 @@ const make = Effect.gen(function* () {
       const currentOption = yield* repository.get(scope);
       if (Option.isNone(currentOption) || currentOption.value.status !== "ready") return;
       const current = currentOption.value;
+      const capturedRunId = current.preconditions.capturedRunId;
+      if (
+        capturedRunId !== undefined &&
+        !(yield* runtime.isTurnQuiesced(current.threadId, capturedRunId, "run"))
+      )
+        return;
       const observed = yield* runtime
         .inspect(current)
         .pipe(Effect.catch((error) => persistRuntimeFailure(current, error).pipe(Effect.as(null))));
@@ -404,7 +420,7 @@ const make = Effect.gen(function* () {
           status: "needs_review",
           needsReviewReasons: validation.reasons,
           lastError: null,
-        }).pipe(Effect.catchTag("GitWorkbenchQueueRevisionConflictError", () => Effect.void));
+        }).pipe(Effect.catchTags({ GitWorkbenchQueueRevisionConflictError: () => Effect.void }));
         return;
       }
 
@@ -413,7 +429,7 @@ const make = Effect.gen(function* () {
         needsReviewReasons: [],
         lastError: null,
       }).pipe(
-        Effect.catchTag("GitWorkbenchQueueRevisionConflictError", () => Effect.succeed(null)),
+        Effect.catchTags({ GitWorkbenchQueueRevisionConflictError: () => Effect.succeed(null) }),
       );
       if (running === null) return;
 
@@ -440,17 +456,38 @@ const make = Effect.gen(function* () {
       status: "ready",
       needsReviewReasons: [],
       lastError: null,
-    }).pipe(Effect.catchTag("GitWorkbenchQueueRevisionConflictError", () => Effect.succeed(null)));
+    }).pipe(
+      Effect.catchTags({ GitWorkbenchQueueRevisionConflictError: () => Effect.succeed(null) }),
+    );
   });
 
   const handleQuiescence: GitWorkbenchQueueShape["handleQuiescence"] = Effect.fn(
     "GitWorkbenchQueue.handleQuiescence",
   )(function* (event) {
-    const waiting = yield* repository.listWaitingForTurn(event.threadId, event.turnId);
+    const waiting =
+      event.runId === undefined
+        ? yield* repository.listWaitingForTurn(event.threadId, event.turnId)
+        : (yield* repository.listRecoverable()).filter(
+            (workflow) =>
+              workflow.threadId === event.threadId && workflow.status === "waiting_for_turn",
+          );
     yield* Effect.forEach(
       waiting,
       (workflow) =>
         Effect.gen(function* () {
+          const runId = workflow.preconditions.capturedRunId;
+          if (
+            runId !== undefined &&
+            !(yield* runtime.isTurnQuiesced(workflow.threadId, runId, "run"))
+          )
+            return;
+          if (
+            runId === undefined &&
+            event.runId !== undefined &&
+            workflow.turnId !== null &&
+            !(yield* runtime.isTurnQuiesced(workflow.threadId, workflow.turnId, "native-turn"))
+          )
+            return;
           const ready = yield* promoteReady(workflow);
           if (ready !== null) yield* drain(ready.scope);
         }),
@@ -466,19 +503,24 @@ const make = Effect.gen(function* () {
         status: "needs_review",
         needsReviewReasons: ["server_restarted_during_execution"],
         lastError: null,
-      }).pipe(Effect.catchTag("GitWorkbenchQueueRevisionConflictError", () => Effect.void));
+      }).pipe(Effect.catchTags({ GitWorkbenchQueueRevisionConflictError: () => Effect.void }));
       return;
     }
     if (workflow.status === "ready") {
       yield* drain(workflow.scope);
       return;
     }
-    if (workflow.turnId === null) {
+    const capturedRunId = workflow.preconditions.capturedRunId;
+    if (workflow.turnId === null && capturedRunId === undefined) {
       const ready = yield* promoteReady(workflow);
       if (ready !== null) yield* drain(ready.scope);
       return;
     }
-    const quiesced = yield* runtime.isTurnQuiesced(workflow.threadId, workflow.turnId);
+    const quiesced = yield* runtime.isTurnQuiesced(
+      workflow.threadId,
+      capturedRunId ?? workflow.turnId!,
+      capturedRunId === undefined ? "native-turn" : "run",
+    );
     if (!quiesced) return;
     const ready = yield* promoteReady(workflow);
     if (ready !== null) yield* drain(ready.scope);

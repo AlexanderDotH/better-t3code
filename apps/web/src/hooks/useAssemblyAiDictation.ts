@@ -1,13 +1,15 @@
 import { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
 import type { VoiceFileReference } from "@t3tools/contracts";
 export { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   startAssemblyAiStreamingTranscription,
   type StartAssemblyAiStreamingTranscriptionInput,
   type AssemblyAiStreamingSession,
 } from "../lib/assemblyAiStreamingTranscription";
+
+import { useStableCallback } from "./useStableCallback";
 
 export type AssemblyAiDictationState = "idle" | "starting" | "recording" | "stopping";
 
@@ -107,6 +109,7 @@ export function useAssemblyAiDictation(input: {
   const createTokenRef = useRef(input.createToken);
   const transformTranscriptRef = useRef(input.transformTranscript);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep callbacks retained by the microphone and streaming transport current after each commit
   useLayoutEffect(() => {
     getDraftSnapshotRef.current = input.getDraftSnapshot;
     applyDraftSnapshotRef.current = input.applyDraftSnapshot;
@@ -116,31 +119,32 @@ export function useAssemblyAiDictation(input: {
     transformTranscriptRef.current = input.transformTranscript;
   });
 
-  const transition = useCallback((next: AssemblyAiDictationState) => {
+  const transition = useStableCallback((next: AssemblyAiDictationState) => {
     stateRef.current = next;
     if (mountedRef.current) setState(next);
-  }, []);
+  });
 
-  const resetAudioWaveform = useCallback(() => {
+  const resetAudioWaveform = useStableCallback(() => {
     if (mountedRef.current) setAudioWaveform(EMPTY_AUDIO_WAVEFORM);
-  }, []);
+  });
 
-  const clearAttempt = useCallback(() => {
+  const clearAttempt = useStableCallback(() => {
     abortControllerRef.current = null;
     sessionRef.current = null;
     originalDraftRef.current = null;
     latestTranscriptRef.current = "";
     expectedDraftTextRef.current = null;
-  }, []);
+  });
 
-  const terminatePreservingDraft = useCallback(() => {
+  const terminatePreservingDraft = useStableCallback(() => {
     attemptRef.current += 1;
     abortControllerRef.current?.abort();
     sessionRef.current?.cancel();
     clearAttempt();
     stateRef.current = "idle";
-  }, [clearAttempt]);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- own microphone and streaming transport resources until the dictation hook unmounts
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -149,11 +153,14 @@ export function useAssemblyAiDictation(input: {
     };
   }, [terminatePreservingDraft]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancel the microphone and streaming session when its owning composer lifecycle changes
   useLayoutEffect(() => {
     transition("idle");
     return () => terminatePreservingDraft();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- lifecycleKey owns the microphone and transport lifetime even when the draft text stays the same
   }, [input.lifecycleKey, terminatePreservingDraft, transition]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancel the streaming transport if an external draft edit replaces its current transcript
   useLayoutEffect(() => {
     if (stateRef.current !== "idle" && input.draftText !== expectedDraftTextRef.current) {
       terminatePreservingDraft();
@@ -162,17 +169,16 @@ export function useAssemblyAiDictation(input: {
     }
   }, [input.draftText, resetAudioWaveform, terminatePreservingDraft, transition]);
 
-  const applySnapshot = useCallback((snapshot: AssemblyAiDictationDraftSnapshot) => {
+  const applySnapshot = useStableCallback((snapshot: AssemblyAiDictationDraftSnapshot) => {
     expectedDraftTextRef.current = snapshot.text;
     applyDraftSnapshotRef.current(snapshot);
-  }, []);
+  });
 
-  const draftUnchanged = useCallback(
+  const draftUnchanged = useStableCallback(
     () => getDraftSnapshotRef.current().text === expectedDraftTextRef.current,
-    [],
   );
 
-  const start = useCallback(async () => {
+  const start = useStableCallback(async () => {
     if (stateRef.current !== "idle") return;
     if (!input.configured) {
       onNoticeRef.current({
@@ -244,17 +250,9 @@ export function useAssemblyAiDictation(input: {
         error: error instanceof Error ? error : new Error("Voice input setup failed."),
       });
     }
-  }, [
-    applySnapshot,
-    clearAttempt,
-    draftUnchanged,
-    input.configured,
-    resetAudioWaveform,
-    terminatePreservingDraft,
-    transition,
-  ]);
+  });
 
-  const stop = useCallback(async () => {
+  const stop = useStableCallback(async () => {
     if (stateRef.current === "idle" || stateRef.current === "stopping") return;
     const session = sessionRef.current;
     if (!session) {
@@ -319,16 +317,9 @@ export function useAssemblyAiDictation(input: {
     clearAttempt();
     resetAudioWaveform();
     transition("idle");
-  }, [
-    applySnapshot,
-    clearAttempt,
-    draftUnchanged,
-    input.lifecycleKey,
-    resetAudioWaveform,
-    transition,
-  ]);
+  });
 
-  const cancel = useCallback(() => {
+  const cancel = useStableCallback(() => {
     if (stateRef.current === "idle") return;
     const originalDraft = draftUnchanged() ? originalDraftRef.current : null;
     attemptRef.current += 1;
@@ -338,9 +329,9 @@ export function useAssemblyAiDictation(input: {
     if (originalDraft) applyDraftSnapshotRef.current(originalDraft);
     resetAudioWaveform();
     transition("idle");
-  }, [clearAttempt, draftUnchanged, resetAudioWaveform, transition]);
+  });
 
-  const restoreOriginal = useCallback(() => {
+  const restoreOriginal = useStableCallback(() => {
     if (
       !restorableDraft ||
       restorableDraft.lifecycleKey !== input.lifecycleKey ||
@@ -349,12 +340,14 @@ export function useAssemblyAiDictation(input: {
       return;
     applyDraftSnapshotRef.current(restorableDraft.original);
     setRestorableDraft(null);
-  }, [input.lifecycleKey, restorableDraft]);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stop the microphone and streaming session when voice credentials are removed
   useEffect(() => {
     if (shouldCancelAssemblyAiDictation(input.configured, stateRef.current)) cancel();
   }, [cancel, input.configured]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- own the Escape listener while a microphone or transcript-processing session is active
   useEffect(() => {
     if (state === "idle") return;
     const cancelOnEscape = (event: KeyboardEvent) => {

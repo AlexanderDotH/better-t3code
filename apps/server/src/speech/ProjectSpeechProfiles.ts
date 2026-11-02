@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import {
   buildBasicProjectSpeechProfileContent,
@@ -225,7 +225,7 @@ export class ProjectSpeechProfiles extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const store = yield* ProjectSpeechProfileStore;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const projectionSnapshotQuery = yield* ProjectStoreV2;
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspaceScanner = yield* ProjectSpeechWorkspaceScanner;
   const vocabulary = yield* Effect.serviceOption(ProjectSpeechVocabulary);
@@ -233,7 +233,7 @@ export const make = Effect.gen(function* () {
   const resolveProject = Effect.fn("ProjectSpeechProfiles.resolveProject")(function* (
     projectId: ProjectId,
   ) {
-    const project = yield* projectionSnapshotQuery.getProjectShellById(projectId).pipe(
+    const project = yield* projectionSnapshotQuery.getShell(projectId).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectSpeechProfileError({

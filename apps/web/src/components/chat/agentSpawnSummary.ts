@@ -9,7 +9,7 @@ export function selectAgentDisplayWorkLogEntries(
   entries: ReadonlyArray<WorkLogEntry>,
   nativeSubagentDisplay: boolean,
 ): ReadonlyArray<WorkLogEntry> {
-  return nativeSubagentDisplay ? entries : entries.filter((entry) => !entry.agentSpawn);
+  return nativeSubagentDisplay ? entries : entries.filter((entry) => entry.itemType !== "subagent");
 }
 
 /** Summarize observed states without treating idle or missing agents as completed. */

@@ -22,13 +22,13 @@ import {
 import { visualizationLabels } from "@t3tools/client-runtime/visualizations/labels";
 import { normalizeVisualizationAppearance } from "@t3tools/client-runtime/visualizations/appearance";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { shareLocalAttachment } from "../../lib/attachmentDownload";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { uuidv4 } from "../../lib/uuid";
-import { useFontFamily } from "../../lib/useFontFamily";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   VisualizationRuntime,
@@ -93,6 +93,16 @@ async function shareVisualization(content: string, extension: "svg" | "png" | "c
   }
 }
 
+function withSourceKeys<Item>(items: readonly Item[]) {
+  const occurrences = new Map<string | undefined, number>();
+  return items.map((item) => {
+    const value = JSON.stringify(item);
+    const occurrence = occurrences.get(value) ?? 0;
+    occurrences.set(value, occurrence + 1);
+    return { item, key: JSON.stringify([value, occurrence]) };
+  });
+}
+
 function SourceTable({
   dataset,
   labels,
@@ -120,17 +130,14 @@ function SourceTable({
               </Text>
             ))}
           </View>
-          {dataset.rows
+          {withSourceKeys(dataset.rows)
             .slice(page * TABLE_PAGE_SIZE, (page + 1) * TABLE_PAGE_SIZE)
-            .map((row, index) => (
-              <View
-                key={page * TABLE_PAGE_SIZE + index}
-                className="flex-row border-b border-border"
-              >
+            .map(({ item: row, key }) => (
+              <View key={key} className="flex-row border-b border-border">
                 {dataset.columns.map((column) => (
                   <Text key={column} selectable className="w-36 p-2 text-xs text-foreground">
                     {row[column] == null
-                      ? "—"
+                      ? "–"
                       : typeof row[column] === "object"
                         ? JSON.stringify(row[column])
                         : String(row[column])}
@@ -205,7 +212,7 @@ export function VisualizationBlock({
 }) {
   const { themeAppearance, themeVariables, interfaceLanguage, chatVisualMode } =
     useAppearancePreferences();
-  const fontFamily = useFontFamily("regular");
+  const fontFamily = FONT_FAMILIES.regular;
   const locale = interfaceLanguage.language === "de" ? "de" : "en";
   const labels = visualizationLabels(locale);
   const requestPreview = useVisualizationPreview();
@@ -299,6 +306,7 @@ export function VisualizationBlock({
   const exporting = activeExport !== null && activeExport.requestId === request?.requestId;
   const pngExportRequest = exporting ? activeExport.pngRequest : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the clipboard feedback timer when this diagram unmounts.
   useEffect(
     () => () => {
       if (copyTimeout.current) clearTimeout(copyTimeout.current);
@@ -306,6 +314,7 @@ export function VisualizationBlock({
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the renderer preview request and abort it when the diagram changes.
   useEffect(() => {
     if (!request || isStreaming) return;
     const controller = new AbortController();
@@ -451,9 +460,9 @@ export function VisualizationBlock({
         <Text className="text-xs text-foreground-muted">{labels.sourceData}</Text>
       </Pressable>
       {showData
-        ? document.datasets.map((dataset, index) => (
+        ? withSourceKeys(document.datasets).map(({ item: dataset, key }) => (
             <SourceTable
-              key={`${request?.requestId}-${index}`}
+              key={key}
               dataset={dataset}
               labels={labels}
               exportDisabled={exporting}

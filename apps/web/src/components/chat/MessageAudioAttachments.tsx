@@ -1,5 +1,5 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -15,15 +15,12 @@ function MessageAudioAttachment({
   readonly attachment: ChatAudioAttachment;
 }) {
   const translate = useInterfaceTranslator().message;
-  const resource = useMemo<AssetResource>(
-    () => ({
-      _tag: "attachment",
-      attachmentId: attachment.id,
-      fileName: attachment.name,
-      mimeType: attachment.mimeType,
-    }),
-    [attachment.id, attachment.name, attachment.mimeType],
-  );
+  const resource: AssetResource = {
+    _tag: "attachment",
+    attachmentId: attachment.id,
+    fileName: attachment.name,
+    mimeType: attachment.mimeType,
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const latestSrc = assetUrl._tag === "Success" ? assetUrl.url : (attachment.previewUrl ?? null);

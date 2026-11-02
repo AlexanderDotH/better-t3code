@@ -8,9 +8,9 @@ import * as Stream from "effect/Stream";
 
 import * as KnowledgeGraphScopeCatalog from "../../knowledge-graph/runtime/KnowledgeGraphScopeCatalog.ts";
 import * as KnowledgeGraphWatcherMultiplexer from "../../knowledge-graph/runtime/KnowledgeGraphWatcherMultiplexer.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
+import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import {
   ProjectIndexingBridge,
   type ResolvedProjectIndexScope,
@@ -45,8 +45,8 @@ const make = Effect.gen(function* () {
   const catalog = yield* KnowledgeGraphScopeCatalog.KnowledgeGraphScopeCatalog;
   const watcher = yield* KnowledgeGraphWatcherMultiplexer.KnowledgeGraphWatcherMultiplexer;
   const registry = yield* ProviderRegistry;
-  const providers = yield* ProviderService;
-  const projections = yield* ProjectionSnapshotQuery;
+  const events = yield* EventSinkV2;
+  const projections = yield* OrchestratorV2;
   const generate = yield* makeProjectIndexGenerator;
   const readDiff = yield* makeProjectIndexDiffReader;
 
@@ -101,33 +101,14 @@ const make = Effect.gen(function* () {
       // model work while a durable interactive turn is already using the environment.
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const events =
-            providers.subscribeEvents === undefined
-              ? providers.streamEvents
-              : yield* providers.subscribeEvents;
-          const shell = yield* projections.getShellSnapshot();
-          const interactiveIds = new Set(shell.threads.map((thread) => thread.id));
-          const isBusy = providers
-            .listSessions()
+          const afterSequence = yield* events.latestSequence();
+          const isBusy = projections
+            .getShellSnapshot()
             .pipe(
-              Effect.map((sessions) =>
-                sessions.some(
-                  (session) => interactiveIds.has(session.threadId) && session.status === "running",
-                ),
-              ),
+              Effect.map((shell) => shell.threads.some((thread) => thread.activeRunId !== null)),
             );
           if (!(yield* isBusy)) return;
-          yield* events.pipe(
-            Stream.filter(
-              (event) =>
-                interactiveIds.has(event.threadId) &&
-                [
-                  "turn.completed",
-                  "turn.aborted",
-                  "session.exited",
-                  "session.state.changed",
-                ].includes(event.type),
-            ),
+          yield* events.stream({ afterSequence }).pipe(
             Stream.filterEffect(() => isBusy.pipe(Effect.map((busy) => !busy))),
             Stream.take(1),
             Stream.runDrain,

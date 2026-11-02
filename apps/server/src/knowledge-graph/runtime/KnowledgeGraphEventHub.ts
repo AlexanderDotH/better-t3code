@@ -23,15 +23,15 @@ export class KnowledgeGraphEventHub extends Context.Service<
 const make = Effect.gen(function* () {
   const events = yield* PubSub.unbounded<KnowledgeGraphStreamEvent>();
   return KnowledgeGraphEventHub.of({
-    publish: (event) => PubSub.publish(events, event).pipe(Effect.asVoid),
-    subscribe: (scopeId) =>
-      PubSub.subscribe(events).pipe(
-        Effect.map((subscription) =>
-          Stream.fromSubscription(subscription).pipe(
-            Stream.filter((event) => eventScopeId(event) === scopeId),
-          ),
-        ),
-      ),
+    publish: Effect.fn("publish")(function (event) {
+      return PubSub.publish(events, event);
+    }, Effect.asVoid),
+    subscribe: Effect.fn("subscribe")(function* (scopeId) {
+      const subscription = yield* PubSub.subscribe(events);
+      return Stream.fromSubscription(subscription).pipe(
+        Stream.filter((event) => eventScopeId(event) === scopeId),
+      );
+    }),
   });
 });
 

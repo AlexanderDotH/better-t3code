@@ -1,31 +1,5 @@
-import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import { ServerIcon } from "lucide-react";
-import {
-  AntigravityIcon,
-  ClaudeAI,
-  CursorIcon,
-  GrokIcon,
-  GeminiIcon,
-  OpenRouterIcon,
-  Icon,
-  OpenAI,
-  OpenCodeIcon,
-} from "../Icons";
-
-export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
-  [ProviderDriverKind.make("codex")]: OpenAI,
-  [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
-  [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
-  [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
-  [ProviderDriverKind.make("gemini")]: GeminiIcon,
-  [ProviderDriverKind.make("chatgpt")]: OpenAI,
-  [ProviderDriverKind.make("openai")]: OpenAI,
-  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
-  [ProviderDriverKind.make("openaiCompatible")]: ServerIcon,
-  [ProviderDriverKind.make("lmstudio")]: ServerIcon,
-};
+import type { ServerProvider, ProviderDriverKind } from "@t3tools/contracts";
+import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 
 export type ModelEsque = {
   capabilities?: ServerProvider["models"][number]["capabilities"];
@@ -62,10 +36,10 @@ export function getDisplayModelName(
   return stripLeadingQualifier(name, model.subProvider);
 }
 
-export function getTriggerDisplayModelName(model: ModelEsque): string {
-  return getDisplayModelName(model, { preferShortName: true });
-}
-
-export function getTriggerDisplayModelLabel(model: ModelEsque): string {
-  return getTriggerDisplayModelName(model);
+export function getTriggerDisplayModelName(
+  model: ModelEsque,
+  driverKind: ProviderDriverKind | null | undefined,
+): string {
+  const shortName = resolveModelShortName(model, driverKind);
+  return getDisplayModelName({ ...model, shortName }, { preferShortName: true });
 }

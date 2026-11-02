@@ -13,8 +13,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { readMcpServersFromConfig } from "../agentImportSources.ts";
-import { expandHomePath } from "../pathExpansion.ts";
-import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import { expandHomePath as expandNativeHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 
 const NativeConfigSettings = Schema.Struct({
   homePath: Schema.optionalKey(Schema.String),
@@ -40,8 +40,12 @@ export const discoverNativeMcpServers = Effect.fn("discoverNativeMcpServers")(fu
   const decoded = decodeNativeConfigSettings(instance ? (instance.config ?? {}) : legacy);
   if (Option.isNone(decoded)) return [];
   const config = decoded.value;
-  const environment = mergeProviderInstanceEnvironment(instance?.environment, input.environment);
+  const environment = yield* mergeProviderInstanceEnvironment(
+    instance?.environment,
+    input.environment,
+  );
   const home = input.homeDir ?? environment.HOME ?? NodeOS.homedir();
+  const expandHomePath = (value: string) => expandNativeHomePath(value, home);
   const scope = input.scope ?? "global";
   const projectCwd = input.projectCwd ? path.resolve(input.projectCwd) : undefined;
   if (scope === "project" && !projectCwd) return [];

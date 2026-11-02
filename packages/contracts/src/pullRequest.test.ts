@@ -1,57 +1,36 @@
+const decodeCapabilities = Schema.decodeUnknownSync(PullRequestCapabilities);
+import { SourceControlProviderKind } from "./sourceControl.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-
+import {
+  PullRequestDetail,
+  PullRequestListResult,
+  resolvePullRequestAuthorFilter,
+} from "./pullRequest.ts";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
-  PullRequestCheck,
-  PullRequestCheckLogInput,
   PullRequestFilesViewedResult,
   PullRequestListInput,
-  PullRequestListResult,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
   pullRequestHostOf,
-  resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
-
-const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
-const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
-const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
-const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
-const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
+const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
+const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
+const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
+const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 
-it("round-trips pipeline job details while accepting checks from older servers", () => {
-  const codec = Schema.toCodecJson(PullRequestCheck);
-  const legacy = { name: "build", status: "pending", description: null, url: null } as const;
-  for (const check of [
-    legacy,
-    { ...legacy, logId: 42 },
-    { ...legacy, stage: "build", statusLabel: "Not started", pendingState: "queued" as const },
-  ]) {
-    expect(Schema.decodeSync(codec)(Schema.encodeSync(codec)(check))).toEqual(check);
-  }
-});
-
-it("only accepts positive integral job IDs", () => {
-  const decode = Schema.decodeUnknownSync(PullRequestCheckLogInput);
-  for (const checkId of [0, -1, 1.5, "42", Infinity]) {
-    expect(() =>
-      decode({ projectId: "p", repository: "group/repo", number: 1, checkId }),
-    ).toThrow();
-  }
-  expect(decode({ projectId: "p", repository: "group/repo", number: 1, checkId: 42 }).checkId).toBe(
-    42,
-  );
-});
+const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
   providers: [
     {
       host: "github.com",
-      kind: "github",
+      kind: SourceControlProviderKind.make("github"),
       searchesOnHost: true,
       projectCount: 1,
       configured: true,
@@ -59,7 +38,7 @@ const LIST_RESULT: PullRequestListResult = {
     },
     {
       host: "gitlab.com",
-      kind: "gitlab",
+      kind: SourceControlProviderKind.make("gitlab"),
       searchesOnHost: true,
       projectCount: 1,
       configured: false,
@@ -68,7 +47,7 @@ const LIST_RESULT: PullRequestListResult = {
   ],
   entries: [
     {
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       host: "github.com",
       projectId: "project-1" as PullRequestListResult["entries"][number]["projectId"],
       projectTitle: "t3code",
@@ -96,24 +75,10 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
-  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
-    const identity = {
-      canonicalKey: "forge.example/team/repo",
-      locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
-    };
-    expect(pullRequestHostOf(identity, "forgejo")).toBe("forge.example:3000");
-    expect(pullRequestHostOf(identity, "gitlab")).toBe("forge.example");
-    expect(
-      pullRequestHostOf(
-        { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
-        "forgejo",
-      ),
-    ).toBe("forge.example");
-  });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema
-   * error. Building it here turns that into a test failure instead.
+   * error.
    */
   it("round-trips through the JSON codec the RPC serializes with", () => {
     const codec = Schema.toCodecJson(PullRequestListResult);
@@ -123,6 +88,24 @@ describe("PullRequestListResult", () => {
     expect(decoded).toStrictEqual(LIST_RESULT);
   });
 
+  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
+    const identity = {
+      canonicalKey: "forge.example/team/repo",
+      locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
+    };
+    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("forgejo"))).toBe(
+      "forge.example:3000",
+    );
+    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(
+      "forge.example",
+    );
+    expect(
+      pullRequestHostOf(
+        { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
+        SourceControlProviderKind.make("forgejo"),
+      ),
+    ).toBe("forge.example");
+  });
   it("keys a viewer by host, so two hosts of one kind stay separate accounts", () => {
     const decoded = decodeListResult({
       ...LIST_RESULT,
@@ -131,6 +114,84 @@ describe("PullRequestListResult", () => {
 
     expect(decoded.viewers["github.com"]).toBe("bilal");
     expect(decoded.viewers["github.acme.dev"]).toBe("b.hassan");
+  });
+});
+
+describe("PullRequestCapabilities", () => {
+  const base = {
+    diff: true,
+    comment: true,
+    actions: [],
+    mergeMethods: [],
+    search: true,
+    review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+    reviewers: { request: true, listCandidates: true },
+  };
+
+  it("loads a newer server's detail response, dropping unknown options in order", () => {
+    const options = {
+      actions: ["close", "archive", "merge"],
+      verdicts: ["request-changes", "block", "approve"],
+      updateMethods: ["rebase", "fast-forward", "merge"],
+    };
+    const detail = {
+      ...LIST_RESULT.entries[0],
+      workspaceRoot: "/workspace/t3code",
+      body: "",
+      changedFiles: 1,
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      capabilities: {
+        ...base,
+        actions: options.actions,
+        mergeMethods: ["squash", "fast-forward", "merge"],
+        updateMethods: options.updateMethods,
+        review: { ...base.review, verdicts: options.verdicts },
+      },
+      viewerPermissions: { ...options, comment: true, resolve: true, requestReviewers: true },
+    };
+    const decoded = decodeDetail(detail);
+
+    expect(decoded.capabilities).toEqual({
+      ...base,
+      actions: ["close", "merge"],
+      mergeMethods: ["squash", "merge"],
+      updateMethods: ["rebase", "merge"],
+      review: { ...base.review, verdicts: ["request-changes", "approve"] },
+    });
+    expect(decoded.viewerPermissions).toEqual({
+      actions: ["close", "merge"],
+      verdicts: ["request-changes", "approve"],
+      updateMethods: ["rebase", "merge"],
+      comment: true,
+      resolve: true,
+      requestReviewers: true,
+    });
+    expect(decoded.title).toBe(detail.title);
+  });
+
+  it("decodes a server that says nothing about reactions as a server with none", () => {
+    expect(decodeCapabilities(base).reactions).toBeUndefined();
+  });
+});
+
+describe("resolvePullRequestAuthorFilter", () => {
+  it("reads me as the signed-in account on the host", () => {
+    expect(resolvePullRequestAuthorFilter("me", "bilal")).toBe("bilal");
+    expect(resolvePullRequestAuthorFilter(" @Me ", "bilal")).toBe("bilal");
+  });
+
+  it("keeps me as a literal login when the host has no viewer", () => {
+    expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
+    expect(resolvePullRequestAuthorFilter("@me", " ")).toBe("@me");
+  });
+
+  it("passes any other login through trimmed", () => {
+    expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
+    expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
   });
 });
 
@@ -264,23 +325,6 @@ describe("approving fork workflows", () => {
     });
 
     expect(action.action).toBe("approve-workflows");
-  });
-});
-
-describe("PullRequestCapabilities", () => {
-  const decodeCapabilities = Schema.decodeUnknownSync(PullRequestCapabilities);
-  const base = {
-    diff: true,
-    comment: true,
-    actions: [],
-    mergeMethods: [],
-    search: true,
-    review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
-    reviewers: { request: true, listCandidates: true },
-  };
-
-  it("decodes a server that says nothing about reactions as a server with none", () => {
-    expect(decodeCapabilities(base).reactions).toBeUndefined();
   });
 });
 

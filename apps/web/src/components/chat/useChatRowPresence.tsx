@@ -98,7 +98,7 @@ export function useChatRowPresence(
         (source.some((row) => transient(row) && !previousById.has(row.id)) ||
           stored.source.some((row) => transient(row) && !nextIds.has(row.id)));
       const changed = foldChanged || statusChanged;
-      const retain = !reset && (changed || stored.deadline > Date.now());
+      const retain = !reset && (changed || stored.deadline > 0);
       const exiting = retain
         ? new Set(
             stored.rows
@@ -116,7 +116,7 @@ export function useChatRowPresence(
               .filter(
                 (row) =>
                   stored.exiting.has(row.id) ||
-                  (stored.entering.has(row.id) && stored.deadline > Date.now()) ||
+                  (stored.entering.has(row.id) && stored.deadline > 0) ||
                   (!previousById.has(row.id) && (foldChanged || transient(row))),
               )
               .map((row) => row.id),
@@ -131,12 +131,13 @@ export function useChatRowPresence(
         rows: exiting.size ? mergeExitingRows(stored.rows, source, exiting) : source,
         entering: moving ? entering : EMPTY_IDS,
         exiting: moving ? exiting : EMPTY_IDS,
-        deadline: moving ? (changed ? Date.now() + RETAIN_MS : stored.deadline) : 0,
+        deadline: moving ? (changed ? stored.deadline + 1 : stored.deadline) : 0,
       };
     }
     setStored(state);
   }
   const deadline = state.deadline;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep rows mounted until their DOM exit animations finish.
   useEffect(() => {
     if (!deadline) return;
     const timer = setTimeout(
@@ -152,7 +153,7 @@ export function useChatRowPresence(
               }
             : current,
         ),
-      Math.max(0, deadline - Date.now()),
+      RETAIN_MS,
     );
     return () => clearTimeout(timer);
   }, [deadline]);
@@ -173,6 +174,7 @@ export function ChatTimelineRowMotion({
   const exiting = motion.exiting.has(id);
   const ref = useRef<HTMLDivElement>(null);
   const animation = useRef<Animation | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep rows mounted until their DOM exit animations finish.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -211,7 +213,8 @@ export function ChatTimelineRowMotion({
       animation.current = null;
       element.style.removeProperty("overflow");
     };
-  }, [id, entering, exiting]);
+  }, [entering, exiting]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep rows mounted until their DOM exit animations finish.
   useEffect(() => () => animation.current?.cancel(), []);
   return (
     <div

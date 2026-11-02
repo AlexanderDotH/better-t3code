@@ -11,7 +11,7 @@ import {
   type ChatVisualModeSyncRecordV2,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { uuidv4 } from "../lib/uuid";
@@ -144,6 +144,7 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
     [syncEnvironments],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist the winning synchronized chat appearance record to native storage.
   useEffect(() => {
     const patch = sync.preferencePatch;
     if (patch === null) return;
@@ -153,6 +154,7 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
     savePreferences(patch);
   }, [savePreferences, sync.preferencePatch]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reconcile chat appearance records with connected environments and track their acknowledgements.
   useEffect(() => {
     if (!sync.isReady) return;
     const connectedEnvironmentIds = new Set(
@@ -222,21 +224,21 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
     });
   }, [sync.isReady, sync.plan, syncEnvironments, updateServerSettings]);
 
-  useEffect(() => {
-    const winner = sync.plan.winner;
-    if (winner === null) return;
-    const synchronizedEnvironmentIds = syncEnvironments
-      .filter(
-        (environment) =>
-          environment.connected &&
-          recordMatches(
-            resolveChatVisualModeRecord(environment.record, environment.recordV2),
-            winner,
-          ),
-      )
-      .map((environment) => environment.environmentId);
-    setIds(setFailedEnvironmentIds, [], synchronizedEnvironmentIds);
-  }, [sync.plan.winner, syncEnvironments]);
+  const winner = sync.plan.winner;
+  const synchronizedEnvironmentIds = new Set(
+    winner === null
+      ? []
+      : syncEnvironments
+          .filter(
+            (environment) =>
+              environment.connected &&
+              recordMatches(
+                resolveChatVisualModeRecord(environment.record, environment.recordV2),
+                winner,
+              ),
+          )
+          .map((environment) => environment.environmentId),
+  );
 
   const setMode = useCallback(
     (mode: ChatVisualMode) => {
@@ -254,13 +256,9 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
     [savePreferences, sync.plan.winner?.updatedAt],
   );
 
-  const failedEnvironmentLabels = useMemo(
-    () =>
-      failedEnvironmentIds.map(
-        (environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId,
-      ),
-    [failedEnvironmentIds, labelByEnvironmentId],
-  );
+  const failedEnvironmentLabels = failedEnvironmentIds
+    .filter((environmentId) => !synchronizedEnvironmentIds.has(environmentId))
+    .map((environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId);
 
   return {
     mode: sync.mode,

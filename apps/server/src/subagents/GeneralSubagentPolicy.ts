@@ -1,4 +1,4 @@
-import type { OrchestrationSubagentStatus, ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -7,13 +7,6 @@ import {
 } from "./GeneralSubagentProtocol.ts";
 
 export type GeneralSubagentApprovalAction = "accept" | "decline" | "fail-agent";
-export type GeneralSubagentOutcomeStatus = "completed" | "interrupted" | "error" | "timed-out";
-
-export interface GeneralSubagentOutcome {
-  readonly status: GeneralSubagentOutcomeStatus;
-  readonly detail?: string;
-}
-
 const decodeGeneralSubagentDetailedResult = Schema.decodeUnknownSync(GeneralSubagentDetailedResult);
 
 function finalResultContract(agentId: string): string {
@@ -54,19 +47,12 @@ ${finalResultContract(input.agentId)}`;
 
 export function buildGeneralSubagentFollowUpPrompt(input: {
   readonly task: string;
-  readonly messages: ReadonlyArray<string>;
   readonly agentId: string;
 }): string {
-  const mailbox =
-    input.messages.length === 0
-      ? ""
-      : `\n\nMessages queued by the parent and delivered at this safe boundary:\n${input.messages
-          .map((message, index) => `${index + 1}. ${message}`)
-          .join("\n")}`;
   return `T3 DIRECT SUBAGENT FOLLOW-UP
 
 Continue in the existing provider session. Complete this follow-up task end to end:
-${input.task}${mailbox}
+${input.task}
 
 Keep the same execution contract: remain within the delegated scope, do not spawn nested agents, verify focused work, and return the scoped outcome to the parent.
 
@@ -104,32 +90,6 @@ export function generalSubagentApprovalAction(requestType: string): GeneralSubag
   return "decline";
 }
 
-export function generalSubagentTerminalStatus(
-  event: ProviderRuntimeEvent,
-): GeneralSubagentOutcomeStatus | null {
-  if (event.type === "turn.aborted") return "interrupted";
-  if (event.type === "turn.completed") {
-    if (event.payload.state === "completed") return "completed";
-    if (event.payload.state === "interrupted" || event.payload.state === "cancelled") {
-      return "interrupted";
-    }
-    return "error";
-  }
-  if (event.type === "session.exited") return "error";
-  if (event.type === "session.state.changed" && event.payload.state === "error") return "error";
-  return null;
-}
-
-export function generalSubagentTerminalDetail(event: ProviderRuntimeEvent): string | undefined {
-  if (event.type === "turn.aborted") return event.payload.reason;
-  if (event.type === "turn.completed") {
-    return event.payload.errorMessage ?? event.payload.stopReason ?? undefined;
-  }
-  if (event.type === "session.exited") return event.payload.reason;
-  if (event.type === "session.state.changed") return event.payload.reason;
-  return undefined;
-}
-
 export function assistantTextFromCompletedItem(event: ProviderRuntimeEvent): string | undefined {
   if (event.type !== "item.completed" || event.payload.itemType !== "assistant_message") {
     return undefined;
@@ -138,11 +98,4 @@ export function assistantTextFromCompletedItem(event: ProviderRuntimeEvent): str
   const data = event.payload.data;
   if (typeof data !== "object" || data === null || !("text" in data)) return undefined;
   return typeof data.text === "string" && data.text.length > 0 ? data.text : undefined;
-}
-
-export function generalSubagentOrchestrationStatus(
-  status: GeneralSubagentOutcomeStatus,
-): OrchestrationSubagentStatus {
-  if (status === "timed-out") return "error";
-  return status;
 }

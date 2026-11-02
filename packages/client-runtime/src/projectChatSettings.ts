@@ -1,11 +1,12 @@
 import type {
   ComposerMode,
   ModelSelection,
-  OrchestrationThreadShell,
   ProjectChatSettings,
   RuntimeMode,
   ScopedProjectRef,
 } from "@t3tools/contracts";
+
+import type { EnvironmentThreadShell } from "./state/models.ts";
 
 export interface ResolvedProjectChatSettings {
   readonly modelSelection: ModelSelection;
@@ -21,7 +22,7 @@ export interface ProjectChatSettingsDefaults extends Omit<
 }
 
 export interface ProjectChatSettingsThread extends Pick<
-  OrchestrationThreadShell,
+  EnvironmentThreadShell,
   | "id"
   | "projectId"
   | "modelSelection"

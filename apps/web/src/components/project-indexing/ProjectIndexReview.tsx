@@ -33,6 +33,7 @@ export function ProjectIndexReview({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const requestGeneration = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate a pending review request when its scoped review panel unmounts.
   useEffect(
     () => () => {
       requestGeneration.current += 1;

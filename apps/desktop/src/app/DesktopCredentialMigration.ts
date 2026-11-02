@@ -146,12 +146,15 @@ const make = Effect.gen(function* () {
   );
   const legacyStorage = ElectronSafeStorage.ElectronSafeStorage.of({
     isEncryptionAvailable: Effect.succeed(true),
-    encryptString: () => Effect.die("Legacy migration never writes OS-encrypted credentials."),
-    decryptString: (value) =>
+    encryptString: Effect.fn("DesktopCredentialMigration.encryptString")(() =>
+      Effect.die("Legacy migration never writes OS-encrypted credentials."),
+    ),
+    decryptString: Effect.fn("DesktopCredentialMigration.decryptString")((value) =>
       Effect.tryPromise({
         try: () => decryptLegacy(value),
         catch: (cause) => new ElectronSafeStorage.ElectronSafeStorageDecryptError({ cause }),
       }),
+    ),
     selectedStorageBackend: Effect.succeedNone,
   });
   const registry = yield* DesktopSavedEnvironments.make.pipe(

@@ -388,6 +388,8 @@ export function createProjectIndexController(input: {
   let epoch = 0;
   let refreshRequest = 0;
   let queryRequest = 0;
+  let subscriptionRefreshPending = false;
+  let subscriptionRefreshAgain = false;
 
   function publish(next: ProjectIndexControllerState) {
     if (next === state) return;
@@ -409,6 +411,7 @@ export function createProjectIndexController(input: {
         ...next,
         invalidationEpoch: state.invalidationEpoch + (event.type === "invalidate" ? 1 : 0),
       });
+      if (event.type === "invalidate") refreshSubscribedStatus();
     }
   }
 
@@ -455,6 +458,25 @@ export function createProjectIndexController(input: {
     }
   }
 
+  function refreshSubscribedStatus() {
+    if (subscriptionRefreshPending) {
+      subscriptionRefreshAgain = true;
+      return;
+    }
+    subscriptionRefreshPending = true;
+    const refreshEpoch = epoch;
+    void refresh()
+      .catch(() => undefined)
+      .finally(() => {
+        if (refreshEpoch !== epoch) return;
+        subscriptionRefreshPending = false;
+        if (subscriptionRefreshAgain && listeners.size > 0) {
+          subscriptionRefreshAgain = false;
+          refreshSubscribedStatus();
+        }
+      });
+  }
+
   async function mutate(
     action: Exclude<ProjectIndexControllerState["pendingAction"], null>,
     run: () => Promise<ProjectIndexStatusV1>,
@@ -499,14 +521,26 @@ export function createProjectIndexController(input: {
     }
   }
 
+  function dispose() {
+    epoch += 1;
+    refreshRequest += 1;
+    queryRequest += 1;
+    subscriptionRefreshPending = false;
+    subscriptionRefreshAgain = false;
+    disconnect();
+    listeners.clear();
+    state = { ...state, loading: false, pendingAction: null };
+  }
+
   return {
     getSnapshot: () => state,
     subscribe(listener: () => void) {
+      const firstSubscriber = listeners.size === 0;
       listeners.add(listener);
-      connect();
+      if (firstSubscriber) refreshSubscribedStatus();
       return () => {
         listeners.delete(listener);
-        if (listeners.size === 0) disconnect();
+        if (listeners.size === 0) dispose();
       };
     },
     refresh,
@@ -526,14 +560,7 @@ export function createProjectIndexController(input: {
         );
       return api.review({ ...scope, selection });
     },
-    dispose() {
-      epoch += 1;
-      refreshRequest += 1;
-      queryRequest += 1;
-      disconnect();
-      listeners.clear();
-      state = { ...state, loading: false, pendingAction: null };
-    },
+    dispose,
   };
 }
 

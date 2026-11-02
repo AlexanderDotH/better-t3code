@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import type { ServerProviderAuth } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
@@ -19,7 +19,7 @@ const credential = {
   accessToken: Redacted.make("access-secret"),
   refreshToken: Redacted.make("refresh-secret"),
   idToken: Redacted.make(
-    `header.${Encoding.encodeBase64Url(
+    `header.${Base64Url.encode(
       JSON.stringify({
         email: "alex@example.com",
         exp: 2_000_000_000,
@@ -105,7 +105,6 @@ describe("ChatGptAuthBroker", () => {
           },
         },
       ]);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(events)).not.toContain("access-secret");
     }),
   );

@@ -12,40 +12,39 @@ export function makeSharedNativeProviderTurnAdmission(input: {
   readonly governor: Pick<SubagentResourceGovernor["Service"], "acquireInProcessLease">;
 }): NativeProviderTurnAdmission {
   return {
-    withLease: (turn, effect) =>
-      Effect.gen(function* () {
-        const pressure = yield* Deferred.make<InProcessCriticalPressureNotice>();
-        const workId = `${turn.providerInstanceId}:${turn.threadId}:${turn.turnId}`;
-        const lease = yield* input.governor.acquireInProcessLease({
-          workId,
-          threadId: turn.threadId,
+    withLease: Effect.fn("NativeProviderTurnAdmission.withLease")(function* (turn, effect) {
+      const pressure = yield* Deferred.make<InProcessCriticalPressureNotice>();
+      const workId = `${turn.providerInstanceId}:${turn.threadId}:${turn.turnId}`;
+      const lease = yield* input.governor.acquireInProcessLease({
+        workId,
+        threadId: turn.threadId,
+        provider: input.provider,
+        providerInstanceId: turn.providerInstanceId,
+        reservation: {
+          serializedHistoryBytes: turn.serializedHistoryBytes,
+          attachmentBytes: turn.attachmentBytes,
+          toolBufferBytes: turn.toolBufferBytes,
+        },
+        onCriticalPressure: (notice) => Deferred.succeed(pressure, notice).pipe(Effect.asVoid),
+      });
+      if (!lease) {
+        return yield* new ProviderAdapterRequestError({
           provider: input.provider,
-          providerInstanceId: turn.providerInstanceId,
-          reservation: {
-            serializedHistoryBytes: turn.serializedHistoryBytes,
-            attachmentBytes: turn.attachmentBytes,
-            toolBufferBytes: turn.toolBufferBytes,
-          },
-          onCriticalPressure: (notice) => Deferred.succeed(pressure, notice).pipe(Effect.asVoid),
+          method: "resource/admission",
+          detail: `${input.provider} turn admission was cancelled while the server was shutting down.`,
         });
-        if (!lease) {
-          return yield* new ProviderAdapterRequestError({
-            provider: input.provider,
-            method: "resource/admission",
-            detail: `${input.provider} turn admission was cancelled while the server was shutting down.`,
-          });
-        }
-        const pressured = Deferred.await(pressure).pipe(
-          Effect.flatMap(
-            (notice) =>
-              new ProviderAdapterRequestError({
-                provider: input.provider,
-                method: "resource/protection",
-                detail: `${input.provider} turn '${notice.workId}' was stopped to protect server memory.`,
-              }),
-          ),
-        );
-        return yield* Effect.raceFirst(effect, pressured).pipe(Effect.ensuring(lease.release));
-      }),
+      }
+      const pressured = Deferred.await(pressure).pipe(
+        Effect.flatMap(
+          (notice) =>
+            new ProviderAdapterRequestError({
+              provider: input.provider,
+              method: "resource/protection",
+              detail: `${input.provider} turn '${notice.workId}' was stopped to protect server memory.`,
+            }),
+        ),
+      );
+      return yield* Effect.raceFirst(effect, pressured).pipe(Effect.ensuring(lease.release));
+    }),
   };
 }

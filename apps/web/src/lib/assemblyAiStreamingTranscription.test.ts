@@ -117,7 +117,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
       { onTranscript: vi.fn(), onError: vi.fn() },
       resources.dependencies,
     );
-    await waitFor(() => resources.hasSocketListener("open"));
+    await resources.socketListening;
     resources.socket.readyState = 1;
     resources.emitSocket("open", {});
     const session = await starting;
@@ -133,7 +133,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
       { onTranscript: vi.fn(), onError: vi.fn(), onAudioLevel },
       resources.dependencies,
     );
-    await waitFor(() => resources.hasSocketListener("open"));
+    await resources.socketListening;
     resources.socket.readyState = 1;
     resources.emitSocket("open", {});
     const session = await starting;
@@ -147,7 +147,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
 
   it("requests microphone permission before minting the short-lived token", async () => {
     const order: string[] = [];
-    const { dependencies, socket, hasSocketListener, emitSocket } = makeBrowserDependencies({
+    const { dependencies, socket, socketListening, emitSocket } = makeBrowserDependencies({
       getUserMedia: async () => {
         order.push("microphone");
         return makeMediaStream();
@@ -162,7 +162,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
       { onTranscript: vi.fn(), onError: vi.fn() },
       dependencies,
     );
-    await waitFor(() => hasSocketListener("open"));
+    await socketListening;
     socket.readyState = 1;
     emitSocket("open", {});
     const session = await starting;
@@ -202,7 +202,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
       { onTranscript: vi.fn(), onError: vi.fn() },
       resources.dependencies,
     );
-    await waitFor(() => resources.hasSocketListener("open"));
+    await resources.socketListening;
     resources.socket.readyState = 1;
     resources.emitSocket("open", {});
     const session = await starting;
@@ -234,7 +234,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
       { onTranscript: vi.fn(), onError },
       resources.dependencies,
     );
-    await waitFor(() => resources.hasSocketListener("open"));
+    await resources.socketListening;
     resources.socket.readyState = 1;
     resources.emitSocket("open", {});
     await starting;
@@ -262,7 +262,8 @@ describe("startAssemblyAiStreamingTranscription", () => {
         clearTimeout: vi.fn(),
       },
     );
-    await waitFor(() => timer.callback !== null && resources.hasSocketListener("open"));
+    await resources.socketListening;
+    expect(timer.callback).not.toBeNull();
 
     timer.callback?.();
 
@@ -278,7 +279,7 @@ describe("startAssemblyAiStreamingTranscription", () => {
       { onTranscript: vi.fn(), onError },
       resources.dependencies,
     );
-    await waitFor(() => resources.hasSocketListener("open"));
+    await resources.socketListening;
     resources.socket.readyState = 1;
     resources.emitSocket("open", {});
     await starting;
@@ -288,14 +289,6 @@ describe("startAssemblyAiStreamingTranscription", () => {
     expect(onError.mock.calls[0]?.[0].message).toMatch(/maximum session duration/i);
   });
 });
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let index = 0; index < 20; index += 1) {
-    if (predicate()) return;
-    await Promise.resolve();
-  }
-  throw new Error("Condition was not reached.");
-}
 
 function makeMediaStream(): AssemblyAiMediaStream {
   return { getTracks: () => [{ stop: vi.fn() }] };
@@ -334,6 +327,10 @@ function makeBrowserDependencies(
   const closeAudioContext = vi.fn(async () => undefined);
   const addWorkletModule = vi.fn(async () => undefined);
   const socketListeners = new Map<string, Set<(event: unknown) => void>>();
+  let notifySocketListening!: () => void;
+  const socketListening = new Promise<void>((resolve) => {
+    notifySocketListening = resolve;
+  });
   const socket = {
     readyState: 0,
     binaryType: "arraybuffer",
@@ -341,6 +338,7 @@ function makeBrowserDependencies(
       const listeners = socketListeners.get(type) ?? new Set();
       listeners.add(listener);
       socketListeners.set(type, listeners);
+      if (type === "open") notifySocketListening();
     }),
     removeEventListener: vi.fn((type: string, listener: (event: unknown) => void) => {
       socketListeners.get(type)?.delete(listener);
@@ -358,7 +356,7 @@ function makeBrowserDependencies(
     addWorkletModule,
     socket,
     emitWorkletMessage: (data: unknown) => workletMessageListener?.({ data }),
-    hasSocketListener: (type: string) => (socketListeners.get(type)?.size ?? 0) > 0,
+    socketListening,
     emitSocket: (type: string, event: unknown) => {
       for (const listener of socketListeners.get(type) ?? []) listener(event);
     },

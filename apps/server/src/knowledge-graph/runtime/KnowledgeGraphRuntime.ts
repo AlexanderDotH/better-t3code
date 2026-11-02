@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../../serverSettings.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import * as KnowledgeGraphRepository from "../persistence/KnowledgeGraphRepository.ts";
 import * as KnowledgeGraphEventHub from "./KnowledgeGraphEventHub.ts";
 import * as KnowledgeGraphIndexer from "./KnowledgeGraphIndexer.ts";
@@ -42,7 +42,7 @@ function isScopeCatalogEvent(type: string): boolean {
     type === "project.deleted" ||
     type === "thread.created" ||
     type === "thread.forked" ||
-    type === "thread.fork-workspace-updated" ||
+    type === "thread.meta.updated" ||
     type === "thread.deleted"
   );
 }
@@ -56,7 +56,7 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
   const eventHub = yield* KnowledgeGraphEventHub.KnowledgeGraphEventHub;
   const settings = yield* ServerSettings.ServerSettingsService;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-  const orchestration = yield* OrchestrationEngine.OrchestrationEngineService;
+  const orchestration = yield* OrchestratorV2;
   const enabled = yield* Ref.make(false);
   const paused = yield* Ref.make(false);
   const generation = yield* Ref.make(0);

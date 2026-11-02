@@ -1,3 +1,4 @@
+import { useEnvironmentProviders } from "~/state/environments";
 import {
   projectIndexingSupported,
   projectIndexingDefaultsSupported,
@@ -51,6 +52,7 @@ function SelectedProjectIndexing(props: {
   readonly thread: EnvironmentThreadShell | null;
 }) {
   const { message } = useInterfaceTranslator();
+  const providersByEnvironment = useEnvironmentProviders();
   const shell = useAtomValue(environmentShell.stateValueAtom(props.environment.environmentId));
   const localDesktop =
     isElectron && props.environment.entry.target._tag === "PrimaryConnectionTarget";
@@ -122,7 +124,7 @@ function SelectedProjectIndexing(props: {
           projectLabel={props.project.title}
           environmentLabel={props.environment.label}
           workspaceRoot={workspaceRoot}
-          providers={props.environment.serverConfig?.providers ?? []}
+          providers={providersByEnvironment.get(props.environment.environmentId) ?? []}
           canOperate={canOperate && !refreshing}
           {...(projectIndexingDefaultsSupported(
             props.environment.serverConfig?.environment.capabilities,

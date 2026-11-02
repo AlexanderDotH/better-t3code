@@ -5,9 +5,9 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { act, useId, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ProjectIndexingSettingsControllerProps } from "./ProjectIndexingSettingsController";
@@ -51,7 +51,7 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({ status: fixture.shellLive ? "live" : "cached", error: Option.none() }),
 }));
 vi.mock("../../state/shell", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     environmentShell: { stateValueAtom: (id: string) => id },
     environmentSnapshotAtom: Atom.family((_id: string) => Atom.make(null)),
@@ -67,14 +67,45 @@ vi.mock("../../hooks/useSettings", () => ({
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: fixture.environments }),
   usePrimaryEnvironmentId: () => fixture.environments[0]?.environmentId ?? null,
+  usePrimaryEnvironment: () => fixture.environments[0] ?? null,
+  useEnvironmentProviders: () =>
+    new Map(
+      fixture.environments.map((environment) => [
+        environment.environmentId,
+        environment.serverConfig.providers,
+      ]),
+    ),
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => fixture.projects,
   useThreadShells: () => fixture.threads,
+  useServerConfigs: () =>
+    new Map(
+      fixture.environments.map((environment) => [
+        environment.environmentId,
+        environment.serverConfig,
+      ]),
+    ),
 }));
 vi.mock("../../state/projectIndexing", () => ({ bindProjectIndexApi: fixture.bind }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({
+  useEnvironmentScope: (_id: unknown, scope: string) =>
+    fixture.sessionAvailable &&
+    fixture.authenticated &&
+    !fixture.sessionPending &&
+    fixture.sessionError === null &&
+    fixture.scopes.includes(scope),
+  useEnvironmentsWithScope: (environments: typeof fixture.environments, scope: string) =>
+    new Set(
+      fixture.sessionAvailable &&
+        fixture.authenticated &&
+        !fixture.sessionPending &&
+        fixture.sessionError === null &&
+        fixture.scopes.includes(scope)
+        ? environments.map((environment) => environment.environmentId)
+        : [],
+    ),
   environmentSession: { sessionStateAtom: (id: string) => id },
 }));
 vi.mock("../../state/query", () => ({
@@ -107,6 +138,7 @@ vi.mock("../ui/select", () => ({
       {children}
     </select>
   ),
+
   SelectTrigger: () => null,
   SelectValue: () => null,
   SelectPopup: ({ children }: { children: ReactNode }) => children,
@@ -128,6 +160,7 @@ vi.mock("./ProjectIndexingSettingsController", () => ({
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
         />
+
         <button disabled={!props.canOperate}>Write index</button>
         <button onClick={() => props.onOpenSource("src/example.ts", 7)}>Open source</button>
       </article>
@@ -156,7 +189,6 @@ const threadId = ThreadId.make("worktree-thread");
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.bind.mockClear();
   fixture.shellLive = true;
   fixture.sessionAvailable = true;
@@ -189,7 +221,9 @@ beforeEach(() => {
   ];
 });
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -200,16 +234,16 @@ describe("ProjectIndexingSettingsSection", () => {
     });
     expect(renderer!.root.findAllByType("article")).toHaveLength(0);
     expect(fixture.bind).not.toHaveBeenCalled();
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("select")[1]!
-        .props.onChange({ currentTarget: { value: projectId } }),
-    );
-    await act(() =>
-      renderer!.root
+        .props.onChange({ currentTarget: { value: projectId } });
+    });
+    await act(async () => {
+      await renderer!.root
         .findAllByType("select")[2]!
-        .props.onChange({ currentTarget: { value: `thread:${threadId}` } }),
-    );
+        .props.onChange({ currentTarget: { value: `thread:${threadId}` } });
+    });
     expect(renderer!.root.findByType("article").props["aria-label"]).toBe(
       `${firstEnvironment}:${projectId}:${threadId}`,
     );
@@ -222,18 +256,18 @@ describe("ProjectIndexingSettingsSection", () => {
     expect(renderer!.root.findByProps({ role: "dialog" }).props["aria-label"]).toBe(
       "environment-a:/environment-a/worktree:src/example.ts",
     );
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("select")[0]!
-        .props.onChange({ currentTarget: { value: secondEnvironment } }),
-    );
+        .props.onChange({ currentTarget: { value: secondEnvironment } });
+    });
     expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
     expect(renderer!.root.findAllByType("article")).toHaveLength(0);
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("select")[1]!
-        .props.onChange({ currentTarget: { value: projectId } }),
-    );
+        .props.onChange({ currentTarget: { value: projectId } });
+    });
     expect(renderer!.root.findByType("article").props["aria-label"]).toBe(
       `${secondEnvironment}:${projectId}:root`,
     );
@@ -261,15 +295,15 @@ describe("ProjectIndexingSettingsSection", () => {
     ).toBe(true);
     fixture.scopes = [];
     fixture.bind.mockClear();
-    await act(() =>
-      renderer!.update(
+    await act(async () => {
+      await renderer!.update(
         <ProjectIndexingProjectSettings
           environmentId={firstEnvironment}
           projectId={projectId}
           threadId={threadId}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer!.root.findAllByType("article")).toHaveLength(0);
     expect(fixture.bind).not.toHaveBeenCalled();
   });
@@ -286,11 +320,11 @@ describe("ProjectIndexingSettingsSection", () => {
     });
     expect(renderer!.root.findAllByType("article")).toHaveLength(0);
     expect(fixture.bind).not.toHaveBeenCalled();
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("select")[2]!
-        .props.onChange({ currentTarget: { value: "project-root" } }),
-    );
+        .props.onChange({ currentTarget: { value: "project-root" } });
+    });
     expect(renderer!.root.findByType("article").props["aria-label"]).toBe(
       `${firstEnvironment}:${projectId}:root`,
     );
@@ -310,15 +344,15 @@ describe("ProjectIndexingSettingsSection", () => {
     expect(fixture.bind).not.toHaveBeenCalled();
     expect(renderer!.root.findAllByType("article")).toHaveLength(0);
     fixture.shellLive = true;
-    await act(() =>
-      renderer!.update(
+    await act(async () => {
+      await renderer!.update(
         <ProjectIndexingProjectSettings
           environmentId={firstEnvironment}
           projectId={projectId}
           threadId={threadId}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer!.root.findByType("article").props["aria-label"]).toBe(
       `${firstEnvironment}:${projectId}:${threadId}`,
     );
@@ -332,23 +366,26 @@ describe("ProjectIndexingSettingsSection", () => {
         threadId={threadId}
       />
     );
+
     await act(() => {
       renderer = create(element);
     });
     const input = renderer!.root.findByType("input");
     const inputId = input.props.id;
-    await act(() => input.props.onChange({ currentTarget: { value: "increment" } }));
+    await act(async () => {
+      await input.props.onChange({ currentTarget: { value: "increment" } });
+    });
 
     fixture.shellLive = false;
-    await act(() =>
-      renderer!.update(
+    await act(async () => {
+      await renderer!.update(
         <ProjectIndexingProjectSettings
           environmentId={firstEnvironment}
           projectId={projectId}
           threadId={threadId}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer!.root.findByType("input")).toBe(input);
     expect(renderer!.root.findByType("input").props.value).toBe("increment");
     expect(
@@ -360,30 +397,30 @@ describe("ProjectIndexingSettingsSection", () => {
     fixture.shellLive = true;
     fixture.sessionAvailable = false;
     fixture.sessionPending = true;
-    await act(() =>
-      renderer!.update(
+    await act(async () => {
+      await renderer!.update(
         <ProjectIndexingProjectSettings
           environmentId={firstEnvironment}
           projectId={projectId}
           threadId={threadId}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer!.root.findByType("input")).toBe(input);
     expect(renderer!.root.findByType("input").props.id).toBe(inputId);
     expect(renderer!.root.findByType("input").props.value).toBe("increment");
 
     fixture.sessionAvailable = true;
     fixture.sessionPending = false;
-    await act(() =>
-      renderer!.update(
+    await act(async () => {
+      await renderer!.update(
         <ProjectIndexingProjectSettings
           environmentId={firstEnvironment}
           projectId={projectId}
           threadId={threadId}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer!.root.findByType("input")).toBe(input);
     expect(renderer!.root.findByType("input").props.value).toBe("increment");
     expect(
@@ -401,6 +438,7 @@ describe("ProjectIndexingSettingsSection", () => {
         threadId={threadId}
       />
     );
+
     const enterSearch = () =>
       renderer!.root.findByType("input").props.onChange({ currentTarget: { value: "increment" } });
     await act(() => {
@@ -408,23 +446,33 @@ describe("ProjectIndexingSettingsSection", () => {
     });
     await act(enterSearch);
     fixture.authenticated = false;
-    await act(() => renderer!.update(render()));
+    await act(async () => {
+      await renderer!.update(render());
+    });
     expect(renderer!.root.findAllByType("input")).toHaveLength(0);
     fixture.authenticated = true;
-    await act(() => renderer!.update(render()));
+    await act(async () => {
+      await renderer!.update(render());
+    });
     expect(renderer!.root.findByType("input").props.value).toBe("");
 
     await act(enterSearch);
     fixture.environments[0]!.connection.phase = "disconnected";
-    await act(() => renderer!.update(render()));
+    await act(async () => {
+      await renderer!.update(render());
+    });
     expect(renderer!.root.findAllByType("input")).toHaveLength(0);
     fixture.environments[0]!.connection.phase = "connected";
-    await act(() => renderer!.update(render()));
+    await act(async () => {
+      await renderer!.update(render());
+    });
     expect(renderer!.root.findByType("input").props.value).toBe("");
 
     await act(enterSearch);
     fixture.threads[0]!.worktreePath = "/environment-a/replaced-worktree";
-    await act(() => renderer!.update(render()));
+    await act(async () => {
+      await renderer!.update(render());
+    });
     expect(renderer!.root.findByType("input").props.value).toBe("");
   });
 });

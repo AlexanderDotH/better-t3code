@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Platform } from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { previewRegistrySkill, validateRegistrySkillFiles } from "../extensionCatalog.ts";
 import { skillArchive } from "../testUtils/skillArchive.ts";
 
@@ -15,7 +15,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { SkillEngine } from "../Services/SkillEngine.ts";
 import { SkillEngineLive } from "./SkillEngine.ts";
 
-const supportsExecutablePermissions = HostProcessPlatform.defaultValue() !== "win32";
+const supportsExecutablePermissions = Platform.defaultValue() !== "win32";
 
 const makeSkillEngineLayer = () =>
   SkillEngineLive.pipe(

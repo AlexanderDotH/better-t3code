@@ -8,7 +8,7 @@ import {
   FETCH_EXPLORATION_ORIENTATION_MAX_CHARS,
   FETCH_EXPLORATION_REQUEST_MAX_CHARS,
   truncateFetchExplorationContext,
-} from "../textGeneration/TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import { discoverWorkspaceContext } from "../workspace/WorkspaceContextEngine.ts";
 
 const FETCH_EXPLORATION_PLANNER_TIMEOUT = "20 seconds";
@@ -238,7 +238,7 @@ const buildFetchRepositoryOrientation = Effect.fn(
   const relevantLines = relevantMatches.map((match) => {
     const location = match.matchLine ? `${match.path}:${match.matchLine}` : match.path;
     const excerpt = compactExcerpt(match.excerpt);
-    return excerpt ? `${location} — ${excerpt}` : location;
+    return excerpt ? `${location}: ${excerpt}` : location;
   });
   const lines = [
     `Discovery backend: ${value.backend}`,

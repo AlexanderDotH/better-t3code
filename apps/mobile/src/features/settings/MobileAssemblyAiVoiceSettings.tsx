@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -571,6 +571,7 @@ export function MobileAssemblyAiVoiceSettings({
   const [projectBusy, setProjectBusy] = useState<ProjectId | null>(null);
   const [projectError, setProjectError] = useState<ProjectId | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote speech model catalog for this environment and ignore replaced requests.
   useEffect(() => {
     if (!supported) return;
     let cancelled = false;

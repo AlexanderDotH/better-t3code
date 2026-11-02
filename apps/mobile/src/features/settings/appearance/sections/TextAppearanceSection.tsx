@@ -10,26 +10,33 @@ import {
   TextAppearancePreview,
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
-import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
 export function TextAppearanceSection() {
-  const translator = useMobileInterfaceTranslator();
-  const { isReady, appearance, setBaseFontSize } = useAppearancePreferences();
+  const { isReady, appearance, setBaseFontSize, mathRenderingEnabled, setMathRenderingEnabled } =
+    useAppearancePreferences();
 
   return (
-    <SettingsSection card title={translator.message("mobile.appearance.text")}>
+    <SettingsSection title="Text">
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"
-        label={translator.message("mobile.appearance.textSize")}
+        label="Text size"
         max={MAX_BASE_FONT_SIZE}
         min={MIN_BASE_FONT_SIZE}
         onChange={setBaseFontSize}
         step={BASE_FONT_SIZE_STEP}
         value={appearance.baseFontSize}
         valueLabel={`${appearance.baseFontSize} pt`}
+      />
+      <SettingsSwitchRow
+        disabled={!isReady}
+        icon="plusminus"
+        label="Render math"
+        value={mathRenderingEnabled}
+        onValueChange={setMathRenderingEnabled}
       />
     </SettingsSection>
   );

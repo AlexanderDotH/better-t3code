@@ -22,7 +22,7 @@ import {
 } from "@t3tools/client-runtime/visualizations/model";
 
 import { uuidv4 } from "../../lib/uuid";
-import { useFontFamily } from "../../lib/useFontFamily";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { createPreviewQueue } from "./previewQueue";
 
 const RENDER_TIMEOUT_MS = 30_000;
@@ -67,16 +67,17 @@ export const VisualizationRuntime = forwardRef<
     onSvg?: (svg: string) => void;
   }
 >(function VisualizationRuntime({ request, onResult, onError, onExportError, onPng, onSvg }, ref) {
-  const webView = useRef<WebView>(null);
+  const webView = useRef<WebView<object>>(null);
   const [html, setHtml] = useState<{ family: string; text: string } | null>(null);
   const [ready, setReady] = useState(false);
   const family = request.format === "vega-lite" ? "vega" : request.format;
-  const fontFamily = useFontFamily("regular");
+  const fontFamily = FONT_FAMILIES.regular;
   const callbacks = useRef({ onResult, onError, onExportError, onPng, onSvg });
   const pending = useRef(request.requestId);
   const pendingExports = useRef(new Map<string, "svg" | "png">());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const webSource = useMemo(() => ({ html: html?.text ?? "" }), [html]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Bind native WebView responses to the committed request and clear superseded export handles.
   useLayoutEffect(() => {
     callbacks.current = { onResult, onError, onExportError, onPng, onSvg };
     if (pending.current !== request.requestId) pendingExports.current.clear();
@@ -87,6 +88,7 @@ export const VisualizationRuntime = forwardRef<
     timer.current = null;
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the bundled WebView renderer and font assets for this diagram family.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -112,6 +114,7 @@ export const VisualizationRuntime = forwardRef<
     };
   }, [family, fontFamily]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Send the current request to the native WebView and own its completion timeout.
   useEffect(() => {
     pendingExports.current.clear();
     if (ready && html?.family === family) webView.current?.postMessage(JSON.stringify(request));
@@ -155,7 +158,7 @@ export const VisualizationRuntime = forwardRef<
 
   if (!html || html.family !== family) return null;
   return (
-    <WebView
+    <WebView<object>
       key={family}
       ref={webView}
       source={webSource}
@@ -222,6 +225,7 @@ const PreviewContext = createContext<RequestPreview | null>(null);
 export function VisualizationProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<VisualizationRenderRequest | null>(null);
   const [queue] = useState(() => createPreviewQueue(setRequest));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Dispose the external preview queue when its native renderer unmounts.
   useEffect(() => () => queue.dispose(), [queue]);
   return (
     <PreviewContext.Provider value={queue.request}>

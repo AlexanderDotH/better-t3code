@@ -5,7 +5,6 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { ProjectIndexEntityBrowser } from "../project-indexing/ProjectIndexEntityBrowser";
@@ -22,13 +21,10 @@ export function ProjectIndexGraphPanelController(props: {
   readonly onOpenSettings?: (() => void) | undefined;
 }) {
   const { message } = useInterfaceTranslator();
-  const scope = useMemo(
-    () => ({
-      projectId: props.projectId,
-      ...(props.threadId ? { threadId: props.threadId } : {}),
-    }),
-    [props.projectId, props.threadId],
-  );
+  const scope = {
+    projectId: props.projectId,
+    ...(props.threadId ? { threadId: props.threadId } : {}),
+  };
   const { controller, snapshot } = useProjectIndexController(props.api, scope);
   const status = snapshot.status;
 

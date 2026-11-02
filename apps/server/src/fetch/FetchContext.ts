@@ -2,9 +2,7 @@ import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
 
 import type { FetchWorkerOutcome } from "./FetchWorkerState.ts";
 
-export { FETCH_WORKER_FINDINGS_MAX_CHARS } from "./FetchWorkerState.ts";
-
-export const FETCH_CONTEXT_MAX_CHARS = 64_000;
+const FETCH_CONTEXT_MAX_CHARS = 64_000;
 const CONTEXT_TRUNCATION_MARKER = "\n... [truncated fairly for Fetch context]";
 const FAILURE_DETAIL_MAX_CHARS = 1_000;
 const FAILURE_DETAIL_TRUNCATION_MARKER = "... [failure detail truncated]";

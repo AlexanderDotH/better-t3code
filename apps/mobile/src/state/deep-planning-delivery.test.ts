@@ -1,6 +1,7 @@
 import type { DeepPlanningApi } from "@t3tools/client-runtime/deep-planning";
 import {
   CommandId,
+  PlanId,
   DeepPlanExportId,
   DeepPlanRun as DeepPlanRunSchema,
   DeepPlanSourceError,
@@ -468,7 +469,7 @@ describe("mobile Deep Planning outbox", () => {
       creation: undefined,
       sourceProposedPlan: {
         threadId,
-        planId: "deep-plan-3",
+        planId: PlanId.make("deep-plan-3"),
         deepPlan: { runId: DeepPlanRunId.make("approved-run"), planVersion: 3 },
       },
     });

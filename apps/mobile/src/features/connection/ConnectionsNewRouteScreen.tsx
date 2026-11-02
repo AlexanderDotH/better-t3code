@@ -1,464 +1,414 @@
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { ListRow } from "../../components/ui/ListRow";
+import * as Dialog from "../../components/ui/Dialog";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { useAuth } from "@clerk/expo";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Haptics from "expo-haptics";
 import {
   StackActions,
+  useIsFocused,
   useNavigation,
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
-
-import * as Clipboard from "expo-clipboard";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Linking, Platform, View } from "react-native";
+import { useState } from "react";
+import { Linking, Pressable, StyleSheet, View } from "react-native";
+import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { AppText as Text } from "../../components/AppText";
-import { ErrorBanner } from "../../components/ErrorBanner";
-import { pairingOnboardingProgressAtom } from "../../connection/onboarding";
-
-import { ConnectionFormField } from "./ConnectionFormField";
-import { ConnectionSheetButton } from "./ConnectionSheetButton";
+import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
+import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
-
-import {
-  describePairingDestination,
-  pairingFailureMessage,
-  pairingStageLabel,
-  resolvePairingRouteIntent,
-  type PairingDestinationReview,
-} from "./pairing";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
+import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
+import { splitEnvironmentSections } from "./environmentSections";
+import { leaveSettingsPage } from "../settings/settings-navigation";
+import { workspaceHasColumns } from "../workspace/workspace-selection-store";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
   readonly pairingUrl?: string;
   readonly autoConnect?: string;
+  readonly routeFor?: EnvironmentId;
 };
-
-type PairingFlowStep = "choose" | "manual" | "review";
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
 
 export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
-  const translator = useMobileInterfaceTranslator();
-  const {
-    connectionPairingUrl,
-    onChangeConnectionPairingUrl,
-    onConnectPress,
-    pairingConnectionError,
-  } = useRemoteConnections();
-  const pairingProgress = useAtomValue(pairingOnboardingProgressAtom);
+  const params = route.params ?? {};
+  // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
+  const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
+  // A new prefill link replaces whatever the form held.
+  return (
+    <PairingForm
+      key={routePairingUrl}
+      routePairingUrl={routePairingUrl}
+      routeFor={params.routeFor}
+    />
+  );
+}
+
+function PairingForm({
+  routePairingUrl,
+  routeFor,
+}: {
+  readonly routePairingUrl: string;
+  readonly routeFor: EnvironmentId | undefined;
+}) {
+  const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
+    useRemoteConnections();
   const navigation = useNavigation();
   const routeName = useRoute().name;
-  const params = route.params ?? {};
-  const { pairingUrl: routePairingUrl, shouldAutoConnect } = resolvePairingRouteIntent(
-    params,
-    __DEV__,
-  );
   const insets = useSafeAreaInsets();
-  const [flowStep, setFlowStep] = useState<PairingFlowStep>("choose");
-  const [hostInput, setHostInput] = useState("");
-  const [codeInput, setCodeInput] = useState("");
-  const [reviewPairingUrl, setReviewPairingUrl] = useState("");
-  const [destinationReview, setDestinationReview] = useState<PairingDestinationReview | null>(null);
-  const [submittedPairingUrl, setSubmittedPairingUrl] = useState("");
-  const [inputError, setInputError] = useState<string | null>(null);
+  const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
+  const [hostInput, setHostInput] = useState(initialPairing.host);
+  const [codeInput, setCodeInput] = useState(initialPairing.code);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  // The user's own edit or submit dismisses the dev auto-connect report.
+  const [ownAttempt, setOwnAttempt] = useState(false);
+  const autoConnect = autoConnectReport(
+    useAtomValue(devAutoConnectAttemptAtom),
+    routePairingUrl,
+    ownAttempt,
+  );
+  const connecting = isSubmitting || autoConnect.connecting;
+  const pairingConnectionError = submitError ?? autoConnect.error;
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const screenFocused = useIsFocused();
   const [scannerLocked, setScannerLocked] = useState(false);
-  const attemptedAutoConnectRef = useRef<string | null>(null);
+  // A good scan parks the camera so it can't re-read the code over later edits.
+  const [scanComplete, setScanComplete] = useState(false);
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
-  const activePairingStage = pairingProgress?.stage ?? "validating";
-  const connectDisabled =
-    isSubmitting || reviewPairingUrl.length === 0 || destinationReview === null;
 
-  const preparePairingRequestForReview = useCallback(
-    (pairingUrl: string) => {
-      const { host, code } = parsePairingUrl(pairingUrl);
-      const normalizedPairingUrl = buildPairingUrl(host, code);
-      const review = describePairingDestination(normalizedPairingUrl);
-      setHostInput(host);
-      setCodeInput(code);
-      setReviewPairingUrl(normalizedPairingUrl);
-      setDestinationReview(review);
-      setSubmittedPairingUrl("");
-      setInputError(null);
-      setFlowStep("review");
-      onChangeConnectionPairingUrl(normalizedPairingUrl);
-    },
-    [onChangeConnectionPairingUrl],
-  );
+  const connectDisabled = connecting || hostInput.trim().length === 0;
 
-  useEffect(() => {
-    if (routePairingUrl.length > 0 || connectionPairingUrl.length === 0) {
-      return;
-    }
+  const clearError = () => {
+    setSubmitError(null);
+    setOwnAttempt(true);
+  };
 
-    try {
-      preparePairingRequestForReview(connectionPairingUrl);
-    } catch (error) {
-      const { host, code } = parsePairingUrl(connectionPairingUrl);
-      setHostInput(host);
-      setCodeInput(code);
-      setInputError(
-        errorMessage(error, translator.message("mobile.connection.savedPairingInvalid")),
-      );
-      setFlowStep("manual");
-    }
-  }, [connectionPairingUrl, preparePairingRequestForReview, routePairingUrl, translator]);
-
-  useEffect(() => {
-    if (routePairingUrl.length === 0) {
-      return;
-    }
-
-    try {
-      preparePairingRequestForReview(routePairingUrl);
-    } catch (error) {
-      const { host, code } = parsePairingUrl(routePairingUrl);
-      setHostInput(host);
-      setCodeInput(code);
-      setInputError(
-        errorMessage(error, translator.message("mobile.connection.pairingLinkInvalid")),
-      );
-      setFlowStep("manual");
-    }
-  }, [preparePairingRequestForReview, routePairingUrl, translator]);
-
-  useEffect(() => {
-    if (pairingConnectionError) {
-      setIsSubmitting(false);
-    }
-  }, [pairingConnectionError]);
-
-  const handleHostChange = useCallback((value: string) => {
+  const handleHostChange = (value: string) => {
     setHostInput(value);
-    setInputError(null);
-  }, []);
+    clearError();
+  };
 
-  const handleCodeChange = useCallback((value: string) => {
+  const handleCodeChange = (value: string) => {
     setCodeInput(value);
-    setInputError(null);
-  }, []);
+    clearError();
+  };
 
-  const openScanner = useCallback(async () => {
-    if (cameraPermission?.granted) {
-      setScannerLocked(false);
-      setShowScanner(true);
-      return;
-    }
-
+  const handleScanPress = async () => {
     const permission = await requestCameraPermission();
     if (permission.granted) {
-      setScannerLocked(false);
-      setShowScanner(true);
+      setScanComplete(false);
       return;
     }
-
-    if (permission.canAskAgain) {
-      Alert.alert(
-        translator.message("mobile.connection.cameraAccessNeeded"),
-        translator.message("mobile.connection.cameraAccessDescription"),
-      );
-      return;
-    }
-
-    Alert.alert(
-      translator.message("mobile.connection.cameraAccessNeeded"),
-      translator.message("mobile.connection.cameraAccessDenied"),
+    if (permission.canAskAgain) return;
+    Dialog.alert(
+      "Camera access needed",
+      "Camera access was denied for this app. Open Settings to enable it.",
       [
-        { text: translator.message("common.cancel"), style: "cancel" },
-        {
-          text: translator.message("mobile.settings.notifications.openSettings"),
-          onPress: () => void Linking.openSettings(),
-        },
+        { text: "Cancel", style: "cancel" },
+        { text: "Open Settings", onPress: () => void Linking.openSettings() },
       ],
     );
-  }, [cameraPermission?.granted, requestCameraPermission, translator]);
+  };
 
-  const closeScanner = useCallback(() => {
-    setShowScanner(false);
-    setScannerLocked(false);
-  }, []);
-
-  const handleQrScan = useCallback(
-    ({ data }: { readonly data: string }) => {
-      if (scannerLocked) {
-        return;
-      }
-
-      setScannerLocked(true);
-      try {
-        preparePairingRequestForReview(extractPairingUrlFromQrPayload(data));
-        setShowScanner(false);
-      } catch (error) {
-        Alert.alert(
-          translator.message("mobile.connection.invalidQr"),
-          errorMessage(error, translator.message("mobile.connection.invalidQrDescription")),
-          [
-            {
-              text: translator.message("common.retry"),
-              onPress: () => setScannerLocked(false),
-            },
-          ],
-          { cancelable: false },
-        );
-      }
-    },
-    [preparePairingRequestForReview, scannerLocked, translator],
-  );
-
-  const handlePastePairingLink = useCallback(async () => {
-    try {
-      const pairingUrl = await Clipboard.getStringAsync();
-      preparePairingRequestForReview(pairingUrl);
-    } catch (error) {
-      Alert.alert(
-        translator.message("mobile.connection.pairingNotRecognized"),
-        errorMessage(error, translator.message("mobile.connection.pairingCopyComplete")),
-      );
+  const handleQrScan = ({ data }: { readonly data: string }) => {
+    if (scannerLocked) {
+      return;
     }
-  }, [preparePairingRequestForReview, translator]);
 
-  const connectAndClose = useCallback(
-    async (pairingUrl: string, replaceWithHome: boolean) => {
-      setSubmittedPairingUrl(pairingUrl);
-      setIsSubmitting(true);
+    setScannerLocked(true);
+
+    try {
+      const pairingUrl = extractPairingUrlFromQrPayload(data);
+      const { host, code } = parsePairingUrl(pairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
       onChangeConnectionPairingUrl(pairingUrl);
-      try {
-        const result = await onConnectPress(pairingUrl);
-        if (AsyncResult.isSuccess(result)) {
-          if (replaceWithHome || !navigation.canGoBack()) {
-            navigation.dispatch(StackActions.replace("Home"));
-          } else {
-            navigation.goBack();
-          }
-        }
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [navigation, onChangeConnectionPairingUrl, onConnectPress],
-  );
-
-  const handleManualReview = useCallback(() => {
-    try {
-      preparePairingRequestForReview(buildPairingUrl(hostInput, codeInput));
+      setScanComplete(true);
+      setScannerLocked(false);
     } catch (error) {
-      setInputError(errorMessage(error, translator.message("mobile.connection.checkHostCode")));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Dialog.alert(
+        "Invalid QR code",
+        error instanceof Error ? error.message : "Scanned QR code was not recognized.",
+      );
+      setTimeout(() => {
+        setScannerLocked(false);
+      }, 600);
     }
-  }, [codeInput, hostInput, preparePairingRequestForReview, translator]);
+  };
 
-  const handleSubmit = useCallback(async () => {
-    if (reviewPairingUrl.length === 0) {
-      return;
+  const handleSubmit = async () => {
+    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    setOwnAttempt(true);
+    setSubmitError(null);
+    setIsSubmitting(true);
+    onChangeConnectionPairingUrl(pairingUrl);
+    const outcome = await onConnectPress(pairingUrl, routeFor);
+    setIsSubmitting(false);
+    setSubmitError(outcome.error);
+    void Haptics.notificationAsync(
+      outcome.ok
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Error,
+    );
+    if (outcome.ok) {
+      // Replacing with Home would nest it inside any sheet below; return to the opener.
+      if (!navigation.canGoBack()) {
+        navigation.dispatch(StackActions.replace("Home"));
+      } else {
+        // Added from the Settings list, the new environment shows on Environments.
+        leaveSettingsPage(navigation, workspaceHasColumns(), "SettingsEnvironments");
+      }
     }
-    await connectAndClose(reviewPairingUrl, false);
-  }, [connectAndClose, reviewPairingUrl]);
-
-  useEffect(() => {
-    if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
-      return;
-    }
-
-    attemptedAutoConnectRef.current = routePairingUrl;
-    void connectAndClose(routePairingUrl, true);
-  }, [connectAndClose, routePairingUrl, shouldAutoConnect]);
-
-  const pairingErrorMessage =
-    pairingConnectionError && submittedPairingUrl === reviewPairingUrl
-      ? pairingFailureMessage(activePairingStage, pairingConnectionError)
-      : null;
+  };
 
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
-      title={translator.message(
-        showScanner ? "mobile.connection.scanQrTitle" : "mobile.connection.addEnvironment",
-      )}
+      title="Add environment"
       actions={[
         {
-          accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
-          icon: showScanner ? "xmark" : Platform.OS === "ios" ? "qrcode.viewfinder" : "camera",
+          accessibilityLabel: connecting ? "Connecting" : "Add environment",
+          loading: connecting,
+          icon: "checkmark",
           tintColor: headerIconColor,
+          disabled: connectDisabled,
           onPress: () => {
-            if (showScanner) {
-              closeScanner();
-            } else {
-              void openScanner();
-            }
+            void handleSubmit();
           },
         },
       ]}
     >
       <ScrollView
+        nestedScrollEnabled
         contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16 }}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingTop: 4,
+        }}
       >
-        <View collapsable={false} className="gap-5">
-          {showScanner ? (
-            cameraPermission?.granted ? (
-              <View className="overflow-hidden rounded-[24px] border-continuous">
-                <CameraView
-                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                  onBarcodeScanned={handleQrScan}
-                  style={{ aspectRatio: 1, width: "100%" }}
-                />
-              </View>
-            ) : (
-              <View className="items-center gap-3 rounded-[24px] border-continuous bg-card px-5 py-8">
-                <Text className="text-center text-sm leading-normal text-foreground-muted">
-                  {translator.message("mobile.connection.cameraRequired")}
-                </Text>
-                <ConnectionSheetButton
-                  compact
-                  icon="camera"
-                  label={translator.message("mobile.connection.allowCamera")}
-                  tone="secondary"
-                  onPress={() => {
-                    void openScanner();
-                  }}
-                />
-              </View>
-            )
-          ) : flowStep === "choose" ? (
-            <View collapsable={false} className="gap-4">
-              <View className="gap-1 px-1">
-                <Text className="font-t3-semibold text-lg text-foreground">
-                  {translator.message("mobile.connection.connectHost")}
-                </Text>
-                <Text className="text-sm leading-normal text-foreground-muted">
-                  {translator.message("mobile.connection.connectInstructions")}
-                </Text>
-              </View>
-              <View className="gap-3 rounded-[24px] bg-card p-4">
-                <ConnectionSheetButton
-                  icon="camera"
-                  label={translator.message("mobile.connection.scanQr")}
-                  tone="primary"
-                  onPress={() => {
-                    void openScanner();
-                  }}
-                />
-                <ConnectionSheetButton
-                  icon="link"
-                  label={translator.message("mobile.connection.pastePairing")}
-                  onPress={() => {
-                    void handlePastePairingLink();
-                  }}
-                />
-                <ConnectionSheetButton
-                  icon="keyboard"
-                  label={translator.message("mobile.connection.enterManually")}
-                  onPress={() => setFlowStep("manual")}
-                />
-              </View>
-            </View>
-          ) : flowStep === "manual" ? (
-            <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
-              <ConnectionFormField
-                label={translator.message("mobile.connection.host")}
-                autoCapitalize="none"
-                autoCorrect={false}
+        <View collapsable={false} className="gap-6.5">
+          <PairingScanCard
+            cameraActive={cameraPermission?.granted === true && screenFocused && !scanComplete}
+            onScan={handleQrScan}
+            onScanPress={() => {
+              void handleScanPress();
+            }}
+          />
+
+          <View collapsable={false} className="gap-2">
+            <Text className="px-4 text-sm font-t3-medium text-foreground-muted">Or enter it</Text>
+            <View
+              collapsable={false}
+              className={cn(
+                "overflow-hidden rounded-[26px] border-continuous border bg-grouped-card",
+                pairingConnectionError ? "border-danger-foreground" : "border-transparent",
+              )}
+            >
+              <PairingInputRow
+                label="Address"
                 keyboardType="url"
-                placeholder="192.168.1.100:8080"
+                placeholder="192.168.1.100:3773"
                 value={hostInput}
                 onChangeText={handleHostChange}
               />
-
-              <ConnectionFormField
-                label={translator.message("mobile.connection.pairingCode")}
-                autoCapitalize="none"
-                autoCorrect={false}
-                placeholder="abc-123-xyz"
+              <View className="ml-4 border-t border-border-subtle" />
+              <PairingInputRow
+                label="Code"
+                placeholder="Pairing code"
+                returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}
-              />
-
-              {inputError ? <ErrorBanner message={inputError} /> : null}
-
-              <ConnectionSheetButton
-                icon="arrow.right"
-                label={translator.message("mobile.connection.review")}
-                disabled={hostInput.trim().length === 0 || codeInput.trim().length === 0}
-                tone="primary"
-                onPress={handleManualReview}
-              />
-              <ConnectionSheetButton
-                compact
-                icon="chevron.left"
-                label={translator.message("mobile.connection.backToOptions")}
-                onPress={() => setFlowStep("choose")}
-              />
-            </View>
-          ) : destinationReview ? (
-            <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
-              <View className="gap-1.5">
-                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  {translator.message("mobile.connection.destination")}
-                </Text>
-                <Text selectable className="font-t3-medium text-base text-foreground">
-                  {destinationReview.destination}
-                </Text>
-              </View>
-
-              <View className="gap-1.5 rounded-2xl bg-secondary px-3.5 py-3">
-                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  {translator.message("mobile.connection.transport")}
-                </Text>
-                <Text className="font-t3-semibold text-sm text-foreground">
-                  {destinationReview.transport} · {destinationReview.transportDetail}
-                </Text>
-                {!destinationReview.encrypted ? (
-                  <Text className="text-xs leading-normal text-foreground-muted">
-                    {translator.message("mobile.connection.unencryptedWarning")}
-                  </Text>
-                ) : null}
-              </View>
-
-              <Text className="text-xs leading-normal text-foreground-muted">
-                {translator.message("mobile.connection.pairingCodeHidden")}
-              </Text>
-
-              {pairingErrorMessage ? <ErrorBanner message={pairingErrorMessage} /> : null}
-
-              <ConnectionSheetButton
-                icon="plus"
-                label={
-                  isSubmitting
-                    ? pairingStageLabel(activePairingStage)
-                    : translator.message("mobile.connection.pairEnvironment")
-                }
-                disabled={connectDisabled}
-                tone="primary"
-                onPress={() => {
-                  void handleSubmit();
+                onSubmitEditing={() => {
+                  if (!connectDisabled) void handleSubmit();
                 }}
               />
-              <ConnectionSheetButton
-                compact
-                icon="pencil"
-                label={translator.message("mobile.connection.editDetails")}
-                disabled={isSubmitting}
-                onPress={() => setFlowStep("manual")}
-              />
             </View>
-          ) : null}
+            <Text
+              accessibilityLiveRegion="polite"
+              className={cn(
+                "px-4 text-sm leading-normal",
+                pairingConnectionError ? "text-danger-foreground" : "text-foreground-muted",
+              )}
+            >
+              {pairingConnectionError ??
+                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+            </Text>
+          </View>
+
+          {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+const SCAN_CARD_HEIGHT = 250;
+const SCAN_RETICLE_SIZE = 150;
+const SCAN_RETICLE_TOP = 36;
+const SCAN_RETICLE_RADIUS = 28;
+
+function PairingScanCard(props: {
+  readonly cameraActive: boolean;
+  readonly onScan: (result: { readonly data: string }) => void;
+  readonly onScanPress: () => void;
+}) {
+  const light = useAppearancePreferences().themeAppearance === "light";
+  return (
+    <Pressable
+      accessibilityRole={props.cameraActive ? undefined : "button"}
+      accessibilityLabel={props.cameraActive ? undefined : "Scan QR code"}
+      disabled={props.cameraActive}
+      onPress={props.onScanPress}
+      className={cn(
+        "overflow-hidden rounded-[26px] border-continuous",
+        light ? "bg-white" : "bg-black",
+      )}
+      style={{ height: SCAN_CARD_HEIGHT }}
+    >
+      <Svg accessibilityElementsHidden height="100%" style={StyleSheet.absoluteFill} width="100%">
+        <Defs>
+          <RadialGradient id="pairing-scan-backdrop" cx="50%" cy="50%" r="50%">
+            <Stop offset="0%" stopColor={light ? "#f4f4f5" : "#2e2e2e"} />
+            <Stop offset="100%" stopColor={light ? "#d9d9dc" : "#0e0e0e"} />
+          </RadialGradient>
+        </Defs>
+        <Rect fill="url(#pairing-scan-backdrop)" height="100%" width="100%" />
+      </Svg>
+
+      {props.cameraActive ? (
+        <>
+          <CameraView
+            active
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            onBarcodeScanned={props.onScan}
+            style={StyleSheet.absoluteFill}
+          />
+          <FrostedCutout
+            cutoutTop={SCAN_RETICLE_TOP}
+            cutoutWidth={SCAN_RETICLE_SIZE}
+            cutoutHeight={SCAN_RETICLE_SIZE}
+            cutoutRadius={SCAN_RETICLE_RADIUS}
+            appearance={light ? "light" : "dark"}
+          />
+        </>
+      ) : null}
+
+      <View
+        pointerEvents="none"
+        className="absolute inset-x-0 items-center gap-3.5"
+        style={{ top: SCAN_RETICLE_TOP }}
+      >
+        <View
+          className={cn(
+            "items-center justify-center gap-2 border-continuous border-[3px]",
+            light ? "border-black/70" : "border-white/80",
+          )}
+          style={{
+            borderRadius: SCAN_RETICLE_RADIUS,
+            height: SCAN_RETICLE_SIZE,
+            width: SCAN_RETICLE_SIZE,
+          }}
+        >
+          {props.cameraActive ? null : (
+            <>
+              <SymbolView
+                name="qrcode.viewfinder"
+                size={44}
+                tintColorClassName={light ? "accent-black/60" : "accent-white/70"}
+                type="monochrome"
+                weight="light"
+              />
+              <Text
+                className={cn("font-t3-medium text-sm", light ? "text-black/70" : "text-white/80")}
+              >
+                Tap to scan
+              </Text>
+            </>
+          )}
+        </View>
+        <Text className={cn("text-center text-sm", light ? "text-black/70" : "text-white/80")}>
+          Scan the code from t3 pair or desktop Connections settings
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function T3ConnectSection() {
+  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const navigation = useNavigation();
+  const { connectedEnvironments, onSetEnvironmentEnabled, onRemoveEnvironmentPress } =
+    useRemoteConnections();
+  const { connectedCloudEnvironments } = splitEnvironmentSections({
+    connectedEnvironments,
+    cloudEnvironments: null,
+  });
+
+  return (
+    <View collapsable={false} className="gap-2">
+      <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
+        Or use the managed relay
+      </Text>
+      {isSignedIn ? (
+        <CloudEnvironmentRows
+          connectedCloudEnvironments={connectedCloudEnvironments}
+          onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+          onRemoveEnvironment={onRemoveEnvironmentPress}
+          showHeader={false}
+        />
+      ) : (
+        <ListRow
+          label="Sign in to T3 Connect"
+          description="Reach your machines from anywhere, no network setup."
+          disabled={!isLoaded}
+          onPress={() => navigation.navigate("SettingsAuth")}
+        />
+      )}
+    </View>
+  );
+}
+
+function PairingInputRow({
+  label,
+  ...inputProps
+}: Omit<AppTextInputProps, "accessibilityLabel" | "className"> & {
+  readonly label: string;
+}) {
+  return (
+    <View collapsable={false} className="h-13 flex-row items-center gap-3 px-4">
+      <Text
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        className="w-20 text-base leading-[23px] text-foreground-muted"
+      >
+        {label}
+      </Text>
+      <AppTextInput
+        {...inputProps}
+        accessibilityLabel={label}
+        autoCapitalize="none"
+        autoCorrect={false}
+        className="min-h-0 flex-1 rounded-none border-0 bg-transparent p-0 text-base leading-[23px]"
+      />
+    </View>
   );
 }

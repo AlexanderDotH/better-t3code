@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { beforeEach, vi } from "vite-plus/test";
 
 const safeStorage = vi.hoisted(() => ({
@@ -28,7 +28,7 @@ const withSafeStorage = <A, E>(
 ) =>
   effect.pipe(
     Effect.provide(ElectronSafeStorage.layer),
-    Effect.provideService(HostProcessPlatform, platform),
+    Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(DesktopLocalSecrets.DesktopLocalSecrets, {
       cipher,
       tokens: {
@@ -99,8 +99,9 @@ describe("ElectronSafeStorage", () => {
     ),
   );
 
-  for (const platform of ["win32", "linux"] as const) {
-    it.effect(`preserves the existing ${platform} storage backend`, () =>
+  it.effect.each(["win32", "linux"] as const)(
+    "preserves the existing %s storage backend",
+    (platform) =>
       withSafeStorage(
         platform,
         Effect.gen(function* () {
@@ -120,6 +121,5 @@ describe("ElectronSafeStorage", () => {
           );
         }),
       ),
-    );
-  }
+  );
 });

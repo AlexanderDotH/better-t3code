@@ -431,106 +431,104 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       maxParallelToolCalls: OPENROUTER_MAX_PARALLEL_TOOL_CALLS,
     },
     history,
-    start: ({ input }) =>
-      Effect.gen(function* () {
-        const preflight = resolveOpenRouterModel(settings, []);
-        if (!preflight.ok && !settings.enabled) {
-          return yield* providerRequestError("session/start", preflight.issue);
-        }
-        const catalog = yield* listModels("models/list");
-        const requestedModel =
-          input.modelSelection?.instanceId === instanceId ? input.modelSelection.model : undefined;
-        const resolution = resolveOpenRouterModel(settings, catalog, requestedModel);
-        if (!resolution.ok) return yield* providerRequestError("session/start", resolution.issue);
-        return {
+    start: Effect.fn("OpenRouterAdapter.start")(function* ({ input }) {
+      const preflight = resolveOpenRouterModel(settings, []);
+      if (!preflight.ok && !settings.enabled) {
+        return yield* providerRequestError("session/start", preflight.issue);
+      }
+      const catalog = yield* listModels("models/list");
+      const requestedModel =
+        input.modelSelection?.instanceId === instanceId ? input.modelSelection.model : undefined;
+      const resolution = resolveOpenRouterModel(settings, catalog, requestedModel);
+      if (!resolution.ok) return yield* providerRequestError("session/start", resolution.issue);
+      return {
+        model: resolution.model,
+        state: { initialCatalog: catalog },
+        configured: {
+          harness: "t3-code",
+          sdk: "@effect/ai-openrouter",
+          protocol: settings.protocol,
           model: resolution.model,
-          state: { initialCatalog: catalog },
-          configured: {
-            harness: "t3-code",
-            sdk: "@effect/ai-openrouter",
-            protocol: settings.protocol,
-            model: resolution.model,
-            stateless: true,
-          },
-        };
-      }),
-    prepareTurn: ({ input, session }) =>
-      Effect.gen(function* () {
-        const catalog = yield* listModels("models/list");
-        const requestedModel =
-          input.modelSelection?.instanceId === instanceId
-            ? input.modelSelection.model
-            : session.session.model;
-        const resolution = resolveOpenRouterModel(settings, catalog, requestedModel);
-        if (!resolution.ok) return yield* providerRequestError("session/prompt", resolution.issue);
-        const requestedReasoningEffort =
-          input.modelSelection?.instanceId === instanceId
-            ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
-            : undefined;
-        const reasoningEffort = resolution.catalogModel.reasoningEfforts.find(
-          (candidate) => candidate === requestedReasoningEffort,
+          stateless: true,
+        },
+      };
+    }),
+    prepareTurn: Effect.fn("OpenRouterAdapter.prepareTurn")(function* ({ input, session }) {
+      const catalog = yield* listModels("models/list");
+      const requestedModel =
+        input.modelSelection?.instanceId === instanceId
+          ? input.modelSelection.model
+          : session.session.model;
+      const resolution = resolveOpenRouterModel(settings, catalog, requestedModel);
+      if (!resolution.ok) return yield* providerRequestError("session/prompt", resolution.issue);
+      const requestedReasoningEffort =
+        input.modelSelection?.instanceId === instanceId
+          ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
+          : undefined;
+      const reasoningEffort = resolution.catalogModel.reasoningEfforts.find(
+        (candidate) => candidate === requestedReasoningEffort,
+      );
+      if (requestedReasoningEffort !== undefined && reasoningEffort === undefined) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Reasoning effort '${requestedReasoningEffort}' is not available for model '${resolution.model}'.`,
+        });
+      }
+      if ((input.attachments?.length ?? 0) > 0) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "OpenRouter native sessions currently accept text input only.",
+        });
+      }
+      const content = input.input?.trim() ?? "";
+      if (!content) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "Turn requires non-empty text.",
+        });
+      }
+      const declarations = yield* options.harness
+        .declarations({
+          threadId: input.threadId,
+          cwd: session.cwd,
+          interactionMode: input.interactionMode,
+          sandboxMode: session.sandboxMode,
+          fetchWorker: session.fetchWorker,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            providerRequestError("tools/catalog", errorDetail(cause), cause),
+          ),
         );
-        if (requestedReasoningEffort !== undefined && reasoningEffort === undefined) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: `Reasoning effort '${requestedReasoningEffort}' is not available for model '${resolution.model}'.`,
-          });
-        }
-        if ((input.attachments?.length ?? 0) > 0) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: "OpenRouter native sessions currently accept text input only.",
-          });
-        }
-        const content = input.input?.trim() ?? "";
-        if (!content) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: "Turn requires non-empty text.",
-          });
-        }
-        const declarations = yield* options.harness
-          .declarations({
-            threadId: input.threadId,
+      return {
+        model: resolution.model,
+        userHistoryItems: [{ type: "user", content }],
+        attachmentBytes: 0,
+        toolDeclarations: declarations.map((declaration) => ({
+          name: declaration.name,
+          description: declaration.description,
+          parameters: declaration.inputSchema,
+          ...(declaration.strict === undefined ? {} : { strict: declaration.strict }),
+        })),
+        protocol: {
+          instructions: buildOpenRouterSystemInstructions({
+            deepPlan: session.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
             cwd: session.cwd,
-            interactionMode: input.interactionMode,
             sandboxMode: session.sandboxMode,
+            interactionMode: input.interactionMode,
             fetchWorker: session.fetchWorker,
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              providerRequestError("tools/catalog", errorDetail(cause), cause),
-            ),
-          );
-        return {
-          model: resolution.model,
-          userHistoryItems: [{ type: "user", content }],
-          attachmentBytes: 0,
-          toolDeclarations: declarations.map((declaration) => ({
-            name: declaration.name,
-            description: declaration.description,
-            parameters: declaration.inputSchema,
-            ...(declaration.strict === undefined ? {} : { strict: declaration.strict }),
-          })),
-          protocol: {
-            instructions: buildOpenRouterSystemInstructions({
-              deepPlan: session.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
-              cwd: session.cwd,
-              sandboxMode: session.sandboxMode,
-              interactionMode: input.interactionMode,
-              fetchWorker: session.fetchWorker,
-            }),
-            toolParameters: {
-              toolChoice: resolution.catalogModel.toolCapabilities.toolChoice,
-              parallelToolCalls: resolution.catalogModel.toolCapabilities.parallelToolCalls,
-            },
-            ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+          }),
+          toolParameters: {
+            toolChoice: resolution.catalogModel.toolCapabilities.toolChoice,
+            parallelToolCalls: resolution.catalogModel.toolCapabilities.parallelToolCalls,
           },
-        };
-      }),
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        },
+      };
+    }),
     streamRound: ({ session, plan, signal }) =>
       options.transport
         .streamRound({

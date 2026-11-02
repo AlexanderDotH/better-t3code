@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import type {
   ProjectAgentClaimSetInput,
   ProjectAgentInboxInput,
@@ -50,9 +51,9 @@ const invokeProjectAgentSend = (input: ProjectAgentMessageSendInput) =>
 const invokeProjectAgentInbox = (input: ProjectAgentInboxInput) =>
   invoke((coordinator, threadId, reply) => coordinator.inbox(threadId, input, reply));
 
-export const CoordinationToolkitHandlersLive = CoordinationToolkit.toLayer({
-  project_agent_list: invokeProjectAgentList,
-  project_agent_claim: invokeProjectAgentClaim,
-  project_agent_send: invokeProjectAgentSend,
-  project_agent_inbox: invokeProjectAgentInbox,
+export const CoordinationToolkitHandlersLive = McpToolAccess.toLayer(CoordinationToolkit, {
+  project_agent_list: McpToolAccess.readsAsCaller(invokeProjectAgentList),
+  project_agent_claim: McpToolAccess.actsAsCaller(invokeProjectAgentClaim),
+  project_agent_send: McpToolAccess.actsAsCaller(invokeProjectAgentSend),
+  project_agent_inbox: McpToolAccess.readsAsCaller(invokeProjectAgentInbox),
 });

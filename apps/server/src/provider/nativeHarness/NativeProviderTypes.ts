@@ -16,7 +16,19 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderAdapterRequestError, ProviderAdapterError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "../Services/ProviderAdapter.ts";
+export type ProviderDeepPlanSupport =
+  | { readonly supported: true; readonly readOnlyPlan: "sandbox" | "native" | "harness" }
+  | { readonly supported: false; readonly reason: string };
+
+export interface ProviderAdapterCapabilities {
+  readonly sessionModelSwitch: "in-session" | "unsupported";
+  readonly mcp?: "unsupported" | "sessionConfig" | "nativeConfig";
+  readonly deepPlan?:
+    | { readonly supported: true; readonly readOnlyPlan: "sandbox" | "native" | "harness" }
+    | { readonly supported: false; readonly reason: string };
+  readonly supportsConversationRollback?: boolean;
+  readonly nativeThreadFork?: boolean;
+}
 
 export interface NativeProviderTurnRecord {
   readonly id: TurnId;

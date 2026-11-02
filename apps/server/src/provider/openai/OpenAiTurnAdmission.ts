@@ -13,40 +13,39 @@ export function makeOpenAiTurnAdmission(
   governor: Pick<SubagentResourceGovernor["Service"], "acquireInProcessLease">,
 ): NativeProviderTurnAdmission {
   return {
-    withLease: (input, effect) =>
-      Effect.gen(function* () {
-        const pressure = yield* Deferred.make<InProcessCriticalPressureNotice>();
-        const workId = `${input.providerInstanceId}:${input.threadId}:${input.turnId}`;
-        const lease = yield* governor.acquireInProcessLease({
-          workId,
-          threadId: input.threadId,
+    withLease: Effect.fn("OpenAiTurnAdmission.withLease")(function* (input, effect) {
+      const pressure = yield* Deferred.make<InProcessCriticalPressureNotice>();
+      const workId = `${input.providerInstanceId}:${input.threadId}:${input.turnId}`;
+      const lease = yield* governor.acquireInProcessLease({
+        workId,
+        threadId: input.threadId,
+        provider: PROVIDER,
+        providerInstanceId: input.providerInstanceId,
+        reservation: {
+          serializedHistoryBytes: input.serializedHistoryBytes,
+          attachmentBytes: input.attachmentBytes,
+          toolBufferBytes: input.toolBufferBytes,
+        },
+        onCriticalPressure: (notice) => Deferred.succeed(pressure, notice).pipe(Effect.asVoid),
+      });
+      if (!lease) {
+        return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
-          providerInstanceId: input.providerInstanceId,
-          reservation: {
-            serializedHistoryBytes: input.serializedHistoryBytes,
-            attachmentBytes: input.attachmentBytes,
-            toolBufferBytes: input.toolBufferBytes,
-          },
-          onCriticalPressure: (notice) => Deferred.succeed(pressure, notice).pipe(Effect.asVoid),
+          method: "resource/admission",
+          detail: "OpenAI turn admission was cancelled while the server was shutting down.",
         });
-        if (!lease) {
-          return yield* new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "resource/admission",
-            detail: "OpenAI turn admission was cancelled while the server was shutting down.",
-          });
-        }
-        const pressured = Deferred.await(pressure).pipe(
-          Effect.flatMap(
-            (notice) =>
-              new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "resource/protection",
-                detail: `OpenAI turn '${notice.workId}' was stopped to protect server memory.`,
-              }),
-          ),
-        );
-        return yield* Effect.raceFirst(effect, pressured).pipe(Effect.ensuring(lease.release));
-      }),
+      }
+      const pressured = Deferred.await(pressure).pipe(
+        Effect.flatMap(
+          (notice) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "resource/protection",
+              detail: `OpenAI turn '${notice.workId}' was stopped to protect server memory.`,
+            }),
+        ),
+      );
+      return yield* Effect.raceFirst(effect, pressured).pipe(Effect.ensuring(lease.release));
+    }),
   };
 }

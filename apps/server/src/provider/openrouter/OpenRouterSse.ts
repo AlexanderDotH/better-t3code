@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
-import * as Sse from "effect/unstable/encoding/Sse";
+import * as Sse from "effect/encoding/Sse";
 
 export class OpenRouterProtocolError extends Schema.TaggedError<OpenRouterProtocolError>()(
   "OpenRouterProtocolError",

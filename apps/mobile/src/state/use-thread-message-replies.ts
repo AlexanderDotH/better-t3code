@@ -5,8 +5,10 @@ import {
   MessageId,
   SubagentId,
   type EnvironmentId,
-  type OrchestrationMessage,
-  type ThreadId,
+  ThreadId,
+  type ModelSelection,
+  type RuntimeMode,
+  type ProviderInteractionMode,
   type ServerConfig,
   type BetterT3SettingsV1,
 } from "@t3tools/contracts";
@@ -32,7 +34,13 @@ import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 
 export function useThreadMessageReplies(input: {
-  readonly thread: { readonly id: ThreadId; readonly environmentId: EnvironmentId } | null;
+  readonly thread: {
+    readonly id: ThreadId;
+    readonly environmentId: EnvironmentId;
+    readonly modelSelection: ModelSelection;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  } | null;
   readonly serverConfig: ServerConfig | null;
   readonly connected: boolean;
   readonly deviceSettings?: BetterT3SettingsV1;
@@ -49,7 +57,7 @@ export function useThreadMessageReplies(input: {
     ? scopedThreadKey(input.thread.environmentId, input.thread.id)
     : null;
   const selectReply = useCallback(
-    (message: OrchestrationMessage) => {
+    (message: Parameters<typeof createMessageReplyReference>[0]) => {
       if (!enabled || !threadKey) return;
       const replyTo = createMessageReplyReference(
         message,
@@ -108,17 +116,16 @@ export function useThreadMessageReplies(input: {
             replyTopicId: reply.replyTopicId,
             replyTo: reply.replyTo,
             commandId: CommandId.make(metadata.commandId),
-            createdAt: metadata.createdAt,
-            message: {
-              messageId,
-              role: "user",
-              ...serializeComposerMessageForServer(
-                appendVoiceFileContext(draft.text.trim(), draft.voiceFileReferences ?? []),
-                uploadedComposerContext(draft.context, draft.attachments, prepared.attachments),
-                input.serverConfig?.environment.capabilities.inlineMessageContext === true,
-              ),
-              attachments: prepared.attachments,
-            },
+            targetThreadId: ThreadId.make(`reply:${reply.replyTopicId}`),
+            messageId,
+            modelSelection: draft.modelSelection ?? thread.modelSelection,
+            runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+            interactionMode: draft.interactionMode ?? thread.interactionMode,
+            ...serializeComposerMessageForServer(
+              appendVoiceFileContext(draft.text.trim(), draft.voiceFileReferences ?? []),
+              uploadedComposerContext(draft.context, draft.attachments, prepared.attachments),
+            ),
+            attachments: prepared.attachments,
           },
         });
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);

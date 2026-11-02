@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - The fixture supplies an independent real Git process driver to verify undo behavior.
@@ -20,7 +20,7 @@ const runRealGit = (input: GitWorkbenchOperationCommandInput) =>
       cwd: input.cwd,
       encoding: "utf8",
       env: {
-        ...HostProcessEnvironment.defaultValue(),
+        ...HostProcess.Environment.defaultValue(),
         ...input.env,
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "commit.gpgsign",

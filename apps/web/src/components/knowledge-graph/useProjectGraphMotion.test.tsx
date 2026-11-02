@@ -1,5 +1,5 @@
-import { act, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { useProjectGraphMotion } from "./useProjectGraphMotion";
@@ -26,7 +26,7 @@ function Harness({ nodes }: { nodes: ReadonlyArray<Node> }) {
 beforeEach(() => {
   frames.clear();
   reduced = false;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   vi.stubGlobal("window", {
     requestAnimationFrame: (callback: FrameRequestCallback) => {
       frames.set(++frameId, callback);
@@ -38,7 +38,9 @@ beforeEach(() => {
   vi.spyOn(performance, "now").mockReturnValue(0);
 });
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -46,7 +48,9 @@ afterEach(async () => {
 async function frame(time: number) {
   const callbacks = [...frames.values()];
   frames.clear();
-  await act(() => callbacks.forEach((callback) => callback(time)));
+  await act(async () => {
+    await callbacks.forEach((callback) => callback(time));
+  });
 }
 
 it("reveals children from their parent and stops requesting frames when settled", async () => {
@@ -54,7 +58,9 @@ it("reveals children from their parent and stops requesting frames when settled"
     renderer = create(<Harness nodes={initial} />);
   });
   expect(frames.size).toBe(0);
-  await act(() => renderer!.update(<Harness nodes={expanded} />));
+  await act(async () => {
+    await renderer!.update(<Harness nodes={expanded} />);
+  });
   await frame(0);
   expect(rendered[1]).toMatchObject({ x: 100, y: 100 });
   await frame(100);
@@ -70,13 +76,19 @@ it("skips motion when reduced motion is requested and cancels work on unmount", 
   await act(() => {
     renderer = create(<Harness nodes={initial} />);
   });
-  await act(() => renderer!.update(<Harness nodes={expanded} />));
+  await act(async () => {
+    await renderer!.update(<Harness nodes={expanded} />);
+  });
   expect(rendered).toEqual(expanded);
   expect(frames.size).toBe(0);
   reduced = false;
-  await act(() => renderer!.update(<Harness nodes={initial} />));
+  await act(async () => {
+    await renderer!.update(<Harness nodes={initial} />);
+  });
   expect(frames.size).toBe(1);
-  await act(() => renderer!.unmount());
+  await act(async () => {
+    await renderer!.unmount();
+  });
   renderer = undefined;
   expect(frames.size).toBe(0);
 });
@@ -86,21 +98,29 @@ it("holds a dragged node, displaces its neighbor, and stops after release", asyn
   await act(() => {
     renderer = create(<Harness nodes={nearby} />);
   });
-  await act(() => motion.moveNode("parent", { x: 600, y: 100 }));
+  await act(async () => {
+    await motion.moveNode("parent", { x: 600, y: 100 });
+  });
   expect(rendered[0]).toMatchObject({ x: 600, y: 100 });
   expect(rendered[1]!.x).toBeGreaterThan(200);
   const neighborAfterFirstMove = rendered[1]!.x;
-  await act(() => motion.moveNode("parent", { x: 700, y: 100 }));
+  await act(async () => {
+    await motion.moveNode("parent", { x: 700, y: 100 });
+  });
   expect(rendered[1]!.x).toBeGreaterThan(neighborAfterFirstMove);
   await frame(100);
   expect(rendered[1]!.x).toBeGreaterThan(200);
-  await act(() => motion.releaseNode());
+  await act(async () => {
+    await motion.releaseNode();
+  });
   await frame(200);
   await frame(1500);
   expect(frames.size).toBe(0);
   expect(rendered[0]).toMatchObject({ x: 700, y: 100 });
   expect(rendered.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y))).toBe(true);
-  await act(() => motion.reset());
+  await act(async () => {
+    await motion.reset();
+  });
   await frame(500);
   expect(rendered).toEqual(nearby);
 });
@@ -110,14 +130,20 @@ it("moves directly with reduced motion and leaves no work after a drag unmounts"
   await act(() => {
     renderer = create(<Harness nodes={expanded} />);
   });
-  await act(() => motion.moveNode("parent", { x: 600, y: 100 }));
+  await act(async () => {
+    await motion.moveNode("parent", { x: 600, y: 100 });
+  });
   expect(rendered[0]).toMatchObject({ x: 600, y: 100 });
   expect(rendered[1]!.x).toBeGreaterThan(300);
   expect(frames.size).toBe(0);
   reduced = false;
-  await act(() => motion.moveNode("parent", { x: 180, y: 170 }));
+  await act(async () => {
+    await motion.moveNode("parent", { x: 180, y: 170 });
+  });
   expect(frames.size).toBe(1);
-  await act(() => renderer!.unmount());
+  await act(async () => {
+    await renderer!.unmount();
+  });
   renderer = undefined;
   expect(frames.size).toBe(0);
 });
@@ -126,8 +152,12 @@ it("drops removed nodes and their pins when a branch collapses during settling",
   await act(() => {
     renderer = create(<Harness nodes={expanded} />);
   });
-  await act(() => motion.moveNode("child", { x: 900, y: 600 }));
-  await act(() => renderer!.update(<Harness nodes={initial} />));
+  await act(async () => {
+    await motion.moveNode("child", { x: 900, y: 600 });
+  });
+  await act(async () => {
+    await renderer!.update(<Harness nodes={initial} />);
+  });
   await frame(500);
   expect(rendered).toEqual(initial);
   expect(frames.size).toBe(0);
@@ -140,13 +170,17 @@ it("keeps spring forces running during frequent pointer movement", async () => {
   });
   for (let time = 8; time <= 80; time += 8) {
     vi.mocked(performance.now).mockReturnValue(time);
-    await act(() => motion.moveNode("parent", { x: 100 - time, y: 100 }));
+    await act(async () => {
+      await motion.moveNode("parent", { x: 100 - time, y: 100 });
+    });
     await frame(time + 1);
   }
   // These nodes are too far apart for collision forces; their link must pull the child along.
   expect(rendered[1]!.x).toBeLessThan(500);
   expect(frames.size).toBe(1);
-  await act(() => motion.releaseNode());
+  await act(async () => {
+    await motion.releaseNode();
+  });
   await frame(1600);
   expect(frames.size).toBe(0);
 });

@@ -75,8 +75,9 @@ describe("AssemblyAI streaming configuration", () => {
     expect(params.has("format_turns")).toBe(false);
   });
 
-  for (const speechModel of ["universal-streaming-english", "universal-streaming-multilingual"]) {
-    it(`does not send unsupported Pro options for ${speechModel}`, () => {
+  it.each(["universal-streaming-english", "universal-streaming-multilingual"])(
+    "does not send unsupported Pro options for %s",
+    (speechModel) => {
       const params = new URL(buildAssemblyAiStreamingUrl({ ...config, speechModel })).searchParams;
       expect(params.get("format_turns")).toBe("true");
       expect(params.get("min_turn_silence")).toBe("700");
@@ -90,8 +91,8 @@ describe("AssemblyAI streaming configuration", () => {
       ]) {
         expect(params.has(key)).toBe(false);
       }
-    });
-  }
+    },
+  );
 
   it("supports tokens returned by older servers without options", () => {
     const { options: _options, ...legacyConfig } = config;

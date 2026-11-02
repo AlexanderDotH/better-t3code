@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -62,11 +62,13 @@ function ActionButton(props: {
 export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps) {
   const translator = useMobileInterfaceTranslator();
   const viewModel = props.viewModel ?? DEFAULT_PROJECT_MEMORY_VIEW_MODEL;
-  const [content, setContent] = useState(viewModel.content);
+  const [edit, setEdit] = useState<{ readonly source: string; readonly value: string } | null>(
+    null,
+  );
+  const content = edit?.source === viewModel.content ? edit.value : viewModel.content;
+  const setContent = (value: string) => setEdit({ source: viewModel.content, value });
   const unavailable = viewModel.status === "unavailable";
   const editable = canEditProjectMemory(viewModel) && !props.busy;
-
-  useEffect(() => setContent(viewModel.content), [viewModel.content]);
 
   return (
     <SettingsSection title={translator.message("settings.projects.memory.title")} card>

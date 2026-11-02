@@ -61,10 +61,13 @@ export const projectIndexEnvironment = {
     idleTtlMs: 0,
     transform: (stream) =>
       stream.pipe(
-        Stream.scan(EMPTY_STREAM_STATE, (current, event) => ({
-          ...applyProjectIndexStreamEvent(current, event),
-          lastEvent: event,
-        })),
+        Stream.scan(
+          () => EMPTY_STREAM_STATE,
+          (current, event) => ({
+            ...applyProjectIndexStreamEvent(current, event),
+            lastEvent: event,
+          }),
+        ),
       ),
   }),
   requestQuery: createEnvironmentRpcCommand(connectionAtomRuntime, {

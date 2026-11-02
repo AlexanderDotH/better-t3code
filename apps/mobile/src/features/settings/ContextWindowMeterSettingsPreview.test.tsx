@@ -2,7 +2,7 @@ import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
@@ -24,8 +24,8 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("react-native-svg", () => ({ default: "svg", Circle: "circle", Text: "svg-text" }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
-vi.mock("../../components/AppText", () => ({ AppText: "text" }));
-vi.mock("../../components/AppSymbol", () => ({ SymbolView: "symbol" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "symbol" }));
 vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>
     createInterfaceTranslator({ language: fixture.language, locale: fixture.locale }),
@@ -37,7 +37,7 @@ vi.mock("expo-secure-store", () => ({
 }));
 vi.mock("../../lib/runtime", async () => {
   const Layer = await import("effect/Layer");
-  return { runtime: { runPromise: vi.fn() }, runtimeContextLayer: Layer.empty };
+  return { runtime: { runPromise: vi.fn() }, runtimeContextLayer: Layer.empty, layer: Layer.empty };
 });
 
 import { MobileDatabase, type StoredPreferencesJson } from "../../persistence/mobile-database";
@@ -173,36 +173,34 @@ afterEach(() => {
 });
 
 describe("mobile context meter preview choices", () => {
-  for (const platform of ["ios", "android"]) {
-    it.effect(
-      `updates the ${platform} choice immediately and retains both directions after app reload`,
-      () =>
-        Effect.gen(function* () {
-          fixture.platform = platform;
-          const storage = memoryStorage();
-          const first = yield* launch(storage);
-          expect(radio(first.render(), true).props.accessibilityState?.checked).toBe(true);
+  it.effect.each(["ios", "android"])(
+    "updates the %s choice immediately and retains both directions after app reload",
+    (platform) =>
+      Effect.gen(function* () {
+        fixture.platform = platform;
+        const storage = memoryStorage();
+        const first = yield* launch(storage);
+        expect(radio(first.render(), true).props.accessibilityState?.checked).toBe(true);
 
-          radio(first.render(), false).props.onPress!();
-          expect(radio(first.render(), false).props.accessibilityState?.checked).toBe(true);
-          yield* first.flush;
-          yield* first.store.savePatch({ baseFontSize: 20 });
-          first.registry.dispose();
+        radio(first.render(), false).props.onPress!();
+        expect(radio(first.render(), false).props.accessibilityState?.checked).toBe(true);
+        yield* first.flush;
+        yield* first.store.savePatch({ baseFontSize: 20 });
+        first.registry.dispose();
 
-          const second = yield* launch(storage);
-          expect(radio(second.render(), false).props.accessibilityState?.checked).toBe(true);
-          expect((yield* second.store.load).baseFontSize).toBe(20);
-          radio(second.render(), true).props.onPress!();
-          expect(radio(second.render(), true).props.accessibilityState?.checked).toBe(true);
-          yield* second.flush;
-          second.registry.dispose();
+        const second = yield* launch(storage);
+        expect(radio(second.render(), false).props.accessibilityState?.checked).toBe(true);
+        expect((yield* second.store.load).baseFontSize).toBe(20);
+        radio(second.render(), true).props.onPress!();
+        expect(radio(second.render(), true).props.accessibilityState?.checked).toBe(true);
+        yield* second.flush;
+        second.registry.dispose();
 
-          const third = yield* launch(storage);
-          expect(radio(third.render(), true).props.accessibilityState?.checked).toBe(true);
-          expect((yield* third.store.load).baseFontSize).toBe(20);
-        }),
-    );
-  }
+        const third = yield* launch(storage);
+        expect(radio(third.render(), true).props.accessibilityState?.checked).toBe(true);
+        expect((yield* third.store.load).baseFontSize).toBe(20);
+      }),
+  );
 
   it.effect("keeps the selected choice and unavailable cards from writing preferences", () =>
     Effect.gen(function* () {
@@ -217,12 +215,13 @@ describe("mobile context meter preview choices", () => {
     }),
   );
 
-  for (const [language, locale] of [
-    ["en", "en-US"],
-    ["de", "de-DE"],
-    ["fr", "fr-FR"],
-  ] as const) {
-    it.effect(`keeps localized ${language} examples while changing the saved choice`, () =>
+  it.effect.each([
+    { language: "en", locale: "en-US" },
+    { language: "de", locale: "de-DE" },
+    { language: "fr", locale: "fr-FR" },
+  ] as const)(
+    "keeps localized $language examples while changing the saved choice",
+    ({ language, locale }) =>
       Effect.gen(function* () {
         fixture.language = language;
         fixture.locale = locale;
@@ -250,6 +249,5 @@ describe("mobile context meter preview choices", () => {
           expect(card.props.accessibilityHint).toContain(example);
         }
       }),
-    );
-  }
+  );
 });

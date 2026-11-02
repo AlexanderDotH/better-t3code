@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { SearchIcon, XIcon } from "lucide-react";
 import { CHAT_VISUAL_MODES, type BetterT3FeatureControlStateV1 } from "@t3tools/contracts";
@@ -6,11 +7,9 @@ import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
   createContext,
   type ReactNode,
-  useCallback,
   useContext,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -88,7 +87,7 @@ export function BetterT3SettingsSearchItemsProvider({
   const [registrations, setRegistrations] = useState<
     ReadonlyMap<string, readonly SettingsSearchItem[]>
   >(new Map());
-  const register = useCallback((id: string, entries: readonly SettingsSearchItem[]) => {
+  const register = useStableCallback((id: string, entries: readonly SettingsSearchItem[]) => {
     setRegistrations((current) => new Map(current).set(id, entries));
     return () => {
       setRegistrations((current) => {
@@ -97,11 +96,8 @@ export function BetterT3SettingsSearchItemsProvider({
         return next;
       });
     };
-  }, []);
-  const availableItems = useMemo(
-    () => [...items, ...Array.from(registrations.values()).flat()],
-    [items, registrations],
-  );
+  });
+  const availableItems = [...items, ...Array.from(registrations.values()).flat()];
   return (
     <BetterT3SearchRegistrationContext value={register}>
       <BetterT3SearchItemsContext value={availableItems}>{children}</BetterT3SearchItemsContext>
@@ -117,6 +113,7 @@ export function BetterT3SettingsSearchItems({
 }) {
   const id = useId();
   const register = useContext(BetterT3SearchRegistrationContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers mounted settings rows with the search index and unregisters them on cleanup
   useEffect(() => register(id, items), [id, items, register]);
   return null;
 }
@@ -174,20 +171,19 @@ export function BetterT3SettingsSearch() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [mountedItems, setMountedItems] = useState<SettingsSearchItem[]>([]);
-  const items = useMemo(() => {
+  const items = (() => {
     const declaredTargets = new Set(declaredItems.map((item) => item.targetId ?? item.id));
     return [
       ...declaredItems.map(withSearchAliases),
       ...mountedItems.filter((item) => !declaredTargets.has(item.targetId ?? item.id)),
     ];
-  }, [declaredItems, mountedItems]);
+  })();
   const results = query.trim() ? searchSettings(query, items) : [];
   const label = translate("settings.application.search.aria");
-  const refreshItems = useCallback(() => {
+  const refreshItems = useStableCallback(() => {
     const page = inputRef.current?.closest("[data-settings-page-scroll]");
     setMountedItems(page ? readBetterT3SettingsSearchItems(page) : []);
-  }, []);
-  useEffect(refreshItems, [declaredItems, refreshItems]);
+  });
   const selectSearchResult = (item: SettingsSearchItem) => {
     highlightedItemRef.current = null;
     setOpen(false);
@@ -205,6 +201,7 @@ export function BetterT3SettingsSearch() {
       }}
       onOpenChange={setOpen}
       onValueChange={(value, details) => {
+        refreshItems();
         if (details.reason === "item-press") {
           const selectedItem =
             highlightedItemRef.current ?? results.find((item) => item.title === value);
@@ -218,7 +215,7 @@ export function BetterT3SettingsSearch() {
       openOnInputClick
       value={query}
     >
-      <div className="relative flex h-10 items-center rounded-lg border border-border/60 bg-background/50 ring-ring/24 transition-colors hover:bg-background/70 focus-within:border-ring focus-within:bg-background focus-within:ring-3">
+      <div className="relative flex h-10 items-center rounded-lg border border-border/60 bg-background/50 ring-ring/24 transition-colors hover:bg-background/70 focus-within:border-ring focus-within:bg-background focus-within:ring-3 focus-within:ring-inset">
         <SearchIcon
           aria-hidden
           className="pointer-events-none absolute start-3 size-4 text-icon-muted"
@@ -237,7 +234,7 @@ export function BetterT3SettingsSearch() {
         {query.length > 0 ? (
           <AutocompletePrimitive.Clear
             aria-label={translate("settings.application.search.clearAria")}
-            className="absolute end-1 inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="absolute end-1 inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <XIcon aria-hidden className="size-4" />
           </AutocompletePrimitive.Clear>

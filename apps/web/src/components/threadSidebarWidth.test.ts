@@ -4,7 +4,7 @@ import {
   resolveInitialThreadSidebarWidth,
   resolveRenderedThreadSidebarWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
-  THREAD_SIDEBAR_MIN_WIDTH,
+  resolveThreadSidebarMinimumWidth,
 } from "./threadSidebarWidth";
 
 describe("thread sidebar width", () => {
@@ -17,7 +17,7 @@ describe("thread sidebar width", () => {
   });
 
   it("clamps a stored width to the sidebar minimum", () => {
-    expect(resolveInitialThreadSidebarWidth(120, 1200)).toBe(THREAD_SIDEBAR_MIN_WIDTH);
+    expect(resolveInitialThreadSidebarWidth(120, 1200)).toBe(resolveThreadSidebarMinimumWidth(0));
   });
 
   it("leaves enough room for the main content on a smaller window", () => {
@@ -29,7 +29,7 @@ describe("thread sidebar width", () => {
   });
 
   it("keeps the sidebar minimum when the whole layout is narrower than its minimums", () => {
-    expect(resolveInitialThreadSidebarWidth(900, 700)).toBe(THREAD_SIDEBAR_MIN_WIDTH);
+    expect(resolveInitialThreadSidebarWidth(900, 700)).toBe(resolveThreadSidebarMinimumWidth(0));
   });
 
   it("reclamps a wide sidebar while the window narrows and restores it when room returns", () => {
@@ -39,7 +39,7 @@ describe("thread sidebar width", () => {
       preferredSidebarWidth,
     );
     expect(resolveRenderedThreadSidebarWidth(preferredSidebarWidth, 840)).toBe(
-      THREAD_SIDEBAR_MIN_WIDTH,
+      resolveThreadSidebarMinimumWidth(0),
     );
     expect(resolveRenderedThreadSidebarWidth(preferredSidebarWidth, 1_400)).toBe(
       preferredSidebarWidth,

@@ -19,12 +19,12 @@ import {
   PromptImprovementOutputSchema,
   truncatePlanParallelismReviewContext,
   TranscriptTranslationOutputSchema,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   normalizeCliError,
   sanitizeThreadTitle,
   toJsonSchemaObject,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 import { TextGenerationError } from "@t3tools/contracts";
 
 const decodePromptImprovementOutput = Schema.decodeUnknownSync(PromptImprovementOutputSchema);

@@ -61,6 +61,7 @@ export function ChatPresentationMotion(
     resetKey: string | undefined;
     visible: boolean | null;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reset native animation values when the visible row changes ownership or motion is disabled.
   useLayoutEffect(() => {
     const previous = previousLifecycle.current;
     if (
@@ -75,6 +76,7 @@ export function ChatPresentationMotion(
     opacity.set(1);
     offset.set(0);
   }, [motion.enabled, motion.resetKey, offset, opacity, visible]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancel native row animations on unmount.
   useLayoutEffect(
     () => () => {
       cancelAnimation(opacity);
@@ -82,6 +84,7 @@ export function ChatPresentationMotion(
     },
     [offset, opacity],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Start a finite native animation for a newly admitted visible row.
   useLayoutEffect(() => {
     if (!motion.enabled || visible === null) return;
     const admission = motionId ? claim(motionId, Date.now()) : null;

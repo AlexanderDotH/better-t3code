@@ -1,3 +1,4 @@
+import { resolveModelSelectionSupport, supportsModelSelectionPurpose } from "@t3tools/shared/model";
 import {
   type ModelSelection,
   type ModelSelectionPurpose,
@@ -7,10 +8,10 @@ import { useMemo } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
-import { buildModelOptions, modelDecisionSupport, type ModelOption } from "../../lib/modelOptions";
+import { buildModelOptions, type ModelOption } from "../../lib/modelOptions";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function modelSelectionLabel(
@@ -43,14 +44,28 @@ export function ModelSelectionModal(props: {
   const insets = useSafeAreaInsets();
   const purpose = props.purpose ?? "agent";
   const options = useMemo(() => {
-    const available = buildModelOptions(props.config, props.current, purpose);
+    const available = buildModelOptions(props.config, props.current, undefined, null)
+      .filter((option) => supportsModelSelectionPurpose(option, purpose))
+      .map((option) => ({
+        ...option,
+        isSelectable: option.isUnavailable !== true,
+        unavailableReason: option.isUnavailable ? "Model unavailable" : null,
+      }));
     return props.optionPredicate ? available.filter(props.optionPredicate) : available;
   }, [props.config, props.current, props.optionPredicate, purpose]);
   const selectedKey = props.current
     ? `${props.current.instanceId}:${props.current.model}`
     : "default";
 
-  const renderOption = (option: ModelOption | null, index: number) => {
+  const renderOption = (
+    option:
+      | (ModelOption & {
+          readonly isSelectable: boolean;
+          readonly unavailableReason: string | null;
+        })
+      | null,
+    index: number,
+  ) => {
     const key = option?.key ?? "default";
     const selected = key === selectedKey;
     return (
@@ -81,7 +96,7 @@ export function ModelSelectionModal(props: {
             {option && purpose === "decision" ? (
               <Text className="rounded-full bg-subtle px-2 py-0.5 text-xs font-t3-medium text-foreground-muted">
                 {translator.message(
-                  modelDecisionSupport(option) === "native"
+                  resolveModelSelectionSupport(option).decision === "native"
                     ? "chat.model.decision.native"
                     : "chat.model.decision.prompted",
                 )}

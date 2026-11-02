@@ -1,23 +1,6 @@
-import type { EffectCallback } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
-import { reactHookHarness as hooks } from "~/test/reactHookHarness";
-
-const effects = vi.hoisted(() => [] as EffectCallback[]);
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  const { reactHookHarness } = await import("~/test/reactHookHarness");
-  return {
-    ...actual,
-    ...reactHookHarness,
-    useEffect: (effect: EffectCallback) => effects.push(effect),
-    useLayoutEffect: (effect: EffectCallback) => effects.push(effect),
-  };
-});
-vi.mock("react/compiler-runtime", async () => {
-  const { reactHookHarness } = await import("~/test/reactHookHarness");
-  return { c: reactHookHarness.useMemoCache };
-});
+import { createElement, useLayoutEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 vi.mock("./workspaceCardDeck.morph", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./workspaceCardDeck.morph")>()),
@@ -34,7 +17,6 @@ import { useWorkspaceCardDeckMorphLifecycle } from "./useWorkspaceCardDeckMorphL
 
 describe("workspace deck morph lifecycle", () => {
   beforeEach(() => {
-    hooks.reset();
     vi.useFakeTimers();
     vi.stubGlobal("window", {
       setTimeout,
@@ -42,10 +24,7 @@ describe("workspace deck morph lifecycle", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     });
-    vi.stubGlobal("document", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
+    vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.mocked(captureWorkspaceDeckSurface).mockReturnValue({
       geometry: {
         rect: { left: 0, top: 0, width: 400, height: 180 },
@@ -101,17 +80,31 @@ describe("workspace deck morph lifecycle", () => {
       resetKey: "thread",
       selectionMode: "animate",
     };
-    function render(overrides: Partial<typeof input> = {}) {
-      hooks.beginRender();
-      effects.length = 0;
-      const lifecycle = useWorkspaceCardDeckMorphLifecycle({ ...input, ...overrides });
-      lifecycle.registerMorphHost("chat", intrinsic);
-      lifecycle.registerMorphHost("git", intrinsic);
+    let current: ReturnType<typeof useWorkspaceCardDeckMorphLifecycle<string>> | undefined;
+    function Probe({ value }: { value: typeof input }) {
+      const next = useWorkspaceCardDeckMorphLifecycle(value);
+      next.registerMorphHost("chat", intrinsic);
+      next.registerMorphHost("git", intrinsic);
       const peekSlot = { querySelector: () => surface } as unknown as HTMLDivElement;
-      lifecycle.registerPeekSlot("chat", peekSlot);
-      lifecycle.registerPeekSlot("git", peekSlot);
-      for (const effect of effects) effect();
-      return lifecycle;
+      next.registerPeekSlot("chat", peekSlot);
+      next.registerPeekSlot("git", peekSlot);
+      useLayoutEffect(() => {
+        current = next;
+      });
+      return null;
+    }
+    let root: ReactTestRenderer | undefined;
+    onTestFinished(async () => {
+      await act(() => root?.unmount());
+    });
+    function render(overrides: Partial<typeof input> = {}) {
+      act(() => {
+        const element = createElement(Probe, { value: { ...input, ...overrides } });
+        if (root) root.update(element);
+        else root = create(element);
+      });
+      if (!current) throw new Error("The lifecycle did not mount.");
+      return current;
     }
     let lifecycle = render();
     lifecycle.pendingMorphCaptureRef.current = lifecycle.captureMorphRequest({

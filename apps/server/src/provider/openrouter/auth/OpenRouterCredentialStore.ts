@@ -48,9 +48,10 @@ export function openRouterApiKeySecretName(instanceId: ProviderInstanceId | stri
 function explicitEnvironmentApiKey(
   environment: ProviderInstanceEnvironment,
 ): Option.Option<Redacted.Redacted<string>> {
-  const value = environment
-    .find((variable) => variable.name === OPENROUTER_API_KEY && variable.sensitive)
-    ?.value.trim();
+  const configured = environment.find(
+    (variable) => variable.name === OPENROUTER_API_KEY && variable.sensitive,
+  )?.value;
+  const value = typeof configured === "string" ? configured.trim() : "";
   return value ? Option.some(Redacted.make(value)) : Option.none();
 }
 

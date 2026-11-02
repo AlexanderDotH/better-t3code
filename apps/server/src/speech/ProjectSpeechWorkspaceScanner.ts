@@ -56,75 +56,74 @@ function normalizeRelativePath(relativePath: string): string {
   return relativePath.replaceAll("\\", "/");
 }
 
-export const make = (
+export const make = Effect.fn("ProjectSpeechWorkspaceScanner.make")(function* (
   options: { readonly entryLimit?: number } = {},
-): Effect.Effect<ProjectSpeechWorkspaceScanner["Service"], never, Path.Path> =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const entryLimit = Math.max(1, Math.floor(options.entryLimit ?? DEFAULT_ENTRY_LIMIT));
+) {
+  const path = yield* Path.Path;
+  const entryLimit = Math.max(1, Math.floor(options.entryLimit ?? DEFAULT_ENTRY_LIMIT));
 
-    const readDirectory = (workspaceRoot: string, directory: PendingDirectory) =>
-      Effect.tryPromise({
-        try: () => NodeFSP.readdir(directory.absolutePath, { withFileTypes: true }),
-        catch: (cause) =>
-          new ProjectSpeechWorkspaceScanError({
-            workspaceRoot,
-            relativePath: directory.relativePath,
-            cause,
-          }),
-      });
-
-    const scan: ProjectSpeechWorkspaceScanner["Service"]["scan"] = Effect.fn(
-      "ProjectSpeechWorkspaceScanner.scan",
-    )(function* (workspaceRoot) {
-      const entries: ProjectEntry[] = [];
-      const pendingDirectories: PendingDirectory[] = [
-        { absolutePath: workspaceRoot, relativePath: "" },
-      ];
-      let nextDirectoryIndex = 0;
-      let truncated = false;
-
-      while (nextDirectoryIndex < pendingDirectories.length && !truncated) {
-        const directory = pendingDirectories[nextDirectoryIndex];
-        nextDirectoryIndex += 1;
-        if (directory === undefined) break;
-
-        const directoryEntries =
-          directory.relativePath.length === 0
-            ? yield* readDirectory(workspaceRoot, directory)
-            : yield* readDirectory(workspaceRoot, directory).pipe(Effect.orElseSucceed(() => []));
-        directoryEntries.sort((left, right) => compareText(left.name, right.name));
-
-        for (const entry of directoryEntries) {
-          if (entry.isSymbolicLink()) continue;
-          if (entry.isDirectory() && isIgnoredProjectSpeechDirectoryName(entry.name)) continue;
-          if (!entry.isDirectory() && !entry.isFile()) continue;
-          const relativePath = normalizeRelativePath(
-            directory.relativePath.length === 0
-              ? entry.name
-              : path.join(directory.relativePath, entry.name),
-          );
-          if (isIgnoredProjectSpeechPath(relativePath)) continue;
-          if (entries.length === entryLimit) {
-            truncated = true;
-            break;
-          }
-          if (entry.isDirectory()) {
-            entries.push({ path: relativePath, kind: "directory" });
-            pendingDirectories.push({
-              absolutePath: path.join(directory.absolutePath, entry.name),
-              relativePath,
-            });
-            continue;
-          }
-          entries.push({ path: relativePath, kind: "file" });
-        }
-      }
-
-      return { entries, truncated };
+  const readDirectory = (workspaceRoot: string, directory: PendingDirectory) =>
+    Effect.tryPromise({
+      try: () => NodeFSP.readdir(directory.absolutePath, { withFileTypes: true }),
+      catch: (cause) =>
+        new ProjectSpeechWorkspaceScanError({
+          workspaceRoot,
+          relativePath: directory.relativePath,
+          cause,
+        }),
     });
 
-    return ProjectSpeechWorkspaceScanner.of({ scan });
+  const scan: ProjectSpeechWorkspaceScanner["Service"]["scan"] = Effect.fn(
+    "ProjectSpeechWorkspaceScanner.scan",
+  )(function* (workspaceRoot) {
+    const entries: ProjectEntry[] = [];
+    const pendingDirectories: PendingDirectory[] = [
+      { absolutePath: workspaceRoot, relativePath: "" },
+    ];
+    let nextDirectoryIndex = 0;
+    let truncated = false;
+
+    while (nextDirectoryIndex < pendingDirectories.length && !truncated) {
+      const directory = pendingDirectories[nextDirectoryIndex];
+      nextDirectoryIndex += 1;
+      if (directory === undefined) break;
+
+      const directoryEntries =
+        directory.relativePath.length === 0
+          ? yield* readDirectory(workspaceRoot, directory)
+          : yield* readDirectory(workspaceRoot, directory).pipe(Effect.orElseSucceed(() => []));
+      directoryEntries.sort((left, right) => compareText(left.name, right.name));
+
+      for (const entry of directoryEntries) {
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory() && isIgnoredProjectSpeechDirectoryName(entry.name)) continue;
+        if (!entry.isDirectory() && !entry.isFile()) continue;
+        const relativePath = normalizeRelativePath(
+          directory.relativePath.length === 0
+            ? entry.name
+            : path.join(directory.relativePath, entry.name),
+        );
+        if (isIgnoredProjectSpeechPath(relativePath)) continue;
+        if (entries.length === entryLimit) {
+          truncated = true;
+          break;
+        }
+        if (entry.isDirectory()) {
+          entries.push({ path: relativePath, kind: "directory" });
+          pendingDirectories.push({
+            absolutePath: path.join(directory.absolutePath, entry.name),
+            relativePath,
+          });
+          continue;
+        }
+        entries.push({ path: relativePath, kind: "file" });
+      }
+    }
+
+    return { entries, truncated };
   });
+
+  return ProjectSpeechWorkspaceScanner.of({ scan });
+});
 
 export const layer = Layer.effect(ProjectSpeechWorkspaceScanner, make());

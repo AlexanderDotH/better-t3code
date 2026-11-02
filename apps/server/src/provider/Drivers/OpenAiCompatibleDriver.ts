@@ -1,17 +1,30 @@
 import { LmStudioSettings, OpenAiCompatibleSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  makeAlreadyLocalProviderHistorySync,
+  makeInstanceHistorySyncSource,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "@t3tools/provider-core/server/ProviderHistorySync";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { McpConfigEngine } from "../../mcp/McpConfigEngine.ts";
 import { make as makeProcessRunner } from "../../processRunner.ts";
 import { SubagentResourceGovernor } from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { makeOpenAiCompatibleTextGeneration } from "../../textGeneration/OpenAiCompatibleTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { nativeHarnessCommandEnvironment } from "../nativeHarness/NativeHarnessTools.ts";
 import { makeNativeProviderHarness } from "../nativeHarness/NativeProviderHarness.ts";
 import { makeNativeProviderMcpToolBridge } from "../nativeHarness/NativeProviderMcpToolBridge.ts";
@@ -27,19 +40,6 @@ import {
   makeOpenAiCompatibleTransport,
   OpenAiCompatibleAuthenticationError,
 } from "../openaiCompatible/OpenAiCompatibleTransport.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import {
-  makeAlreadyLocalProviderHistorySync,
-  makeInstanceHistorySyncSource,
-  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
-} from "../Services/ProviderHistorySync.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
 import type { OpenAiDriverEnv } from "./OpenAiDriver.ts";
 
 export type OpenAiCompatibleDriverEnv = OpenAiDriverEnv;
@@ -61,13 +61,13 @@ function makeOpenAiCompatibleDriver(input: {
     metadata: { displayName: input.displayName, supportsMultipleInstances: true },
     configSchema: input.configSchema,
     defaultConfig: () => decodeSettings({}),
-    create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-      Effect.gen(function* () {
+    create: Effect.fn("OpenAiCompatibleDriver.create")(
+      function* ({ instanceId, displayName, accentColor, environment, enabled, config }) {
         const httpClient = yield* HttpClient.HttpClient;
         const resourceGovernor = yield* SubagentResourceGovernor;
         const mcpConfigEngine = yield* McpConfigEngine;
         const toolEnvironment = nativeHarnessCommandEnvironment(
-          mergeProviderInstanceEnvironment(environment),
+          yield* mergeProviderInstanceEnvironment(environment, yield* HostProcess.Environment),
         );
         const effectiveConfig = { ...config, enabled };
         const credentialStore = yield* makeOpenAiCompatibleCredentialStore({
@@ -143,7 +143,7 @@ function makeOpenAiCompatibleDriver(input: {
           validateCredential: (apiKey) =>
             makeOpenAiCompatibleTransport({
               baseUrl: credentialStore.baseUrl,
-              resolveApiKey: Effect.succeed(Option.some(apiKey)),
+              resolveApiKey: Effect.succeedSome(apiKey),
             }).pipe(
               Effect.flatMap((candidate) => candidate.listModels),
               Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -161,16 +161,16 @@ function makeOpenAiCompatibleDriver(input: {
           enabled,
           snapshot,
           refreshModels: () => snapshot.refresh.pipe(Effect.asVoid),
-          adapter,
+          orchestrationAdapter: adapter,
           historySync: makeAlreadyLocalProviderHistorySync({
             source: makeInstanceHistorySyncSource({
-              driverKind,
+              driverKind: driverKind,
               instanceId,
               continuationKey: continuationIdentity.continuationKey,
               displayName: displayName ?? input.displayName,
               capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
             }),
-            reason: `${input.displayName} history is already stored by T3 Code.`,
+            reason: "Conversation history is already stored by T3 Code.",
           }),
           textGeneration: makeOpenAiCompatibleTextGeneration(effectiveConfig, {
             driverKind: input.driverKind,
@@ -179,17 +179,20 @@ function makeOpenAiCompatibleDriver(input: {
           }),
           authentication,
         } satisfies ProviderInstance;
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: driverKind,
-              instanceId,
-              detail: `Failed to build ${input.displayName} provider instance.`,
-              cause,
-            }),
+      },
+      (effect, { instanceId }) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: driverKind,
+                instanceId,
+                detail: `Failed to build ${input.displayName} provider instance.`,
+                cause,
+              }),
+          ),
         ),
-      ),
+    ),
   };
 }
 

@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   type ProjectContextInput,
   type ProjectIndexOperationError,
@@ -5,10 +6,9 @@ import {
   WorkspaceContextUnavailableError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectContextQuery from "../../../projectIndexing/query/ProjectContextQuery.ts";
 import { ProjectContextToolkit } from "./tools.ts";
 
@@ -18,30 +18,30 @@ export const invokeProjectContext = Effect.fn("ProjectContextToolkit.invoke")(fu
   ProjectIndexQueryResultV1,
   ProjectIndexOperationError | WorkspaceContextUnavailableError,
   | McpInvocationContext.McpInvocationContext
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+  | OrchestratorV2
   | ProjectContextQuery.ProjectContextQuery
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceMcpCapability();
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projections = yield* OrchestratorV2;
   const thread = yield* projections
-    .getThreadShellById(invocation.threadId)
+    .getThreadShell(invocation.threadId)
     .pipe(
       Effect.mapError(
         (cause) =>
           new WorkspaceContextUnavailableError({ reason: "projection_unavailable", cause }),
       ),
     );
-  if (Option.isNone(thread)) {
+  if (thread === null) {
     return yield* new WorkspaceContextUnavailableError({ reason: "thread_not_found" });
   }
   const query = yield* ProjectContextQuery.ProjectContextQuery;
   return yield* query.query({
     ...input,
-    projectId: thread.value.projectId,
+    projectId: thread.projectId,
     threadId: invocation.threadId,
   });
 });
 
-export const ProjectContextToolkitHandlersLive = ProjectContextToolkit.toLayer({
-  project_context: invokeProjectContext,
+export const ProjectContextToolkitHandlersLive = McpToolAccess.toLayer(ProjectContextToolkit, {
+  project_context: McpToolAccess.readsAsCaller(invokeProjectContext),
 });

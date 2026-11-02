@@ -1,15 +1,8 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
-import type { DiffsHighlighter } from "@pierre/diffs";
-import React, {
-  Children,
-  cloneElement,
-  isValidElement,
-  useContext,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
+import type { highlightCodeToHast } from "../../lib/incrementalHighlighting";
+import React, { useContext, useState, type CSSProperties, type ReactNode } from "react";
 import { renderSkillInlineMarkdownChildren } from "./SkillInlineText";
+import { nodeToPlainText } from "./MarkdownCodeBlock.logic";
 import {
   getStreamingTextMotionAnimationTiming,
   mapSourceFrameToRenderedText,
@@ -19,7 +12,7 @@ import {
   type StreamingTextMotionFrame,
 } from "./streamingTextMotion";
 
-const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const STREAM_TEXT_TAG_NAME = "stream-text";
 const STREAMING_SKILL_TOKEN_PATTERN = /^[$/]([a-zA-Z][a-zA-Z0-9:_-]*)$/;
 
@@ -64,9 +57,10 @@ interface StreamingTextRunProps {
   readonly animationTimeMs: number;
   readonly frame: StreamingTextMotionFrame;
   readonly graphemeIndexStart: number;
-  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly sourceStart: number;
   readonly text: string;
+  readonly threadRef?: ScopedThreadRef | undefined;
 }
 
 export interface StreamingLabelMotion {
@@ -79,8 +73,9 @@ export interface StreamingLabelMotion {
 export interface StreamingTextRenderContextValue {
   readonly animationTimeMs: number;
   readonly framesByGeneration: ReadonlyMap<number, StreamingTextMotionFrame>;
-  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly source: string;
+  readonly threadRef?: ScopedThreadRef | undefined;
 }
 
 export const StreamingTextRenderContext =
@@ -286,6 +281,7 @@ function StreamingTextRun({
   skills,
   sourceStart,
   text,
+  threadRef,
 }: StreamingTextRunProps) {
   const graphemes = segmentStreamingTextGraphemes(text, sourceStart);
   const groups = groupStreamingTextGraphemes(graphemes);
@@ -300,7 +296,7 @@ function StreamingTextRun({
         if (isKnownSkillToken(groupText, skills)) {
           return (
             <React.Fragment key={groupKey}>
-              {renderSkillInlineMarkdownChildren(groupText, skills)}
+              {renderSkillInlineMarkdownChildren(groupText, skills, threadRef)}
             </React.Fragment>
           );
         }
@@ -350,6 +346,7 @@ export function StreamingTextNode({ node, children }: StreamingTextNodeProps) {
       skills={renderContext.skills}
       sourceStart={sourceStart}
       text={streamedText}
+      threadRef={renderContext.threadRef}
     />
   );
 }
@@ -455,56 +452,12 @@ function isWhitespaceGrapheme(grapheme: StreamingTextGrapheme | undefined): bool
   return grapheme !== undefined && /^\s+$/u.test(grapheme.text);
 }
 
-function isKnownSkillToken(
-  text: string,
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>,
-): boolean {
+function isKnownSkillToken(text: string, skills: ReadonlyArray<ServerProviderSkill>): boolean {
   const name = STREAMING_SKILL_TOKEN_PATTERN.exec(text)?.[1];
   return name !== undefined && skills.some((skill) => skill.name === name);
 }
 
-export function renderSkillAwareMarkdownChildren(
-  children: ReactNode,
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>,
-): ReactNode {
-  return Children.map(children, (child) => {
-    if (typeof child === "string") {
-      return renderSkillInlineMarkdownChildren(child, skills);
-    }
-    if (!isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
-      return child;
-    }
-    const markdownTagName = typeof child.type === "string" ? child.type : child.props.node?.tagName;
-    if (
-      markdownTagName === STREAM_TEXT_TAG_NAME ||
-      markdownTagName === "code" ||
-      markdownTagName === "a" ||
-      !("children" in child.props)
-    ) {
-      return child;
-    }
-    return cloneElement(
-      child,
-      undefined,
-      renderSkillAwareMarkdownChildren(child.props.children, skills),
-    );
-  });
-}
-
-export function nodeToPlainText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    return node.map((child) => nodeToPlainText(child)).join("");
-  }
-  if (isValidElement<{ children?: ReactNode }>(node)) {
-    return nodeToPlainText(node.props.children);
-  }
-  return "";
-}
-
-type HighlightedRoot = ReturnType<DiffsHighlighter["codeToHast"]>;
+type HighlightedRoot = ReturnType<typeof highlightCodeToHast>;
 type HighlightedElement = Extract<HighlightedRoot["children"][number], { type: "element" }>;
 type CodeNode = HighlightedElement["children"][number];
 
@@ -520,7 +473,7 @@ function highlightedTextLength(node: CodeNode): number {
   return length;
 }
 
-interface StreamingCodeMotion {
+export interface StreamingCodeMotion {
   readonly animationTimeMs: number;
   readonly codeSourceStart: number;
   readonly frames: readonly StreamingTextMotionFrame[];

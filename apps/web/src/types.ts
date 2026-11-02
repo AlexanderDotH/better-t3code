@@ -4,20 +4,25 @@ import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointSummary,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
+  MessageId,
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2UserMessageInputIntent,
+  PlanId,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
+  RunId,
   RuntimeMode,
+  ScheduledTaskId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
-  EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadRuntimeSummary,
 } from "@t3tools/client-runtime/state/shell";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { videoMimeType } from "@t3tools/shared/video";
 
 export { videoMimeType } from "@t3tools/shared/video";
@@ -48,11 +53,10 @@ export interface ChatAudioAttachment extends ContractChatAudioAttachment {
 export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly previewUrl?: string;
   readonly downloadable?: boolean;
+  readonly htmlRender?: boolean;
 }
 
-// Attachment types this build does not know pass through with the contract
-// shape. The UI renders them as inert rows so a newer server cannot crash an
-// older client.
+// Render unknown attachment contracts as inert rows so newer servers cannot crash older clients.
 export type ChatUnknownAttachment = ContractChatUnknownAttachment;
 
 export type ChatAttachment =
@@ -61,13 +65,8 @@ export type ChatAttachment =
   | ChatFileAttachment
   | ChatUnknownAttachment;
 
-// The union has an open member (`type: string`), so a literal comparison does
-// not narrow. Use these guards wherever type-specific fields are read.
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
-  // Messages sent before pictures were typed by content carry `file`; they are still
-  // pictures, and reading them as such is what lets them render instead of listing. Only
-  // `file` is reclassified: an attachment type this client does not know yet is not a
-  // picture by default, whatever its name says.
+  // Legacy file attachments can be images; unknown types must never be reclassified by name.
   if (attachment.type === "image") return true;
   return attachment.type === "file" && imageMimeType(attachment) !== null;
 }
@@ -77,8 +76,7 @@ export function isAudioAttachment(attachment: ChatAttachment): attachment is Cha
 }
 
 export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
-  // Disjoint from `isImageAttachment` on purpose: a legacy `file` carrying an image reads as a
-  // picture, and callers filter both sets independently, so overlap renders it twice.
+  // Keep disjoint from isImageAttachment so independently filtered sets do not render legacy images twice.
   return attachment.type === "file" && !isImageAttachment(attachment);
 }
 
@@ -86,17 +84,41 @@ export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
   return videoMimeType(attachment) !== null;
 }
 
-export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+export interface ChatMessage {
+  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+  readonly id: MessageId;
+  readonly replyTo?: import("@t3tools/contracts").MessageReplyReference;
+  readonly replyTopicId?: import("@t3tools/contracts").SubagentId;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly runId: RunId | null;
+  readonly streaming: boolean;
+  readonly createdBy?: OrchestrationV2Actor;
+  readonly creationSource?: OrchestrationV2CreationSource;
+  readonly scheduledTaskId?: ScheduledTaskId;
+  readonly senderThreadId?: ThreadId;
+  readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
 }
 
-export type ProposedPlan = OrchestrationProposedPlan;
-export type TurnDiffFileChange = OrchestrationCheckpointFile;
-export type TurnDiffSummary = OrchestrationCheckpointSummary;
+export interface ProposedPlan {
+  readonly deepPlan?: import("@t3tools/contracts").DeepPlanRunReference | undefined;
+  readonly id: PlanId;
+  readonly runId: RunId | null;
+  readonly planMarkdown: string;
+  readonly status: OrchestrationV2PlanArtifact["status"];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export type TurnDiffFileChange = ThreadCheckpointSummary["files"][number];
+export type TurnDiffSummary = ThreadCheckpointSummary;
 
 export type Project = EnvironmentProject;
-export type Thread = EnvironmentThread;
+export type Thread = EnvironmentThreadShell;
 export type ThreadShell = EnvironmentThreadShell;
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
-export type ThreadSession = OrchestrationSession;
+export type ThreadSession = ThreadRuntimeSummary;

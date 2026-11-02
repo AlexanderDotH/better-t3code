@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import { afterEach, expect, it } from "vite-plus/test";
 
@@ -23,14 +23,24 @@ afterEach(() => {
 it("lets native I/O run before a large transaction batch finishes", async () => {
   let processed = 0;
   let processedAtIo = 0;
-  const ioTurn = NodeTimersPromises.setImmediate().then(() => {
-    processedAtIo = processed;
+  const { port1, port2 } = new NodeWorkerThreads.MessageChannel();
+  const ioTurn = new Promise<void>((resolve) => {
+    port1.once("message", () => {
+      processedAtIo = processed;
+      resolve();
+    });
   });
-  for await (const value of iterateKvItems(Array.from({ length: 1_024 }, (_, index) => index))) {
-    expect(value).toBe(processed);
-    processed += 1;
+  port2.postMessage("io-ready");
+  try {
+    for await (const value of iterateKvItems(Array.from({ length: 1_024 }, (_, index) => index))) {
+      expect(value).toBe(processed);
+      processed += 1;
+    }
+    await ioTurn;
+  } finally {
+    port1.close();
+    port2.close();
   }
-  await ioTurn;
   expect(processed).toBe(1_024);
   expect(processedAtIo).toBeGreaterThan(0);
   expect(processedAtIo).toBeLessThan(processed);

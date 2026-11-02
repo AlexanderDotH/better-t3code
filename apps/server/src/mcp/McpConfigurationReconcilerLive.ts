@@ -13,32 +13,33 @@ export interface McpConfigurationRuntime {
   readonly providerCapability: McpRuntimeRegistry["Service"]["providerCapability"];
 }
 
-const makeMcpConfigurationReconciler = (runtime: McpConfigurationRuntime) =>
-  Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
-    const changes = yield* serverSettings.subscribeChanges;
-    const initialSettings = yield* serverSettings.getSettings;
-    const reconciler = yield* makeMcpConfigurationReconcilerCore({
-      initialSettings,
-      readSettings: serverSettings.getSettings,
-      reconcileConfiguration: runtime.reconcileConfiguration,
-      providerCapability: runtime.providerCapability,
-    });
-
-    yield* Stream.runForEach(changes, () =>
-      reconciler.reconcileCurrent.pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning("failed to reconcile changed MCP configuration", {
-            operation: error.operation,
-            cause: error.cause,
-          }),
-        ),
-        Effect.ignore,
-      ),
-    ).pipe(Effect.forkScoped);
-
-    return reconciler;
+const makeMcpConfigurationReconciler = Effect.fn("makeMcpConfigurationReconciler")(function* (
+  runtime: McpConfigurationRuntime,
+) {
+  const serverSettings = yield* ServerSettingsService;
+  const changes = yield* serverSettings.subscribeChanges;
+  const initialSettings = yield* serverSettings.getSettings;
+  const reconciler = yield* makeMcpConfigurationReconcilerCore({
+    initialSettings,
+    readSettings: serverSettings.getSettings,
+    reconcileConfiguration: runtime.reconcileConfiguration,
+    providerCapability: runtime.providerCapability,
   });
+
+  yield* Stream.runForEach(changes, () =>
+    reconciler.reconcileCurrent.pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("failed to reconcile changed MCP configuration", {
+          operation: error.operation,
+          cause: error.cause,
+        }),
+      ),
+      Effect.ignore,
+    ),
+  ).pipe(Effect.forkScoped);
+
+  return reconciler;
+});
 
 export const makeMcpConfigurationReconcilerLayer = (runtime: McpConfigurationRuntime) =>
   Layer.effect(McpConfigurationReconciler, makeMcpConfigurationReconciler(runtime));

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import {
   loadClaudeGatewayCatalog,
@@ -174,9 +174,7 @@ describe("ClaudeGatewayCatalog", () => {
             },
             { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: true },
           ]);
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
           expect(JSON.stringify(catalog)).not.toContain("instance-token");
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
           expect(JSON.stringify(catalog)).not.toContain("settings-token");
         }),
       );

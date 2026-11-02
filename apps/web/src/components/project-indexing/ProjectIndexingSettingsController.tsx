@@ -12,7 +12,7 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { RotateCwIcon } from "lucide-react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -45,21 +45,15 @@ export interface ProjectIndexingSettingsControllerProps {
 function ConnectedProjectIndexingSettings(props: ProjectIndexingSettingsControllerProps) {
   const { message } = useInterfaceTranslator();
   const environmentSettings = useEnvironmentSettings(props.environmentId);
-  const scope = useMemo(
-    () => ({
-      projectId: props.projectId,
-      ...(props.threadId ? { threadId: props.threadId } : {}),
-    }),
-    [props.projectId, props.threadId],
-  );
+  const scope = {
+    projectId: props.projectId,
+    ...(props.threadId ? { threadId: props.threadId } : {}),
+  };
   const { controller, snapshot } = useProjectIndexController(props.api, scope);
-  const status = useMemo(
-    () =>
-      snapshot.status && props.defaults
-        ? { ...snapshot.status, defaults: props.defaults }
-        : snapshot.status,
-    [props.defaults, snapshot.status],
-  );
+  const status =
+    snapshot.status && props.defaults
+      ? { ...snapshot.status, defaults: props.defaults }
+      : snapshot.status;
   const effectiveSettings = status
     ? resolveProjectIndexSettings(status.settings, status.defaults)
     : null;
@@ -195,6 +189,7 @@ function ConnectedProjectIndexingSettings(props: ProjectIndexingSettingsControll
               modelControl={
                 <div className="flex flex-wrap items-center gap-2">
                   <ProjectIndexModelPicker
+                    environmentId={props.environmentId}
                     selection={selection}
                     settings={environmentSettings}
                     providers={props.providers}

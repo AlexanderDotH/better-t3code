@@ -1,10 +1,13 @@
-"use client";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import type { EnvironmentId, ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contracts";
 import type { ProviderSettingsModelOption } from "@t3tools/client-runtime/providerSettingsForm";
 import { useState } from "react";
 
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  usePersistEnvironmentProviderInstanceMutation,
+} from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
@@ -16,7 +19,7 @@ import {
   aiEndpointBaseUrlError,
 } from "./AiEndpointSettings.logic";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
-import type { ProviderClientDefinition } from "./providerDriverMeta";
+import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
 
 interface AiEndpointSettingsProps {
@@ -42,7 +45,7 @@ export function AiEndpointSettings({
 }: AiEndpointSettingsProps) {
   const translate = useInterfaceTranslator().message;
   const settings = useEnvironmentSettings(environmentId);
-  const updateSettings = useSettingsCommand(serverEnvironment.updateSettings);
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const refreshProviders = useSettingsCommand(serverEnvironment.refreshProviders);
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
@@ -51,22 +54,19 @@ export function AiEndpointSettings({
     models: ReadonlyArray<ProviderSettingsModelOption>;
   } | null>(null);
   const config = draft ?? instance.config;
-  const baseUrl = aiEndpointBaseUrl(definition.value, config);
-  const savedBaseUrl = aiEndpointBaseUrl(definition.value, instance.config);
-  const error = aiEndpointBaseUrlError(definition.value, config);
+  const baseUrl = aiEndpointBaseUrl(definition.driverKind, config);
+  const savedBaseUrl = aiEndpointBaseUrl(definition.driverKind, instance.config);
+  const error = aiEndpointBaseUrlError(definition.driverKind, config);
   const save = useSettingsMutation({
-    mutationFn: (nextConfig: Record<string, unknown>) =>
-      updateSettings({
-        environmentId,
-        input: {
-          patch: {
-            providerInstances: {
-              ...settings.providerInstances,
-              [instanceId]: { ...instance, config: nextConfig },
-            },
-          },
-        },
-      }),
+    mutationFn: async (nextConfig: Record<string, unknown>) => {
+      const result = await persistProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: { ...instance, config: nextConfig },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return result.value;
+    },
     onSuccess: () => setDraft(null),
     onError: (failure) =>
       toastManager.add({
@@ -185,7 +185,7 @@ export function AiEndpointSettings({
             onAdopt={(endpoint) => {
               setDraft(adoptAiEndpoint(config, endpoint));
               setDiscoveredModels({
-                baseUrl: aiEndpointBaseUrl(definition.value, { baseUrl: endpoint.baseUrl })!,
+                baseUrl: aiEndpointBaseUrl(definition.driverKind, { baseUrl: endpoint.baseUrl })!,
                 models: endpoint.models.map((model) => ({
                   slug: model.id,
                   name: model.name || model.id,

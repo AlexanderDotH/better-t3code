@@ -1,34 +1,26 @@
-import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
-import { useCallback, useLayoutEffect, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, View } from "react-native";
+import { SheetCloseButton } from "../../../components/ui/SheetHeader";
+import { useNavigation } from "@react-navigation/native";
+import { useState } from "react";
+import { Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
-import { AppText as Text } from "../../../components/AppText";
-import { LoadingStrip } from "../../../components/LoadingStrip";
-import { SymbolView } from "../../../components/AppSymbol";
+import { Button } from "../../../components/ui/Button";
+import { IconButton } from "../../../components/ui/IconButton";
+import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { LoadingStrip } from "../../../components/ui/LoadingStrip";
+import { SymbolView } from "../../../components/ui/AppSymbol";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
-import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
-  const translator = useMobileInterfaceTranslator();
 
   return (
-    <Pressable
-      accessibilityLabel={translator.message("mobile.settings.legal.closeDocument")}
-      accessibilityRole="button"
-      hitSlop={12}
-      onPress={() => navigation.goBack()}
-      className="p-2 active:opacity-60"
-    >
-      <SymbolView
-        name="xmark"
-        size={18}
-        tintColorClassName={"accent-icon"}
-        type="monochrome"
-        weight="semibold"
-      />
-    </Pressable>
+    <SheetCloseButton
+      accessibilityLabel="Close legal document"
+      onClose={() => navigation.goBack()}
+    />
   );
 }
 
@@ -37,26 +29,19 @@ export function SettingsLegalDocumentExternalHeaderButton({
 }: {
   readonly externalUrl?: string;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
 
   return (
-    <Pressable
-      accessibilityLabel={translator.message("mobile.settings.legal.openExternal")}
-      accessibilityRole="button"
-      hitSlop={12}
+    <IconButton
+      accessibilityLabel="Open legal documents in external browser"
+      icon="safari"
       onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
-      className="p-2 active:opacity-60"
-    >
-      <SymbolView
-        name="safari"
-        size={19}
-        tintColorClassName={"accent-icon"}
-        type="monochrome"
-        weight="regular"
-      />
-    </Pressable>
+    />
   );
+}
+
+function externalHeaderButton(externalUrl: string) {
+  return () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />;
 }
 
 interface SettingsLegalDocumentRouteScreenProps {
@@ -68,29 +53,26 @@ export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
-  const translator = useMobileInterfaceTranslator();
-  const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState(documentUrl);
-  const renderExternalHeaderButton = useCallback(
-    () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />,
-    [externalUrl],
+  const headerOptions = (
+    <NativeStackScreenOptions
+      options={{
+        headerRight: externalHeaderButton(externalUrl),
+      }}
+      optionsVersion={externalUrl}
+    />
   );
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: renderExternalHeaderButton,
-    });
-  }, [navigation, renderExternalHeaderButton]);
-
-  const openExternalUrl = useCallback((url: string) => {
+  const openExternalUrl = (url: string) => {
     void Linking.openURL(url).catch(() => undefined);
-  }, []);
+  };
   if (loadError) {
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
+        {headerOptions}
         <SymbolView
           name="exclamationmark.triangle"
           size={32}
@@ -100,35 +82,28 @@ export function SettingsLegalDocumentRouteScreen({
         />
         <View className="items-center gap-2">
           <Text className="text-center font-t3-bold text-lg text-foreground">
-            {translator.message("mobile.settings.legal.loadFailed", {
-              document: documentName.toLowerCase(),
-            })}
+            Couldn&apos;t load the {documentName.toLowerCase()}
           </Text>
           <Text selectable className="text-center text-sm leading-normal text-foreground-muted">
             {loadError}
           </Text>
         </View>
         <View className="w-full max-w-[320px] gap-2">
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label="Try Again"
+            tone="contrast"
+            fullWidth
             onPress={() => {
               setLoadError(null);
               setReloadKey((value) => value + 1);
             }}
-            className="items-center rounded-xl bg-foreground px-4 py-3 active:opacity-80"
-          >
-            <Text className="font-t3-bold text-base text-sheet">
-              {translator.message("mobile.settings.legal.tryAgain")}
-            </Text>
-          </Pressable>
+          />
           <Pressable
             accessibilityRole="link"
             onPress={() => openExternalUrl(documentUrl)}
             className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
           >
-            <Text className="font-t3-medium text-base text-foreground-muted">
-              {translator.message("mobile.settings.legal.openBrowser")}
-            </Text>
+            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
           </Pressable>
         </View>
       </View>
@@ -137,6 +112,7 @@ export function SettingsLegalDocumentRouteScreen({
 
   return (
     <View className="relative flex-1 bg-sheet">
+      {headerOptions}
       {loadProgress > 0 && loadProgress < 1 ? <LoadingStrip progress={loadProgress} /> : null}
       <WebView
         key={reloadKey}
@@ -182,7 +158,7 @@ export function SettingsLegalDocumentRouteScreen({
         }}
         renderLoading={() => (
           <View className="absolute inset-0 items-center justify-center bg-sheet">
-            <ActivityIndicator />
+            <AppActivityIndicator />
           </View>
         )}
         style={{ flex: 1, backgroundColor: "transparent" }}

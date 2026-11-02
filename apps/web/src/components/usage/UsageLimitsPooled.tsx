@@ -246,7 +246,7 @@ function PoolSegment({
             style={{ gridColumn: index, gridRow: 1 }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className={cn(
-              "relative min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8",
+              "relative min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8",
               showPaceBar ? "h-7" : "h-5",
             )}
           />
@@ -437,15 +437,7 @@ function RedeemableSegmentPopup({
   );
 }
 
-/**
- * One pooled window as equal-width segments, one per account, each filled by
- * the share of that account's quota still open. Equal widths are honest: every
- * account contributes the same share of the pool, whatever its plan.
- *
- * Wide, each segment carries its own label. Narrow, the bar is a bare strip
- * and a legend below lists the accounts in the same order; both open the
- * same popover.
- */
+/** Each account contributes an equal-width quota segment; narrow bars move labels to a legend. */
 function PoolBar({
   pool,
   color,
@@ -486,7 +478,7 @@ function PoolBar({
                   pacingEnabled && pool.kind === "weekly" ? "h-7" : "h-5",
                 )}
               >
-                <span aria-hidden>—</span>
+                <span aria-hidden>,</span>
                 <span className="ms-2 hidden truncate @2xl/pool:inline">Not reported</span>
               </span>
               <span

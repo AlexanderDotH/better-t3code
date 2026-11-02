@@ -283,7 +283,7 @@ function resultFromState(state: GitWorkbenchOperationState): GitWorkbenchOperati
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchOperationsDriver;
   const stateReader = yield* GitWorkbenchOperationStateReader;
@@ -470,7 +470,9 @@ export const make = Effect.gen(function* () {
   });
 
   return GitWorkbenchOperations.of({
-    run: (input) => lockFor(input.cwd).withPermit(runUnlocked(input)),
+    run: Effect.fn("GitWorkbenchOperations.run")((input) =>
+      lockFor(input.cwd).withPermit(runUnlocked(input)),
+    ),
   });
 });
 
@@ -481,7 +483,7 @@ export const driverLayer = Layer.effect(
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
     return GitWorkbenchOperationsDriver.of({
-      run: (input) =>
+      run: Effect.fn("GitWorkbenchOperationsDriver.run")((input) =>
         git
           .execute({
             ...input,
@@ -495,6 +497,7 @@ export const driverLayer = Layer.effect(
               stdoutTruncated: result.stdoutTruncated,
             })),
           ),
+      ),
     });
   }),
 );

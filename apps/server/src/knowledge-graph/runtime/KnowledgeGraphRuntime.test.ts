@@ -20,7 +20,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as KnowledgeGraphRepository from "../persistence/KnowledgeGraphRepository.ts";
@@ -240,8 +240,8 @@ const makeRuntimeHarness = (
         readFile: () => Effect.die("node content is not used in this test"),
       }),
     );
-    const orchestration = OrchestrationEngine.OrchestrationEngineService.of(
-      serviceStub<OrchestrationEngine.OrchestrationEngineService["Service"]>({
+    const orchestration = OrchestratorV2.of(
+      serviceStub<OrchestratorV2["Service"]>({
         streamDomainEvents: Stream.never,
       }),
     );
@@ -257,7 +257,7 @@ const makeRuntimeHarness = (
       Effect.provideService(KnowledgeGraphEventHub.KnowledgeGraphEventHub, eventHub),
       Effect.provideService(ServerSettings.ServerSettingsService, settings),
       Effect.provideService(WorkspaceFileSystem.WorkspaceFileSystem, workspaceFiles),
-      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, orchestration),
+      Effect.provideService(OrchestratorV2, orchestration),
     );
 
     return {

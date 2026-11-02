@@ -1,3 +1,4 @@
+import { useEnvironmentProviders } from "~/state/environments";
 import type {
   EnvironmentId,
   ExtensionCatalogEntry,
@@ -66,8 +67,9 @@ export function ExtensionInstallDialog(props: {
         })
       : null,
   );
+  const providersByEnvironment = useEnvironmentProviders();
   const providerTabs = deriveMcpProviderTabs(
-    (config?.providers ?? []).map((provider) => ({
+    (providersByEnvironment.get(props.environmentId) ?? []).map((provider) => ({
       ...provider,
       mcpCapability: providerStatus.data?.providers.find(
         (status) => status.instanceId === provider.instanceId,

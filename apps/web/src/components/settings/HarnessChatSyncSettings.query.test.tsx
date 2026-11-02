@@ -4,15 +4,15 @@ import {
   HarnessChatSyncSourceId,
   type HarnessChatSyncListInput,
 } from "@t3tools/contracts";
-import { AtomRegistry } from "effect/unstable/reactivity";
-import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { AtomRegistry } from "effect/reactivity";
+import { useLayoutEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { useHarnessChatPages } from "./HarnessChatSyncSettings.query";
 
 vi.mock("../../state/agentSettings", async () => {
-  const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const family = Atom.family((key: string) => {
     const input = JSON.parse(key) as HarnessChatSyncListInput;
     return Atom.make(
@@ -60,14 +60,15 @@ function render(query = "", enabled = true) {
   );
 }
 beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registry = AtomRegistry.make();
   await act(() => {
     renderer = create(render());
   });
 });
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   registry.dispose();
   vi.unstubAllGlobals();
 });
@@ -80,17 +81,25 @@ it("loads the next page once and does not carry its cursor into a different sear
   expect(view.pages).toHaveLength(2);
   expect(view.pages[1]?.changedMatching).toBe(7);
   expect(view.hasNextPage).toBe(false);
-  await act(() => renderer?.update(render("different")));
+  await act(async () => {
+    await renderer?.update(render("different"));
+  });
   expect(view.pages).toHaveLength(1);
   expect(view.pages[0]?.totalMatching).toBe(1);
   expect(view.hasNextPage).toBe(true);
 });
 it("refresh starts again at the first page and inactive panels return no cached data", async () => {
-  await act(() => view.loadNext());
+  await act(async () => {
+    await view.loadNext();
+  });
   expect(view.pages).toHaveLength(2);
-  await act(() => view.refresh());
+  await act(async () => {
+    await view.refresh();
+  });
   expect(view.pages).toHaveLength(1);
-  await act(() => renderer?.update(render("", false)));
+  await act(async () => {
+    await renderer?.update(render("", false));
+  });
   expect(view.pages).toEqual([]);
   expect(view.isPending).toBe(false);
 });

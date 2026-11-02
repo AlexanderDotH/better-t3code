@@ -1,6 +1,7 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import {
   isAtomCommandInterrupted,
@@ -31,7 +32,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   readonly environmentUnavailable: boolean;
 }) {
   const translate = useInterfaceTranslator().message;
-  const exportTranscript = useAtomCommand(orchestrationEnvironment.exportThreadTranscript, {
+  const exportTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
   const [state, setState] = useState<CopyState>("idle");
@@ -39,6 +40,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the pending clipboard indicator timer when the button unmounts.
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -50,7 +52,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
     };
   }, []);
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = useStableCallback(async () => {
     if (requestInFlightRef.current || activeTurnInProgress || environmentUnavailable) return;
 
     requestInFlightRef.current = true;
@@ -108,14 +110,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
     } finally {
       requestInFlightRef.current = false;
     }
-  }, [
-    activeTurnInProgress,
-    environmentId,
-    environmentUnavailable,
-    exportTranscript,
-    threadId,
-    translate,
-  ]);
+  });
 
   const disabled = environmentUnavailable || activeTurnInProgress || state !== "idle";
   const tooltip = environmentUnavailable

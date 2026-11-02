@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   WorkspaceContextUnavailableError,
   type ProjectMemoryError,
@@ -5,10 +6,11 @@ import {
   type ProjectMemoryToolResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
+import { resolveWorkspaceMcpScope } from "../../WorkspaceMcpScope.ts";
 import * as ProjectMemoryPolicy from "../../../projectMemory/ProjectMemoryPolicy.ts";
 import * as ProjectMemoryStore from "../../../projectMemory/ProjectMemoryStore.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
@@ -19,24 +21,23 @@ export const invokeProjectMemory = Effect.fn("ProjectMemoryToolkit.invoke")(func
   ProjectMemoryToolResult,
   ProjectMemoryError | WorkspaceContextUnavailableError,
   | McpInvocationContext.McpInvocationContext
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+  | OrchestratorV2
+  | ProjectStoreV2
   | ProjectMemoryPolicy.ProjectMemoryPolicy
   | ProjectMemoryStore.ProjectMemoryStore
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceMcpCapability();
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const context = yield* projections.getThreadCheckpointContext(invocation.threadId).pipe(
-    Effect.mapError(
-      (cause) =>
-        new WorkspaceContextUnavailableError({
-          reason: "projection_unavailable",
-          cause,
-        }),
-    ),
-  );
-  if (Option.isNone(context)) {
-    return yield* new WorkspaceContextUnavailableError({ reason: "thread_not_found" });
-  }
+  if (invocation.projectMemoryEnabled === false)
+    return yield* new WorkspaceContextUnavailableError({ reason: "credential_not_authorized" });
+  const context = yield* resolveWorkspaceMcpScope(invocation.threadId);
+  const checkpoints = yield* (yield* OrchestratorV2)
+    .getThreadRecords(invocation.threadId, ["checkpoints"])
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceContextUnavailableError({ reason: "projection_unavailable", cause }),
+      ),
+    );
 
   const policy = yield* ProjectMemoryPolicy.ProjectMemoryPolicy;
   const access = yield* policy.resolve({
@@ -45,12 +46,12 @@ export const invokeProjectMemory = Effect.fn("ProjectMemoryToolkit.invoke")(func
     providerSessionId: invocation.providerSessionId,
     providerInstanceId: invocation.providerInstanceId,
   });
-  const latestCheckpoint = context.value.checkpoints.findLast(
+  const latestCheckpoint = checkpoints.checkpoints.findLast(
     (checkpoint) => checkpoint.status === "ready",
-  )?.checkpointRef;
+  )?.ref;
   const scope: ProjectMemoryStore.ProjectMemoryScope = {
-    projectId: context.value.projectId,
-    workspaceRoot: context.value.workspaceRoot,
+    projectId: context.thread.projectId,
+    workspaceRoot: context.project.workspaceRoot,
     threadId: invocation.threadId,
     actor: access.actor,
     ...(latestCheckpoint === undefined ? {} : { checkpointRef: latestCheckpoint }),
@@ -93,6 +94,6 @@ export const invokeProjectMemory = Effect.fn("ProjectMemoryToolkit.invoke")(func
   }
 });
 
-export const ProjectMemoryToolkitHandlersLive = ProjectMemoryToolkit.toLayer({
-  project_memory: invokeProjectMemory,
+export const ProjectMemoryToolkitHandlersLive = McpToolAccess.toLayer(ProjectMemoryToolkit, {
+  project_memory: McpToolAccess.actsAsCaller(invokeProjectMemory),
 });

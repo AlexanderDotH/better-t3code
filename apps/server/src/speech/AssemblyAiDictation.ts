@@ -20,9 +20,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
@@ -189,7 +190,7 @@ function exactFileMentions(
   entries: readonly SpeechVocabularyEntry[],
 ): GatewayDictation["files"] {
   const names = new Set(
-    entries.filter((entry) => entry.kind === "file").flatMap((entry) => [entry.path, entry.name]),
+    entries.flatMap((entry) => (entry.kind === "file" ? [entry.path, entry.name] : [])),
   );
   return [...names]
     .filter((name) => mentionOffsets(text, name).length > 0)
@@ -199,7 +200,8 @@ function exactFileMentions(
 
 const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
-  const projection = yield* ProjectionSnapshotQuery;
+  const projects = yield* ProjectStoreV2;
+  const projection = yield* ProjectionStoreV2;
   const vocabulary = yield* ProjectSpeechVocabulary;
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
@@ -209,8 +211,8 @@ const make = Effect.gen(function* () {
   const resolveWorkspace = Effect.fn("AssemblyAiDictation.resolveWorkspace")(function* (
     input: SpeechStreamingStartInput,
   ) {
-    const project = yield* projection
-      .getProjectShellById(input.projectId)
+    const project = yield* projects
+      .getShell(input.projectId)
       .pipe(
         Effect.mapError(
           () => new SpeechDictationError({ reason: "The project could not be resolved." }),
@@ -221,18 +223,18 @@ const make = Effect.gen(function* () {
     }
     if (!input.threadId) return project.value.workspaceRoot;
     const thread = yield* projection
-      .getThreadCheckpointContext(input.threadId)
+      .getThread(input.threadId)
       .pipe(
         Effect.mapError(
           () => new SpeechDictationError({ reason: "The thread workspace could not be resolved." }),
         ),
       );
-    if (Option.isNone(thread) || thread.value.projectId !== input.projectId) {
+    if (thread.projectId !== input.projectId) {
       return yield* new SpeechDictationError({
         reason: "The thread does not belong to this project.",
       });
     }
-    return thread.value.worktreePath ?? project.value.workspaceRoot;
+    return thread.worktreePath ?? project.value.workspaceRoot;
   });
 
   const loadModels = Effect.gen(function* () {

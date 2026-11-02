@@ -41,6 +41,7 @@ export function useWorkspaceCardDeckRetainedState<CardId extends string>(input: 
   const [collapsingCard, setCollapsingCard] = useState<CardId | null>(null);
   const [transition, setTransition] = useState<WorkspaceDeckTransition<CardId> | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed selection to pending DOM animation and focus callbacks
   useLayoutEffect(() => {
     expandedCardRef.current = input.expandedCard;
     activeCardRef.current = input.activeCard;

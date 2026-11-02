@@ -57,6 +57,7 @@ export function GitCommitComposer(props: GitCommitComposerProps) {
   const messageRef = useRef<HTMLTextAreaElement | null>(null);
   const automaticRef = useRef<HTMLInputElement | null>(null);
   const lastFocusRequest = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies a requested focus change to the mounted commit input
   useEffect(() => {
     if (!props.focusRequest || props.focusRequest === lastFocusRequest.current) return;
     lastFocusRequest.current = props.focusRequest;

@@ -1,112 +1,25 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  DeepPlanRunId,
   McpCapabilityUnavailableError,
   PreviewAutomationUnavailableError,
   ProviderInstanceId,
   ThreadId,
-  WorkspaceContextUnavailableError,
-  WorkspaceEditError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
-it.effect("reports the scoped credential context when preview capability is unavailable", () => {
-  const invocation: McpInvocationContext.McpInvocationScope = {
-    environmentId: EnvironmentId.make("environment-1"),
-    threadId: ThreadId.make("thread-1"),
-    providerSessionId: "provider-session-1",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    capabilities: new Set(),
-    issuedAt: 1,
-  };
-
-  return Effect.gen(function* () {
-    const error = yield* McpInvocationContext.requireMcpCapability("preview").pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-      Effect.flip,
-    );
-
-    expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
-    expect(error).toMatchObject({
-      capability: "preview",
-      environmentId: invocation.environmentId,
-      threadId: invocation.threadId,
-      providerSessionId: invocation.providerSessionId,
-      providerInstanceId: invocation.providerInstanceId,
-    });
-    expect(error.message).toContain("MCP credential does not grant the preview capability");
-    expect(error.message).toContain("use a headless browser from the shell");
-  });
-});
-
-it.effect(
-  "keeps old writable credentials readonly during Deep Plan planning and restores approved execution",
-  () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("deep-plan-owner");
-      const invocation: McpInvocationContext.McpInvocationScope = {
-        environmentId: EnvironmentId.make("local"),
-        ownerThreadId: threadId,
-        threadId,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        providerSessionId: "old-fullaccess-session",
-        capabilities: new Set(["workspace", "workspace-write", "deep-plan"]),
-        issuedAt: 1,
-        deepPlan: {
-          runId: DeepPlanRunId.make("run-1"),
-          runThreadId: threadId,
-          phase: "planning",
-          approvedPlanVersion: null,
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
-        },
-      };
-      expect(
-        yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-        ),
-      ).toBe(invocation);
-      expect(
-        yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.flip,
-        ),
-      ).toMatchObject({ _tag: "WorkspaceEditError", reason: "credential_not_authorized" });
-      const approved: McpInvocationContext.McpInvocationScope = {
-        ...invocation,
-        deepPlan: { ...invocation.deepPlan!, phase: "execution", approvedPlanVersion: 1 },
-      };
-      expect(
-        yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, approved),
-        ),
-      ).toBe(approved);
-      const review: McpInvocationContext.McpInvocationScope = {
-        ...approved,
-        deepPlan: { ...approved.deepPlan!, readOnly: true },
-      };
-      expect(
-        yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, review),
-        ),
-      ).toBe(review);
-      expect(
-        yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, review),
-          Effect.flip,
-        ),
-      ).toMatchObject({ _tag: "WorkspaceEditError", reason: "credential_not_authorized" });
-    }),
-);
-
 it.effect("reports other missing capabilities with the neutral error", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-1"),
-    threadId: ThreadId.make("thread-1"),
-    providerSessionId: "provider-session-1",
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    requestNamespace: "provider-session-1",
+    thread: {
+      threadId: ThreadId.make("thread-1"),
+      providerSessionId: "provider-session-1",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
     capabilities: new Set(["preview"]),
     issuedAt: 1,
   };
@@ -118,7 +31,10 @@ it.effect("reports other missing capabilities with the neutral error", () => {
     );
 
     expect(error).toBeInstanceOf(McpCapabilityUnavailableError);
-    expect(error).toMatchObject({ capability: "pull-requests", threadId: invocation.threadId });
+    expect(error).toMatchObject({
+      capability: "pull-requests",
+      threadId: invocation.thread?.threadId,
+    });
 
     const scope = yield* McpInvocationContext.requireMcpCapability("preview").pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
@@ -127,44 +43,55 @@ it.effect("reports other missing capabilities with the neutral error", () => {
   });
 });
 
-it.effect("rejects workspace access when a credential grants preview only", () => {
+it.effect("refuses thread-owned capabilities to a caller signed in from outside a thread", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-1"),
-    threadId: ThreadId.make("thread-1"),
-    providerSessionId: "provider-session-1",
-    providerInstanceId: ProviderInstanceId.make("grok"),
-    capabilities: new Set(["preview"]),
+    requestNamespace: "client:session-1",
+    thread: undefined,
+    client: { sessionId: "session-1", label: "Claude Code", access: "auto" },
+    capabilities: new Set(["preview", "orchestration"]),
     issuedAt: 1,
   };
 
   return Effect.gen(function* () {
-    const error = yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
+    const error = yield* McpInvocationContext.requireThreadMcpCapability("preview").pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
       Effect.flip,
     );
-
-    expect(error).toBeInstanceOf(WorkspaceContextUnavailableError);
-    expect(error.reason).toBe("credential_not_authorized");
+    expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
+    expect(error).toMatchObject({ capability: "preview", environmentId: "environment-1" });
+    expect(error.threadId).toBeUndefined();
   });
 });
 
-it.effect("rejects workspace editing when a credential grants read access only", () => {
-  const invocation: McpInvocationContext.McpInvocationScope = {
+it("acts at an administrator's ceiling for a client approved above it", () => {
+  const scope = (
+    access: McpInvocationContext.McpClientCaller["access"],
+    narrowedTo?: McpInvocationContext.ClientModes,
+  ): McpInvocationContext.McpInvocationScope => ({
     environmentId: EnvironmentId.make("environment-1"),
-    threadId: ThreadId.make("thread-1"),
-    providerSessionId: "provider-session-1",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    capabilities: new Set(["workspace"]),
+    requestNamespace: "client:session-1",
+    thread: undefined,
+    client: { sessionId: "session-1", label: "Claude Code", access, narrowedTo },
+    capabilities: new Set(["orchestration"]),
     issuedAt: 1,
-  };
-
-  return Effect.gen(function* () {
-    const error = yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-      Effect.flip,
+  });
+  const modes = (invocation: McpInvocationContext.McpInvocationScope, ceiling?: "auto") =>
+    McpInvocationContext.clientModeCeiling(
+      McpInvocationContext.withRuntimeModeCeiling(invocation, ceiling).client,
     );
 
-    expect(error).toBeInstanceOf(WorkspaceEditError);
-    expect(error.reason).toBe("credential_not_authorized");
+  expect(modes(scope("full-access"), "auto")).toEqual({
+    runtimeMode: "auto",
+    interactionMode: "default",
   });
+  // A narrower request and the approved mode still win below the ceiling.
+  expect(
+    modes(
+      scope("full-access", { runtimeMode: "approval-required", interactionMode: "plan" }),
+      "auto",
+    ),
+  ).toEqual({ runtimeMode: "approval-required", interactionMode: "plan" });
+  expect(modes(scope("auto-accept-edits"), "auto").runtimeMode).toBe("auto-accept-edits");
+  expect(modes(scope("full-access")).runtimeMode).toBe("full-access");
 });

@@ -1,30 +1,30 @@
-import { memo, useState, useId, type CSSProperties, type ReactNode } from "react";
-import { ChatSizeMotion } from "./ChatSizeMotion";
+import { DeepPlanChecklist } from "./DeepPlanProgress";
+import {
+  deepPlanSourceTitle,
+  formatDeepPlanForDisplay,
+} from "@t3tools/client-runtime/deep-planning";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { DeepPlanRun } from "@t3tools/contracts";
 import { useChatVisualMode } from "../../chatVisualModeSync";
+import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
+import { memo, useState, useId } from "react";
+import { findRevealRef } from "./markdownFindContext";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  resolveBetterT3FeatureFlag,
+  AuthFilesystemWriteScope,
   type EnvironmentId,
   type ScopedThreadRef,
-  type DeepPlanRun,
 } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
   downloadPlanAsTextFile,
   normalizePlanMarkdownForExport,
-  proposedPlanTitle,
-  stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
-import {
-  formatDeepPlanForDisplay,
-  deepPlanSourceTitle,
-} from "@t3tools/client-runtime/deep-planning";
-import { DeepPlanChecklist } from "./DeepPlanProgress";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -44,8 +44,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
-import { useClientSettings } from "~/hooks/useSettings";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -53,30 +52,23 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
-  actions,
+  findActive = false,
   deepPlan,
-  variant = "plan",
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
-  actions?: ReactNode;
+  findActive?: boolean;
   deepPlan?: DeepPlanRun;
-  variant?: "plan" | "deep-plan";
 }) {
-  const better = useChatVisualMode() === "better-t3";
   const translator = useInterfaceTranslator();
-  const translate = translator.message;
-  const isDeepPlan = variant === "deep-plan" || Boolean(deepPlan);
-  const bluePlanBubble = useClientSettings((settings) =>
-    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.classicBubbleOnly"),
-  );
-  const accentedPlanBubble = better || isDeepPlan || bluePlanBubble;
+  const chatVisualMode = useChatVisualMode();
   const [expanded, setExpanded] = useState(false);
+  const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  const [savePath, setSavePath] = useState("");
+  const [lastSavePath, setLastSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
     reportFailure: false,
@@ -87,15 +79,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: translate("chat.plan.copyFailed"),
-          description: error instanceof Error ? error.message : translate("chat.plan.copyError"),
+          title: "Could not copy plan",
+          description: error instanceof Error ? error.message : "An error occurred while copying.",
         }),
       );
     },
   });
-  const savePathInputId = useId();
-  const title =
-    deepPlan?.plan?.goal ?? proposedPlanTitle(planMarkdown) ?? translate("chat.agent.proposedPlan");
+  const title = deepPlan?.plan?.goal ?? proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const bodyMarkdown = deepPlan?.plan
     ? formatDeepPlanForDisplay(deepPlan, translator, { includeImplementation: false })
     : planMarkdown;
@@ -105,6 +95,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(bodyMarkdown, { maxLines: 10 })
     : null;
+  const isCollapsed = canCollapse && !expanded;
+  // Mount clipped plans during find to count hidden matches without revealing them.
+  const showPreview = isCollapsed && !findActive;
+  const revealRef = findRevealRef(() => setExpanded(true));
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
 
@@ -117,33 +111,34 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   const openSaveDialog = () => {
+    if (!canWriteFiles) return;
     if (!workspaceRoot) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: translate("chat.plan.workspaceUnavailable"),
-          description: translate("chat.plan.workspaceUnavailableDescription"),
+          title: "Workspace path is unavailable",
+          description: "This thread does not have a workspace path to save into.",
         }),
       );
       return;
     }
-    setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
     setIsSaveDialogOpen(true);
   };
 
-  const handleSaveToWorkspace = () => {
+  const handleSaveToWorkspace = (savePath: string) => {
     const relativePath = savePath.trim();
-    if (!workspaceRoot) {
+    if (!workspaceRoot || !readEnvironmentScope(environmentId, AuthFilesystemWriteScope)) {
       return;
     }
     if (!relativePath) {
       toastManager.add({
         type: "warning",
-        title: translate("chat.plan.enterWorkspacePath"),
+        title: "Enter a workspace path",
       });
       return;
     }
 
+    setLastSavePath(savePath);
     setIsSavingToWorkspace(true);
     void (async () => {
       const result = await writeProjectFile({
@@ -159,7 +154,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         setIsSaveDialogOpen(false);
         toastManager.add({
           type: "success",
-          title: translate("chat.plan.saved"),
+          title: "Plan saved to workspace",
           description: result.value.relativePath,
         });
         return;
@@ -169,8 +164,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: translate("chat.plan.saveFailed"),
-            description: error instanceof Error ? error.message : translate("chat.plan.saveError"),
+            title: "Could not save plan",
+            description: error instanceof Error ? error.message : "An error occurred while saving.",
           }),
         );
       }
@@ -179,202 +174,186 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
 
   return (
     <div
+      data-plan-kind={deepPlan ? "deep-plan" : "plan"}
       className={cn(
-        "rounded-3xl border p-4 sm:p-5",
-        accentedPlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
-        better && "better-chat-bubble better-chat-status better-chat-plan",
+        "rounded-2xl border border-border/80 bg-card/70 p-4 sm:p-5",
+        chatVisualMode === "better-t3" && "better-chat-bubble better-chat-plan",
       )}
-      data-plan-kind={isDeepPlan ? "deep-plan" : "plan"}
-      data-chat-tone={better ? (isDeepPlan ? "warning" : "info") : undefined}
-      style={
-        isDeepPlan
-          ? ({
-              "--primary": "var(--deep-plan)",
-              "--primary-foreground": "var(--deep-plan-foreground)",
-              "--ring": "var(--deep-plan)",
-            } as CSSProperties)
-          : undefined
-      }
     >
-      <ChatSizeMotion>
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Badge
-              variant={accentedPlanBubble ? "label" : "secondary"}
-              style={
-                accentedPlanBubble ? ({ "--label": "var(--primary)" } as CSSProperties) : undefined
-              }
-            >
-              {translate(isDeepPlan ? "chat.deepPlan.label" : "chat.plan.label")}
-            </Badge>
-            <h3
-              className={cn(
-                "truncate text-sm font-medium",
-                accentedPlanBubble ? "text-primary" : "text-foreground",
-              )}
-            >
-              {title}
-            </h3>
-            {deepPlan?.plan ? (
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {translate("chat.deepPlan.planVersion", { version: deepPlan.plan.version })}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 items-center gap-0.5">
-            {actions}
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    aria-label={translate("chat.plan.actions")}
-                    size="icon-xs"
-                    variant="outline"
-                  />
-                }
-              >
-                <EllipsisIcon aria-hidden="true" className="size-4" />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                <MenuItem onClick={handleCopyPlan}>
-                  {isCopied
-                    ? translate("chat.plan.copied")
-                    : translate("chat.composer.copyClipboard")}
-                </MenuItem>
-                <MenuItem onClick={handleDownload}>
-                  {translate("chat.plan.downloadMarkdown")}
-                </MenuItem>
-                <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
-                  {translate("chat.plan.saveWorkspace")}
-                </MenuItem>
-              </MenuPopup>
-            </Menu>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Badge variant="secondary">{deepPlan ? "DeepPlan" : "Plan"}</Badge>
+          {}
+          <h3 data-thread-find-text="true" className="truncate text-sm font-medium text-foreground">
+            {title}
+          </h3>
         </div>
-        {deepPlan ? (
-          <details className="mt-3 rounded-lg border border-border/70 px-3 text-xs">
-            <summary className="min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              {translate("chat.deepPlan.sources")} ·{" "}
-              {translate("chat.deepPlan.sourceCount", { count: deepPlan.sources.length })}
-            </summary>
-            <ul className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pb-3">
-              {deepPlan.sources.map((source) => (
-                <li key={source.sourceId} className="break-words">
-                  <span className="font-medium">{deepPlanSourceTitle(source)}</span>
-                  {source.archived ? (
-                    <span className="block text-muted-foreground">
-                      {translate("chat.deepPlan.archived")}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-        <div className="mt-4">
-          <div
-            className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}
-            style={
-              canCollapse && !expanded
-                ? { maskImage: "linear-gradient(to bottom, black calc(100% - 6rem), transparent)" }
-                : undefined
-            }
+        <Menu>
+          <MenuTrigger
+            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
           >
-            {canCollapse && !expanded ? (
-              <ChatMarkdown
-                text={collapsedPreview ?? ""}
-                cwd={cwd}
-                threadRef={threadRef}
-                isStreaming={false}
-                headingLevelOffset={3}
-              />
-            ) : (
-              <ChatMarkdown
-                text={displayedPlanMarkdown}
-                cwd={cwd}
-                threadRef={threadRef}
-                isStreaming={false}
-                headingLevelOffset={3}
-              />
-            )}
-          </div>
-          {canCollapse ? (
-            <div className="mt-4 flex justify-center">
-              <Button
-                size="sm"
-                variant="outline"
-                data-scroll-anchor-ignore
-                aria-expanded={expanded}
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? translate("chat.plan.collapse") : translate("chat.plan.expand")}
-              </Button>
-            </div>
+            <EllipsisIcon aria-hidden="true" className="size-4" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={handleCopyPlan}>
+              {isCopied ? "Copied!" : "Copy to clipboard"}
+            </MenuItem>
+            <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+            <MenuItem
+              onClick={openSaveDialog}
+              disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
+            >
+              Save to workspace
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      </div>
+      {deepPlan ? (
+        <details className="mt-3 rounded-lg border border-border/70 px-3 text-xs">
+          <summary className="min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+            {translator.message("chat.deepPlan.sources")} ·{" "}
+            {translator.message("chat.deepPlan.sourceCount", { count: deepPlan.sources.length })}
+          </summary>
+          <ul className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pb-3">
+            {deepPlan.sources.map((source) => (
+              <li key={source.sourceId} className="break-words">
+                <span className="font-medium">{deepPlanSourceTitle(source)}</span>
+                {source.archived ? (
+                  <span className="block text-muted-foreground">
+                    {translator.message("chat.deepPlan.archived")}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      <div className="mt-4">
+        <div
+          ref={revealRef}
+          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+          data-thread-find-text="true"
+          data-thread-find-fold={isCollapsed ? "" : undefined}
+        >
+          {showPreview ? (
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              isStreaming={false}
+              headingLevelOffset={3}
+            />
+          ) : (
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              isStreaming={false}
+              headingLevelOffset={3}
+            />
+          )}
+          {isCollapsed ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
-        {deepPlan?.plan ? (
-          <div className="mt-4 border-t border-primary/20 pt-3">
-            <DeepPlanChecklist
-              run={deepPlan}
-              environmentId={environmentId}
-              threadId={threadRef?.threadId ?? deepPlan.threadId}
-              placement="plan"
-            />
+        {canCollapse ? (
+          <div className="mt-4 flex justify-center">
+            <Button
+              size="sm"
+              variant="outline"
+              data-scroll-anchor-ignore
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Collapse plan" : "Expand plan"}
+            </Button>
           </div>
         ) : null}
+      </div>
 
-        <Dialog
-          open={isSaveDialogOpen}
-          onOpenChange={(open) => {
-            if (!isSavingToWorkspace) {
-              setIsSaveDialogOpen(open);
-            }
-          }}
-        >
-          <DialogPopup className="max-w-xl">
-            <DialogHeader>
-              <DialogTitle>{translate("chat.plan.saveTitle")}</DialogTitle>
-              <DialogDescription>
-                {translate("chat.plan.relativePath", {
-                  workspace: workspaceRoot ?? translate("chat.plan.workspace"),
-                })}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel>
-              <label htmlFor={savePathInputId} className="grid gap-1.5">
-                <span className="text-xs font-medium text-foreground">
-                  {translate("chat.plan.workspacePath")}
-                </span>
-                <Input
-                  id={savePathInputId}
-                  value={savePath}
-                  onChange={(event) => setSavePath(event.target.value)}
-                  placeholder={downloadFilename}
-                  spellCheck={false}
-                  disabled={isSavingToWorkspace}
-                />
-              </label>
-            </DialogPanel>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsSaveDialogOpen(false)}
-                disabled={isSavingToWorkspace}
-              >
-                {translate("common.cancel")}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => void handleSaveToWorkspace()}
-                disabled={isSavingToWorkspace}
-              >
-                {isSavingToWorkspace ? translate("chat.plan.saving") : translate("chat.plan.save")}
-              </Button>
-            </DialogFooter>
-          </DialogPopup>
-        </Dialog>
-      </ChatSizeMotion>
+      {deepPlan?.plan ? (
+        <div className="mt-4 border-t border-primary/20 pt-3">
+          <DeepPlanChecklist
+            run={deepPlan}
+            environmentId={environmentId}
+            threadId={threadRef?.threadId ?? deepPlan.threadId}
+            placement="plan"
+          />
+        </div>
+      ) : null}
+      <Dialog
+        open={isSaveDialogOpen}
+        onOpenChange={(open) => {
+          if (!isSavingToWorkspace) {
+            setIsSaveDialogOpen(open);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <SavePlanToWorkspaceForm
+            initialPath={lastSavePath || downloadFilename}
+            placeholder={downloadFilename}
+            workspaceRoot={workspaceRoot}
+            canWriteFiles={canWriteFiles}
+            saving={isSavingToWorkspace}
+            onCancel={() => setIsSaveDialogOpen(false)}
+            onSave={handleSaveToWorkspace}
+          />
+        </DialogPopup>
+      </Dialog>
     </div>
   );
 });
+
+function SavePlanToWorkspaceForm({
+  initialPath,
+  placeholder,
+  workspaceRoot,
+  canWriteFiles,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  initialPath: string;
+  placeholder: string;
+  workspaceRoot: string | undefined;
+  canWriteFiles: boolean;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (path: string) => void;
+}) {
+  const [savePath, setSavePath] = useState(initialPath);
+  const savePathInputId = useId();
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Save plan to workspace</DialogTitle>
+        <DialogDescription>
+          Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogPanel>
+        <label htmlFor={savePathInputId} className="grid gap-1.5">
+          <span className="text-xs font-medium text-foreground">Workspace path</span>
+          <Input
+            id={savePathInputId}
+            value={savePath}
+            onChange={(event) => setSavePath(event.target.value)}
+            placeholder={placeholder}
+            spellCheck={false}
+            disabled={saving}
+          />
+        </label>
+      </DialogPanel>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => onSave(savePath)} disabled={!canWriteFiles || saving}>
+          {saving ? "Saving..." : "Save"}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}

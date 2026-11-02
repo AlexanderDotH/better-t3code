@@ -1,4 +1,7 @@
-import type { OrchestrationSubagentStatus, OrchestrationSubagentSummary } from "@t3tools/contracts";
+import type {
+  OrchestrationSubagentStatus,
+  OrchestrationSubagentSummary,
+} from "@t3tools/contracts/legacy";
 
 export const SUBAGENT_TERMINAL_COLOR_MS = 30_000;
 

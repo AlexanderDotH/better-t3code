@@ -51,79 +51,79 @@ export function makeResourceGovernorAdmissionCoordinator<
       }),
     );
 
-  const acquireInProcessLease = (request: InProcessWorkAdmissionRequest) =>
-    Effect.gen(function* () {
-      const deferred = yield* Deferred.make<InProcessWorkGrant | undefined>();
-      const result = yield* input.mutex.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* Ref.get(input.stateRef);
-          if (!resourceGovernorAdmissionQueueHasCapacity(current)) {
-            return { _tag: "QueueFull" } as const;
-          }
-          const admissionId = current.nextAdmissionId;
-          yield* input.commitAdmissions({
-            ...current,
-            nextAdmissionId: admissionId + 1,
-            waitingInProcess: [
-              ...current.waitingInProcess,
-              {
-                ...request,
-                id: admissionId,
-                reservedBytes: inProcessReservationBytes(request.reservation),
-                deferred,
-              },
-            ],
-          });
-          return { _tag: "Waiting", id: admissionId } as const;
-        }),
-      );
-      if (result._tag === "QueueFull") return undefined;
-      const grant = yield* Deferred.await(deferred).pipe(
-        Effect.onInterrupt(() => releaseInProcessLease(result.id)),
-      );
-      if (!grant) return undefined;
-      return {
-        workId: grant.workId,
-        reservedBytes: grant.reservedBytes,
-        release: releaseInProcessLease(grant.id),
-      } satisfies InProcessWorkLease;
-    });
+  const acquireInProcessLease = Effect.fn("acquireInProcessLease")(function* (
+    request: InProcessWorkAdmissionRequest,
+  ) {
+    const deferred = yield* Deferred.make<InProcessWorkGrant | undefined>();
+    const result = yield* input.mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(input.stateRef);
+        if (!resourceGovernorAdmissionQueueHasCapacity(current)) {
+          return { _tag: "QueueFull" } as const;
+        }
+        const admissionId = current.nextAdmissionId;
+        yield* input.commitAdmissions({
+          ...current,
+          nextAdmissionId: admissionId + 1,
+          waitingInProcess: [
+            ...current.waitingInProcess,
+            {
+              ...request,
+              id: admissionId,
+              reservedBytes: inProcessReservationBytes(request.reservation),
+              deferred,
+            },
+          ],
+        });
+        return { _tag: "Waiting", id: admissionId } as const;
+      }),
+    );
+    if (result._tag === "QueueFull") return undefined;
+    const grant = yield* Deferred.await(deferred).pipe(
+      Effect.onInterrupt(() => releaseInProcessLease(result.id)),
+    );
+    if (!grant) return undefined;
+    return {
+      workId: grant.workId,
+      reservedBytes: grant.reservedBytes,
+      release: releaseInProcessLease(grant.id),
+    } satisfies InProcessWorkLease;
+  });
 
-  const awaitAdmission = (request: SubagentAdmissionRequest) =>
-    Effect.gen(function* () {
-      const deferred = yield* Deferred.make<boolean>();
-      const result = yield* input.mutex.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* Ref.get(input.stateRef);
-          const retention = request.retention;
-          if (
-            retention &&
-            [...current.active.values()].some(
-              (admission) =>
-                requestsHaveSameOwner(admission, request) &&
-                requestHasRetention(admission, retention),
-            )
-          ) {
-            return { _tag: "AlreadyAdmitted" } as const;
-          }
-          if (!resourceGovernorAdmissionQueueHasCapacity(current)) {
-            return { _tag: "QueueFull" } as const;
-          }
-          const id = current.nextAdmissionId;
-          yield* input.commitAdmissions({
-            ...current,
-            nextAdmissionId: id + 1,
-            waiting: [...current.waiting, { ...request, id, deferred }],
-          });
-          return { _tag: "Waiting", id } as const;
-        }),
-      );
-      if (result._tag === "AlreadyAdmitted") return true;
-      if (result._tag === "QueueFull") return false;
-      return yield* Deferred.await(deferred).pipe(
-        Effect.onInterrupt(() => cancelAdmission(result.id)),
-      );
-    });
+  const awaitAdmission = Effect.fn("awaitAdmission")(function* (request: SubagentAdmissionRequest) {
+    const deferred = yield* Deferred.make<boolean>();
+    const result = yield* input.mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(input.stateRef);
+        const retention = request.retention;
+        if (
+          retention &&
+          [...current.active.values()].some(
+            (admission) =>
+              requestsHaveSameOwner(admission, request) &&
+              requestHasRetention(admission, retention),
+          )
+        ) {
+          return { _tag: "AlreadyAdmitted" } as const;
+        }
+        if (!resourceGovernorAdmissionQueueHasCapacity(current)) {
+          return { _tag: "QueueFull" } as const;
+        }
+        const id = current.nextAdmissionId;
+        yield* input.commitAdmissions({
+          ...current,
+          nextAdmissionId: id + 1,
+          waiting: [...current.waiting, { ...request, id, deferred }],
+        });
+        return { _tag: "Waiting", id } as const;
+      }),
+    );
+    if (result._tag === "AlreadyAdmitted") return true;
+    if (result._tag === "QueueFull") return false;
+    return yield* Deferred.await(deferred).pipe(
+      Effect.onInterrupt(() => cancelAdmission(result.id)),
+    );
+  });
 
   const confirmSubagent = (request: SubagentLifecycleRequest) =>
     input.mutex.withPermits(1)(

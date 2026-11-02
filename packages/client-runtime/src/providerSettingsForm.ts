@@ -75,7 +75,7 @@ function readSchemaAnnotation(definition: ProviderSettingsDefinition) {
 }
 
 function decodeFieldDefault(fieldSchema: Schema.Top): unknown {
-  const decoded = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>)(undefined);
+  const decoded = Schema.decodeOption(fieldSchema as Schema.Decoder<unknown>)(undefined);
   return Option.isSome(decoded) ? decoded.value : undefined;
 }
 

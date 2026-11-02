@@ -1,7 +1,8 @@
+import type { SqlError } from "effect/sql/SqlError";
 import { ProjectIndexCoverageV1, ProjectIndexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import { decodeRecord } from "./KnowledgeRecords.ts";
 import { asStoreError, KnowledgeStoreError } from "./KnowledgeStoreSchema.ts";
@@ -125,10 +126,10 @@ export function makeKnowledgeReads(sql: SqlClient.SqlClient) {
       Effect.mapError(asStoreError("read knowledge format")),
     );
 
-  const listRecords = <Kind extends KnowledgeRecordKind>(
-    input: KnowledgeRecordQuery<Kind>,
-  ): Effect.Effect<KnowledgePage<KnowledgeRecordMap[Kind]>, KnowledgeStoreError> =>
-    Effect.gen(function* () {
+  const listRecords = Effect.fn("listRecords")(
+    function* <Kind extends KnowledgeRecordKind>(
+      input: KnowledgeRecordQuery<Kind>,
+    ): Effect.fn.Return<KnowledgePage<KnowledgeRecordMap[Kind]>, KnowledgeStoreError | SqlError> {
       const revision = yield* readRevision(input.revision);
       const limit = boundedPageSize(input.limit);
       const predicates = ["record.revision = ?", "record.kind = ?", "record.id > ?"];
@@ -217,7 +218,10 @@ export function makeKnowledgeReads(sql: SqlClient.SqlClient) {
         items,
         nextCursor: rows.length > limit ? (page.at(-1)?.id ?? null) : null,
       };
-    }).pipe(sql.withTransaction, Effect.mapError(asStoreError("query records")));
+    },
+    sql.withTransaction,
+    Effect.mapError(asStoreError("query records")),
+  );
 
   const getRecord = <Kind extends KnowledgeRecordKind>(kind: Kind, id: string, revision?: number) =>
     listRecords({

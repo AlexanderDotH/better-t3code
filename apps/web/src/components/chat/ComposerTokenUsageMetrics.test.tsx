@@ -1,6 +1,6 @@
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { act, type ComponentProps, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type ComponentProps, type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 import { summarizeThreadTokenUsage } from "../../lib/threadTokenUsage";
@@ -18,7 +18,6 @@ vi.mock("../ui/tooltip", () => ({
 }));
 
 it("updates the badge outlines with each direction's source shares and keeps empty usage finite", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const emptyUsage = summarizeThreadTokenUsage(null, []);
   const usage = {
     ...emptyUsage,

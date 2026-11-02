@@ -10,7 +10,7 @@ import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
 import { useEnvironmentQuery } from "../../state/query";
 import { Edit3Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UploadIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -60,7 +60,7 @@ function SkillImportSourceRows(props: {
   readonly onSelectedSourceIdsChange: (sourceIds: ReadonlyArray<string>) => void;
 }) {
   const translator = useInterfaceTranslator();
-  const selected = useMemo(() => new Set(props.selectedSourceIds), [props.selectedSourceIds]);
+  const selected = new Set(props.selectedSourceIds);
 
   if (props.isLoading) {
     return (
@@ -378,10 +378,7 @@ export function SkillsSettingsPanel(props: {
       .map((source) => source.id) ??
     [];
 
-  const visibleSkills = useMemo(
-    () => (skillsQuery.data?.skills ?? []).filter((skill) => skill.scope === scope),
-    [scope, skillsQuery.data?.skills],
-  );
+  const visibleSkills = (skillsQuery.data?.skills ?? []).filter((skill) => skill.scope === scope);
 
   const invalidateSkills = skillsQuery.refresh;
   const createSkill = useSettingsCommand(agentSettingsEnvironment.skills.create);

@@ -1,14 +1,7 @@
-import type { OrchestrationSubagentSummary, SubagentId } from "@t3tools/contracts";
+import type { SubagentId } from "@t3tools/contracts";
+import type { OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
 import { ArchiveIcon, BotIcon, ChevronRightIcon } from "lucide-react";
-import {
-  memo,
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  type AnimationEvent as ReactAnimationEvent,
-  type Ref,
-} from "react";
+import { memo, useId, useState, type AnimationEvent as ReactAnimationEvent, type Ref } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
@@ -97,7 +90,7 @@ export const ChatAgentStack = memo(function ChatAgentStack({
         aria-label={translate("chat.agent.count", { count: subagents.length })}
         aria-expanded={compactOpen}
         aria-controls={compactContentId}
-        className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-1.5 rounded-full border border-border/65 bg-background/92 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-background hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-1.5 rounded-full border border-border/65 bg-background/92 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-background hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         onClick={() => setCompactOpen((current) => !current)}
       >
         <BotIcon
@@ -224,7 +217,7 @@ function ChatAgentPill({
             data-subagent-presence={presence}
             className={cn(
               "subagent-stack-pill group pointer-events-auto flex h-7 w-fit max-w-52 items-center gap-1.5 rounded-full border border-border/65 bg-background/88 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-200",
-              "hover:border-border hover:bg-background/96 hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+              "hover:border-border hover:bg-background/96 hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
               selected && "border-ring/45 bg-accent/90 shadow-md/12",
             )}
             onAnimationEnd={onAnimationEnd}
@@ -262,20 +255,20 @@ function ArchivedAgentSection({
   const [open, setOpen] = useState(selectedAgentIsArchived);
   const [renderLimit, setRenderLimit] = useState(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
   const archiveBoundaryKey = `${agents.length}:${agents[0]?.id ?? ""}:${agents.at(-1)?.id ?? ""}`;
-  const renderedAgents = useMemo(
-    () => selectArchivedAgentsForRender(agents, renderLimit, selectedSubagentId),
-    [agents, renderLimit, selectedSubagentId],
-  );
+  const renderedAgents = selectArchivedAgentsForRender(agents, renderLimit, selectedSubagentId);
   const remainingAgentCount = Math.max(0, agents.length - renderLimit);
 
-  useEffect(() => {
-    if (selectedAgentIsArchived) {
-      setOpen(true);
-    }
-  }, [selectedAgentIsArchived]);
-  useEffect(() => {
+  const [observedArchivedSelection, setObservedArchivedSelection] =
+    useState(selectedAgentIsArchived);
+  if (observedArchivedSelection !== selectedAgentIsArchived) {
+    setObservedArchivedSelection(selectedAgentIsArchived);
+    if (selectedAgentIsArchived) setOpen(true);
+  }
+  const [observedBoundary, setObservedBoundary] = useState(archiveBoundaryKey);
+  if (observedBoundary !== archiveBoundaryKey) {
+    setObservedBoundary(archiveBoundaryKey);
     setRenderLimit(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
-  }, [archiveBoundaryKey]);
+  }
 
   if (agents.length === 0) {
     return null;
@@ -287,7 +280,7 @@ function ArchivedAgentSection({
       <CollapsibleTrigger
         type="button"
         aria-label={archivedLabel}
-        className="pointer-events-auto group flex h-7 w-fit max-w-52 items-center gap-1.5 rounded-full border border-border/55 bg-background/78 px-2.5 text-xs font-medium text-muted-foreground/70 shadow-sm/5 outline-none backdrop-blur-xl transition-[background-color,border-color,color] hover:border-border/80 hover:bg-background/92 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        className="pointer-events-auto group flex h-7 w-fit max-w-52 items-center gap-1.5 rounded-full border border-border/55 bg-background/78 px-2.5 text-xs font-medium text-muted-foreground/70 shadow-sm/5 outline-none backdrop-blur-xl transition-[background-color,border-color,color] hover:border-border/80 hover:bg-background/92 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring"
       >
         <ArchiveIcon aria-hidden="true" className="size-3.5" />
         <span>{translate("chat.agent.history")}</span>
@@ -313,7 +306,7 @@ function ArchivedAgentSection({
         {remainingAgentCount > 0 ? (
           <button
             type="button"
-            className="pointer-events-auto mt-1 h-7 rounded-full px-2.5 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="pointer-events-auto mt-1 h-7 rounded-full px-2.5 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => setRenderLimit((current) => current + ARCHIVED_AGENT_RENDER_PAGE_SIZE)}
           >
             {translate("chat.agent.showMore", {

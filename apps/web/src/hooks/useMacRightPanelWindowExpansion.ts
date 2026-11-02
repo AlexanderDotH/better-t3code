@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { isMacElectron } from "../env";
 import { PREVIEW_PANEL_MIN_WIDTH } from "../rightPanelLayout";
@@ -75,44 +75,36 @@ export function useMacRightPanelWindowExpansion({
     ? window.desktopBridge?.setRightPanelWindowExpansion
     : undefined;
 
-  const request = useCallback(
-    async (panelWidth: number | null, requestDirection: Direction) => {
-      if (!expandWindow || store.getSnapshot().preparing) return false;
-      const previous = store.getSnapshot();
-      store.set({ ...previous, preparing: true });
-      try {
-        const applied = await expandWindow({ panelWidth, direction: requestDirection });
-        store.set({
-          expanded: panelWidth !== null && applied,
-          preparing: false,
-          direction: panelWidth !== null && applied ? requestDirection : null,
-        });
-        return applied;
-      } catch {
-        store.set(previous);
-        return false;
-      }
-    },
-    [expandWindow, store],
-  );
+  const request = async (panelWidth: number | null, requestDirection: Direction) => {
+    if (!expandWindow || store.getSnapshot().preparing) return false;
+    const previous = store.getSnapshot();
+    store.set({ ...previous, preparing: true });
+    try {
+      const applied = await expandWindow({ panelWidth, direction: requestDirection });
+      store.set({
+        expanded: panelWidth !== null && applied,
+        preparing: false,
+        direction: panelWidth !== null && applied ? requestDirection : null,
+      });
+      return applied;
+    } catch {
+      store.set(previous);
+      return false;
+    }
+  };
 
-  const prepareOpen = useCallback(
-    () => request(panelWidthForExpansion(panelWidthStorageKey, defaultPanelWidth), direction),
-    [defaultPanelWidth, direction, panelWidthStorageKey, request],
-  );
-  const toggle = useCallback(
-    () =>
-      expanded
-        ? request(null, expandedDirection ?? direction)
-        : request(panelWidthForExpansion(panelWidthStorageKey, defaultPanelWidth), direction),
-    [defaultPanelWidth, direction, expanded, expandedDirection, panelWidthStorageKey, request],
-  );
-  const cancelPreparedOpen = useCallback(() => {
+  const prepareOpen = () =>
+    request(panelWidthForExpansion(panelWidthStorageKey, defaultPanelWidth), direction);
+  const toggle = () =>
+    expanded
+      ? request(null, expandedDirection ?? direction)
+      : request(panelWidthForExpansion(panelWidthStorageKey, defaultPanelWidth), direction);
+  const cancelPreparedOpen = () => {
     const current = store.getSnapshot();
     if (current.expanded && current.direction) {
       void request(null, current.direction);
     }
-  }, [request, store]);
+  };
 
   return {
     available: expandWindow !== undefined,

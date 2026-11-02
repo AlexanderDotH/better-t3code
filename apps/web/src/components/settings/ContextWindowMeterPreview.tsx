@@ -96,7 +96,7 @@ export function ContextWindowMeterChoice(props: {
             <button
               aria-checked={selected}
               className={cn(
-                "better-t3-feature-option min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-card text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "better-t3-feature-option min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-card text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 selected ? "border-primary/65" : "border-border/70 hover:border-primary/35",
               )}
               key={String(enabled)}

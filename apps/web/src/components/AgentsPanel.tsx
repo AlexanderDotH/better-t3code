@@ -1,25 +1,10 @@
-/**
- * Agents right-panel surface: the fleet view over the native subagent fold.
- * The chat carries one expandable row per spawn batch and links here.
- *
- * Visualization rules (from live-test feedback):
- * - Spawn order is stable. Activity and completion update rows in place.
- * - Agent rows reserve three fixed lines for identity, activity, and metrics;
- *   changing data must never change their height.
- * - Workflow expansion is presentation state. A live run stays expanded when
- *   it settles; older collapsed runs can still be opened at run granularity.
- * - Static status dots, DOM-write elapsed timers, plain token counters.
- */
+import type { AgentPanelModel } from "./chat/agentPanelModel";
 import { useAtomValue } from "@effect/atom-react";
 import type {
-  AgentPanelModel,
-  AgentPanelWorkflowGroup,
+  SubagentWorkflowGroup as AgentPanelWorkflowGroup,
   RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import {
-  formatSubagentModelLabel,
-  formatSubagentTokenCount,
-} from "@t3tools/client-runtime/state/subagentRuntime";
+import { formatSubagentTokenCount } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -88,6 +73,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Update the mounted agent timer without committing the panel.
   useEffect(() => {
     if (!live || !startedAt) {
       return;
@@ -142,14 +128,14 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const statusLabel =
     agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
   const activity = agentActivityText(agent);
-  const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const modelLabel = [agent.model, agent.effort].filter(Boolean).join(" · ");
   const role =
     agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
       ? null
       : agent.role;
   const metadata = [
     modelLabel,
-    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
+    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "– tok",
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -323,14 +309,11 @@ function PhaseSection({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
-  const previousState = useRef(phase.state);
-
-  useEffect(() => {
-    if (previousState.current !== "running" && phase.state === "running") {
-      setOpen(true);
-    }
-    previousState.current = phase.state;
-  }, [phase.state]);
+  const [previousState, setPreviousState] = useState(phase.state);
+  if (previousState !== phase.state) {
+    setPreviousState(phase.state);
+    if (phase.state === "running") setOpen(true);
+  }
 
   return (
     <div>
@@ -359,7 +342,7 @@ function PhaseSection({
             ? "pending"
             : phase.state === "done"
               ? `${phase.settledCount} done`
-              : `${phase.activeCount} active · ${phase.settledCount} done`}
+              : `${phase.members.filter((member) => member.status === "running" || member.status === "waiting" || member.status === "pending").length} active · ${phase.settledCount} done`}
         </span>
         {!open && phase.members.length > 0 ? (
           <span className="ml-auto flex items-center gap-0.5">

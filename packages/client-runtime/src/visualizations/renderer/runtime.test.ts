@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { expect, test, vi } from "vite-plus/test";
 import { prepareVisualizationSvgExport } from "../export.ts";
 import {

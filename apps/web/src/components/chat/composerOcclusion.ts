@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 const COMPOSER_SURFACES =
   "[data-chat-composer-floating-bubble-host], [data-composer-banner-surface]";
 
@@ -39,14 +40,13 @@ export function observeComposerOcclusion(overlay: HTMLElement, onChange: () => v
       onChange();
     });
   };
-  const resizeObserver =
-    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleChange);
+  let stopObserving = () => {};
   const observeSurfaces = () => {
-    resizeObserver?.disconnect();
-    resizeObserver?.observe(overlay);
-    for (const surface of overlay.querySelectorAll<HTMLElement>(COMPOSER_SURFACES)) {
-      resizeObserver?.observe(surface);
-    }
+    stopObserving();
+    stopObserving = observeResize(
+      [overlay, ...overlay.querySelectorAll<HTMLElement>(COMPOSER_SURFACES)],
+      scheduleChange,
+    );
     scheduleChange();
   };
   const mutations = new MutationObserver(observeSurfaces);
@@ -60,7 +60,7 @@ export function observeComposerOcclusion(overlay: HTMLElement, onChange: () => v
   overlay.addEventListener("animationend", scheduleChange);
   observeSurfaces();
   return () => {
-    resizeObserver?.disconnect();
+    stopObserving();
     mutations.disconnect();
     overlay.removeEventListener("transitionend", scheduleChange);
     overlay.removeEventListener("animationend", scheduleChange);

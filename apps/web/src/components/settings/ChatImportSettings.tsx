@@ -7,7 +7,7 @@ import { DatabaseIcon, DownloadIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useActiveEnvironmentId } from "../../state/entities";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { requireSettingsEnvironment, resolveSettingsEnvironmentId } from "./settingsEnvironment";
@@ -70,7 +70,7 @@ function SourceRow({
 export function ChatImportSettingsPanel() {
   const translator = useInterfaceTranslator();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const activeEnvironmentId = useActiveEnvironmentId();
+  const activeEnvironmentId = useOptionalSettingsScope()?.environment?.environmentId ?? null;
   const environmentSelection = {
     primaryEnvironmentId,
     selectedEnvironmentId: activeEnvironmentId,

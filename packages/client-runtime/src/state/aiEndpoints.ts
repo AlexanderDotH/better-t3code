@@ -5,7 +5,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { runStream } from "../rpc/client.ts";
 import { runStreamInEnvironment } from "./runtime.ts";

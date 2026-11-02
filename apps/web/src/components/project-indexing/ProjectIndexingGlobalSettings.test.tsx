@@ -1,5 +1,4 @@
-// @vitest-environment jsdom
-
+import { installMemoryStorage } from "../../../test/memoryStorage";
 import type { ProjectIndexClientApi } from "@t3tools/client-runtime/project-indexing";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -15,9 +14,9 @@ import {
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
-import { act, type ComponentProps, type ReactNode } from "react";
+import { type ComponentProps, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const fixture = vi.hoisted(() => ({
@@ -30,7 +29,7 @@ const fixture = vi.hoisted(() => ({
   navigate: vi.fn(),
 }));
 
-vi.mock("../../env", () => ({ isElectron: false }));
+vi.mock("../../env", () => ({ isElectron: false, isSecretsFeatureEnabled: false }));
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
   useNavigate: () => fixture.navigate,
@@ -51,6 +50,21 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => fixture.save }));
 vi.mock("../../state/projectIndexing", () => ({ bindProjectIndexApi: () => fixture.api! }));
 vi.mock("../../state/session", () => ({
+  useEnvironmentScope: (_id: unknown, scope: string) =>
+    fixture.session?.authenticated === true &&
+    fixture.sessionError === null &&
+    fixture.session.scopes.includes(scope),
+  useEnvironmentsWithScope: (
+    environments: ReadonlyArray<{ environmentId: string }>,
+    scope: string,
+  ) =>
+    new Set(
+      fixture.session?.authenticated === true &&
+        fixture.sessionError === null &&
+        fixture.session.scopes.includes(scope)
+        ? environments.map((environment) => environment.environmentId)
+        : [],
+    ),
   environmentSession: { sessionStateAtom: (id: string) => id },
 }));
 vi.mock("../../state/query", () => ({
@@ -61,11 +75,18 @@ vi.mock("../../state/query", () => ({
     refresh: vi.fn(),
   }),
 }));
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({ status: "live", error: Option.none() }),
-}));
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@effect/atom-react")>();
+  return {
+    ...actual,
+    useAtomValue: (atom: Parameters<typeof actual.useAtomValue>[0]) =>
+      typeof atom === "string"
+        ? { status: "live", error: Option.none() }
+        : actual.useAtomValue(atom),
+  };
+});
 vi.mock("../../state/shell", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     environmentShell: { stateValueAtom: (id: string) => id },
     environmentSnapshotAtom: Atom.family((_id: string) => Atom.make(null)),
@@ -75,8 +96,14 @@ vi.mock("../../state/environments", () => ({
   useEnvironment: () => environment(),
   useEnvironments: () => ({ environments: [environment()] }),
   usePrimaryEnvironmentId: () => environmentId,
+  usePrimaryEnvironment: () => environment(),
+  useEnvironmentProviders: () => new Map([[environmentId, providers]]),
 }));
-vi.mock("../../state/entities", () => ({ useProjects: () => projects, useThreadShells: () => [] }));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => projects,
+  useThreadShells: () => [],
+  useServerConfigs: () => new Map([[environmentId, environment().serverConfig]]),
+}));
 vi.mock("../ui/button", () => ({
   Button: ({
     size: _size,
@@ -149,6 +176,7 @@ vi.mock("../ui/select", () => ({
       {children}
     </select>
   ),
+
   SelectTrigger: () => null,
   SelectValue: () => null,
   SelectPopup: ({ children }: { children: ReactNode }) => children,
@@ -225,6 +253,7 @@ const providers: ReadonlyArray<ServerProvider> = [
     skills: [],
   },
 ];
+
 const projects = [firstProject, secondProject].map((id) => ({
   id,
   environmentId,
@@ -304,7 +333,7 @@ function Harness({ withProjects = false }: { withProjects?: boolean }) {
 
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  installMemoryStorage();
   localStorage.removeItem("t3code.better-t3-settings-expanded.v1");
   fixture.defaultsVersion = 1;
   fixture.session = {
@@ -369,7 +398,9 @@ beforeEach(() => {
   );
 });
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -388,12 +419,12 @@ function checkbox(panel: ReactTestInstance, label: string) {
   return panel.findAllByType("input").find((input) => input.props["aria-label"] === label)!;
 }
 function expandModels() {
-  return act(() =>
-    globalPanel()
+  return act(async () => {
+    await globalPanel()
       .findAllByType(Collapsible)
       .find((node) => node.props["data-better-t3-subgroup"] === "indexing-models")!
-      .props.onOpenChange(true),
-  );
+      .props.onOpenChange(true);
+  });
 }
 function picker(panel: ReactTestInstance, label: string) {
   return panel.findAllByType("select").find((select) => select.props["aria-label"] === label)!;
@@ -409,20 +440,22 @@ describe("global project indexing defaults", () => {
     expect(
       checkbox(globalPanel(), "Enable project indexing on this environment").props.checked,
     ).toBe(false);
-    await act(() => renderer!.update(<Harness withProjects />));
+    await act(async () => {
+      await renderer!.update(<Harness withProjects />);
+    });
     const originalFirst = statuses.get(firstProject)!.settings;
     const originalSecond = statuses.get(secondProject)!.settings;
-    await act(() =>
-      checkbox(globalPanel(), "Enable project indexing on this environment").props.onChange({
+    await act(async () => {
+      await checkbox(globalPanel(), "Enable project indexing on this environment").props.onChange({
         currentTarget: { checked: true },
-      }),
-    );
+      });
+    });
     await expandModels();
-    await act(() =>
-      picker(globalPanel(), "Default AI review model").props.onChange({
+    await act(async () => {
+      await picker(globalPanel(), "Default AI review model").props.onChange({
         currentTarget: { value: "model-a" },
-      }),
-    );
+      });
+    });
     expect(fixture.api!.checkModel).toHaveBeenCalledWith({ modelSelection: model("model-a") });
     expect(picker(projectPanel(firstProject), "AI review model").props.value).toBe("model-a");
     expect(picker(projectPanel(secondProject), "AI review model").props.value).toBe("model-b");
@@ -430,31 +463,33 @@ describe("global project indexing defaults", () => {
     expect(statuses.get(secondProject)!.settings).toBe(originalSecond);
     expect(fixture.api!.updateSettings).not.toHaveBeenCalled();
 
-    await act(() =>
-      picker(globalPanel(), "Default AI review model").props.onChange({
+    await act(async () => {
+      await picker(globalPanel(), "Default AI review model").props.onChange({
         currentTarget: { value: "model-c" },
-      }),
-    );
+      });
+    });
     expect(picker(projectPanel(firstProject), "AI review model").props.value).toBe("model-c");
     expect(picker(projectPanel(secondProject), "AI review model").props.value).toBe("model-b");
-    await act(() =>
-      picker(projectPanel(firstProject), "AI review model").props.onChange({
+    await act(async () => {
+      await picker(projectPanel(firstProject), "AI review model").props.onChange({
         currentTarget: { value: "model-a" },
-      }),
-    );
+      });
+    });
     expect(fixture.api!.updateSettings).toHaveBeenLastCalledWith({
       projectId: firstProject,
       patch: { modelSelection: model("model-a") },
     });
     expect(statuses.get(secondProject)!.settings).toBe(originalSecond);
-    await act(() => button(projectPanel(firstProject), "Use environment default").props.onClick());
+    await act(async () => {
+      await button(projectPanel(firstProject), "Use environment default").props.onClick();
+    });
     expect(statuses.get(firstProject)!.settings.modelSelection).toBeNull();
     expect(picker(projectPanel(firstProject), "AI review model").props.value).toBe("model-c");
-    await act(() =>
-      checkbox(globalPanel(), "Enable project indexing on this environment").props.onChange({
+    await act(async () => {
+      await checkbox(globalPanel(), "Enable project indexing on this environment").props.onChange({
         currentTarget: { checked: false },
-      }),
-    );
+      });
+    });
     for (const project of projects) {
       expect(checkbox(projectPanel(project.id), "Enable project indexing").props.checked).toBe(
         true,
@@ -484,7 +519,9 @@ describe("global project indexing defaults", () => {
         .filter((candidate) => candidate.children.includes("Decision model"));
       expect(decisions).toHaveLength(1);
       expect(picker(globalPanel(), "Default AI review model")).toBeUndefined();
-      await act(() => decisions[0]!.props.onClick());
+      await act(async () => {
+        await decisions[0]!.props.onClick();
+      });
       expect(selectDecision).toHaveBeenCalledExactlyOnceWith();
       expect(fixture.save).not.toHaveBeenCalled();
       expect(fixture.api!.checkModel).not.toHaveBeenCalled();
@@ -526,11 +563,11 @@ describe("global project indexing defaults", () => {
     await expandModels();
     expect(picker(globalPanel(), "Default AI review model").props.disabled).toBe(true);
     expect(button(globalPanel(), "Decision model").props.disabled).toBe(true);
-    await act(() =>
-      picker(globalPanel(), "Default AI review model").props.onChange({
+    await act(async () => {
+      await picker(globalPanel(), "Default AI review model").props.onChange({
         currentTarget: { value: "model-a" },
-      }),
-    );
+      });
+    });
     expect(fixture.save).not.toHaveBeenCalled();
   });
 
@@ -542,11 +579,11 @@ describe("global project indexing defaults", () => {
     expect(fixture.api!.getStatus).not.toHaveBeenCalled();
     expect(fixture.save).not.toHaveBeenCalled();
     expect(globalPanel().findAllByType(ProjectIndexingSettingsController)).toHaveLength(0);
-    await act(() =>
-      globalPanel()
+    await act(async () => {
+      await globalPanel()
         .findAllByType("select")[1]!
-        .props.onChange({ currentTarget: { value: firstProject } }),
-    );
+        .props.onChange({ currentTarget: { value: firstProject } });
+    });
     expect(fixture.api!.getStatus).toHaveBeenCalledWith({ projectId: firstProject });
     expect(fixture.save).not.toHaveBeenCalled();
     expect(picker(projectPanel(firstProject), "AI review model").props.value).toBe("");
@@ -606,13 +643,15 @@ describe("global project indexing defaults", () => {
       modelSelection: model("model-a"),
     });
     expect(button(projectPanel(firstProject), "Resume indexing").props.disabled).toBe(false);
-    await act(() =>
-      picker(projectPanel(firstProject), "AI review model").props.onChange({
+    await act(async () => {
+      await picker(projectPanel(firstProject), "AI review model").props.onChange({
         currentTarget: { value: "model-c" },
-      }),
-    );
+      });
+    });
     expect(button(projectPanel(firstProject), "Resume indexing").props.disabled).toBe(false);
-    await act(() => button(projectPanel(firstProject), "Resume indexing").props.onClick());
+    await act(async () => {
+      await button(projectPanel(firstProject), "Resume indexing").props.onClick();
+    });
     expect(fixture.api!.control).toHaveBeenLastCalledWith({
       projectId: firstProject,
       action: "resume",

@@ -58,9 +58,9 @@ export function makeNativeHarnessWorkspaceToolExecutor(
           .editFiles({ workspaceRoot: input.cwd, input: args })
           .pipe(
             Effect.map((output) => ({ ok: true as const, output })),
-            Effect.catchTag("WorkspaceEditError", (error) =>
-              Effect.succeed({ ok: false as const, error }),
-            ),
+            Effect.catchTags({
+              WorkspaceEditError: (error) => Effect.succeed({ ok: false as const, error }),
+            }),
           );
         if (!outcome.ok) {
           const { error } = outcome;

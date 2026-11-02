@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
-export const MOBILE_PROJECT_THREAD_PREVIEW_MIGRATION_VERSION = 1 as const;
+const MOBILE_PROJECT_THREAD_PREVIEW_MIGRATION_VERSION = 1 as const;
 
 const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
   ProjectThreadPreviewSyncRecord,

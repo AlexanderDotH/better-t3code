@@ -4,7 +4,7 @@ import {
   getModelSelectionStringOptionValue,
 } from "@t3tools/shared/model";
 
-export const CODEX_DEFAULT_SERVICE_TIER = "default";
+const CODEX_DEFAULT_SERVICE_TIER = "default";
 export const CODEX_FAST_SERVICE_TIER = "priority";
 const LEGACY_CODEX_FAST_SERVICE_TIER = "fast";
 
@@ -49,14 +49,7 @@ function serviceTierFallback(
     : undefined;
 }
 
-/**
- * Canonicalize persisted Codex speed options at the server boundary.
- *
- * `undefined` capabilities mean that no catalog entry was available, so the
- * compatibility alias is still normalized but the requested tier is retained.
- * A known catalog without `serviceTier` support removes the option instead of
- * sending a tier that the selected model did not advertise.
- */
+/** Normalize the speed alias; retain unknown catalog tiers and remove known unsupported tiers. */
 export function normalizeCodexModelSelectionServiceTier(
   modelSelection: ModelSelection,
   capabilities: ModelCapabilities | null | undefined,

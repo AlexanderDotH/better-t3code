@@ -19,7 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 
-import { expandHomePath } from "./pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { isValidSkillName, parseSkillFile } from "./skills/skillFile.ts";
 
 const MCP_ID_MAX_LENGTH = 96;
@@ -137,7 +137,7 @@ function sourceId(tool: AgentImportTool, rootPath: string): AgentImportSourceId 
 }
 
 function normalizePath(path: Path.Path, value: string): string {
-  return path.resolve(expandHomePath(value));
+  return path.resolve(expandHomePath(value, NodeOS.homedir()));
 }
 
 function isAgentDotFolder(name: string, prefixes: ReadonlyArray<string>): boolean {
@@ -186,55 +186,53 @@ function uniqueRoots(roots: ReadonlyArray<CandidateRoot>): ReadonlyArray<Candida
 function isDirectory(fileSystem: FileSystem.FileSystem, candidate: string): Effect.Effect<boolean> {
   return fileSystem.stat(candidate).pipe(
     Effect.map((stat) => stat.type === "Directory"),
-    Effect.catch(() => Effect.succeed(false)),
+    Effect.orElseSucceed(() => false),
   );
 }
 
 function isFile(fileSystem: FileSystem.FileSystem, candidate: string): Effect.Effect<boolean> {
   return fileSystem.stat(candidate).pipe(
     Effect.map((stat) => stat.type === "File"),
-    Effect.catch(() => Effect.succeed(false)),
+    Effect.orElseSucceed(() => false),
   );
 }
 
-function homeDotFolderCandidates(input: {
+const homeDotFolderCandidates = Effect.fn("homeDotFolderCandidates")(function* (input: {
   readonly homeDir: string;
   readonly settings?: ServerSettings | undefined;
-}): Effect.Effect<ReadonlyArray<CandidateRoot>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const entries = yield* fileSystem
-      .readDirectory(input.homeDir)
-      .pipe(Effect.orElseSucceed(() => []));
-    const roots: CandidateRoot[] = [];
+}): Effect.fn.Return<ReadonlyArray<CandidateRoot>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fileSystem
+    .readDirectory(input.homeDir)
+    .pipe(Effect.orElseSucceed(() => []));
+  const roots: CandidateRoot[] = [];
 
-    for (const entry of entries) {
-      if (!entry.startsWith(".")) continue;
-      for (const definition of TOOL_DEFINITIONS) {
-        if (!isAgentDotFolder(entry, definition.homePrefixes)) continue;
-        roots.push({
-          tool: definition.tool,
-          path: path.join(input.homeDir, entry),
-          label: `${definition.displayName} ${entry}`,
-        });
-      }
-    }
-
-    const configRoot = path.join(input.homeDir, ".config");
+  for (const entry of entries) {
+    if (!entry.startsWith(".")) continue;
     for (const definition of TOOL_DEFINITIONS) {
-      for (const directory of definition.configDirectories) {
-        roots.push({
-          tool: definition.tool,
-          path: path.join(configRoot, directory),
-          label: `${definition.displayName} .config/${directory}`,
-        });
-      }
+      if (!isAgentDotFolder(entry, definition.homePrefixes)) continue;
+      roots.push({
+        tool: definition.tool,
+        path: path.join(input.homeDir, entry),
+        label: `${definition.displayName} ${entry}`,
+      });
     }
+  }
 
-    return uniqueRoots([...configuredRootsFromSettings(path, input.settings), ...roots]);
-  });
-}
+  const configRoot = path.join(input.homeDir, ".config");
+  for (const definition of TOOL_DEFINITIONS) {
+    for (const directory of definition.configDirectories) {
+      roots.push({
+        tool: definition.tool,
+        path: path.join(configRoot, directory),
+        label: `${definition.displayName} .config/${directory}`,
+      });
+    }
+  }
+
+  return uniqueRoots([...configuredRootsFromSettings(path, input.settings), ...roots]);
+});
 
 function configFileCandidates(path: Path.Path, source: CandidateRoot): ReadonlyArray<string> {
   const definition = toolDefinition(source.tool);
@@ -246,93 +244,85 @@ function configFileCandidates(path: Path.Path, source: CandidateRoot): ReadonlyA
   return [...new Set(candidates)];
 }
 
-function readExistingConfigFiles(input: {
+const readExistingConfigFiles = Effect.fn("readExistingConfigFiles")(function* (input: {
   readonly source: CandidateRoot;
-}): Effect.Effect<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const candidates = configFileCandidates(path, input.source);
-    const existing = yield* Effect.forEach(
-      candidates,
-      (candidate) =>
-        isFile(fileSystem, candidate).pipe(Effect.map((exists) => (exists ? candidate : null))),
-      { concurrency: "unbounded" },
-    );
-    return existing.filter((candidate): candidate is string => candidate !== null);
-  });
-}
+}): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const candidates = configFileCandidates(path, input.source);
+  const existing = yield* Effect.forEach(
+    candidates,
+    (candidate) =>
+      isFile(fileSystem, candidate).pipe(Effect.map((exists) => (exists ? candidate : null))),
+    { concurrency: "unbounded" },
+  );
+  return existing.filter((candidate): candidate is string => candidate !== null);
+});
 
-function scanFiles(input: {
+const scanFiles = Effect.fn("scanFiles")(function* (input: {
   readonly root: string;
   readonly accept: (filePath: string) => boolean;
   readonly maxDepth?: number | undefined;
-}): Effect.Effect<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const output: string[] = [];
+}): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const output: string[] = [];
 
-    const visit = (directory: string, depth: number): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        if (depth > (input.maxDepth ?? MAX_DISCOVERY_DEPTH)) return;
-        const entries = yield* fileSystem
-          .readDirectory(directory)
-          .pipe(Effect.orElseSucceed(() => []));
-        yield* Effect.forEach(
-          entries,
-          (entry) =>
-            Effect.gen(function* () {
-              const entryPath = path.join(directory, entry);
-              const stat = yield* fileSystem
-                .stat(entryPath)
-                .pipe(Effect.catch(() => Effect.succeed(null)));
-              if (!stat) return;
-              if (stat.type === "File") {
-                if (input.accept(entryPath)) output.push(entryPath);
-                return;
-              }
-              if (stat.type === "Directory") {
-                yield* visit(entryPath, depth + 1);
-              }
-            }),
-          { concurrency: "unbounded" },
-        );
-      });
-
-    if (yield* isDirectory(fileSystem, input.root)) {
-      yield* visit(input.root, 0);
-    }
-    return output.toSorted((left, right) => left.localeCompare(right));
-  });
-}
-
-function sourceSkillFiles(input: {
-  readonly source: CandidateRoot;
-}): Effect.Effect<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const definition = toolDefinition(input.source.tool);
-    const files = yield* Effect.forEach(
-      definition.skillDirectories,
-      (directory) => {
-        const root = path.join(input.source.path, directory.relativePath);
-        return scanFiles({
-          root,
-          accept: (filePath) => {
-            const basename = path.basename(filePath);
-            if (directory.mode === "skillFile") {
-              return basename === "SKILL.md";
-            }
-            return basename.endsWith(".md") || basename.endsWith(".mdc");
-          },
-        });
-      },
+  const visit = Effect.fn("visit")(function* (
+    directory: string,
+    depth: number,
+  ): Effect.fn.Return<void> {
+    if (depth > (input.maxDepth ?? MAX_DISCOVERY_DEPTH)) return;
+    const entries = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    yield* Effect.forEach(
+      entries,
+      (entry) =>
+        Effect.gen(function* () {
+          const entryPath = path.join(directory, entry);
+          const stat = yield* fileSystem.stat(entryPath).pipe(Effect.orElseSucceed(() => null));
+          if (!stat) return;
+          if (stat.type === "File") {
+            if (input.accept(entryPath)) output.push(entryPath);
+            return;
+          }
+          if (stat.type === "Directory") {
+            yield* visit(entryPath, depth + 1);
+          }
+        }),
       { concurrency: "unbounded" },
     );
-    return files.flat().toSorted((left, right) => left.localeCompare(right));
   });
-}
+
+  if (yield* isDirectory(fileSystem, input.root)) {
+    yield* visit(input.root, 0);
+  }
+  return output.toSorted((left, right) => left.localeCompare(right));
+});
+
+const sourceSkillFiles = Effect.fn("sourceSkillFiles")(function* (input: {
+  readonly source: CandidateRoot;
+}): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  const definition = toolDefinition(input.source.tool);
+  const files = yield* Effect.forEach(
+    definition.skillDirectories,
+    (directory) => {
+      const root = path.join(input.source.path, directory.relativePath);
+      return scanFiles({
+        root,
+        accept: (filePath) => {
+          const basename = path.basename(filePath);
+          if (directory.mode === "skillFile") {
+            return basename === "SKILL.md";
+          }
+          return basename.endsWith(".md") || basename.endsWith(".mdc");
+        },
+      });
+    },
+    { concurrency: "unbounded" },
+  );
+  return files.flat().toSorted((left, right) => left.localeCompare(right));
+});
 
 function stripJsonComments(input: string): string {
   let output = "";
@@ -658,7 +648,7 @@ function deduplicateImportedSkills(input: {
   return output;
 }
 
-export function readMcpServersFromConfig(input: {
+export const readMcpServersFromConfig = Effect.fn("readMcpServersFromConfig")(function* (input: {
   readonly filePath: string;
   readonly reservedIds: Set<string>;
   readonly providerRouting: McpProviderRouting;
@@ -668,35 +658,33 @@ export function readMcpServersFromConfig(input: {
   readonly includeDisabled?: boolean;
   readonly claudeProjectCwd?: string;
   readonly contents?: string;
-}): Effect.Effect<ReadonlyArray<McpServerDefinition>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const contents =
-      input.contents ??
-      (yield* fileSystem.readFileString(input.filePath).pipe(Effect.orElseSucceed(() => "")));
-    if (!contents.trim()) return [];
-    let parsed = parseJsonObject(contents) ?? {};
-    if (input.claudeProjectCwd !== undefined) {
-      const project = Predicate.isObject(parsed.projects)
-        ? parsed.projects[input.claudeProjectCwd]
-        : undefined;
-      parsed = Predicate.isObject(project) ? project : {};
-    }
-    const rawServers = path.basename(input.filePath).endsWith(".toml")
-      ? parseCodexMcpToml(contents)
-      : rawMcpServersFromJson(parsed);
-    return normalizeMcpServers({
-      rawServers,
-      reservedIds: input.reservedIds,
-      providerRouting: input.providerRouting,
-      scope: input.scope,
-      ...(input.projectId ? { projectId: input.projectId } : {}),
-      ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-      ...(input.includeDisabled ? { includeDisabled: true } : {}),
-    });
+}): Effect.fn.Return<ReadonlyArray<McpServerDefinition>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const contents =
+    input.contents ??
+    (yield* fileSystem.readFileString(input.filePath).pipe(Effect.orElseSucceed(() => "")));
+  if (!contents.trim()) return [];
+  let parsed = parseJsonObject(contents) ?? {};
+  if (input.claudeProjectCwd !== undefined) {
+    const project = Predicate.isObject(parsed.projects)
+      ? parsed.projects[input.claudeProjectCwd]
+      : undefined;
+    parsed = Predicate.isObject(project) ? project : {};
+  }
+  const rawServers = path.basename(input.filePath).endsWith(".toml")
+    ? parseCodexMcpToml(contents)
+    : rawMcpServersFromJson(parsed);
+  return normalizeMcpServers({
+    rawServers,
+    reservedIds: input.reservedIds,
+    providerRouting: input.providerRouting,
+    scope: input.scope,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+    ...(input.includeDisabled ? { includeDisabled: true } : {}),
   });
-}
+});
 
 function markdownDescription(input: string, fallback: string): string {
   const lines = input.replaceAll("\r\n", "\n").split("\n");
@@ -735,94 +723,87 @@ function importedSkillFromContents(input: {
   };
 }
 
-function readSkillsFromSource(
+const readSkillsFromSource = Effect.fn("readSkillsFromSource")(function* (
   source: ResolvedSource,
-): Effect.Effect<ReadonlyArray<RawSkillImport>, never, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const skills = yield* Effect.forEach(
-      source.skillPaths,
-      (filePath) =>
-        fileSystem.readFileString(filePath).pipe(
-          Effect.map((contents) =>
-            importedSkillFromContents({
-              filePath,
-              contents,
-              sourceTool: source.tool,
-            }),
-          ),
-          Effect.catch(() => Effect.succeed(null)),
+): Effect.fn.Return<ReadonlyArray<RawSkillImport>, never, FileSystem.FileSystem> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const skills = yield* Effect.forEach(
+    source.skillPaths,
+    (filePath) =>
+      fileSystem.readFileString(filePath).pipe(
+        Effect.map((contents) =>
+          importedSkillFromContents({
+            filePath,
+            contents,
+            sourceTool: source.tool,
+          }),
         ),
-      { concurrency: "unbounded" },
-    );
-    return skills.filter((skill): skill is RawSkillImport => skill !== null);
-  });
-}
+        Effect.orElseSucceed(() => null),
+      ),
+    { concurrency: "unbounded" },
+  );
+  return skills.filter((skill): skill is RawSkillImport => skill !== null);
+});
 
-function resolveSources(
+const resolveSources = Effect.fn("resolveSources")(function* (
   input: {
     readonly homeDir?: string | undefined;
     readonly settings?: ServerSettings | undefined;
   } = {},
-): Effect.Effect<ReadonlyArray<ResolvedSource>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const candidates = yield* homeDotFolderCandidates({
-      homeDir: input.homeDir ?? NodeOS.homedir(),
-      settings: input.settings,
-    });
-    const existing = yield* Effect.forEach(
-      candidates,
-      (candidate) =>
-        isDirectory(fileSystem, candidate.path).pipe(
-          Effect.map((exists) => (exists ? candidate : null)),
-        ),
-      { concurrency: "unbounded" },
-    );
-    return yield* Effect.forEach(
-      existing.filter((candidate): candidate is CandidateRoot => candidate !== null),
-      (candidate) =>
-        Effect.gen(function* () {
-          const [mcpConfigPaths, skillPaths] = yield* Effect.all(
-            [
-              readExistingConfigFiles({ source: candidate }),
-              sourceSkillFiles({ source: candidate }),
-            ],
-            { concurrency: "unbounded" },
-          );
-          const reservedIds = new Set<string>();
-          const mcpServers = yield* Effect.forEach(
-            mcpConfigPaths,
-            (filePath) =>
-              readMcpServersFromConfig({
-                filePath,
-                reservedIds,
-                providerRouting: { mode: "all" },
-                scope: "global",
-              }),
-            { concurrency: "unbounded" },
-          );
-          const definition = toolDefinition(candidate.tool);
-          return {
-            id: sourceId(candidate.tool, candidate.path),
-            tool: candidate.tool,
-            label: candidate.label || definition.displayName,
-            path: candidate.path,
-            rootPath: candidate.path,
-            mcpConfigPaths,
-            skillPaths,
-            mcpServerCount: mcpServers.flat().length,
-            skillCount: skillPaths.length,
-          } satisfies ResolvedSource;
-        }),
-      { concurrency: "unbounded" },
-    ).pipe(
-      Effect.map((sources) =>
-        sources.toSorted((left, right) => left.label.localeCompare(right.label)),
-      ),
-    );
+): Effect.fn.Return<ReadonlyArray<ResolvedSource>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const candidates = yield* homeDotFolderCandidates({
+    homeDir: input.homeDir ?? NodeOS.homedir(),
+    settings: input.settings,
   });
-}
+  const existing = yield* Effect.forEach(
+    candidates,
+    (candidate) =>
+      isDirectory(fileSystem, candidate.path).pipe(
+        Effect.map((exists) => (exists ? candidate : null)),
+      ),
+    { concurrency: "unbounded" },
+  );
+  return yield* Effect.forEach(
+    existing.filter((candidate): candidate is CandidateRoot => candidate !== null),
+    (candidate) =>
+      Effect.gen(function* () {
+        const [mcpConfigPaths, skillPaths] = yield* Effect.all(
+          [readExistingConfigFiles({ source: candidate }), sourceSkillFiles({ source: candidate })],
+          { concurrency: "unbounded" },
+        );
+        const reservedIds = new Set<string>();
+        const mcpServers = yield* Effect.forEach(
+          mcpConfigPaths,
+          (filePath) =>
+            readMcpServersFromConfig({
+              filePath,
+              reservedIds,
+              providerRouting: { mode: "all" },
+              scope: "global",
+            }),
+          { concurrency: "unbounded" },
+        );
+        const definition = toolDefinition(candidate.tool);
+        return {
+          id: sourceId(candidate.tool, candidate.path),
+          tool: candidate.tool,
+          label: candidate.label || definition.displayName,
+          path: candidate.path,
+          rootPath: candidate.path,
+          mcpConfigPaths,
+          skillPaths,
+          mcpServerCount: mcpServers.flat().length,
+          skillCount: skillPaths.length,
+        } satisfies ResolvedSource;
+      }),
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map((sources) =>
+      sources.toSorted((left, right) => left.label.localeCompare(right.label)),
+    ),
+  );
+});
 
 function selectedSources(input: {
   readonly sources: ReadonlyArray<ResolvedSource>;
@@ -841,23 +822,23 @@ export function discoverAgentImportSources(
   return resolveSources(input).pipe(Effect.map((sources) => ({ sources })));
 }
 
-export function importMcpServersFromAgentSources(input: {
-  readonly sourceIds: ReadonlyArray<AgentImportSourceId>;
-  readonly providerRouting?: McpProviderRouting | undefined;
-  readonly scope: "global" | "project";
-  readonly projectId?: ProjectId | undefined;
-  readonly projectCwd?: string | undefined;
-  readonly reservedIds?: ReadonlySet<string> | undefined;
-  readonly existingServers?: ReadonlyArray<McpServerDefinition> | undefined;
-  readonly deduplicate?: boolean | undefined;
-  readonly homeDir?: string | undefined;
-  readonly settings?: ServerSettings | undefined;
-}): Effect.Effect<
-  ReadonlyArray<McpServerDefinition>,
-  McpConfigError,
-  FileSystem.FileSystem | Path.Path
-> {
-  return Effect.gen(function* () {
+export const importMcpServersFromAgentSources = Effect.fn("importMcpServersFromAgentSources")(
+  function* (input: {
+    readonly sourceIds: ReadonlyArray<AgentImportSourceId>;
+    readonly providerRouting?: McpProviderRouting | undefined;
+    readonly scope: "global" | "project";
+    readonly projectId?: ProjectId | undefined;
+    readonly projectCwd?: string | undefined;
+    readonly reservedIds?: ReadonlySet<string> | undefined;
+    readonly existingServers?: ReadonlyArray<McpServerDefinition> | undefined;
+    readonly deduplicate?: boolean | undefined;
+    readonly homeDir?: string | undefined;
+    readonly settings?: ServerSettings | undefined;
+  }): Effect.fn.Return<
+    ReadonlyArray<McpServerDefinition>,
+    McpConfigError,
+    FileSystem.FileSystem | Path.Path
+  > {
     if (input.sourceIds.length === 0) {
       return yield* toMcpError("Select at least one agent import source.");
     }
@@ -901,21 +882,21 @@ export function importMcpServersFromAgentSources(input: {
       );
     }
     return servers;
-  });
-}
+  },
+);
 
-export function importSkillsFromAgentSources(input: {
-  readonly sourceIds: ReadonlyArray<AgentImportSourceId>;
-  readonly existingSkills?: ReadonlyArray<SkillDescriptor> | undefined;
-  readonly deduplicate?: boolean | undefined;
-  readonly homeDir?: string | undefined;
-  readonly settings?: ServerSettings | undefined;
-}): Effect.Effect<
-  ReadonlyArray<RawSkillImport>,
-  SkillEngineError,
-  FileSystem.FileSystem | Path.Path
-> {
-  return Effect.gen(function* () {
+export const importSkillsFromAgentSources = Effect.fn("importSkillsFromAgentSources")(
+  function* (input: {
+    readonly sourceIds: ReadonlyArray<AgentImportSourceId>;
+    readonly existingSkills?: ReadonlyArray<SkillDescriptor> | undefined;
+    readonly deduplicate?: boolean | undefined;
+    readonly homeDir?: string | undefined;
+    readonly settings?: ServerSettings | undefined;
+  }): Effect.fn.Return<
+    ReadonlyArray<RawSkillImport>,
+    SkillEngineError,
+    FileSystem.FileSystem | Path.Path
+  > {
     if (input.sourceIds.length === 0) {
       return yield* toSkillError("Select at least one agent import source.");
     }
@@ -943,7 +924,7 @@ export function importSkillsFromAgentSources(input: {
       );
     }
     return skills;
-  });
-}
+  },
+);
 
 export type { RawSkillImport as AgentImportedSkill };

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, makeBetterT3SettingsV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -215,47 +215,51 @@ describe("AssemblyAiStreamingToken", () => {
     },
   );
 
-  for (const [status, reason] of [
-    [401, "AssemblyAI rejected the configured API key."],
-    [429, "AssemblyAI streaming token requests are temporarily rate limited."],
-  ] as const) {
-    it.effect(`maps HTTP ${status} to a useful secret-free error`, () => {
-      const { layer } = makeTestLayer({
-        apiKey: "must-never-appear",
-        respond: () => new Response("nope", { status }),
-      });
-
-      return Effect.gen(function* () {
-        const service = yield* AssemblyAiStreamingToken;
-        const error = yield* Effect.flip(service.create(speechContext));
-
-        expect(error.reason).toBe(reason);
-        expect(error.message).not.toContain("must-never-appear");
-        expect(error.reason).not.toContain("must-never-appear");
-        expect(error.cause).toBeUndefined();
-      }).pipe(Effect.provide(layer));
+  it.effect.each(
+    (
+      [
+        [401, "AssemblyAI rejected the configured API key."],
+        [429, "AssemblyAI streaming token requests are temporarily rate limited."],
+      ] as const
+    ).map(([status, reason]) => ({ status, reason })),
+  )("maps HTTP $status to a useful secret-free error", ({ status, reason }) => {
+    const { layer } = makeTestLayer({
+      apiKey: "must-never-appear",
+      respond: () => new Response("nope", { status }),
     });
-  }
 
-  for (const [label, respond] of [
-    ["malformed JSON", () => new Response("not-json", { status: 200 })],
-    ["missing tokens", () => Response.json({ unexpected: true })],
-    ["empty tokens", () => Response.json({ token: "   " })],
-  ] satisfies ReadonlyArray<readonly [string, () => Response]>) {
-    it.effect(`rejects ${label} through schema decoding`, () => {
-      const { layer } = makeTestLayer({
-        apiKey: "must-never-appear",
-        respond,
-      });
+    return Effect.gen(function* () {
+      const service = yield* AssemblyAiStreamingToken;
+      const error = yield* Effect.flip(service.create(speechContext));
 
-      return Effect.gen(function* () {
-        const service = yield* AssemblyAiStreamingToken;
-        const error = yield* Effect.flip(service.create(speechContext));
+      expect(error.reason).toBe(reason);
+      expect(error.message).not.toContain("must-never-appear");
+      expect(error.reason).not.toContain("must-never-appear");
+      expect(error.cause).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
 
-        expect(error.reason).toBe("AssemblyAI returned an invalid streaming token response.");
-        expect(error.reason).not.toContain("must-never-appear");
-        expect(error.cause).toBeUndefined();
-      }).pipe(Effect.provide(layer));
+  it.effect.each(
+    (
+      [
+        ["malformed JSON", () => new Response("not-json", { status: 200 })],
+        ["missing tokens", () => Response.json({ unexpected: true })],
+        ["empty tokens", () => Response.json({ token: "   " })],
+      ] satisfies ReadonlyArray<readonly [string, () => Response]>
+    ).map(([label, respond]) => ({ label, respond })),
+  )("rejects $label through schema decoding", ({ respond }) => {
+    const { layer } = makeTestLayer({
+      apiKey: "must-never-appear",
+      respond,
     });
-  }
+
+    return Effect.gen(function* () {
+      const service = yield* AssemblyAiStreamingToken;
+      const error = yield* Effect.flip(service.create(speechContext));
+
+      expect(error.reason).toBe("AssemblyAI returned an invalid streaming token response.");
+      expect(error.reason).not.toContain("must-never-appear");
+      expect(error.cause).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
 });

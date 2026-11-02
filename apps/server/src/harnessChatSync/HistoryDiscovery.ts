@@ -22,17 +22,17 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import {
   ProjectionHarnessChatSyncRepository,
   type ProjectionHarnessChatSyncLink,
 } from "../persistence/Services/ProjectionHarnessChatSync.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import {
   ProviderHistorySyncError,
   type ProviderHistoryThreadSummary,
-} from "../provider/Services/ProviderHistorySync.ts";
+} from "@t3tools/provider-core/server/ProviderHistorySync";
 import { describeFailure, harnessSyncError, isHarnessChatSyncError } from "./Errors.ts";
 import { resolveHarnessChatTargetProject } from "./ProjectTarget.ts";
 import {
@@ -410,7 +410,7 @@ export const makeHarnessHistoryDiscovery = Effect.fn("makeHarnessHistoryDiscover
   function* (input: { readonly now: Effect.Effect<IsoDateTime> }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const projections = yield* ProjectionSnapshotQuery;
+    const projects = yield* ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry;
     const syncRepository = yield* ProjectionHarnessChatSyncRepository;
     const summaryCache = yield* Ref.make(
@@ -655,13 +655,12 @@ export const makeHarnessHistoryDiscovery = Effect.fn("makeHarnessHistoryDiscover
           ),
         ),
         readLinks(group),
-        projections
-          .getShellSnapshot()
-          .pipe(
-            Effect.mapError((cause) =>
-              harnessSyncError("operation-failed", "Could not resolve target projects.", cause),
-            ),
+        projects.listShells().pipe(
+          Effect.map((projects) => ({ projects })),
+          Effect.mapError((cause) =>
+            harnessSyncError("operation-failed", "Could not resolve target projects.", cause),
           ),
+        ),
       ]);
       const pageSummaries = historyPage.summaries;
       const chats = yield* Effect.forEach(

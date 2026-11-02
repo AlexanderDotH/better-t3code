@@ -156,7 +156,7 @@ function planSubagentCeiling(
   return ceiling < 2 ? null : (ceiling as PlanSubagentCount);
 }
 
-function getSupportedPlanSubagentCounts(
+export function getSupportedPlanSubagentCounts(
   provider: ServerProvider | null | undefined,
 ): ReadonlyArray<PlanSubagentCount> {
   const ceiling = planSubagentCeiling(provider);

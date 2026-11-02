@@ -1,5 +1,7 @@
-import type { OrchestrationSubagentSummary, SubagentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import type { SubagentId } from "@t3tools/contracts";
+import type { OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
+import { useEffect, useState } from "react";
 
 import { partitionSubagentsByLifecycle, type SubagentLifecycleEntry } from "./subagentLifecycle";
 
@@ -201,18 +203,22 @@ export function useSubagentLifecycleStack(
   subagents: ReadonlyArray<OrchestrationSubagentSummary>,
 ): SubagentLifecycleStack {
   const [lifecycleNowMs, setLifecycleNowMs] = useState(() => Date.now());
-  const partition = useMemo(
-    () => partitionSubagentsByLifecycle({ subagents, nowMs: lifecycleNowMs }),
-    [lifecycleNowMs, subagents],
-  );
+  const partition = partitionSubagentsByLifecycle({ subagents, nowMs: lifecycleNowMs });
   const [visible, setVisible] = useState<ReadonlyArray<SubagentPresenceEntry>>(() =>
     initializeSubagentPresence(partition.visible, lifecycleNowMs),
   );
 
-  useEffect(() => {
-    setVisible((current) => reconcileSubagentPresence(current, partition.visible, Date.now()));
-  }, [partition.visible]);
+  const [observedInput, setObservedInput] = useState({ subagents, now: lifecycleNowMs });
+  if (observedInput.subagents !== subagents || observedInput.now !== lifecycleNowMs) {
+    setObservedInput({ subagents, now: lifecycleNowMs });
+    const observedAt = subagents.reduce(
+      (latest, agent) => Math.max(latest, Date.parse(agent.updatedAt)),
+      lifecycleNowMs,
+    );
+    setVisible((current) => reconcileSubagentPresence(current, partition.visible, observedAt));
+  }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Coordinate visibility events and timers with the mounted subagent animations.
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") {
       return;
@@ -242,9 +248,10 @@ export function useSubagentLifecycleStack(
       window.removeEventListener("focus", refreshClock);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [lifecycleNowMs, partition.nextTransitionAtMs]);
+  }, [partition.nextTransitionAtMs]);
 
   const hasReadyExit = visible.some((entry) => entry.phase === "exit-ready");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Coordinate visibility events and timers with the mounted subagent animations.
   useEffect(() => {
     if (typeof window === "undefined" || !hasReadyExit) {
       return;
@@ -258,6 +265,7 @@ export function useSubagentLifecycleStack(
   }, [hasReadyExit]);
 
   const presenceTransitionAtMs = nextPresenceTransitionAtMs(visible);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Coordinate visibility events and timers with the mounted subagent animations.
   useEffect(() => {
     if (typeof window === "undefined" || presenceTransitionAtMs === null) {
       return;
@@ -273,14 +281,16 @@ export function useSubagentLifecycleStack(
     };
   }, [presenceTransitionAtMs]);
 
-  const completePhase = useCallback((subagentId: SubagentId, phase: SubagentPresencePhase) => {
-    setVisible((current) => completePresencePhase(current, subagentId, phase, Date.now()));
-  }, []);
+  const completePhase = useStableCallback(
+    (subagentId: SubagentId, phase: SubagentPresencePhase) => {
+      setVisible((current) => completePresencePhase(current, subagentId, phase, Date.now()));
+    },
+  );
 
-  const archived = useMemo(() => {
+  const archived = (() => {
     const retainedIds = new Set(visible.map((entry) => entry.agent.id));
     return partition.archived.filter((agent) => !retainedIds.has(agent.id));
-  }, [partition.archived, visible]);
+  })();
 
   return { visible, archived, completePhase };
 }

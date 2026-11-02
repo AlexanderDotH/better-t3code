@@ -2,8 +2,8 @@ import {
   MessageId,
   type CommandId,
   type DeepPlanRun,
-  type OrchestrationThreadShell,
-  type OrchestrationCommand,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2Command,
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
 
@@ -22,11 +22,11 @@ export function canContinueDeepPlan(
 
 export function deepPlanContinuationCommand(input: {
   readonly run: DeepPlanRun;
-  readonly target: OrchestrationThreadShell;
+  readonly target: OrchestrationV2ThreadShell;
   readonly commandId: CommandId;
   readonly createdAt: string;
-}): Extract<OrchestrationCommand, { type: "thread.turn.start" }> {
-  const { run, target, commandId, createdAt } = input;
+}): Extract<OrchestrationV2Command, { type: "message.dispatch" }> {
+  const { run, target, commandId } = input;
   const selection = run.approval?.implementation ?? target.modelSelection;
   const text = [
     `Continue Deep Plan ${run.id}, owned by thread ${run.threadId}, from its durable state.`,
@@ -45,24 +45,21 @@ export function deepPlanContinuationCommand(input: {
     .filter(Boolean)
     .join("\n");
   return {
-    type: "thread.turn.start",
+    type: "message.dispatch",
     commandId,
     threadId: target.id,
-    message: {
-      messageId: MessageId.make(commandId + ":message"),
-      role: "user",
-      text,
-      attachments: [],
-    },
-    background: { runId: run.id },
-    idleGuard: { latestTurnId: target.latestTurn?.turnId ?? null },
+    messageId: MessageId.make(commandId + ":message"),
+    text,
+    attachments: [],
+    createdBy: "agent",
+    creationSource: "server",
+    deepPlanRunId: run.id,
+    idleGuard: { latestRunId: target.latestRunId },
     modelSelection: {
       instanceId: selection.instanceId,
       model: selection.model,
       ...(selection.options === undefined ? {} : { options: selection.options }),
     },
-    runtimeMode: target.runtimeMode,
-    interactionMode: run.approval ? "default" : "plan",
-    createdAt,
+    dispatchMode: { type: "start_immediately" },
   };
 }

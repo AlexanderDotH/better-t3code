@@ -1,5 +1,6 @@
 import type { InterfaceMessageKey, InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import type { RefObject } from "react";
+import { observeResize } from "../../lib/observeResize";
 
 import { BetterT3SettingsSearch } from "./BetterT3SettingsSearch";
 import { scrollToSettingsTarget } from "./settingsLayout";
@@ -11,10 +12,9 @@ function measureNavigation(navigation: HTMLDivElement | null) {
   const measure = () =>
     content.style.setProperty("--better-t3-navigation-height", `${navigation.offsetHeight}px`);
   measure();
-  const observer = new ResizeObserver(measure);
-  observer.observe(navigation);
+  const stopObserving = observeResize(navigation, measure);
   return () => {
-    observer.disconnect();
+    stopObserving();
     content.style.removeProperty("--better-t3-navigation-height");
   };
 }

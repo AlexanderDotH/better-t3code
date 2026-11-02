@@ -2,7 +2,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   KnowledgeGraphDeterministicPatchV1,
@@ -16,12 +15,13 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
+import * as KvKeys from "../../knowledge/KvKeys.ts";
 
 import { KnowledgeGraphRepository } from "./KnowledgeGraphRepository.ts";
 import { knowledgeGraphKvLayerAt } from "./KnowledgeGraphKvRepository.ts";
 
-const scope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1)({
+const scope = Schema.decodeSync(KnowledgeGraphScopeV1)({
   version: 1,
   scopeId: KnowledgeGraphScopeId.make("kv-scope"),
   environmentId: "environment-1",
@@ -29,7 +29,7 @@ const scope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1)({
   effectiveWorkspaceRoot: "/workspace/project",
   isWorktree: false,
 });
-const patch = Schema.decodeUnknownSync(KnowledgeGraphDeterministicPatchV1)({
+const patch = Schema.decodeSync(KnowledgeGraphDeterministicPatchV1)({
   version: 1,
   scope,
   baseRevision: 0,
@@ -70,12 +70,12 @@ const patch = Schema.decodeUnknownSync(KnowledgeGraphDeterministicPatchV1)({
   },
   committedAt: "2026-08-29T10:00:00.000Z",
 });
-const linked = Schema.decodeUnknownSync(KnowledgeGraphDeterministicPatchV1)({
+const linked = Schema.decodeSync(KnowledgeGraphDeterministicPatchV1)({
   ...patch,
   baseRevision: 1,
   nodes: [
     {
-      ...patch.nodes[0],
+      ...patch.nodes[0]!,
       nodeId: KnowledgeGraphNodeId.make("linked-file"),
       label: "src/linked.ts",
       source: { path: "src/linked.ts" },
@@ -110,6 +110,20 @@ it.effect("cancels a large transaction before committing its graph revision", ()
       yield* Effect.gen(function* () {
         const repository = yield* KnowledgeGraphRepository;
         yield* repository.applyDeterministicPatch(patch);
+        const entered = Promise.withResolvers<void>();
+        const iterate = KvKeys.iterateKvItems;
+        using _iteration = vi
+          .spyOn(KvKeys, "iterateKvItems")
+          .mockImplementation(async function* (items, signal) {
+            if (signal === undefined) return yield* iterate(items, signal);
+            entered.resolve();
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) resolve();
+              else signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+            signal.throwIfAborted();
+            yield* iterate(items, signal);
+          });
         const pending = yield* repository
           .applyDeterministicPatch({
             ...linked,
@@ -120,8 +134,7 @@ it.effect("cancels a large transaction before committing its graph revision", ()
             edges: [],
           })
           .pipe(Effect.forkScoped);
-        // Advance one native I/O turn so interruption races with a live transaction.
-        yield* Effect.promise(() => NodeTimersPromises.setImmediate());
+        yield* Effect.promise(() => entered.promise);
         yield* Fiber.interrupt(pending);
         const snapshot = Option.getOrThrow(yield* repository.getSnapshot(scope.scopeId));
         expect(snapshot.revision).toBe(1);

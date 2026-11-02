@@ -2,23 +2,32 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useState } from "react";
 import { ProjectMemorySettings, type ProjectMemoryViewModel } from "./ProjectMemorySettings";
-import { useSettingsMutation } from "./useSettingsMutation";
+import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
 
 export function ProjectMemorySettingsController({
   project,
+  readOnly = false,
 }: {
   readonly project: { readonly environmentId: EnvironmentId; readonly id: ProjectId };
+  readonly readOnly?: boolean;
 }) {
   const target = { environmentId: project.environmentId, input: { projectId: project.id } };
   const query = useEnvironmentQuery(serverEnvironment.projectMemoryView(target));
-  const updateSettings = useAtomCommand(serverEnvironment.updateProjectMemorySettings);
-  const replace = useAtomCommand(serverEnvironment.replaceProjectMemory);
-  const importMemory = useAtomCommand(serverEnvironment.importProjectMemory);
-  const clear = useAtomCommand(serverEnvironment.clearProjectMemory);
+  const updateSettings = useSettingsCommand(serverEnvironment.updateProjectMemorySettings);
+  const replace = useSettingsCommand(serverEnvironment.replaceProjectMemory);
+  const importMemory = useSettingsCommand(serverEnvironment.importProjectMemory);
+  const clear = useSettingsCommand(serverEnvironment.clearProjectMemory);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const mutation = useSettingsMutation({
-    mutationFn: (operation: () => Promise<unknown>) => operation(),
+    mutationFn: async (operation: () => Promise<unknown>) => {
+      if (!readOnly) await operation();
+    },
+    onMutate: () => setMutationError(null),
+    onSuccess: () => query.refresh(),
+    onError: (error) =>
+      setMutationError(error instanceof Error ? error.message : "Could not update project memory."),
   });
   const viewModel: ProjectMemoryViewModel | undefined = query.data
     ? {
@@ -35,14 +44,15 @@ export function ProjectMemorySettingsController({
 
   return (
     <>
-      {query.error ? (
+      {query.error || mutationError ? (
         <p role="alert" className="text-sm text-destructive">
-          {query.error}
+          {mutationError ?? query.error}
         </p>
       ) : null}
       <ProjectMemorySettings
+        key={`${project.environmentId}:${project.id}:${query.dataUpdatedAt}`}
         {...(viewModel ? { viewModel } : {})}
-        busy={mutation.isPending || query.isPending}
+        busy={readOnly || mutation.isPending || query.isPending}
         onSavePreferences={(preferences) =>
           mutation.mutate(() =>
             updateSettings({

@@ -6,7 +6,7 @@ import type {
 import { useMemo } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { mobileProjectIndexFacts } from "./mobile-project-index-facts";
 import { ProjectIndexSourceButton } from "./ProjectIndexSourceButton";

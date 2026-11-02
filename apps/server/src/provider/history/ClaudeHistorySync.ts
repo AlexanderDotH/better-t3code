@@ -76,35 +76,33 @@ const scanClaudeSessionFiles = Effect.fn("scanClaudeSessionFiles")(function* (in
   const projectNames = yield* input.fileSystem.readDirectory(projectsDir);
   const files = yield* Effect.forEach(
     projectNames,
-    (projectKey) =>
-      Effect.gen(function* () {
-        const projectPath = input.path.join(projectsDir, projectKey);
-        const projectStat = yield* input.fileSystem.stat(projectPath);
-        if (projectStat.type !== "Directory") return [];
-        const entryNames = yield* input.fileSystem.readDirectory(projectPath);
-        return yield* Effect.forEach(
-          entryNames,
-          (entryName) =>
-            Effect.gen(function* () {
-              if (!entryName.endsWith(".jsonl")) return undefined;
-              const sessionId = entryName.slice(0, -".jsonl".length);
-              if (!CLAUDE_SESSION_ID.test(sessionId)) return undefined;
-              const sessionPath = input.path.join(projectPath, entryName);
-              const stat = yield* input.fileSystem.stat(sessionPath);
-              if (stat.type !== "File") return undefined;
-              return {
-                projectKey,
-                sessionId,
-                path: sessionPath,
-                mtime: Option.match(stat.mtime, {
-                  onNone: () => 0,
-                  onSome: (mtime) => mtime.getTime(),
-                }),
-              };
+    Effect.fn("ClaudeHistorySync.operation")(function* (projectKey) {
+      const projectPath = input.path.join(projectsDir, projectKey);
+      const projectStat = yield* input.fileSystem.stat(projectPath);
+      if (projectStat.type !== "Directory") return [];
+      const entryNames = yield* input.fileSystem.readDirectory(projectPath);
+      return yield* Effect.forEach(
+        entryNames,
+        Effect.fn("ClaudeHistorySync.operation")(function* (entryName) {
+          if (!entryName.endsWith(".jsonl")) return undefined;
+          const sessionId = entryName.slice(0, -".jsonl".length);
+          if (!CLAUDE_SESSION_ID.test(sessionId)) return undefined;
+          const sessionPath = input.path.join(projectPath, entryName);
+          const stat = yield* input.fileSystem.stat(sessionPath);
+          if (stat.type !== "File") return undefined;
+          return {
+            projectKey,
+            sessionId,
+            path: sessionPath,
+            mtime: Option.match(stat.mtime, {
+              onNone: () => 0,
+              onSome: (mtime) => mtime.getTime(),
             }),
-          { concurrency: "unbounded" },
-        );
-      }),
+          };
+        }),
+        { concurrency: "unbounded" },
+      );
+    }),
     { concurrency: "unbounded" },
   );
   const sessions: ClaudeSessionFile[] = files.flat().flatMap((file) => (file ? [file] : []));
@@ -124,7 +122,7 @@ export const makeClaudeHomeSessionStore = Effect.fn("makeClaudeHomeSessionStore"
   const scanFiles = () => scanClaudeSessionFiles({ configDir, fileSystem, path });
   const readEntries = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(Effect.map(parseSessionEntries));
-  const runPromise = Effect.runPromise;
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
 
   return {
     append: () => Promise.reject(new Error("Claude history store is read-only.")),
@@ -405,57 +403,50 @@ export function makeClaudeHistorySyncAdapter(input: {
     });
 
   return {
-    list: (request) =>
-      Effect.gen(function* () {
-        const sessions = (yield* loadSessions("list"))
-          .filter((session) => matchesSession(session, request))
-          .sort((left, right) => right.lastModified - left.lastModified);
-        const offset = parseOffset(request.cursor);
-        const page = sessions.slice(offset, offset + request.limit);
-        const nextOffset = offset + page.length;
-        const latestUpdatedAt = sessions[0]
-          ? millisecondsToIso(sessions[0].lastModified)
-          : undefined;
-        return {
-          items: page.map(sessionSummary),
-          ...(nextOffset < sessions.length ? { nextCursor: String(nextOffset) } : {}),
-          totalMatching: sessions.length,
-          ...(latestUpdatedAt ? { latestUpdatedAt } : {}),
-        };
-      }),
-    read: ({ sessionId }) =>
-      Effect.gen(function* () {
-        const [sessions, messages] = yield* Effect.all(
-          [loadSessions("read", sessionId), loadMessages(sessionId, "read")],
-          { concurrency: "unbounded" },
-        );
-        const session = sessions.find((candidate) => candidate.sessionId === sessionId);
-        if (!session) {
-          return yield* historyError({
-            sourceId: input.sourceId,
-            operation: "read",
-            sessionId,
-            detail: "Claude session was not found in the configured home.",
-          });
-        }
-        return transcriptFromMessages({ session, messages });
-      }),
-    resumeCursor: ({ sessionId }) =>
-      Effect.gen(function* () {
-        const messages = yield* loadMessages(sessionId, "resume");
-        const lastAssistantUuid = messages.findLast(
-          (message) => message.type === "assistant",
-        )?.uuid;
-        const turnCount = messages.filter(
-          (message) => message.type === "user" && message.parent_tool_use_id === null,
-        ).length;
-        return {
-          resumeCursor: {
-            resume: sessionId,
-            ...(lastAssistantUuid ? { resumeSessionAt: lastAssistantUuid } : {}),
-            turnCount,
-          },
-        };
-      }),
+    list: Effect.fn("ClaudeHistorySync.list")(function* (request) {
+      const sessions = (yield* loadSessions("list"))
+        .filter((session) => matchesSession(session, request))
+        .sort((left, right) => right.lastModified - left.lastModified);
+      const offset = parseOffset(request.cursor);
+      const page = sessions.slice(offset, offset + request.limit);
+      const nextOffset = offset + page.length;
+      const latestUpdatedAt = sessions[0] ? millisecondsToIso(sessions[0].lastModified) : undefined;
+      return {
+        items: page.map(sessionSummary),
+        ...(nextOffset < sessions.length ? { nextCursor: String(nextOffset) } : {}),
+        totalMatching: sessions.length,
+        ...(latestUpdatedAt ? { latestUpdatedAt } : {}),
+      };
+    }),
+    read: Effect.fn("ClaudeHistorySync.read")(function* ({ sessionId }) {
+      const [sessions, messages] = yield* Effect.all(
+        [loadSessions("read", sessionId), loadMessages(sessionId, "read")],
+        { concurrency: "unbounded" },
+      );
+      const session = sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (!session) {
+        return yield* historyError({
+          sourceId: input.sourceId,
+          operation: "read",
+          sessionId,
+          detail: "Claude session was not found in the configured home.",
+        });
+      }
+      return transcriptFromMessages({ session, messages });
+    }),
+    resumeCursor: Effect.fn("ClaudeHistorySync.resumeCursor")(function* ({ sessionId }) {
+      const messages = yield* loadMessages(sessionId, "resume");
+      const lastAssistantUuid = messages.findLast((message) => message.type === "assistant")?.uuid;
+      const turnCount = messages.filter(
+        (message) => message.type === "user" && message.parent_tool_use_id === null,
+      ).length;
+      return {
+        resumeCursor: {
+          resume: sessionId,
+          ...(lastAssistantUuid ? { resumeSessionAt: lastAssistantUuid } : {}),
+          turnCount,
+        },
+      };
+    }),
   };
 }

@@ -1,33 +1,10 @@
-import {
-  matchesOpenRouterModelFilters,
-  type OpenRouterModelFilter,
-} from "@t3tools/shared/modelCatalogFilters";
-import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
-
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import type { ProviderInstanceId } from "@t3tools/contracts";
-
-export type ModelFavorite = {
-  readonly provider: ProviderInstanceId;
-  readonly model: string;
-};
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
   return `${provider}:${model}`;
 }
 
-export function toggleModelFavorite(
-  favorites: ReadonlyArray<ModelFavorite>,
-  option: ModelOption,
-): ReadonlyArray<ModelFavorite> {
-  const provider = option.selection.instanceId;
-  const model = option.selection.model;
-  return favorites.some((favorite) => favorite.provider === provider && favorite.model === model)
-    ? favorites.filter((favorite) => favorite.provider !== provider || favorite.model !== model)
-    : [...favorites, { provider, model }];
-}
-
-/** Keep catalog order within each group when favorites move to the front. */
 export function favoritesFirst(
   models: ReadonlyArray<ModelOption>,
   favoriteKeys: ReadonlySet<string>,
@@ -40,26 +17,6 @@ export function favoritesFirst(
   return [...favorites, ...others];
 }
 
-export const MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET = 44;
-
-export function modelFavoriteActionMessageKey(favorite: boolean): InterfaceMessageKey {
-  return favorite ? "mobile.thread.settings.removeFavorite" : "mobile.thread.settings.addFavorite";
-}
-
-export function performModelFavoriteToggle(
-  event: { readonly stopPropagation: () => void },
-  toggleFavorite: () => void,
-): void {
-  event.stopPropagation();
-  toggleFavorite();
-}
-
-/** Large remote catalogs get a focused picker page instead of expanding inline. */
-export function providerCatalogUsesDrillIn(driver: string | undefined): boolean {
-  return driver === "openrouter";
-}
-
-/** Match the terms a user can actually see or recognize in the model picker. */
 export function modelMatchesCatalogQuery(input: {
   readonly model: ModelOption;
   readonly providerLabel: string;
@@ -78,55 +35,34 @@ export function modelMatchesCatalogQuery(input: {
   ].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-/** Compose OpenRouter's provider-owned capability filters with picker-local state. */
-export function filterOpenRouterProviderCatalog(input: {
-  readonly models: ReadonlyArray<ModelOption>;
-  readonly providerLabel: string;
-  readonly query: string;
-  readonly filters: ReadonlySet<OpenRouterModelFilter>;
-  readonly favoritesOnly: boolean;
-  readonly isFavorite: (model: ModelOption) => boolean;
-}): ReadonlyArray<ModelOption> {
-  return input.models.filter(
-    (model) =>
-      (!input.favoritesOnly || input.isFavorite(model)) &&
-      matchesOpenRouterModelFilters(model, input.filters) &&
-      modelMatchesCatalogQuery({
-        model,
-        providerLabel: input.providerLabel,
-        query: input.query,
-      }),
-  );
-}
-
-/** Preserve staged provider options when the highlighted model is tapped again. */
 export function pendingModelAfterPress(input: {
   readonly current: ModelOption | null;
   readonly pressed: ModelOption;
   readonly pressedIsApplied: boolean;
+  readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
 }): ModelOption | null {
   if (input.pressedIsApplied) {
     return null;
   }
-  return input.current?.key === input.pressed.key ? input.current : input.pressed;
+  if (input.current?.key === input.pressed.key) {
+    return input.current;
+  }
+  return input.restoreSelection
+    ? { ...input.pressed, selection: input.restoreSelection(input.pressed.selection) }
+    : input.pressed;
 }
 
-/** A model can disappear while the picker is open. */
 export function canCommitPendingModel(
   pending: ModelOption,
   groups: ReadonlyArray<ProviderGroup>,
 ): boolean {
   return groups.some((group) =>
     group.models.some(
-      (model) => model.key === pending.key && !model.isUnavailable && model.isSelectable,
+      (model) => model.key === pending.key && !model.isUnavailable && !model.isHidden,
     ),
   );
 }
 
-/**
- * Primary and selected providers start open; all other catalogs start closed.
- * A user's disclosure tap inverts that default until the picker is dismissed.
- */
 export function providerSectionIsCollapsed(input: {
   readonly defaultExpanded: boolean;
   readonly hasExpansionOverride: boolean;

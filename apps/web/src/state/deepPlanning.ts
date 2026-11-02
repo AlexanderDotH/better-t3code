@@ -7,14 +7,14 @@ import {
 import {
   CommandId,
   DEEP_PLAN_WS_METHODS,
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type DeepPlanRun,
   type EnvironmentId,
   type ModelSelection,
   type ThreadId,
 } from "@t3tools/contracts";
 import { approveDeepPlanImplementation } from "@t3tools/client-runtime/deep-planning";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -27,7 +27,7 @@ const deepPlanningEnvironment = {
   }),
   dispatchCommand: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "web:deep-plan:dispatch",
-    tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+    tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   }),
   getRun: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "web:deep-plan:get-run",

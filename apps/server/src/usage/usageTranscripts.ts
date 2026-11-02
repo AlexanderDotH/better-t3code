@@ -39,14 +39,6 @@ export interface UsageRecord {
   readonly dedupeKey: string | null;
 }
 
-const EMPTY_TOTALS: UsageTokenTotals = {
-  uncachedInputTokens: 0,
-  cachedInputTokens: 0,
-  cacheCreationTokens: 0,
-  outputTokens: 0,
-  reasoningTokens: 0,
-};
-
 const EMPTY_DIAGNOSTICS: MutableUsageContextDiagnostics = {
   nativeForks: 0,
   compactHandoffs: 0,
@@ -90,16 +82,6 @@ function parseTimestampMs(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
-}
-
-export function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {
-  return {
-    uncachedInputTokens: a.uncachedInputTokens + b.uncachedInputTokens,
-    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
-    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
-    reasoningTokens: a.reasoningTokens + b.reasoningTokens,
-  };
 }
 
 export function totalTokens(totals: UsageTokenTotals): number {
@@ -158,19 +140,6 @@ function contentFreeDiagnostics(
 }
 
 /**
- * Cheap substring gate applied before `JSON.parse`.
- *
- * Transcripts are mostly tool output; only a minority of lines carry usage. On
- * a 30-day window this skips roughly half the lines outright and is worth about
- * an order of magnitude.
- */
-export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
-  if (provider === "grok") return line.includes('"turn_completed"');
-  return line.includes('"token_count"');
-}
-
-/**
  * Grok reports cost in integer ticks where `1 USD = 10^10` ticks. See Grok
  * headless `total_cost_usd_ticks`. Convert to dollars for pricing.
  */
@@ -180,10 +149,6 @@ function grokCostTicksToUsd(ticks: unknown): number | null {
   if (typeof ticks !== "number" || !Number.isFinite(ticks) || ticks < 0) return null;
   return ticks / GROK_COST_USD_TICKS_PER_DOLLAR;
 }
-
-/* -------------------------------------------------------------------------- */
-/* Claude Code                                                                */
-/* -------------------------------------------------------------------------- */
 
 export interface ClaudeScanState {
   callKind: UsageCallKind;
@@ -220,14 +185,7 @@ function takeClaudeDiagnostics(state: ClaudeScanState): UsageContextDiagnostics 
   return Object.values(diagnostics).some((value) => (value ?? 0) > 0) ? diagnostics : undefined;
 }
 
-/**
- * Parses one line of a Claude Code transcript.
- *
- * T3 Code writes one record per assistant *content block*, and every one of
- * those records repeats the same complete `usage` object for the parent
- * message. Summing them overcounts by roughly 2.4x on a real workload, so the
- * caller must drop repeats by `dedupeKey` and keep the first.
- */
+/** Claude repeats usage for each content block; callers keep the first record per dedupeKey. */
 export function parseClaudeLine(
   line: string,
   state: ClaudeScanState = initialClaudeScanState(),
@@ -241,7 +199,7 @@ export function parseClaudeLine(
   return parseClaudeRecord(parsed, state);
 }
 
-export function parseClaudeRecord(
+function parseClaudeRecord(
   parsed: unknown,
   state: ClaudeScanState = initialClaudeScanState(),
 ): UsageRecord | null {
@@ -324,10 +282,6 @@ export function parseClaudeRecord(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Codex                                                                      */
-/* -------------------------------------------------------------------------- */
-
 /**
  * Rolling state for a single Codex rollout file.
  *
@@ -364,13 +318,7 @@ export function initialCodexScanState(): CodexScanState {
   };
 }
 
-/**
- * A forked or subagent rollout opens with the parent's full history copied in,
- * every line re-stamped to the fork instant. Those copies are written in one
- * synchronous burst (observed gaps 0-40ms), while the child's first genuine
- * usage event only lands after a real model turn (observed 5s+). One second of
- * separation splits the two cleanly; `ccusage` uses the same threshold.
- */
+/** Parent history is copied in a short burst; a one-second gap marks genuine child usage. */
 const FORK_COPY_MAX_GAP_MS = 1000;
 
 /** Whether a `session_meta` payload marks the rollout as a fork or subagent. */
@@ -457,14 +405,7 @@ function recordSubagentResultSize(payload: Record<string, unknown>, state: Codex
   );
 }
 
-/**
- * Feeds one line of a Codex rollout into `state`, returning a record when the
- * line was a usage event.
- *
- * Deltas come from `last_token_usage`. Summing those across a session
- * reconciles with the session's final `total_token_usage`, provided
- * consecutive duplicate events are dropped, which this does.
- */
+/** Sum last_token_usage deltas and drop consecutive duplicate events to match session totals. */
 export function parseCodexLine(line: string, state: CodexScanState): UsageRecord | null {
   let parsed: unknown;
   try {
@@ -475,7 +416,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   return parseCodexRecord(parsed, state);
 }
 
-export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord | null {
+function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord | null {
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
@@ -608,10 +549,6 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Grok Build                                                                 */
-/* -------------------------------------------------------------------------- */
-
 interface GrokUsageTotals {
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -655,15 +592,7 @@ function grokTotalsToUsage(totals: GrokUsageTotals): UsageTokenTotals {
   };
 }
 
-/**
- * Parses one line of a Grok Build `updates.jsonl` session log.
- *
- * Usage lands on `turn_completed` session updates. Per-model breakdowns live
- * under `usage.modelUsage`; when present each model becomes its own record.
- *
- * Returns every record for the line (0 or more). Callers stream line-by-line
- * and flatten.
- */
+/** Return one usage record per model from turn_completed updates, or the aggregate fallback. */
 export function parseGrokLine(line: string): readonly UsageRecord[] {
   let parsed: unknown;
   try {
@@ -674,7 +603,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   return parseGrokRecord(parsed);
 }
 
-export function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
+function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   if (typeof parsed !== "object" || parsed === null) return [];
 
   const record = parsed as Record<string, unknown>;
@@ -743,14 +672,8 @@ export function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
     ];
   }
 
-  // Cost allocation:
-  // 1. Emitted models with their own costUsdTicks keep those values.
-  // 2. Remaining aggregate cost (top-level minus those per-model ticks,
-  //    clamped at 0) is pro-rated across emitted models that lack ticks,
-  //    by token share among the unticked models only.
-  // 3. When no model has per-model ticks, remaining equals the full
-  //    aggregate and every emitted model gets a token-share slice.
-  // Zero-token rows are never emitted and never count toward used ticks.
+  // Preserve reported per-model costs, then divide the remaining aggregate among
+  // unticked models by token share. Zero-token rows take no share.
   const topLevelCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
   let usedTickedCostUsd = 0;
   let untickedTokenDenominator = 0;
@@ -790,5 +713,3 @@ export function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   }
   return results;
 }
-
-export { EMPTY_TOTALS };

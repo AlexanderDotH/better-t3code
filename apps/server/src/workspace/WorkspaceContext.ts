@@ -355,7 +355,7 @@ export class WorkspaceContext extends Context.Service<
   }
 >()("t3/workspace/WorkspaceContext") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;

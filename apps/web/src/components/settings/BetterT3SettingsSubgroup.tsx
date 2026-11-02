@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   BETTER_T3_SETTINGS_SUBGROUPS,
   getBetterT3SettingsSubgroupForTarget,
@@ -8,11 +9,9 @@ import * as Schema from "effect/Schema";
 import { ChevronRightIcon } from "lucide-react";
 import {
   createContext,
-  useCallback,
   useContext,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -49,7 +48,7 @@ export function BetterT3SettingsExpansionProvider({ children }: { readonly child
     () => sessionExpandedGroups ?? sanitizeBetterT3ExpandedSettingsGroups(storedGroups),
   );
   const expandedGroupsRef = useRef(expandedGroups);
-  const setExpanded = useCallback(
+  const setExpanded = useStableCallback(
     (groupId: BetterT3SettingsSubgroupId, expanded: boolean) => {
       const current = expandedGroupsRef.current;
       if (current.includes(groupId) === expanded) return;
@@ -68,25 +67,18 @@ export function BetterT3SettingsExpansionProvider({ children }: { readonly child
         sessionExpandedGroups = next;
       }
     },
-    [storeGroups],
   );
-  const openForTarget = useCallback(
-    (targetId: string) => {
-      const group = getBetterT3SettingsSubgroupForTarget(targetId);
-      if (!group?.collapsible) return false;
-      setExpanded(group.id, true);
-      return true;
-    },
-    [setExpanded],
-  );
-  const value = useMemo(
-    () => ({
-      isExpanded: (groupId: BetterT3SettingsSubgroupId) => expandedGroups.includes(groupId),
-      setExpanded,
-      openForTarget,
-    }),
-    [expandedGroups, openForTarget, setExpanded],
-  );
+  const openForTarget = useStableCallback((targetId: string) => {
+    const group = getBetterT3SettingsSubgroupForTarget(targetId);
+    if (!group?.collapsible) return false;
+    setExpanded(group.id, true);
+    return true;
+  });
+  const value = {
+    isExpanded: (groupId: BetterT3SettingsSubgroupId) => expandedGroups.includes(groupId),
+    setExpanded,
+    openForTarget,
+  };
   return (
     <BetterT3SettingsExpansionContext value={value}>{children}</BetterT3SettingsExpansionContext>
   );
@@ -127,41 +119,46 @@ function BetterT3SettingsSubgroupContent({
 }: BetterT3SettingsSubgroupProps & { readonly expansion: BetterT3SettingsExpansion }) {
   const translator = useInterfaceTranslator();
   const group = BETTER_T3_SETTINGS_SUBGROUPS.find((candidate) => candidate.id === groupId);
-  const expanded = !group?.collapsible || expansion.isExpanded(groupId);
+  const targetId = useSettingsSearchTargetId();
+  const [reveal, setReveal] = useState({
+    targetId,
+    error: revealOnError,
+    expanded:
+      revealOnError ||
+      (targetId !== null && getBetterT3SettingsSubgroupForTarget(targetId)?.id === groupId),
+  });
+  if (reveal.targetId !== targetId || reveal.error !== revealOnError) {
+    setReveal({
+      targetId,
+      error: revealOnError,
+      expanded:
+        reveal.expanded ||
+        (targetId !== null && getBetterT3SettingsSubgroupForTarget(targetId)?.id === groupId) ||
+        (!reveal.error && revealOnError),
+    });
+  }
+  const searchMatch =
+    targetId !== null && getBetterT3SettingsSubgroupForTarget(targetId)?.id === groupId;
+  const expanded =
+    !group?.collapsible || expansion.isExpanded(groupId) || reveal.expanded || searchMatch;
   const [wasExpanded, setWasExpanded] = useState(expanded);
   if (expanded && !wasExpanded) setWasExpanded(true);
-  const setExpanded = useCallback(
-    (next: boolean) => {
-      expansion.setExpanded(groupId, next);
-    },
-    [expansion, groupId],
-  );
-  const targetId = useSettingsSearchTargetId();
+  const setExpanded = useStableCallback((next: boolean) => {
+    setReveal({ targetId, error: revealOnError, expanded: false });
+    expansion.setExpanded(groupId, next);
+  });
   const retryTarget = useRetrySettingsSearchTarget();
-  const previousError = useRef(revealOnError);
   const mountedExpandedContent = useRef(false);
   const id = useId();
   const headingId = `${id}-heading`;
   const panelId = `${id}-panel`;
 
-  useLayoutEffect(() => {
-    if (
-      group?.collapsible &&
-      targetId &&
-      getBetterT3SettingsSubgroupForTarget(targetId)?.id === groupId
-    ) {
-      setExpanded(true);
-    }
-  }, [group?.collapsible, groupId, setExpanded, targetId]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retries DOM search-target focus after a collapsed section mounts its content
   useLayoutEffect(() => {
     if (!group?.collapsible || !expanded) return;
     if (mountedExpandedContent.current) retryTarget();
     mountedExpandedContent.current = true;
   }, [expanded, group?.collapsible, retryTarget]);
-  useLayoutEffect(() => {
-    if (revealOnError && !previousError.current) setExpanded(true);
-    previousError.current = revealOnError;
-  }, [revealOnError, setExpanded]);
 
   const label = title ?? (group ? translator.message(group.titleMessageId) : groupId);
   const body = (
@@ -193,7 +190,7 @@ function BetterT3SettingsSubgroupContent({
           render={
             <button
               type="button"
-              className="flex min-h-9 w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 sm:px-4 [@media(pointer:coarse)]:min-h-11"
+              className="flex min-h-9 w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 sm:px-4 [@media(pointer:coarse)]:min-h-11"
             />
           }
           aria-controls={panelId}

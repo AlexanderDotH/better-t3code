@@ -1,5 +1,4 @@
-// @vitest-environment jsdom
-
+import { installMemoryStorage } from "../../../test/memoryStorage";
 import {
   BETTER_T3_FEATURE_REGISTRY,
   DEFAULT_UNIFIED_SETTINGS,
@@ -8,18 +7,23 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 const fixture = vi.hoisted(() => ({
   settings: new Map<string, UnifiedSettings>(),
   updateSettings: vi.fn(),
-  listProfiles: vi.fn(async () => ({ _tag: "Success", value: { profiles: [] } })),
+  saveSettings: vi.fn(async (_request: unknown) => ({
+    _tag: "Success" as const,
+    value: undefined,
+  })),
+  profilesQuery: vi.fn((input: { environmentId: string; input: object }) => input),
   environments: [
     { environmentId: "local", label: "Local" },
     { environmentId: "remote", label: "Remote" },
   ],
+
   projects: [
     {
       environmentId: "local",
@@ -51,7 +55,24 @@ vi.mock("../../state/entities", async (importOriginal) => ({
   useProjects: () => fixture.projects,
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => fixture.listProfiles,
+  useAtomCommand: () => fixture.saveSettings,
+}));
+vi.mock("../../state/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../state/server")>();
+  return {
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      projectSpeechProfilesQuery: fixture.profilesQuery,
+    },
+  };
+});
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({
+    data: { profiles: [] },
+    error: null,
+    isPending: false,
+    refresh: vi.fn(),
+  }),
 }));
 vi.mock("../../hooks/useInterfaceTranslator", async () => {
   const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
@@ -85,10 +106,11 @@ import { Collapsible } from "../ui/collapsible";
 const translate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
 
 it("shows each voice setting once and keeps credentials, models, and projects in the selected environment", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  installMemoryStorage();
   window.localStorage.clear();
   fixture.updateSettings.mockClear();
-  fixture.listProfiles.mockClear();
+  fixture.saveSettings.mockClear();
+  fixture.profilesQuery.mockClear();
   for (const environmentId of ["local", "remote"]) {
     fixture.settings.set(environmentId, {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -122,17 +144,18 @@ it("shows each voice setting once and keeps credentials, models, and projects in
       }
     />
   );
+
   let renderer: ReactTestRenderer | undefined;
   try {
     await act(() => {
       renderer = create(content("remote"));
     });
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType(Collapsible)
         .find((node) => node.props["data-better-t3-subgroup"] === "voice-translation")!
-        .props.onOpenChange(true),
-    );
+        .props.onOpenChange(true);
+    });
     expect(fixture.updateSettings).not.toHaveBeenCalled();
     const voiceRegion = renderer!.root.findByProps({ id: "better-t3-group-voice", role: "region" });
     const composerRegion = renderer!.root.findByProps({
@@ -164,32 +187,46 @@ it("shows each voice setting once and keeps credentials, models, and projects in
     expect(keyInput().props.value).toBe("remote-key");
     expect(JSON.stringify(renderer!.toJSON())).toContain("Remote project");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Local project");
-    expect(fixture.listProfiles).toHaveBeenCalledExactlyOnceWith({
-      environmentId: "remote",
-      input: {},
-    });
+    expect(fixture.profilesQuery).toHaveBeenCalled();
+    expect(
+      fixture.profilesQuery.mock.calls.every(([request]) => request.environmentId === "remote"),
+    ).toBe(true);
 
-    await act(() => keyInput().props.onChange({ target: { value: "updated-remote-key" } }));
-    await act(() => keyInput().props.onBlur());
-    expect(fixture.updateSettings).toHaveBeenLastCalledWith("remote", {
-      speechTranscription: {
-        assemblyAi: { apiKey: { value: "updated-remote-key", valueRedacted: false } },
+    await act(async () => {
+      await keyInput().props.onChange({ target: { value: "updated-remote-key" } });
+    });
+    await act(async () => {
+      await keyInput().props.onBlur();
+    });
+    expect(fixture.saveSettings).toHaveBeenLastCalledWith({
+      environmentId: "remote",
+      input: {
+        patch: {
+          speechTranscription: {
+            assemblyAi: { apiKey: { value: "updated-remote-key", valueRedacted: false } },
+          },
+        },
       },
     });
-    await act(() =>
-      renderer!.root.findByProps({ "aria-label": "Voice translation model" }).props.onClick(),
-    );
+    await act(async () => {
+      await renderer!.root.findByProps({ "aria-label": "Voice translation model" }).props.onClick();
+    });
     expect(fixture.updateSettings).toHaveBeenLastCalledWith("remote", {
       voiceTranslationModelSelection: { instanceId: "codex", model: "selected-voice-model" },
     });
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("button")
         .find((node) => node.props["aria-label"] === "Reset AssemblyAI API key to default")!
-        .props.onClick({ stopPropagation: vi.fn(), nativeEvent: {} }),
-    );
-    expect(fixture.updateSettings).toHaveBeenLastCalledWith("remote", {
-      speechTranscription: { assemblyAi: { apiKey: { value: "", valueRedacted: false } } },
+        .props.onClick({ stopPropagation: vi.fn(), nativeEvent: {} });
+    });
+    expect(fixture.saveSettings).toHaveBeenLastCalledWith({
+      environmentId: "remote",
+      input: {
+        patch: {
+          speechTranscription: { assemblyAi: { apiKey: { value: "", valueRedacted: false } } },
+        },
+      },
     });
 
     fixture.settings.set("remote", {
@@ -199,25 +236,39 @@ it("shows each voice setting once and keeps credentials, models, and projects in
         model: "saved-remote-model",
       },
     });
-    await act(() => renderer!.update(content("remote")));
+    await act(async () => {
+      await renderer!.update(content("remote"));
+    });
     expect(JSON.stringify(renderer!.toJSON())).toContain("saved-remote-model");
     expect(JSON.stringify(renderer!.toJSON())).toContain("Unavailable");
-    expect(fixture.listProfiles).toHaveBeenCalledTimes(1);
-    await act(() => keyInput().props.onChange({ target: { value: "unsaved-remote-draft" } }));
-    await act(() => renderer!.update(content("local")));
+    expect(
+      fixture.profilesQuery.mock.calls.every(([request]) => request.environmentId === "remote"),
+    ).toBe(true);
+    await act(async () => {
+      await keyInput().props.onChange({ target: { value: "unsaved-remote-draft" } });
+    });
+    await act(async () => {
+      await renderer!.update(content("local"));
+    });
     expect(keyInput().props.value).toBe("local-key");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("saved-remote-model");
     expect(JSON.stringify(renderer!.toJSON())).toContain("Local project");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Remote project");
-    expect(fixture.listProfiles).toHaveBeenLastCalledWith({ environmentId: "local", input: {} });
+    expect(fixture.profilesQuery).toHaveBeenLastCalledWith({ environmentId: "local", input: {} });
 
-    await act(() => renderer!.update(content("local", true)));
+    const requestsBeforeDisabled = fixture.profilesQuery.mock.calls.length;
+    await act(async () => {
+      await renderer!.update(content("local", true));
+    });
+    expect(fixture.profilesQuery).toHaveBeenCalledTimes(requestsBeforeDisabled);
     expect(keyInput().props.disabled).toBe(true);
     expect(
       renderer!.root.findByProps({ "aria-label": "Voice translation model" }).props.disabled,
     ).toBe(true);
   } finally {
-    await act(() => renderer?.unmount());
+    await act(async () => {
+      await renderer?.unmount();
+    });
     vi.unstubAllGlobals();
   }
 });

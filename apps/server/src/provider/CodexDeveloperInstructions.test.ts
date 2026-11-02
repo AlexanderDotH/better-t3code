@@ -1,199 +1,94 @@
-import { WORKSPACE_CONTEXT_MAX_QUERIES, WORKSPACE_CONTEXT_MAX_READS } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeAssert from "node:assert/strict";
+
+import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
-  buildCodexDeveloperInstructions as buildModeInstructions,
+  CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
 
-const buildCodexDeveloperInstructions = (
-  mode: Parameters<typeof buildModeInstructions>[0],
-  runtime: Parameters<typeof buildCodexAdditionalContext>[0],
-  tools?: Parameters<typeof buildCodexAdditionalContext>[1],
-) =>
-  [
-    buildModeInstructions(mode),
-    ...Object.values(buildCodexAdditionalContext(runtime, tools, mode)).map((entry) => entry.value),
-  ].join("\n\n");
+describe("buildCodexAdditionalContext", () => {
+  describe.each([
+    { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
+  ])("with runtime $model", (runtime) => {
+    it.each([undefined, { browser: true, device: true }])(
+      "keeps every entry within Codex's per-entry cap with tools %j",
+      (availability) => {
+        const context = buildCodexAdditionalContext(runtime, availability);
 
-const preChangeDefaultFixture = {
-  characters: 2_606,
-  estimatedTokens: Math.ceil(2_606 / 4),
-};
-const estimatedTokens = (value: string) => Math.ceil(value.length / 4);
-const workspaceBatchGuidance = `Batch at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries or ${WORKSPACE_CONTEXT_MAX_READS} reads per call; split larger sets and use \`workspace_context\` only for mixed batches.`;
+        for (const [key, entry] of Object.entries(context)) {
+          // Codex counts ceil(UTF-8 bytes / 4) tokens, excluding keys and wrappers.
+          const bytes = Buffer.byteLength(entry.value, "utf8");
+          const limit = CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES;
+          NodeAssert.ok(
+            bytes <= limit,
+            `${key}: ${bytes} UTF-8 bytes exceeds Codex's ${limit}-byte per-entry cap by ${bytes - limit} bytes; split the instructions into separate entries to avoid silent truncation`,
+          );
+        }
+      },
+    );
+  });
+});
 
-describe("buildCodexDeveloperInstructions delegation history policy", () => {
-  for (const interactionMode of ["default", "plan"] as const) {
-    it(`defaults automatic ${interactionMode} delegation to a self-contained brief without history`, () => {
-      const instructions = buildCodexDeveloperInstructions(interactionMode, {
-        model: "gpt-5.6",
+describe("Codex runtime context", () => {
+  it("describes Markdown media support in the runtime context in both modes", () => {
+    {
+      const instructions = runtimeInstructions({
+        model: "gpt-5.3-codex",
         reasoningEffort: "high",
       });
+      NodeAssert.match(
+        instructions,
+        /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link any other file.*absolute path.*files viewer.*<\/runtime_info>/,
+      );
+    }
+  });
 
-      expect(instructions).toContain('fork_turns: "none"');
-      expect(instructions).toContain("self-contained brief");
-      expect(instructions).toContain("positive fork_turns count");
-      expect(instructions).toContain("full history only when explicitly requested");
-      expect(instructions).toContain("thread_context");
-      expect(instructions).not.toMatch(/at most \d+ (?:direct )?(?:children|agents|subagents)/i);
-    });
-  }
-
-  it("keeps baseline instructions thirty percent below the pre-change fixture", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.6",
-      reasoningEffort: "high",
+  it("flattens multiline metadata into single-line runtime info", () => {
+    const instructions = runtimeInstructions({
+      model: "gpt\n5.3\ncodex",
+      reasoningEffort: " high\neffort ",
     });
 
-    // Runtime guards were added after the delegation-size baseline was captured.
-    const baselineInstructions = instructions.replace(
-      /<(pull_request_linking|chat_mode|deep_plan)>[\s\S]*?<\/\1>/gu,
-      "",
-    );
-    expect(baselineInstructions.length).toBeLessThanOrEqual(
-      Math.floor(preChangeDefaultFixture.characters * 0.7),
-    );
-    expect(estimatedTokens(baselineInstructions)).toBeLessThanOrEqual(
-      Math.floor(preChangeDefaultFixture.estimatedTokens * 0.7),
-    );
-  });
-
-  it("keeps all eight self-contained briefs below half the legacy inherited input", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.6",
-      reasoningEffort: "high",
-    });
-    const parentTranscript = `Goal and prior evidence\n${"historical tool output ".repeat(8_000)}`;
-    const briefs = Array.from(
-      { length: 8 },
-      (_, index) =>
-        `Workstream ${index + 1}: inspect its owned files, preserve behavior, and return focused acceptance evidence.`,
-    );
-    const legacyProcessedInput = briefs.reduce(
-      (total, brief) => total + estimatedTokens(`${instructions}\n${parentTranscript}\n${brief}`),
-      0,
-    );
-    const compactProcessedInput = briefs.reduce(
-      (total, brief) => total + estimatedTokens(`${instructions}\n${brief}`),
-      0,
-    );
-
-    expect(briefs).toHaveLength(8);
-    expect(briefs.every((brief) => brief.includes("acceptance evidence"))).toBe(true);
-    expect(compactProcessedInput).toBeLessThanOrEqual(legacyProcessedInput * 0.5);
-  });
-
-  it("adds only non-duplicated guidance for capabilities attached to this session", () => {
-    const instructions = buildCodexDeveloperInstructions(
-      "default",
-      { model: "gpt-5.6", reasoningEffort: "high" },
-      {
-        preview: false,
-        workspace: false,
-        workspaceWrite: false,
-        coordination: true,
-        threadContext: true,
-        projectMemory: false,
-        knowledgeGraph: false,
-      },
-    );
-
-    expect(instructions).not.toContain("preview_status");
-    expect(instructions).not.toContain("workspace_context");
-    expect(instructions).not.toContain("workspace_find");
-    expect(instructions).not.toContain("workspace_read");
-    expect(instructions).not.toContain("Project memory");
-    expect(instructions).toContain("thread_context");
-    expect(instructions).not.toMatch(/## (?:Coordination|Knowledge graph|Workspace context)/);
-  });
-
-  it("requires batched workspace discovery and recommends edits only for writable profiles", () => {
-    const tools = {
-      preview: false,
-      workspace: true,
-      workspaceWrite: true,
-      coordination: true,
-      threadContext: true,
-      projectMemory: false,
-      knowledgeGraph: true,
-    };
-    const instructions = buildCodexDeveloperInstructions(
-      "default",
-      { model: "gpt-5.6", reasoningEffort: "high" },
-      tools,
-    );
-
-    expect(instructions).toContain("workspace_find");
-    expect(instructions).toContain("workspace_read");
-    expect(instructions).toContain("workspace_context");
-    expect(instructions).toContain(workspaceBatchGuidance);
-    expect(instructions).toContain("workspace_edit");
-    expect(instructions).toMatch(/new files.*write mode.*create.*exact replacements/i);
-    expect(instructions).toMatch(/large edits.*formatters.*generators.*binaries/i);
-
-    const plan = buildCodexDeveloperInstructions(
-      "plan",
-      { model: "gpt-5.6", reasoningEffort: "high" },
-      tools,
-    );
-    expect(plan).toContain("workspace_find");
-    expect(plan).toContain("workspace_read");
-    expect(plan).toContain("workspace_context");
-    expect(plan).toContain(workspaceBatchGuidance);
-    expect(plan).not.toContain("workspace_edit");
-    expect(plan).not.toContain("Prefer `workspace_edit`");
-  });
-
-  it("never recommends workspace edits for read-only workspace profiles", () => {
-    const instructions = buildCodexDeveloperInstructions(
-      "default",
-      { model: "gpt-5.6", reasoningEffort: "high" },
-      {
-        preview: false,
-        workspace: true,
-        workspaceWrite: false,
-        coordination: false,
-        threadContext: true,
-        projectMemory: false,
-        knowledgeGraph: false,
-      },
-    );
-
-    expect(instructions).toContain("workspace_find");
-    expect(instructions).toContain("workspace_read");
-    expect(instructions).toContain("workspace_context");
-    expect(instructions).not.toContain("workspace_edit");
-  });
-
-  it("keeps unique preview and project-memory safety policy when those tools exist", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.6",
-      reasoningEffort: "high",
-    });
-
-    expect(instructions).toContain("preview_status");
-    expect(instructions).toContain("project_memory");
-    expect(instructions).toContain("verified durable facts");
-    expect(instructions).toContain("Never store credentials");
-    expect(instructions).not.toMatch(/## (?:Coordination|Knowledge graph|Workspace context)/);
-    const context = buildCodexAdditionalContext({ model: "gpt-5.6", reasoningEffort: "high" });
-    expect(context.t3_code_delegation?.value).toContain("## Delegation history");
-    expect(context.t3_code_runtime?.value).toContain("<runtime_info>");
-    expect(buildModeInstructions("default")).not.toContain("## Delegation history");
+    NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
+    NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
 });
 
-describe("Codex application context", () => {
-  it("preserves device guidance separately from collaboration-mode text", () => {
-    const context = buildCodexAdditionalContext(
-      { model: "gpt-5.6", reasoningEffort: "high" },
-      { browser: false, device: true },
+describe("Codex orchestration context", () => {
+  it("routes subagents native first, delegate_task for the rest", () => {
+    const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
+      .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+      .map(([, entry]) => entry.value)
+      .join("\n");
+
+    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
+    NodeAssert.ok(orchestration.includes("A native type running another provider's model"));
+    NodeAssert.ok(
+      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
     );
-    expect(context.t3_code_tools?.value).toContain("device_open");
-    expect(context.t3_code_tools?.value).not.toContain("preview_status");
-    expect(buildModeInstructions("default")).not.toMatch(
-      /device_open|workspace_find|fork_turns|runtime_info/,
-    );
+    NodeAssert.ok(orchestration.includes("never a `t3_thread_send`"));
+    NodeAssert.ok(!orchestration.includes("inheritedOptions"));
+    NodeAssert.ok(!orchestration.includes("Prefer native"));
+    // The ACP terminal fallback is ACP-only; Codex agents never need it.
+    NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
   });
 });
+
+describe("Codex device context", () => {
+  it("adds the shared device block only when the session holds device access", () => {
+    const tools = (device: boolean) =>
+      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser: true, device }).t3_code_tools
+        ?.value ?? "";
+
+    NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
+    NodeAssert.ok(!tools(true).includes("ToolSearch"));
+    NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+  });
+});
+
+function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
+  return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
+}

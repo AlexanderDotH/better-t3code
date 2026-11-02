@@ -409,7 +409,7 @@ describe("sanitizeMobilePreferences", () => {
     return Effect.gen(function* () {
       yield* dependencies.database.savePreferencesJson(
         JSON.stringify({ composerUsageLimitsVisible: "true", baseFontSize: 18 }),
-        Date.now(),
+        1_787_169_600_000,
       );
       const store = yield* make();
       const restored = yield* store.load;

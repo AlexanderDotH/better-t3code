@@ -1,5 +1,3 @@
-import { useMemo } from "react";
-
 import { projectEnvironment } from "~/state/projects";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
@@ -19,9 +17,28 @@ import type { useGitWorkspaceDeckSession } from "./GitWorkspaceDeckController.se
 export function useGitWorkspaceDeckQueries(input: {
   readonly gitAvailable: boolean;
   readonly isDesktop: boolean;
-  readonly props: GitWorkspaceDeckControllerProps;
+  readonly props: Pick<
+    GitWorkspaceDeckControllerProps,
+    "activeTurn" | "cwd" | "environmentId" | "legacyStatus" | "threadId"
+  >;
   readonly resolvedActiveCard: ChatWorkspaceCardId;
-  readonly session: ReturnType<typeof useGitWorkspaceDeckSession>;
+  readonly session: Pick<
+    ReturnType<typeof useGitWorkspaceDeckSession>,
+    | "activeTab"
+    | "bufferFlushQueue"
+    | "commitPatchTarget"
+    | "currentSelection"
+    | "diffs"
+    | "expandedCard"
+    | "historyCursor"
+    | "historyPath"
+    | "historyRefName"
+    | "historySnapshotOid"
+    | "rebasePlanTarget"
+    | "selectedChangeId"
+    | "selectedCommitOid"
+    | "selectedFilePath"
+  >;
 }) {
   const { props, session } = input;
   const scopeReady =
@@ -45,10 +62,7 @@ export function useGitWorkspaceDeckQueries(input: {
   );
   const projection = workbenchQuery.data;
   const contractSnapshot = projection?.snapshot ?? null;
-  const snapshot = useMemo(
-    () => (contractSnapshot ? mapSnapshot(contractSnapshot, props.legacyStatus) : null),
-    [contractSnapshot, props.legacyStatus],
-  );
+  const snapshot = contractSnapshot ? mapSnapshot(contractSnapshot, props.legacyStatus) : null;
   const insightsQuery = useEnvironmentQuery(
     scopeReady &&
       shouldLoadGitRepositoryInsights({
@@ -63,11 +77,8 @@ export function useGitWorkspaceDeckQueries(input: {
         })
       : null,
   );
-  const insights = useMemo(() => mapInsights(insightsQuery.data), [insightsQuery.data]);
-  const changes = useMemo(
-    () => mapChanges(contractSnapshot, session.diffs),
-    [contractSnapshot, session.diffs],
-  );
+  const insights = mapInsights(insightsQuery.data);
+  const changes = mapChanges(contractSnapshot, session.diffs);
   const selectedChange =
     changes.find((candidate) => candidate.id === session.selectedChangeId) ?? null;
   const changesDiffQuery = useEnvironmentQuery(

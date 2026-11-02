@@ -1,27 +1,134 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-
+import {
+  GitCommandError,
+  GitPreparePullRequestThreadResult,
+  GitRunStackedActionInput,
+} from "./git.ts";
 import {
   VcsCreateWorktreeInput,
   GitPreparePullRequestThreadInput,
-  GitPreparePullRequestThreadResult,
   GitRunStackedActionResult,
-  GitRunStackedActionInput,
   GitResolvePullRequestResult,
   TextGenerationError,
 } from "./git.ts";
-
-const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
+const decodeTextGenerationError = Schema.decodeUnknownSync(TextGenerationError);
+const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
+const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
+
+const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCommandError));
 const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadResult,
 );
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
-const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
-const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
-const decodeTextGenerationError = Schema.decodeUnknownSync(TextGenerationError);
+
+describe("GitCommandError", () => {
+  it("decodes an unknown failure reason as absent", () => {
+    const error = decodeGitCommandError({
+      _tag: "GitCommandError",
+      operation: "GitVcsDriver.createWorktree",
+      command: "git",
+      cwd: "/repo",
+      detail: "git worktree add failed",
+      reason: "added_by_a_newer_server",
+    });
+
+    expect(error.reason).toBeUndefined();
+    expect(error.message).toBe(
+      "Git command failed in GitVcsDriver.createWorktree (/repo): git worktree add failed",
+    );
+  });
+});
+
+describe("GitPreparePullRequestThreadResult", () => {
+  it("defaults legacy responses to the pull request head", () => {
+    const parsed = decodePreparePullRequestThreadResult({
+      pullRequest: {
+        number: 42,
+        title: "PR threads",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/pr-threads",
+        state: "open",
+      },
+      branch: "feature/pr-threads",
+      worktreePath: "/tmp/pr-threads",
+    });
+
+    expect(parsed.isOnPullRequestHead).toBe(true);
+  });
+
+  it("preserves an explicit stale pull request checkout result", () => {
+    const parsed = decodePreparePullRequestThreadResult({
+      pullRequest: {
+        number: 42,
+        title: "PR threads",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/pr-threads",
+        state: "open",
+      },
+      branch: "feature/pr-threads",
+      worktreePath: "/tmp/pr-threads",
+      isOnPullRequestHead: false,
+    });
+
+    expect(parsed.isOnPullRequestHead).toBe(false);
+  });
+});
+
+describe("GitRunStackedActionInput", () => {
+  it("preserves leading and trailing whitespace in file paths", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      filePaths: [" leading.txt", "trailing.txt "],
+    });
+
+    expect(parsed.filePaths).toEqual([" leading.txt", "trailing.txt "]);
+  });
+
+  it("accepts explicit stacked actions and requires a client-provided actionId", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "create_pr",
+    });
+
+    expect(parsed.actionId).toBe("action-1");
+    expect(parsed.action).toBe("create_pr");
+  });
+  it("preserves legacy filePaths while accepting standard-index commit selections", () => {
+    const legacy = decodeRunStackedActionInput({
+      actionId: "legacy-action",
+      cwd: "/repo",
+      action: "commit",
+      filePaths: ["src/legacy.ts"],
+    });
+    const staged = decodeRunStackedActionInput({
+      actionId: "staged-action",
+      cwd: "/repo",
+      action: "commit_push",
+      commitSelection: { mode: "staged" },
+    });
+    const selected = decodeRunStackedActionInput({
+      actionId: "selected-action",
+      cwd: "/repo",
+      action: "commit",
+      commitSelection: { mode: "paths", paths: ["src/deck.tsx"] },
+    });
+
+    expect(legacy.filePaths).toEqual(["src/legacy.ts"]);
+    expect(legacy.commitSelection).toBeUndefined();
+    expect(staged.commitSelection).toEqual({ mode: "staged" });
+    expect(selected.commitSelection).toEqual({ mode: "paths", paths: ["src/deck.tsx"] });
+  });
+});
 
 describe("TextGenerationError", () => {
   it("keeps legacy errors compatible and decodes typed model failures", () => {
@@ -99,43 +206,6 @@ describe("GitPreparePullRequestThreadInput", () => {
   });
 });
 
-describe("GitPreparePullRequestThreadResult", () => {
-  it("defaults legacy responses to the pull request head", () => {
-    const parsed = decodePreparePullRequestThreadResult({
-      pullRequest: {
-        number: 42,
-        title: "PR threads",
-        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
-        baseBranch: "main",
-        headBranch: "feature/pr-threads",
-        state: "open",
-      },
-      branch: "feature/pr-threads",
-      worktreePath: "/tmp/pr-threads",
-    });
-
-    expect(parsed.isOnPullRequestHead).toBe(true);
-  });
-
-  it("preserves an explicit stale pull request checkout result", () => {
-    const parsed = decodePreparePullRequestThreadResult({
-      pullRequest: {
-        number: 42,
-        title: "PR threads",
-        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
-        baseBranch: "main",
-        headBranch: "feature/pr-threads",
-        state: "open",
-      },
-      branch: "feature/pr-threads",
-      worktreePath: "/tmp/pr-threads",
-      isOnPullRequestHead: false,
-    });
-
-    expect(parsed.isOnPullRequestHead).toBe(false);
-  });
-});
-
 describe("GitResolvePullRequestResult", () => {
   it("decodes resolved pull request metadata", () => {
     const parsed = decodeResolvePullRequestResult({
@@ -151,45 +221,6 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
-  });
-});
-
-describe("GitRunStackedActionInput", () => {
-  it("accepts explicit stacked actions and requires a client-provided actionId", () => {
-    const parsed = decodeRunStackedActionInput({
-      actionId: "action-1",
-      cwd: "/repo",
-      action: "create_pr",
-    });
-
-    expect(parsed.actionId).toBe("action-1");
-    expect(parsed.action).toBe("create_pr");
-  });
-
-  it("preserves legacy filePaths while accepting standard-index commit selections", () => {
-    const legacy = decodeRunStackedActionInput({
-      actionId: "legacy-action",
-      cwd: "/repo",
-      action: "commit",
-      filePaths: ["src/legacy.ts"],
-    });
-    const staged = decodeRunStackedActionInput({
-      actionId: "staged-action",
-      cwd: "/repo",
-      action: "commit_push",
-      commitSelection: { mode: "staged" },
-    });
-    const selected = decodeRunStackedActionInput({
-      actionId: "selected-action",
-      cwd: "/repo",
-      action: "commit",
-      commitSelection: { mode: "paths", paths: ["src/deck.tsx"] },
-    });
-
-    expect(legacy.filePaths).toEqual(["src/legacy.ts"]);
-    expect(legacy.commitSelection).toBeUndefined();
-    expect(staged.commitSelection).toEqual({ mode: "staged" });
-    expect(selected.commitSelection).toEqual({ mode: "paths", paths: ["src/deck.tsx"] });
   });
 });
 

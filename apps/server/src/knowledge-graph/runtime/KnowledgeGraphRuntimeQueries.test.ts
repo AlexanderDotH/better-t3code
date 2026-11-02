@@ -95,7 +95,7 @@ function serviceStub<T extends object>(overrides: Partial<T>): T {
 function makeQueries(patches: ReadonlyArray<KnowledgeGraphPatchV1>, hasLegacySemanticData = false) {
   const repository = serviceStub<KnowledgeGraphRepository.KnowledgeGraphRepository["Service"]>({
     ensureScope: (resolved) => Effect.succeed(resolved),
-    getSnapshot: () => Effect.succeed(Option.some(snapshot)),
+    getSnapshot: () => Effect.succeedSome(snapshot),
     hasLegacySemanticData: () => Effect.succeed(hasLegacySemanticData),
     listPatchesAfter: () => Effect.succeed(patches),
   });
@@ -242,8 +242,8 @@ it.effect("reads only a bounded source excerpt inside the resolved project scope
       nodeRevision: 2,
     };
     const repository = serviceStub<KnowledgeGraphRepository.KnowledgeGraphRepository["Service"]>({
-      getNodeBundle: () => Effect.succeed(Option.some({ node, evidence: [] })),
-      getSnapshot: () => Effect.succeed(Option.some(snapshot)),
+      getNodeBundle: () => Effect.succeedSome({ node, evidence: [] }),
+      getSnapshot: () => Effect.succeedSome(snapshot),
     });
     const queries = makeKnowledgeGraphRuntimeQueries({
       repository,

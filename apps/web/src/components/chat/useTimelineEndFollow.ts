@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 
 interface TimelineEndFollowOptions {
@@ -14,11 +15,11 @@ interface TimelineEndFollowOptions {
 export function useTimelineEndFollow(options: TimelineEndFollowOptions) {
   const current = useRef<TimelineEndFollowOptions | null>(null);
   const frame = useRef<number | null>(null);
-  const cancel = useCallback(() => {
+  const cancel = useStableCallback(() => {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     frame.current = null;
-  }, []);
-  const schedule = useCallback(() => {
+  });
+  const schedule = useStableCallback(() => {
     if (frame.current !== null || current.current === null) return;
     const identity = current.current.identity;
     frame.current = requestAnimationFrame(() => {
@@ -37,7 +38,8 @@ export function useTimelineEndFollow(options: TimelineEndFollowOptions) {
         void list.scrollToEnd({ animated: false });
       }
     });
-  }, []);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize the timeline scroll position with committed layout changes.
   useLayoutEffect(() => {
     const previous = current.current;
     current.current = options;
@@ -49,6 +51,7 @@ export function useTimelineEndFollow(options: TimelineEndFollowOptions) {
     )
       schedule();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize the timeline scroll position with committed layout changes.
   useLayoutEffect(
     () => () => {
       cancel();

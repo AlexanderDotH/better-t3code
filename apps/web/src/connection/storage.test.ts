@@ -2,8 +2,8 @@ import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId } from "@t3tools/contracts";
-import { ConnectionCatalogDocument, ConnectionTargetStore } from "@t3tools/client-runtime/platform";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -12,13 +12,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
-import {
-  makeBrowserGitHubRoutingPermissions,
-  connectionStorageLayer,
-  upgradeConnectionStorageDatabase,
-  makeCatalogBackend,
-  makeCatalogStore,
-} from "./storage";
+import { upgradeConnectionStorageDatabase } from "./storage";
+import * as ConnectionStorage from "./storage";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -35,40 +30,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-it.effect("reopens the version-5 cache shipped by Better T3", () =>
-  Effect.gen(function* () {
-    const database = { close: vi.fn() };
-    vi.stubGlobal("indexedDB", {
-      open: (_name: string, version: number) => {
-        const request = Object.assign(new EventTarget(), {
-          result: database,
-          error:
-            version < 5
-              ? new DOMException("The existing database is version 5.", "VersionError")
-              : null,
-        });
-        queueMicrotask(() =>
-          request.dispatchEvent(new Event(request.error === null ? "success" : "error")),
-        );
-        return request;
-      },
-    });
-    vi.stubGlobal("window", {
-      desktopBridge: {
-        getConnectionCatalog: async () => JSON.stringify(emptyCatalog),
-        setConnectionCatalog: vi.fn(),
-      },
-    });
-
-    const targets = yield* ConnectionTargetStore.use((store) => store.list).pipe(
-      Effect.provide(connectionStorageLayer),
-    );
-
-    expect(targets).toEqual([]);
-    expect(database.close).toHaveBeenCalledOnce();
-  }),
-);
 
 describe("upgradeConnectionStorageDatabase", () => {
   it("clears only pre-pagination thread snapshots when upgrading from version 4", () => {
@@ -119,7 +80,7 @@ describe("makeCatalogStore", () => {
     Effect.gen(function* () {
       const writes: string[] = [];
       const quarantined: string[] = [];
-      const store = yield* makeCatalogStore({
+      const store = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.succeed("{not-json"),
         write: (raw) => Effect.sync(() => writes.push(raw)),
         quarantine: (raw) => Effect.sync(() => quarantined.push(raw)),
@@ -138,7 +99,7 @@ describe("makeCatalogStore", () => {
         reason: "remote-unavailable",
         detail: "permission denied",
       });
-      const store = yield* makeCatalogStore({
+      const store = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.fail(failure),
         write: () => Effect.void,
       });
@@ -148,26 +109,12 @@ describe("makeCatalogStore", () => {
   );
 });
 
-describe("makeCatalogBackend", () => {
-  it.effect("fails writes when desktop secure storage declines the catalog", () =>
-    Effect.gen(function* () {
-      const setConnectionCatalog = vi.fn().mockResolvedValue(false);
-      vi.stubGlobal("window", {
-        desktopBridge: {
-          getConnectionCatalog: vi.fn().mockResolvedValue(null),
-          setConnectionCatalog,
-        },
-      });
-      const backend = makeCatalogBackend({} as IDBDatabase);
+const fixedHandle = (database: IDBDatabase) => ({
+  get: Effect.succeed(database),
+  invalidate: () => Effect.void,
+});
 
-      const error = yield* backend.write("{}").pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(ConnectionTransientError);
-      expect(error.message).toContain("Desktop secure storage is unavailable");
-      expect(setConnectionCatalog).toHaveBeenCalledWith("{}");
-    }),
-  );
-
+describe("ConnectionStorage.makeCatalogBackend", () => {
   it.effect("fails IndexedDB writes whose commit aborts", () =>
     Effect.gen(function* () {
       vi.stubGlobal("window", {});
@@ -183,11 +130,116 @@ describe("makeCatalogBackend", () => {
           },
         }),
       });
-      const backend = makeCatalogBackend({ transaction: () => transaction } as never);
+      const backend = ConnectionStorage.makeCatalogBackend(
+        fixedHandle({ transaction: () => transaction } as unknown as IDBDatabase),
+      );
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
       expect(error.message).toContain("QuotaExceededError");
+    }),
+  );
+});
+
+describe("IndexedDB connection recovery", () => {
+  it.effect("reopens after a forced close and finalizes the current connection", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const makeDatabase = () =>
+        Object.assign(new EventTarget(), {
+          close: vi.fn(),
+          transaction: () => ({
+            objectStore: () => ({
+              get: () => {
+                const request = Object.assign(new EventTarget(), {
+                  result: undefined,
+                  error: null,
+                });
+                queueMicrotask(() => request.dispatchEvent(new Event("success")));
+                return request;
+              },
+            }),
+          }),
+        }) as unknown as IDBDatabase;
+      const first = makeDatabase();
+      const second = makeDatabase();
+      const databases = [first, second];
+      let openCount = 0;
+      const open = vi.fn((_name: string, version: number) => {
+        expect(version).toBeGreaterThanOrEqual(5);
+        const request = Object.assign(new EventTarget(), {
+          result: databases[openCount++],
+          error: null,
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* Persistence.EnvironmentCacheStore;
+        const environmentId = EnvironmentId.make("env");
+        const threadId = ThreadId.make("thread");
+        expect(Option.isNone(yield* cache.loadThread(environmentId, threadId))).toBe(true);
+        expect(open).toHaveBeenCalledTimes(1);
+
+        first.dispatchEvent(new Event("close"));
+        const recovered = yield* Effect.all(
+          [cache.loadThread(environmentId, threadId), cache.loadThread(environmentId, threadId)],
+          { concurrency: 2 },
+        );
+        expect(recovered.every(Option.isNone)).toBe(true);
+        expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+
+      expect(first.close).not.toHaveBeenCalled();
+      expect(second.close).toHaveBeenCalledOnce();
+    }),
+  );
+});
+
+describe("IndexedDB connection closed without a close event", () => {
+  it.effect("reopens and retries the failing operation once", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const closing = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => {
+          // Chromium force-closed this connection; this tab never saw "close".
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      }) as unknown as IDBDatabase;
+      const fresh = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => ({
+          objectStore: () => ({
+            get: () => {
+              const request = Object.assign(new EventTarget(), { result: undefined, error: null });
+              queueMicrotask(() => request.dispatchEvent(new Event("success")));
+              return request;
+            },
+          }),
+        }),
+      }) as unknown as IDBDatabase;
+      const databases = [closing, fresh];
+      let openCount = 0;
+      const open = vi.fn((_name: string, version: number) => {
+        expect(version).toBeGreaterThanOrEqual(5);
+        const request = Object.assign(new EventTarget(), {
+          result: databases[openCount++],
+          error: null,
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* Persistence.EnvironmentCacheStore;
+        const loaded = yield* cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread"));
+        expect(Option.isNone(loaded)).toBe(true);
+        expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );
 });
@@ -214,8 +266,8 @@ describe("browser GitHub routing permissions", () => {
       };
       const firstBrowser = Object.assign(new EventTarget(), { localStorage });
       const secondBrowser = Object.assign(new EventTarget(), { localStorage });
-      const first = makeBrowserGitHubRoutingPermissions(firstBrowser);
-      const second = makeBrowserGitHubRoutingPermissions(secondBrowser);
+      const first = ConnectionStorage.makeBrowserPullRequestRoutingPermissions(firstBrowser);
+      const second = ConnectionStorage.makeBrowserPullRequestRoutingPermissions(secondBrowser);
       const entry = {
         target: new PrimaryConnectionTarget({
           environmentId: EnvironmentId.make("first"),
@@ -237,7 +289,7 @@ describe("browser GitHub routing permissions", () => {
       yield* first.set(entry, "read-write");
       expect(yield* second.get(entry)).toBe("read-write");
       const oldPermissions = Option.getOrThrow(yield* Stream.runHead(first.changes));
-      const staleCatalog = yield* makeCatalogStore({
+      const staleCatalog = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.succeed(
           encodeCatalog({ ...emptyCatalog, githubRoutingPermissions: oldPermissions }),
         ),
@@ -262,7 +314,9 @@ describe("browser GitHub routing permissions", () => {
       yield* staleCatalog.update((document) => ({ ...document, accountId: "updated" }));
       expect(yield* second.get(entry)).toBe("off");
       expect(yield* first.get(other)).toBe("read");
-      expect(yield* makeBrowserGitHubRoutingPermissions(firstBrowser).get(entry)).toBe("off");
+      expect(
+        yield* ConnectionStorage.makeBrowserPullRequestRoutingPermissions(firstBrowser).get(entry),
+      ).toBe("off");
 
       yield* first.set(entry, "read-write");
       yield* second.forget(entry.target.environmentId);

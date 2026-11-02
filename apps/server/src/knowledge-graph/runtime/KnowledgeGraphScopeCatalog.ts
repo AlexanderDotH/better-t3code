@@ -20,7 +20,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 
 export const KnowledgeGraphScopeResolutionReason = Schema.Literals([
   "project-not-found",
@@ -349,7 +350,8 @@ export const layer = Layer.effect(
   KnowledgeGraphScopeCatalog,
   Effect.gen(function* () {
     const environment = yield* ServerEnvironment.ServerEnvironment;
-    const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const projections = yield* OrchestratorV2;
+    const projects = yield* ProjectStoreV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const resolvedHomeDirectory = path.resolve(NodeOS.homedir());
@@ -359,11 +361,14 @@ export const layer = Layer.effect(
     return KnowledgeGraphScopeCatalog.of(
       makeKnowledgeGraphScopeCatalog({
         getEnvironmentId: environment.getEnvironmentId,
-        getShellSnapshot: projections.getShellSnapshot(),
+        getShellSnapshot: Effect.all({
+          threads: projections.getShellSnapshot().pipe(Effect.map((shell) => shell.threads)),
+          projects: projects.listShells(),
+        }),
         getProject: (projectId) =>
-          projections.getProjectShellById(projectId).pipe(Effect.map(Option.getOrUndefined)),
+          projects.getShell(projectId).pipe(Effect.map(Option.getOrUndefined)),
         getThread: (threadId) =>
-          projections.getThreadShellById(threadId).pipe(Effect.map(Option.getOrUndefined)),
+          projections.getThreadShell(threadId).pipe(Effect.map((thread) => thread ?? undefined)),
         canonicalizeWorkspaceRoot: (workspaceRoot) =>
           fileSystem.realPath(path.resolve(workspaceRoot)),
         homeDirectory,

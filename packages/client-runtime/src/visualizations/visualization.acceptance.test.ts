@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import * as Viz from "@viz-js/viz";
 import { VISUALIZATION_EXAMPLES } from "./examples.ts";
@@ -110,35 +109,27 @@ function assertAppearance(svg: string) {
 }
 
 describe("shipped diagram family acceptance", () => {
-  for (const example of VISUALIZATION_EXAMPLES) {
-    test(
-      example.id,
-      async () => {
-        const container = document.createElement("div");
-        document.body.append(container);
-        const request: VisualizationRenderRequest = {
-          channel: VISUALIZATION_CHANNEL,
-          type: "render",
-          requestId: example.id,
-          format: example.format,
-          source: example.source,
-          theme: "light",
-        };
-        parseVisualization(request.format, request.source);
-        const result = await render(request, container);
-        try {
-          assertSvg(sanitizeVisualizationSvg(result.svg));
-          assertSvg(
-            sanitizeVisualizationSvg(result.exportSvg ? await result.exportSvg() : result.svg),
-          );
-        } finally {
-          result.dispose?.();
-          container.remove();
-        }
-      },
-      15_000,
-    );
-  }
+  test.each(VISUALIZATION_EXAMPLES)("$id", async (example) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const request: VisualizationRenderRequest = {
+      channel: VISUALIZATION_CHANNEL,
+      type: "render",
+      requestId: example.id,
+      format: example.format,
+      source: example.source,
+      theme: "light",
+    };
+    parseVisualization(request.format, request.source);
+    const result = await render(request, container);
+    try {
+      assertSvg(sanitizeVisualizationSvg(result.svg));
+      assertSvg(sanitizeVisualizationSvg(result.exportSvg ? await result.exportSvg() : result.svg));
+    } finally {
+      result.dispose?.();
+      container.remove();
+    }
+  });
 
   test.each(["mermaid-flowchart", "plantuml-sequence", "dot-tree", "vega-lite-bar", "vega-map"])(
     "renders %s with a dark theme",

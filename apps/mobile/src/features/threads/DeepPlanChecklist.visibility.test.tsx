@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   DeepPlanRunId,
   EnvironmentId,
@@ -8,7 +6,7 @@ import {
   type DeepPlanRun,
 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -27,10 +25,10 @@ vi.mock("react-native", () => {
   const Container = (props: { children?: ReactNode }) => createElement("div", {}, props.children);
   return { View: Container, ScrollView: Container, Pressable: Container };
 });
-vi.mock("../../components/AppText", () => ({
+vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => createElement("span", {}, props.children),
 }));
-vi.mock("../../components/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>
     createInterfaceTranslator({ language: "en", locale: "en-US" }),

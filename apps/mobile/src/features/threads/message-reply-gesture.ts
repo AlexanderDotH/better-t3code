@@ -4,14 +4,14 @@ import {
   MESSAGE_REPLY_SELECTION_DELAY_MS,
   shouldTriggerMessageReply,
 } from "@t3tools/client-runtime/messageReplies";
-import type { OrchestrationMessage } from "@t3tools/contracts";
+import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 
-export const MESSAGE_REPLY_MAX_TRANSLATION = 72;
+const MESSAGE_REPLY_MAX_TRANSLATION = 72;
 const MESSAGE_REPLY_INTENT_DISTANCE = 12;
 const MESSAGE_REPLY_VERTICAL_TOLERANCE = 12;
 
 export function classifyMessageReplyMovement(input: {
-  readonly role: OrchestrationMessage["role"];
+  readonly role: OrchestrationV2ConversationMessage["role"];
   readonly translationX: number;
   readonly translationY: number;
   readonly elapsedMs: number;
@@ -32,7 +32,10 @@ export function classifyMessageReplyMovement(input: {
     : "fail";
 }
 
-export function messageReplyTranslation(translationX: number, role: OrchestrationMessage["role"]) {
+export function messageReplyTranslation(
+  translationX: number,
+  role: OrchestrationV2ConversationMessage["role"],
+) {
   "worklet";
   if (!isMessageReplySwipeDirection(translationX, role)) return 0;
   return Math.max(
@@ -45,7 +48,7 @@ export function acceptsMessageReplyGesture(
   translationX: number,
   translationY: number,
   completed: boolean,
-  role: OrchestrationMessage["role"],
+  role: OrchestrationV2ConversationMessage["role"],
 ) {
   "worklet";
   return completed && shouldTriggerMessageReply(translationX, translationY, role);

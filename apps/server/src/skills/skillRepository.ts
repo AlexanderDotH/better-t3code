@@ -1,7 +1,7 @@
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpIncomingMessage } from "effect/unstable/http";
+import { HttpClient, HttpIncomingMessage } from "effect/http";
 import { SkillEngineError } from "@t3tools/contracts";
 import * as Yauzl from "yauzl";
 import { isValidSkillName, parseSkillFile } from "./skillFile.ts";

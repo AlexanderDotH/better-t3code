@@ -1,4 +1,4 @@
-import type { OrchestrationThreadStreamItem } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadStreamItem } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Metric from "effect/Metric";
 
@@ -53,7 +53,7 @@ export function createStreamingPipelineMetrics(options?: {
   }
 
   function beginApply(
-    items: ReadonlyArray<OrchestrationThreadStreamItem>,
+    items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
     previousSequence: number,
   ) {
     const startedAt = now();
@@ -77,14 +77,12 @@ export function createStreamingPipelineMetrics(options?: {
         }
         if (item.kind === "snapshot") {
           snapshots += 1;
-          sequence = item.snapshot.snapshotSequence;
-        } else if (item.kind === "cursor") {
-          sequence = Math.max(sequence, item.sequence);
+          sequence = item.snapshotSequence;
         } else if (item.kind === "event") {
-          if (item.event.sequence <= sequence) replayedEvents += 1;
-          else if (item.event.sequence <= appliedSequence) {
+          if (item.sequence <= sequence) replayedEvents += 1;
+          else if (item.sequence <= appliedSequence) {
             appliedEvents += 1;
-            sequence = item.event.sequence;
+            sequence = item.sequence;
           }
         }
       }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { makeOpenRouterKeyValidator, maskOpenRouterKeyLabel } from "./OpenRouterKeyValidation.ts";
 
@@ -50,7 +50,6 @@ describe("OpenRouterKeyValidation", () => {
         expiresAt: "2027-08-25T00:00:00.000Z",
       });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(result)).not.toContain("secret-value");
     }),
   );
@@ -79,7 +78,6 @@ describe("OpenRouterKeyValidation", () => {
         retryable: false,
       });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("sk-or-invalid");
     }),
   );
@@ -111,7 +109,6 @@ describe("OpenRouterKeyValidation", () => {
         });
         expect(error.message).toContain("completion endpoints");
         // A schema encoder could hide leaked properties by stripping unknown fields.
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         expect(JSON.stringify(error)).not.toContain("management-secret");
       }
     }),
@@ -139,7 +136,6 @@ describe("OpenRouterKeyValidation", () => {
       expect(error).toMatchObject({ code: "security", retryable: false });
       expect(execute).toHaveBeenCalledTimes(1);
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("sk-or-secret");
     }),
   );
@@ -161,7 +157,6 @@ describe("OpenRouterKeyValidation", () => {
 
       expect(error).toMatchObject({ code: "response-invalid", retryable: false });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const serializedError = JSON.stringify(error);
       expect(serializedError).not.toContain("never-log-this");
       expect(serializedError).not.toContain("sk-or-secret");

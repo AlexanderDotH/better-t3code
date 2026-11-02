@@ -1,4 +1,4 @@
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import {
   deriveProviderSettingsFields,
   nextProviderConfigWithFieldValue,
@@ -10,10 +10,10 @@ import {
   type ProviderSettingsFieldValue,
 } from "@t3tools/client-runtime/providerSettingsForm";
 import type { ServerProvider } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, TextInput, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   mobileProviderCatalogModels,
@@ -55,8 +55,12 @@ function MobileSelectField(props: {
     props.field.defaultStringValue,
   );
   const selectedOption = props.field.options?.find((option) => option.value === selected);
-  const [manualDraft, setManualDraft] = useState(selected);
-  useEffect(() => setManualDraft(selected), [selected]);
+  const [manualEdit, setManualEdit] = useState<{
+    readonly source: string;
+    readonly value: string;
+  } | null>(null);
+  const manualDraft = manualEdit?.source === selected ? manualEdit.value : selected;
+  const setManualDraft = (value: string) => setManualEdit({ source: selected, value });
   const unavailable = props.field.disabled === true;
   const disabled = props.disabled || unavailable;
   const displayValue =
@@ -161,13 +165,20 @@ function MobileTextField(props: {
 }) {
   const translator = useMobileInterfaceTranslator();
   const resolvedDraft = textDraft(props.field, props.value);
-  const [draft, setDraft] = useState(resolvedDraft);
-  const [invalid, setInvalid] = useState(false);
-
-  useEffect(() => {
-    setDraft(resolvedDraft);
-    setInvalid(false);
-  }, [resolvedDraft]);
+  const [edit, setEdit] = useState<{
+    readonly source: string;
+    readonly value: string;
+    readonly invalid: boolean;
+  } | null>(null);
+  const draft = edit?.source === resolvedDraft ? edit.value : resolvedDraft;
+  const invalid = edit?.source === resolvedDraft && edit.invalid;
+  const setDraft = (value: string) => setEdit({ source: resolvedDraft, value, invalid: false });
+  const setInvalid = (next: boolean) =>
+    setEdit((current) => ({
+      source: resolvedDraft,
+      value: current?.source === resolvedDraft ? current.value : resolvedDraft,
+      invalid: next,
+    }));
 
   const commit = () => {
     if (props.field.control === "number") {
@@ -261,13 +272,14 @@ function MobileSwitchField(props: {
 
 export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProps) {
   const translator = useMobileInterfaceTranslator();
-  const [draftConfig, setDraftConfig] = useState(props.value);
+  const [configEdit, setConfigEdit] = useState<{
+    readonly source: unknown;
+    readonly value: unknown;
+  } | null>(null);
+  const draftConfig =
+    configEdit !== null && configEdit.source === props.value ? configEdit.value : props.value;
   const definition = mobileProviderSettingsDefinition(props.provider.driver);
   const models = mobileProviderCatalogModels(props.provider);
-
-  useEffect(() => {
-    setDraftConfig(props.value);
-  }, [props.value]);
 
   const fields = useMemo(
     () =>
@@ -279,7 +291,7 @@ export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProp
 
   const commit = (field: ProviderSettingsFieldModel, value: ProviderSettingsFieldValue) => {
     const next = nextProviderConfigWithFieldValue(draftConfig, field, value);
-    setDraftConfig(next);
+    setConfigEdit({ source: props.value, value: next });
     props.onChange(next);
   };
 

@@ -1,7 +1,7 @@
 import type { ContextWindowSelector } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { act, useState } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useState } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { BetterT3FeatureChoice } from "./BetterT3SettingsPreview";
@@ -77,7 +77,6 @@ function ComposerOrSidebarChoiceHarness({
 
 describe("context window visual choice", () => {
   it("switches between two translated cards and preserves the selection while disabled", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     let renderer: ReactTestRenderer | undefined;
     try {
       await act(() => {
@@ -92,21 +91,33 @@ describe("context window visual choice", () => {
       expect(JSON.stringify(renderer!.toJSON())).toContain("Better T3");
       expect(selection()).toEqual([false, true]);
 
-      await act(() => radios()[0]!.props.onClick());
+      await act(async () => {
+        await radios()[0]!.props.onClick();
+      });
       expect(selection()).toEqual([true, false]);
-      await act(() => radios()[1]!.props.onClick());
+      await act(async () => {
+        await radios()[1]!.props.onClick();
+      });
       expect(selection()).toEqual([false, true]);
 
-      await act(() => renderer!.update(<ContextWindowChoiceHarness disabled />));
+      await act(async () => {
+        await renderer!.update(<ContextWindowChoiceHarness disabled />);
+      });
       expect(radios().every((radio) => radio.props.disabled === true)).toBe(true);
       expect(selection()).toEqual([false, true]);
 
-      await act(() => renderer!.update(<ContextWindowChoiceHarness />));
+      await act(async () => {
+        await renderer!.update(<ContextWindowChoiceHarness />);
+      });
       expect(radios().every((radio) => radio.props.disabled === false)).toBe(true);
-      await act(() => radios()[0]!.props.onClick());
+      await act(async () => {
+        await radios()[0]!.props.onClick();
+      });
       expect(selection()).toEqual([true, false]);
     } finally {
-      await act(() => renderer?.unmount());
+      await act(async () => {
+        await renderer?.unmount();
+      });
       vi.unstubAllGlobals();
     }
   });
@@ -114,7 +125,6 @@ describe("context window visual choice", () => {
 
 describe("plan bubble visual choice", () => {
   it("defaults to native T3 Code and enables the blue bubble card", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     let renderer: ReactTestRenderer | undefined;
     try {
       await act(() => {
@@ -125,10 +135,14 @@ describe("plan bubble visual choice", () => {
       expect(JSON.stringify(renderer!.toJSON())).toContain("Blaue Plan-Bubble");
       expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([true, false]);
 
-      await act(() => radios[1]!.props.onClick());
+      await act(async () => {
+        await radios[1]!.props.onClick();
+      });
       expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, true]);
     } finally {
-      await act(() => renderer?.unmount());
+      await act(async () => {
+        await renderer?.unmount();
+      });
       vi.unstubAllGlobals();
     }
   });
@@ -138,7 +152,6 @@ describe.each(["agent.expandedComposerControls", "chat.classicSidebar"] as const
   "%s visual choice",
   (featureId) => {
     it("shows both layouts and updates the selected card", async () => {
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
       let renderer: ReactTestRenderer | undefined;
       try {
         await act(() => {
@@ -152,10 +165,14 @@ describe.each(["agent.expandedComposerControls", "chat.classicSidebar"] as const
         });
         expect(previews).toHaveLength(2);
 
-        await act(() => radios[1]!.props.onClick());
+        await act(async () => {
+          await radios[1]!.props.onClick();
+        });
         expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, true]);
       } finally {
-        await act(() => renderer?.unmount());
+        await act(async () => {
+          await renderer?.unmount();
+        });
         vi.unstubAllGlobals();
       }
     });

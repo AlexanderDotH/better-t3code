@@ -1,31 +1,178 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-
 import { ThreadId } from "./baseSchemas.ts";
+import { ProviderSendTurnInput, ProviderUploadFeedbackError } from "./provider.ts";
 import {
   ProviderEvent,
-  ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
   resolveProviderSessionPurpose,
-  ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
-
-const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
-const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
-const decodeProviderSession = Schema.decodeUnknownSync(ProviderSession);
-const decodeProviderEvent = Schema.decodeUnknownSync(ProviderEvent);
-const decodeProviderUploadFeedbackInput = Schema.decodeUnknownSync(ProviderUploadFeedbackInput);
-const decodeProviderUploadFeedbackResult = Schema.decodeUnknownSync(ProviderUploadFeedbackResult);
-
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
   id: string,
 ): unknown {
   return options?.find((option) => option.id === id)?.value;
 }
+const decodeProviderUploadFeedbackResult = Schema.decodeUnknownSync(ProviderUploadFeedbackResult);
+const decodeProviderUploadFeedbackInput = Schema.decodeUnknownSync(ProviderUploadFeedbackInput);
+const decodeProviderEvent = Schema.decodeUnknownSync(ProviderEvent);
+const decodeProviderSession = Schema.decodeUnknownSync(ProviderSession);
+const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
+
+const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
+
+describe("ProviderSendTurnInput", () => {
+  it.each(["image", "file"])(
+    "caps total image bytes for %s attachments without charging videos",
+    (type) => {
+      const image = {
+        type,
+        id: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 10 * 1024 * 1024,
+      };
+      const video = {
+        type: "file",
+        id: "video",
+        name: "video.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 50 * 1024 * 1024,
+      };
+      expect(
+        decodeProviderSendTurnInput({
+          threadId: "thread-1",
+          attachments: [...Array.from({ length: 8 }, () => image), video],
+        }).attachments,
+      ).toHaveLength(9);
+      expect(() =>
+        decodeProviderSendTurnInput({
+          threadId: "thread-1",
+          attachments: [...Array.from({ length: 8 }, () => image), { ...image, sizeBytes: 1 }],
+        }),
+      ).toThrow(/80 MiB/);
+    },
+  );
+
+  it("keeps an unbounded internal transcript handoff separate from the current turn limits", () => {
+    const inheritedAttachments = Array.from({ length: 9 }, (_, index) => ({
+      type: "file" as const,
+      id: `inherited-file-${index}`,
+      name: `inherited-${index}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    }));
+    const inheritedText = "h".repeat(120_001);
+
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-fork",
+      input: "new fork message",
+      transcriptHandoff: {
+        text: inheritedText,
+        attachments: inheritedAttachments,
+      },
+    });
+
+    expect(parsed.input).toBe("new fork message");
+    expect(parsed.transcriptHandoff?.text).toBe(inheritedText);
+    expect(parsed.transcriptHandoff?.attachments).toHaveLength(9);
+    expect(() =>
+      decodeProviderSendTurnInput({
+        threadId: "thread-fork",
+        input: "u".repeat(120_001),
+        transcriptHandoff: { text: "inherited" },
+      }),
+    ).toThrow();
+  });
+  it("accepts 100 attachments and rejects 101", () => {
+    const attachments = Array.from({ length: 100 }, (_, index) => ({
+      type: "image",
+      id: `image-${index}`,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    }));
+    expect(
+      decodeProviderSendTurnInput({ threadId: "thread-1", attachments }).attachments,
+    ).toHaveLength(100);
+    expect(() =>
+      decodeProviderSendTurnInput({
+        threadId: "thread-1",
+        attachments: [...attachments, attachments[0]],
+      }),
+    ).toThrow();
+  });
+  it("accepts codex modelSelection", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        options: [
+          { id: "reasoningEffort", value: "xhigh" },
+          { id: "fastMode", value: true },
+        ],
+      },
+    });
+
+    expect(parsed.modelSelection?.instanceId).toBe("codex");
+    expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
+    expect(getOptionValue(parsed.modelSelection?.options, "reasoningEffort")).toBe("xhigh");
+    expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+  });
+  it("accepts claude modelSelection including ultrathink", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: [
+          { id: "effort", value: "ultrathink" },
+          { id: "fastMode", value: true },
+        ],
+      },
+    });
+
+    expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
+    expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
+    expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+  });
+});
+
+describe("provider feedback", () => {
+  it("keeps the failed thread and original cause without exposing upstream text", () => {
+    const cause = new Error("provider request secret");
+    const error = new ProviderUploadFeedbackError({
+      threadId: ThreadId.make("thread-1"),
+      cause,
+    });
+
+    expect(error.threadId).toBe("thread-1");
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe("Failed to upload feedback for thread thread-1.");
+    expect(error.message).not.toContain("provider request secret");
+  });
+
+  it("accepts a thread and an optional feedback reason", () => {
+    expect(
+      decodeProviderUploadFeedbackInput({
+        threadId: "thread-1",
+        reason: "The agent stopped early.",
+      }),
+    ).toEqual({ threadId: "thread-1", reason: "The agent stopped early." });
+    expect(decodeProviderUploadFeedbackInput({ threadId: "thread-1" })).toEqual({
+      threadId: "thread-1",
+    });
+  });
+  it("returns the shareable Codex feedback identifier", () => {
+    expect(decodeProviderUploadFeedbackResult({ feedbackId: "provider-thread-1" })).toEqual({
+      feedbackId: "provider-thread-1",
+    });
+  });
+});
 
 describe("ProviderSessionStartInput", () => {
   it("keeps legacy sessions interactive when purpose is absent", () => {
@@ -184,160 +331,6 @@ describe("ProviderSessionStartInput", () => {
     });
 
     expect(parsed.runtimeSessionId).toBe("runtime-session-1");
-  });
-});
-
-describe("ProviderSendTurnInput", () => {
-  it("keeps an unbounded internal transcript handoff separate from the current turn limits", () => {
-    const inheritedAttachments = Array.from({ length: 9 }, (_, index) => ({
-      type: "file" as const,
-      id: `inherited-file-${index}`,
-      name: `inherited-${index}.txt`,
-      mimeType: "text/plain",
-      sizeBytes: 1,
-    }));
-    const inheritedText = "h".repeat(120_001);
-
-    const parsed = decodeProviderSendTurnInput({
-      threadId: "thread-fork",
-      input: "new fork message",
-      transcriptHandoff: {
-        text: inheritedText,
-        attachments: inheritedAttachments,
-      },
-    });
-
-    expect(parsed.input).toBe("new fork message");
-    expect(parsed.transcriptHandoff?.text).toBe(inheritedText);
-    expect(parsed.transcriptHandoff?.attachments).toHaveLength(9);
-    expect(() =>
-      decodeProviderSendTurnInput({
-        threadId: "thread-fork",
-        input: "u".repeat(120_001),
-        transcriptHandoff: { text: "inherited" },
-      }),
-    ).toThrow();
-  });
-
-  it("accepts 100 attachments and rejects 101", () => {
-    const attachments = Array.from({ length: 100 }, (_, index) => ({
-      type: "image",
-      id: `image-${index}`,
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 1,
-    }));
-    expect(
-      decodeProviderSendTurnInput({ threadId: "thread-1", attachments }).attachments,
-    ).toHaveLength(100);
-    expect(() =>
-      decodeProviderSendTurnInput({
-        threadId: "thread-1",
-        attachments: [...attachments, attachments[0]],
-      }),
-    ).toThrow();
-  });
-
-  it.each(["image", "file"])(
-    "caps total image bytes for %s attachments without charging videos",
-    (type) => {
-      const image = {
-        type,
-        id: "image",
-        name: "image.png",
-        mimeType: "image/png",
-        sizeBytes: 10 * 1024 * 1024,
-      };
-      const video = {
-        type: "file",
-        id: "video",
-        name: "video.mp4",
-        mimeType: "video/mp4",
-        sizeBytes: 50 * 1024 * 1024,
-      };
-      expect(
-        decodeProviderSendTurnInput({
-          threadId: "thread-1",
-          attachments: [...Array.from({ length: 8 }, () => image), video],
-        }).attachments,
-      ).toHaveLength(9);
-      expect(() =>
-        decodeProviderSendTurnInput({
-          threadId: "thread-1",
-          attachments: [...Array.from({ length: 8 }, () => image), { ...image, sizeBytes: 1 }],
-        }),
-      ).toThrow(/80 MiB/);
-    },
-  );
-
-  it("accepts codex modelSelection", () => {
-    const parsed = decodeProviderSendTurnInput({
-      threadId: "thread-1",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.3-codex",
-        options: [
-          { id: "reasoningEffort", value: "xhigh" },
-          { id: "fastMode", value: true },
-        ],
-      },
-    });
-
-    expect(parsed.modelSelection?.instanceId).toBe("codex");
-    expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
-    expect(getOptionValue(parsed.modelSelection?.options, "reasoningEffort")).toBe("xhigh");
-    expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
-  });
-
-  it("accepts claude modelSelection including ultrathink", () => {
-    const parsed = decodeProviderSendTurnInput({
-      threadId: "thread-1",
-      modelSelection: {
-        provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
-        options: [
-          { id: "effort", value: "ultrathink" },
-          { id: "fastMode", value: true },
-        ],
-      },
-    });
-
-    expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
-    expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
-    expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
-  });
-});
-
-describe("provider feedback", () => {
-  it("accepts a thread and an optional feedback reason", () => {
-    expect(
-      decodeProviderUploadFeedbackInput({
-        threadId: "thread-1",
-        reason: "The agent stopped early.",
-      }),
-    ).toEqual({ threadId: "thread-1", reason: "The agent stopped early." });
-    expect(decodeProviderUploadFeedbackInput({ threadId: "thread-1" })).toEqual({
-      threadId: "thread-1",
-    });
-  });
-
-  it("returns the shareable Codex feedback identifier", () => {
-    expect(decodeProviderUploadFeedbackResult({ feedbackId: "provider-thread-1" })).toEqual({
-      feedbackId: "provider-thread-1",
-    });
-  });
-
-  it("keeps the failed thread and original cause without exposing upstream text", () => {
-    const cause = new Error("provider request secret");
-    const error = new ProviderUploadFeedbackError({
-      threadId: ThreadId.make("thread-1"),
-      cause,
-    });
-
-    expect(error.threadId).toBe("thread-1");
-    expect(error.cause).toBe(cause);
-    expect(error.message).toBe("Failed to upload feedback for thread thread-1.");
-    expect(error.message).not.toContain("provider request secret");
   });
 });
 

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { ChatVisualMode } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { act, createElement, useState, type ReactNode } from "react";
@@ -7,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
+  useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
   View: ({ children }: { children?: ReactNode }) => createElement("div", {}, children),
   Pressable: (props: {
     children?: ReactNode;
@@ -25,11 +25,11 @@ vi.mock("react-native", () => ({
       props.children,
     ),
 }));
-vi.mock("../../../../components/AppText", () => ({
+vi.mock("../../../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => createElement("span", {}, children),
 }));
-vi.mock("../../../../components/AppSymbol", () => ({ SymbolView: () => null }));
-vi.mock("../../../../components/ThemedSwitch", () => ({
+vi.mock("../../../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../../../components/ui/ThemedSwitch", () => ({
   ThemedSwitch: (props: {
     value: boolean;
     disabled?: boolean;

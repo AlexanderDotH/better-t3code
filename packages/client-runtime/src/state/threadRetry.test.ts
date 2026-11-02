@@ -1,168 +1,79 @@
-import { MessageId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  MessageId,
+  RunId,
+  type OrchestrationV2Run,
+  type OrchestrationV2ConversationMessage,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-
+import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
 import { resolveInterruptedTurnRetryTarget } from "./threadRetry.ts";
 
-const REQUESTED_AT = "2026-08-26T10:00:00.000Z";
-const TURN_ID = TurnId.make("turn-interrupted");
-const MESSAGE_ID = MessageId.make("message-user");
-
-const interruptedTurn = {
-  turnId: TURN_ID,
-  state: "interrupted" as const,
-  requestedAt: REQUESTED_AT,
-  startedAt: REQUESTED_AT,
-  completedAt: "2026-08-26T10:00:10.000Z",
-  assistantMessageId: null,
+const run: OrchestrationV2Run = {
+  id: RunId.make("interrupted"),
+  threadId: v2Projection.thread.id,
+  ordinal: 1,
+  providerInstanceId: v2Projection.thread.providerInstanceId,
+  modelSelection: v2Projection.thread.modelSelection,
+  providerThreadId: null,
+  userMessageId: MessageId.make("user"),
+  rootNodeId: null,
+  activeAttemptId: null,
+  status: "interrupted",
+  requestedAt: v2Now,
+  startedAt: v2Now,
+  completedAt: v2Now,
+  checkpointId: null,
+  contextHandoffId: null,
 };
-
-const userMessage = {
-  id: MESSAGE_ID,
-  role: "user" as const,
-  text: "Try this",
-  turnId: null,
+const user: OrchestrationV2ConversationMessage = {
+  id: run.userMessageId,
+  threadId: run.threadId,
+  runId: run.id,
+  nodeId: null,
+  createdBy: "user",
+  creationSource: "web",
+  role: "user",
+  text: "Retry this",
+  attachments: [],
   streaming: false,
-  createdAt: REQUESTED_AT,
-  updatedAt: REQUESTED_AT,
+  createdAt: v2Now,
+  updatedAt: v2Now,
 };
 
-const readySession = {
-  threadId: ThreadId.make("thread-retry"),
-  status: "ready" as const,
-  providerName: "codex",
-  providerInstanceId: ProviderInstanceId.make("codex"),
-  runtimeSessionId: null,
-  runtimeMode: "full-access" as const,
-  activeTurnId: null,
-  abortState: null,
-  lastError: null,
-  updatedAt: "2026-08-26T10:00:10.000Z",
-};
-
-describe("resolveInterruptedTurnRetryTarget", () => {
-  it("targets the last user message when its interrupted turn returned no assistant result", () => {
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: interruptedTurn,
-        messages: [userMessage],
-      }),
-    ).toEqual({ messageId: MESSAGE_ID, turnId: TURN_ID });
-  });
-
-  it("targets a result-less user message aborted before the provider assigned a turn id", () => {
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: {
-          ...interruptedTurn,
-          requestedAt: "2026-08-26T09:55:00.000Z",
-          startedAt: "2026-08-26T09:55:00.000Z",
-          completedAt: "2026-08-26T09:56:00.000Z",
-          assistantMessageId: MessageId.make("previous-assistant"),
-        },
-        messages: [userMessage],
-        session: readySession,
-      }),
-    ).toEqual({ messageId: MESSAGE_ID, turnId: null });
-  });
-
-  it("does not expose an early retry while the provider start is still pending", () => {
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: null,
-        messages: [userMessage],
-        session: {
-          ...readySession,
-          status: "starting",
-          updatedAt: REQUESTED_AT,
-        },
-      }),
-    ).toBeNull();
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: null,
-        messages: [userMessage],
-        session: {
-          ...readySession,
-          updatedAt: "2026-08-26T09:59:59.000Z",
-        },
-      }),
-    ).toBeNull();
-  });
-
-  it("does not target a turn that produced even a partial assistant message", () => {
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: interruptedTurn,
-        messages: [
-          userMessage,
-          {
-            ...userMessage,
-            id: MessageId.make("message-assistant"),
-            role: "assistant",
-            turnId: TURN_ID,
-            streaming: true,
-          },
-        ],
-      }),
-    ).toBeNull();
-  });
-
-  it("does not attach the retry to a newer queued user message", () => {
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: interruptedTurn,
-        messages: [
-          userMessage,
-          {
-            ...userMessage,
-            id: MessageId.make("message-newer"),
-            createdAt: "2026-08-26T10:01:00.000Z",
-            updatedAt: "2026-08-26T10:01:00.000Z",
-          },
-        ],
-      }),
-    ).toBeNull();
-  });
-
-  it("allows another retry when a later result-only attempt is also interrupted", () => {
-    expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: {
-          ...interruptedTurn,
-          turnId: TurnId.make("turn-retry-interrupted"),
-          requestedAt: "2026-08-26T10:02:00.000Z",
-          startedAt: "2026-08-26T10:02:00.000Z",
-          completedAt: "2026-08-26T10:02:10.000Z",
-        },
-        messages: [userMessage],
-      }),
-    ).toEqual({
-      messageId: MESSAGE_ID,
-      turnId: TurnId.make("turn-retry-interrupted"),
+describe("interrupted V2 retry", () => {
+  it("offers the original message only for a stopped result-less run without pending work", () => {
+    const projection = { ...v2Projection, runs: [run], messages: [user] };
+    expect(resolveInterruptedTurnRetryTarget({ projection })).toEqual({
+      messageId: user.id,
+      runId: run.id,
     });
-  });
-
-  it("does not mutate inherited history or turns with an assistant result", () => {
+    for (const status of [
+      "preparing",
+      "queued",
+      "starting",
+      "running",
+      "waiting",
+      "completed",
+    ] as const) {
+      expect(
+        resolveInterruptedTurnRetryTarget({
+          projection: { ...projection, runs: [{ ...run, status }] },
+        }),
+      ).toBeNull();
+    }
     expect(
       resolveInterruptedTurnRetryTarget({
-        latestTurn: { ...interruptedTurn, assistantMessageId: MessageId.make("assistant-result") },
-        messages: [userMessage],
+        projection: {
+          ...projection,
+          messages: [
+            user,
+            { ...user, id: MessageId.make("assistant"), role: "assistant", text: "Partial result" },
+          ],
+        },
       }),
     ).toBeNull();
     expect(
-      resolveInterruptedTurnRetryTarget({
-        latestTurn: interruptedTurn,
-        messages: [
-          {
-            ...userMessage,
-            historyOrigin: {
-              sourceThreadId: ThreadId.make("source-thread"),
-              sourceId: "source-message",
-              ordinal: 1,
-            },
-          },
-        ],
-      }),
+      resolveInterruptedTurnRetryTarget({ projection: { ...projection, messages: [] } }),
     ).toBeNull();
   });
 });

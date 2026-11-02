@@ -15,7 +15,7 @@ import {
   type ChatVisualModeSyncWrite,
 } from "@t3tools/client-runtime/chat-visual-mode-sync";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { toastManager } from "./components/ui/toast";
 import { useLocalStorage } from "./hooks/useLocalStorage";
@@ -148,37 +148,34 @@ function useChatVisualModeSyncCache() {
     ChatVisualModeSyncCache,
   );
   const translate = useInterfaceTranslator().message;
-  const setRecord = useCallback(
-    (update: ChatVisualModeCacheUpdate) => {
-      void persistClientSettingsUpdate((settings) => {
-        const current = resolveChatVisualModeRecord(
-          legacyRecord,
-          resolveChatVisualModeRecord(
-            settings.chatVisualModeLocalRecord,
-            settings.chatVisualModeLocalRecordV2,
-          ),
-        );
-        const next = typeof update === "function" ? update(current) : update;
-        const record =
-          typeof update === "function" || next === null
-            ? next
-            : selectLatestChatVisualModeRecord(current, next);
-        return {
-          ...settings,
-          chatVisualModeLocalRecordV2: record,
-          chatVisualModeLocalRecord: record === null ? null : chatVisualModeToLegacyRecord(record),
-        };
-      })
-        .then(() => clearLegacyRecord(null))
-        .catch(() => {
-          toastManager.add({
-            type: "error",
-            title: translate("settings.betterT3.chatAppearanceSaveFailed"),
-          });
+  const setRecord = (update: ChatVisualModeCacheUpdate) => {
+    void persistClientSettingsUpdate((settings) => {
+      const current = resolveChatVisualModeRecord(
+        legacyRecord,
+        resolveChatVisualModeRecord(
+          settings.chatVisualModeLocalRecord,
+          settings.chatVisualModeLocalRecordV2,
+        ),
+      );
+      const next = typeof update === "function" ? update(current) : update;
+      const record =
+        typeof update === "function" || next === null
+          ? next
+          : selectLatestChatVisualModeRecord(current, next);
+      return {
+        ...settings,
+        chatVisualModeLocalRecordV2: record,
+        chatVisualModeLocalRecord: record === null ? null : chatVisualModeToLegacyRecord(record),
+      };
+    })
+      .then(() => clearLegacyRecord(null))
+      .catch(() => {
+        toastManager.add({
+          type: "error",
+          title: translate("settings.betterT3.chatAppearanceSaveFailed"),
         });
-    },
-    [clearLegacyRecord, legacyRecord, translate],
-  );
+      });
+  };
   const record = resolveChatVisualModeRecord(
     legacyRecord,
     resolveChatVisualModeRecord(durableLegacyRecord, durableRecord),
@@ -230,18 +227,15 @@ export function useChatVisualModeSyncStatus() {
 
 export function useSetChatVisualMode(): (mode: ChatVisualMode) => void {
   const [, setRecord] = useChatVisualModeSyncCache();
-  return useCallback(
-    (mode: ChatVisualMode) => {
-      setRecord((current) =>
-        createChatVisualModeSyncRecord(
-          mode,
-          DEFAULT_UPDATE_CLOCK,
-          Math.max(current?.updatedAt ?? -1, latestObservedUpdatedAt),
-        ),
-      );
-    },
-    [setRecord],
-  );
+  return (mode: ChatVisualMode) => {
+    setRecord((current) =>
+      createChatVisualModeSyncRecord(
+        mode,
+        DEFAULT_UPDATE_CLOCK,
+        Math.max(current?.updatedAt ?? -1, latestObservedUpdatedAt),
+      ),
+    );
+  };
 }
 
 export function ChatVisualModeSyncCoordinator() {
@@ -262,38 +256,30 @@ export function ChatVisualModeSyncCoordinator() {
   const confirmedWriteKeys = useRef(new Set<string>());
   const mounted = useRef(true);
 
-  const syncEnvironments = useMemo(
-    () =>
-      environments.flatMap((environment) => {
-        const config = environment.serverConfig;
-        if (config === null) return [];
-        return [
-          {
-            environmentId: environment.environmentId,
-            environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
-            connected: environment.connection.phase === "connected",
-            record: config.settings.chatVisualModeSyncRecord ?? null,
-            recordV2: config.settings.chatVisualModeSyncRecordV2 ?? null,
-          },
-        ];
-      }),
-    [environments],
+  const syncEnvironments = environments.flatMap((environment) => {
+    const config = environment.serverConfig;
+    if (config === null) return [];
+    return [
+      {
+        environmentId: environment.environmentId,
+        environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
+        connected: environment.connection.phase === "connected",
+        record: config.settings.chatVisualModeSyncRecord ?? null,
+        recordV2: config.settings.chatVisualModeSyncRecordV2 ?? null,
+      },
+    ];
+  });
+  const labelByEnvironmentId = new Map(
+    environments.map(({ environmentId, label }) => [environmentId, label] as const),
   );
-  const labelByEnvironmentId = useMemo(
-    () => new Map(environments.map(({ environmentId, label }) => [environmentId, label] as const)),
-    [environments],
-  );
-  const plan = useMemo(
-    () =>
-      planChatVisualModeSync<EnvironmentId>({
-        localRecord: null,
-        localRecordV2: localRecord,
-        environments: syncEnvironments,
-        pendingWrites,
-      }),
-    [localRecord, pendingWrites, syncEnvironments],
-  );
+  const plan = planChatVisualModeSync<EnvironmentId>({
+    localRecord: null,
+    localRecordV2: localRecord,
+    environments: syncEnvironments,
+    pendingWrites,
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clear failed RPC attempts when a server disconnects or its pending setting changes, so reconnect can retry
   useEffect(() => {
     const connectedEnvironmentIds = new Set(
       syncEnvironments
@@ -303,6 +289,7 @@ export function ChatVisualModeSyncCoordinator() {
     const pendingWriteKeyByEnvironment = new Map(
       plan.pendingWrites.map((write) => [write.environmentId, writeKey(write)] as const),
     );
+    // oxlint-disable-next-line react/set-state-in-effect -- reset server retry suppression after disconnect or a replacement settings record
     setFailedWriteKeyByEnvironment((current) => {
       const next = new Map(
         [...current].filter(
@@ -315,6 +302,7 @@ export function ChatVisualModeSyncCoordinator() {
     });
   }, [plan.pendingWrites, syncEnvironments]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retire acknowledged write leases when the server settings snapshot catches up
   useEffect(() => {
     const plannedWriteKeys = new Set(plan.writes.map(writeKey));
     for (const key of confirmedWriteKeys.current) {
@@ -322,6 +310,7 @@ export function ChatVisualModeSyncCoordinator() {
     }
   }, [plan.writes]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prevent in-flight server RPC completions from updating an unmounted coordinator
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -329,6 +318,7 @@ export function ChatVisualModeSyncCoordinator() {
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconcile durable client preferences with connected server settings and send pending RPC writes
   useEffect(() => {
     if (!settingsHydrated || !isReady || plan.winner === null) return;
     latestObservedUpdatedAt = Math.max(latestObservedUpdatedAt, plan.winner.updatedAt);
@@ -336,6 +326,7 @@ export function ChatVisualModeSyncCoordinator() {
     if (!hasDurableRecord || !recordsMatch(localRecord, plan.nextLocalRecord)) {
       setLocalRecord(plan.nextLocalRecord);
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- retain unacknowledged server writes across disconnects and remote settings snapshots
     setPendingWrites((current) =>
       writesMatch(current, plan.pendingWrites) ? current : plan.pendingWrites,
     );

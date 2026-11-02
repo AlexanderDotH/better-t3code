@@ -193,7 +193,7 @@ describe("OpenAI-compatible provider status", () => {
 
         const rejected = yield* checkOpenAiCompatibleProviderStatus(SETTINGS, {
           ...dependencies,
-          resolveCredential: Effect.succeed(Option.some(Redacted.make("saved-secret"))),
+          resolveCredential: Effect.succeedSome(Redacted.make("saved-secret")),
           listModels: Effect.fail(
             new OpenAiCompatibleAuthenticationError({ status: 403, message: "saved-secret" }),
           ),

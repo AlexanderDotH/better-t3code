@@ -1,23 +1,23 @@
-import type { EnvironmentId, ScopedThreadRef, TurnId } from "@t3tools/contracts";
-import { memo, useMemo } from "react";
+import type { EnvironmentId, ScopedThreadRef, RunId } from "@t3tools/contracts";
+import { memo } from "react";
 
 import { workEntryIsProviderReasoning, type WorkLogEntry } from "../../session-logic";
 import type { ChatMessage } from "../../types";
 import { WorkingReasoningLog } from "./WorkingReasoningDialog";
 
 /** Turn records are ordered; stop at the previous turn instead of revisiting the thread history. */
-function entriesForTurn<T extends { readonly turnId?: TurnId | null }>(
+function entriesForTurn<T extends { readonly runId?: RunId | null }>(
   entries: readonly T[],
-  turnId: TurnId,
+  runId: RunId,
 ) {
   const recent: T[] = [];
   let foundTurn = false;
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index]!;
-    if (entry.turnId === turnId) {
+    if (entry.runId === runId) {
       foundTurn = true;
       recent.push(entry);
-    } else if (foundTurn && entry.turnId != null) {
+    } else if (foundTurn && entry.runId != null) {
       break;
     }
   }
@@ -29,24 +29,21 @@ interface ReasoningTrace {
   readonly detail: string;
   readonly createdAt: string;
   readonly streaming: boolean;
-  readonly turnId: TurnId | null;
+  readonly runId: RunId | null;
 }
 
 function reasoningTracesForTurn(
   entries: readonly WorkLogEntry[],
   messages: readonly ChatMessage[],
-  turnId: TurnId | null,
+  runId: RunId | null,
 ): ReasoningTrace[] {
-  if (turnId === null) return [];
-  const canonical = entriesForTurn(messages, turnId).filter(
-    (message) => message.role === "reasoning" && message.turnId === turnId && message.text.trim(),
-  );
+  if (runId === null) return [];
+  const canonical: ChatMessage[] = [];
   const canonicalText = new Set(canonical.map((message) => message.text.trim()));
-  const legacy = entriesForTurn(entries, turnId)
+  const legacy = entriesForTurn(entries, runId)
     .filter(
       (entry) =>
-        entry.turnId === turnId &&
-        entry.historyOrigin === undefined &&
+        entry.runId === runId &&
         workEntryIsProviderReasoning(entry) &&
         entry.detail?.trim() &&
         !canonicalText.has(entry.detail.trim()),
@@ -55,7 +52,7 @@ function reasoningTracesForTurn(
       id: entry.id,
       detail: entry.detail!,
       createdAt: entry.createdAt,
-      turnId: entry.turnId ?? null,
+      runId: entry.runId ?? null,
       streaming: true,
     }));
   return [
@@ -64,7 +61,7 @@ function reasoningTracesForTurn(
       id: message.id,
       detail: message.text,
       createdAt: message.createdAt,
-      turnId: message.turnId,
+      runId: message.runId,
       streaming: message.streaming,
     })),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -74,22 +71,19 @@ export const ComposerReasoningScroller = memo(function ComposerReasoningScroller
   readonly entries: readonly WorkLogEntry[];
   readonly messages?: readonly ChatMessage[];
   readonly active?: boolean;
-  readonly turnId: TurnId | null;
+  readonly runId: RunId | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly cwd: string | undefined;
 }) {
-  const entries = useMemo(
-    () => reasoningTracesForTurn(props.entries, props.messages ?? [], props.turnId),
-    [props.entries, props.messages, props.turnId],
-  );
+  const entries = reasoningTracesForTurn(props.entries, props.messages ?? [], props.runId);
   if (entries.length === 0) return null;
   return (
     <div className="min-w-0 flex-1" data-composer-reasoning="true">
       <WorkingReasoningLog
         traces={entries}
-        {...(props.turnId ? { followTurnId: props.turnId } : {})}
-        key={`${props.environmentId}:${props.threadRef.threadId}:${props.turnId}`}
+        {...(props.runId ? { followRunId: props.runId } : {})}
+        key={`${props.environmentId}:${props.threadRef.threadId}:${props.runId}`}
         compact
       />
     </div>

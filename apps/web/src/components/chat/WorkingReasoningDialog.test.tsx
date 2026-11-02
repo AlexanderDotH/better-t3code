@@ -1,6 +1,6 @@
-import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
-import { act, cloneElement, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { EnvironmentId, ThreadId, RunId } from "@t3tools/contracts";
+import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const motion = vi.hoisted(() => ({ reduced: false }));
@@ -77,8 +77,8 @@ function renderedText(node: ReactTestInstance | string): string {
   return typeof node === "string" ? node : node.children.map(renderedText).join("");
 }
 
-const turnId = TurnId.make("turn");
-const traces = [{ id: "thought", detail: "**Plan**\n\nFirst paragraph", streaming: true, turnId }];
+const runId = RunId.make("run");
+const traces = [{ id: "thought", detail: "**Plan**\n\nFirst paragraph", streaming: true, runId }];
 const contentProps = {
   traces,
   active: true,
@@ -93,26 +93,26 @@ function DialogFixture(props: {
   streamingMotionEnabled: boolean;
   enabled?: boolean;
 }) {
-  const messages = props.traces.map((trace) => ({
-    id: MessageId.make(trace.id),
-    role: "reasoning" as const,
-    turnId,
-    text: trace.detail,
-    createdAt: "2026-09-30T10:00:00Z",
-    updatedAt: "2026-09-30T10:00:00Z",
-    streaming: trace.streaming,
+  const entries: WorkLogEntry[] = props.traces.map((trace) => ({
+    id: trace.id,
+    itemType: "reasoning",
+    tone: "thinking",
+    label: "Thinking",
+    runId: trace.runId ?? runId,
+    detail: trace.detail,
+    createdAt: trace.createdAt ?? "2026-09-30T10:00:00Z",
   }));
   return (
     <WorkingReasoningDialogProvider
-      entries={[]}
-      messages={messages}
-      activeTurnId={props.active ? turnId : null}
+      entries={entries}
+      messages={[]}
+      activeRunId={props.active ? runId : null}
       isWorking={props.active}
       streamIdPrefix={props.streamIdPrefix}
       streamingMotionEnabled={props.streamingMotionEnabled}
       {...(props.enabled === undefined ? {} : { enabled: props.enabled })}
     >
-      <WorkingReasoningLog traces={props.traces} followTurnId={turnId} />
+      <WorkingReasoningLog traces={props.traces} followRunId={runId} />
     </WorkingReasoningDialogProvider>
   );
 }
@@ -138,7 +138,6 @@ beforeEach(() => {
   viewport.scrollTop = 0;
   viewport.scrollHeight = 24;
   viewport.scrollTo.mockClear();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     frames.set(++nextFrame, callback);
     return nextFrame;
@@ -147,12 +146,28 @@ beforeEach(() => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(private callback: () => void) {}
-      observe() {
-        resizeCallbacks.add(this.callback);
+      private readonly deliveries = new Map<Element, () => void>();
+      constructor(private callback: (entries: readonly ResizeObserverEntry[]) => void) {}
+      observe(element: Element) {
+        this.unobserve(element);
+        const deliver = () =>
+          this.callback([
+            {
+              target: element,
+              contentRect: { width: 100, height: viewport.scrollHeight },
+            } as ResizeObserverEntry,
+          ]);
+        this.deliveries.set(element, deliver);
+        resizeCallbacks.add(deliver);
+      }
+      unobserve(element: Element) {
+        const deliver = this.deliveries.get(element);
+        if (deliver) resizeCallbacks.delete(deliver);
+        this.deliveries.delete(element);
       }
       disconnect() {
-        resizeCallbacks.delete(this.callback);
+        for (const deliver of this.deliveries.values()) resizeCallbacks.delete(deliver);
+        this.deliveries.clear();
       }
     },
   );
@@ -187,17 +202,16 @@ it.each([
 it("keeps only titles in the Working strip and opens complete historical and live bodies in its dialog", async () => {
   const environmentId = EnvironmentId.make("env");
   const props = {
-    entries: [],
-    messages: Array.from({ length: 5 }, (_, index) => ({
-      id: MessageId.make(`thought-${index}`),
-      role: "reasoning" as const,
-      turnId,
-      text: `## Title ${index}\n\nPrivate body ${index}`,
+    entries: Array.from({ length: 5 }, (_, index): WorkLogEntry => ({
+      id: `thought-${index}`,
+      itemType: "reasoning",
+      tone: "thinking",
+      label: "Thinking",
+      runId,
+      detail: `## Title ${index}\n\nPrivate body ${index}`,
       createdAt: `2026-09-30T10:00:0${index}Z`,
-      updatedAt: `2026-09-30T10:00:0${index}Z`,
-      streaming: index === 4,
     })),
-    turnId,
+    runId,
     environmentId,
     threadRef: { environmentId, threadId: ThreadId.make("thread") },
     cwd: undefined,
@@ -207,8 +221,8 @@ it("keeps only titles in the Working strip and opens complete historical and liv
   const composer = (next = props, showStrip = true, scope = "thread") => (
     <WorkingReasoningDialogProvider
       entries={next.entries}
-      messages={next.messages}
-      activeTurnId={next.active ? turnId : null}
+      messages={[]}
+      activeRunId={next.active ? runId : null}
       isWorking={next.active}
       streamIdPrefix={scope}
       streamingMotionEnabled={next.streamingMotionEnabled}
@@ -233,29 +247,27 @@ it("keeps only titles in the Working strip and opens complete historical and liv
   );
   const bodies = () => renderer!.root.findAllByProps({ "data-full-trace": "true" });
   expect(bodies().map((node) => node.children.join(""))).toEqual(
-    props.messages.map((message) => message.text),
+    props.entries.map((message) => message.detail),
   );
   expect(bodies().at(-1)!.props["data-live"]).toBe(true);
-  const streamingMessages = [
-    ...props.messages,
+  const streamingEntries = [
+    ...props.entries,
     {
-      ...props.messages[4]!,
-      id: MessageId.make("thought-5"),
-      text: "### Next title\n\nBody arriving after the dialog opened",
+      ...props.entries[4]!,
+      id: "thought-5",
+      detail: "### Next title\n\nBody arriving after the dialog opened",
       createdAt: "2026-09-30T10:00:05Z",
     },
   ];
-  await act(() => renderer!.update(composer({ ...props, messages: streamingMessages })));
+  await act(() => renderer!.update(composer({ ...props, entries: streamingEntries })));
   expect(bodies().map((node) => node.children.join(""))).toEqual(
-    streamingMessages.map((message) => message.text),
+    streamingEntries.map((message) => message.detail),
   );
-  const appended = streamingMessages.map((message, index) =>
-    index === 5
-      ? { ...message, text: `${message.text}\nNew final line`, streaming: false }
-      : message,
+  const appended = streamingEntries.map((message, index) =>
+    index === 5 ? { ...message, detail: `${message.detail}\nNew final line` } : message,
   );
   await act(() =>
-    renderer!.update(composer({ ...props, messages: appended, active: false }, false)),
+    renderer!.update(composer({ ...props, entries: appended, active: false }, false)),
   );
   expect(renderer!.root.findAllByProps({ "data-reasoning-log": "true" })).toHaveLength(0);
   expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(1);
@@ -265,67 +277,45 @@ it("keeps only titles in the Working strip and opens complete historical and liv
   expect(renderer!.toJSON()).toBeNull();
 });
 
-it("shows current-turn canonical and legacy thinking once, excluding prior turns, inherited context, tools, and blank traces", async () => {
-  const canonical = {
-    id: MessageId.make("canonical"),
-    role: "reasoning" as const,
-    turnId,
-    text: "**Canonical**\n\nComplete canonical body",
-    createdAt: "2026-09-30T10:00:00Z",
-    updatedAt: "2026-09-30T10:00:00Z",
-    streaming: false,
-  };
-  const legacy: WorkLogEntry = {
-    id: "legacy",
-    turnId,
-    createdAt: "2026-09-30T10:00:01Z",
+it("shows current-run reasoning while excluding prior runs, inherited context, tools, and blank entries", async () => {
+  const first: WorkLogEntry = {
+    id: "first",
+    runId,
+    itemType: "reasoning",
     tone: "thinking",
     label: "Thinking",
-    sourceActivityKind: "reasoning.summary",
-    detail: "# Legacy\n\nComplete legacy body",
+    detail: "**First**\n\nComplete first body",
+    createdAt: "2026-09-30T10:00:00Z",
   };
-  const messages = [
-    {
-      ...canonical,
-      id: MessageId.make("previous"),
-      turnId: TurnId.make("previous"),
-      text: "Previous turn body",
-    },
-    canonical,
-  ];
+  const second: WorkLogEntry = {
+    ...first,
+    id: "second",
+    detail: "# Second\n\nComplete second body",
+    createdAt: "2026-09-30T10:00:01Z",
+  };
   const entries: WorkLogEntry[] = [
-    {
-      ...legacy,
-      id: "previous-legacy",
-      turnId: TurnId.make("previous"),
-      detail: "Previous turn body",
-    },
-    { ...legacy, id: "duplicate", detail: canonical.text },
-    legacy,
-    { ...legacy, id: "tool", sourceActivityKind: "tool.started", detail: "Tool body" },
-    { ...legacy, id: "empty", detail: "  " },
-    {
-      ...legacy,
-      id: "inherited",
-      detail: "Inherited context",
-      historyOrigin: { sourceThreadId: ThreadId.make("origin"), sourceId: "original", ordinal: 0 },
-    },
+    { ...first, id: "previous", runId: RunId.make("previous"), detail: "Previous run body" },
+    { ...first, id: "inherited", runId: RunId.make("source-run"), detail: "Inherited context" },
+    first,
+    second,
+    { ...first, id: "tool", itemType: "command_execution", tone: "tool", detail: "Tool body" },
+    { ...first, id: "empty", detail: "  " },
   ];
   const environmentId = EnvironmentId.make("env");
   await act(() => {
     renderer = create(
       <WorkingReasoningDialogProvider
         entries={entries}
-        messages={messages}
-        activeTurnId={null}
+        messages={[]}
+        activeRunId={null}
         isWorking={false}
         streamIdPrefix="thread"
         streamingMotionEnabled
       >
         <ComposerReasoningScroller
           entries={entries}
-          messages={messages}
-          turnId={turnId}
+          messages={[]}
+          runId={runId}
           environmentId={environmentId}
           threadRef={{ environmentId, threadId: ThreadId.make("thread") }}
           cwd={undefined}
@@ -336,14 +326,14 @@ it("shows current-turn canonical and legacy thinking once, excluding prior turns
     );
   });
   expect(renderer!.root.findAllByProps({ "data-reasoning-log": "true" }).map(renderedText)).toEqual(
-    ["Canonical", "Legacy"],
+    ["First", "Second"],
   );
   await act(() =>
     renderer!.root.findAllByProps({ "data-reasoning-log": "true" })[1]!.props.onClick(),
   );
   expect(renderer!.root.findAllByProps({ "data-full-trace": "true" }).map(renderedText)).toEqual([
-    canonical.text,
-    legacy.detail,
+    first.detail,
+    second.detail,
   ]);
 });
 

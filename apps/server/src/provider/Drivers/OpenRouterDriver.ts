@@ -1,4 +1,12 @@
 import {
+  makeAlreadyLocalProviderHistorySync,
+  makeInstanceHistorySyncSource,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "@t3tools/provider-core/server/ProviderHistorySync";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import {
   OpenRouterDriverSettings,
   OpenRouterSettings,
   ProviderDriverKind,
@@ -10,8 +18,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -43,25 +51,20 @@ import {
   makeOpenRouterTransport,
   OpenRouterAuthenticationError,
 } from "../openrouter/OpenRouterTransport.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import {
-  makeAlreadyLocalProviderHistorySync,
-  makeInstanceHistorySyncSource,
-  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
-} from "../Services/ProviderHistorySync.ts";
+} from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 
 const DRIVER_KIND = ProviderDriverKind.make("openrouter");
 const decodeSettings = Schema.decodeSync(OpenRouterSettings);
@@ -80,6 +83,8 @@ export type OpenRouterDriverEnv =
   | Path.Path
   | ServerConfig
   | ServerSecretStore.ServerSecretStore
+  | IdAllocatorV2
+  | ProviderHost
   | ServerSettingsService
   | SubagentResourceGovernor
   | WorkspaceContext.WorkspaceContext
@@ -105,41 +110,40 @@ function makeOpenRouterTurnAdmission(
   governor: SubagentResourceGovernor["Service"],
 ): NativeProviderTurnAdmission {
   return {
-    withLease: (input, effect) =>
-      Effect.gen(function* () {
-        const pressure = yield* Deferred.make<InProcessCriticalPressureNotice>();
-        const workId = `${input.providerInstanceId}:${input.threadId}:${input.turnId}`;
-        const lease = yield* governor.acquireInProcessLease({
-          workId,
-          threadId: input.threadId,
+    withLease: Effect.fn("OpenRouterDriver.withLease")(function* (input, effect) {
+      const pressure = yield* Deferred.make<InProcessCriticalPressureNotice>();
+      const workId = `${input.providerInstanceId}:${input.threadId}:${input.turnId}`;
+      const lease = yield* governor.acquireInProcessLease({
+        workId,
+        threadId: input.threadId,
+        provider: DRIVER_KIND,
+        providerInstanceId: input.providerInstanceId,
+        reservation: {
+          serializedHistoryBytes: input.serializedHistoryBytes,
+          attachmentBytes: input.attachmentBytes,
+          toolBufferBytes: input.toolBufferBytes,
+        },
+        onCriticalPressure: (notice) => Deferred.succeed(pressure, notice).pipe(Effect.asVoid),
+      });
+      if (!lease) {
+        return yield* new ProviderAdapterRequestError({
           provider: DRIVER_KIND,
-          providerInstanceId: input.providerInstanceId,
-          reservation: {
-            serializedHistoryBytes: input.serializedHistoryBytes,
-            attachmentBytes: input.attachmentBytes,
-            toolBufferBytes: input.toolBufferBytes,
-          },
-          onCriticalPressure: (notice) => Deferred.succeed(pressure, notice).pipe(Effect.asVoid),
+          method: "resource/admission",
+          detail: "OpenRouter turn admission was cancelled while the server was shutting down.",
         });
-        if (!lease) {
-          return yield* new ProviderAdapterRequestError({
-            provider: DRIVER_KIND,
-            method: "resource/admission",
-            detail: "OpenRouter turn admission was cancelled while the server was shutting down.",
-          });
-        }
-        const pressured = Deferred.await(pressure).pipe(
-          Effect.flatMap(
-            (notice) =>
-              new ProviderAdapterRequestError({
-                provider: DRIVER_KIND,
-                method: "resource/protection",
-                detail: `OpenRouter turn '${notice.workId}' was stopped to protect server memory.`,
-              }),
-          ),
-        );
-        return yield* Effect.raceFirst(effect, pressured).pipe(Effect.ensuring(lease.release));
-      }),
+      }
+      const pressured = Deferred.await(pressure).pipe(
+        Effect.flatMap(
+          (notice) =>
+            new ProviderAdapterRequestError({
+              provider: DRIVER_KIND,
+              method: "resource/protection",
+              detail: `OpenRouter turn '${notice.workId}' was stopped to protect server memory.`,
+            }),
+        ),
+      );
+      return yield* Effect.raceFirst(effect, pressured).pipe(Effect.ensuring(lease.release));
+    }),
   };
 }
 
@@ -151,81 +155,78 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
   },
   configSchema: OpenRouterDriverSettings,
   defaultConfig: (): OpenRouterSettings => decodeSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
-      const resourceGovernor = yield* SubagentResourceGovernor;
-      const mcpConfigEngine = yield* McpConfigEngine;
-      const processEnvironment = mergeProviderInstanceEnvironment(environment);
-      const toolEnvironment = nativeHarnessCommandEnvironment(processEnvironment);
-      const effectiveConfig = { ...config, enabled } satisfies OpenRouterSettings;
+  create: Effect.fn("OpenRouterDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const resourceGovernor = yield* SubagentResourceGovernor;
+    const mcpConfigEngine = yield* McpConfigEngine;
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
+      environment,
+      yield* HostProcess.Environment,
+    );
+    const toolEnvironment = nativeHarnessCommandEnvironment(processEnvironment);
+    const effectiveConfig = { ...config, enabled } satisfies OpenRouterSettings;
 
-      const credentialStore = yield* makeOpenRouterCredentialStore({ instanceId, environment });
-      const keyValidator = yield* makeOpenRouterKeyValidator();
-      const transport = yield* makeOpenRouterTransport({
-        resolveApiKey: credentialStore.resolve.pipe(
-          Effect.map((credential) => credential.apiKey),
-          Effect.mapError(
-            () =>
-              new OpenRouterAuthenticationError({
-                message:
-                  "Set an OpenRouter API key or configure OPENROUTER_API_KEY in this provider instance's environment.",
-              }),
-          ),
+    const credentialStore = yield* makeOpenRouterCredentialStore({ instanceId, environment });
+    const keyValidator = yield* makeOpenRouterKeyValidator();
+    const transport = yield* makeOpenRouterTransport({
+      resolveApiKey: credentialStore.resolve.pipe(
+        Effect.map((credential) => credential.apiKey),
+        Effect.mapError(
+          () =>
+            new OpenRouterAuthenticationError({
+              message:
+                "Set an OpenRouter API key or configure OPENROUTER_API_KEY in this provider instance's environment.",
+            }),
         ),
-      });
+      ),
+    });
 
-      const processRunner = yield* makeProcessRunner();
-      const mcpTools = yield* makeNativeProviderMcpToolBridge({
-        instanceId,
-        environment: toolEnvironment,
-        resolveActiveServers: mcpConfigEngine.resolveActiveServers,
-      });
-      const harness = yield* makeNativeProviderHarness(processRunner, {
-        extensionForThread: mcpTools.extensionForThread,
-        releaseThread: mcpTools.releaseThread,
-      });
-      const adapter = yield* makeOpenRouterAdapter(effectiveConfig, {
-        instanceId,
-        environment: toolEnvironment,
-        transport,
-        harness,
-        admission: makeOpenRouterTurnAdmission(resourceGovernor),
-        resolveMcpServers: ({ cwd }) =>
-          mcpConfigEngine
-            .resolveActiveServers({ cwd, providerInstanceId: instanceId })
-            .pipe(Effect.mapError((cause) => ({ detail: cause.detail }))),
-      });
+    const processRunner = yield* makeProcessRunner();
+    const mcpTools = yield* makeNativeProviderMcpToolBridge({
+      instanceId,
+      environment: toolEnvironment,
+      resolveActiveServers: mcpConfigEngine.resolveActiveServers,
+    });
+    const harness = yield* makeNativeProviderHarness(processRunner, {
+      extensionForThread: mcpTools.extensionForThread,
+      releaseThread: mcpTools.releaseThread,
+    });
+    const adapter = yield* makeOpenRouterAdapter(effectiveConfig, {
+      instanceId,
+      environment: toolEnvironment,
+      transport,
+      harness,
+      admission: makeOpenRouterTurnAdmission(resourceGovernor),
+      resolveMcpServers: ({ cwd }) =>
+        mcpConfigEngine
+          .resolveActiveServers({ cwd, providerInstanceId: instanceId })
+          .pipe(Effect.mapError((cause) => ({ detail: cause.detail }))),
+    });
 
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
-        instanceId,
-      });
-      const historySync = makeAlreadyLocalProviderHistorySync({
-        source: makeInstanceHistorySyncSource({
-          driverKind: DRIVER_KIND,
-          instanceId,
-          continuationKey: continuationIdentity.continuationKey,
-          displayName: displayName ?? "OpenRouter",
-          capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
-        }),
-        reason: "OpenRouter history is already stored by T3 Code.",
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const checkProvider = checkOpenRouterProviderStatus(effectiveConfig, {
-        resolveCredential: credentialStore.resolveOption,
-        validateKey: keyValidator.validate,
-        listModels: transport.listModels,
-      }).pipe(Effect.map(stampIdentity));
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<
-        ProviderSnapshotSettings<OpenRouterSettings>
-      >({
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: DRIVER_KIND,
+      instanceId,
+    });
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const checkProvider = checkOpenRouterProviderStatus(effectiveConfig, {
+      resolveCredential: credentialStore.resolveOption,
+      validateKey: keyValidator.validate,
+      listModels: transport.listModels,
+    }).pipe(Effect.map(stampIdentity));
+    const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenRouterSettings>>(
+      {
         resolveMaintenance: () => Effect.succeed(MAINTENANCE),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -233,67 +234,77 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
         initialSnapshot: (settings) =>
           makePendingOpenRouterProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: `Failed to build OpenRouter snapshot: ${cause.message ?? String(cause)}`,
-              cause,
-            }),
-        ),
-      );
-
-      const textGeneration = makeOpenRouterTextGeneration(
-        effectiveConfig,
-        (request) =>
-          completeOpenRouterText(transport, {
-            model: request.model,
-            instructions: request.instructions,
-            history: [{ type: "user", content: request.prompt }],
-            tools: [],
-            settings: effectiveConfig,
-            ...(request.reasoningEffort === undefined
-              ? {}
-              : { reasoningEffort: request.reasoningEffort }),
+      },
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: `Failed to build OpenRouter snapshot: ${cause.message ?? String(cause)}`,
+            cause,
           }),
-        {
-          isModelAvailable: (model) =>
-            transport
-              .listModels(effectiveConfig.customModels)
-              .pipe(
-                Effect.map((catalog) =>
-                  catalog.some(
-                    (candidate) =>
-                      candidate.id === model && candidate.selectionSupport.textGeneration,
-                  ),
+      ),
+    );
+
+    const textGeneration = makeOpenRouterTextGeneration(
+      effectiveConfig,
+      (request) =>
+        completeOpenRouterText(transport, {
+          model: request.model,
+          instructions: request.instructions,
+          history: [{ type: "user", content: request.prompt }],
+          tools: [],
+          settings: effectiveConfig,
+          ...(request.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: request.reasoningEffort }),
+        }),
+      {
+        isModelAvailable: (model) =>
+          transport
+            .listModels(effectiveConfig.customModels)
+            .pipe(
+              Effect.map((catalog) =>
+                catalog.some(
+                  (candidate) =>
+                    candidate.id === model && candidate.selectionSupport.textGeneration,
                 ),
               ),
-        },
-      );
-      const decisionGeneration = makeOpenRouterDecisionGeneration(effectiveConfig, transport);
-      const authentication = makeOpenRouterAuthentication({
-        instanceId,
-        credentialStore,
-        keyValidator,
-        stopAll: adapter.stopAll(),
-        refreshSnapshot: snapshot.refresh,
-      });
+            ),
+      },
+    );
+    const decisionGeneration = makeOpenRouterDecisionGeneration(effectiveConfig, transport);
+    const authentication = makeOpenRouterAuthentication({
+      instanceId,
+      credentialStore,
+      keyValidator,
+      stopAll: adapter.stopAll(),
+      refreshSnapshot: snapshot.refresh,
+    });
 
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot,
-        adapter,
-        historySync,
-        decisionGeneration,
-        textGeneration,
-        authentication,
-      } satisfies ProviderInstance;
-    }),
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot,
+      orchestrationAdapter: adapter,
+      historySync: makeAlreadyLocalProviderHistorySync({
+        source: makeInstanceHistorySyncSource({
+          driverKind: DRIVER_KIND,
+          instanceId,
+          continuationKey: continuationIdentity.continuationKey,
+          displayName: displayName ?? "OpenRouter",
+          capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+        }),
+        reason: "Conversation history is already stored by T3 Code.",
+      }),
+      decisionGeneration,
+      textGeneration,
+      authentication,
+    } satisfies ProviderInstance;
+  }),
 };

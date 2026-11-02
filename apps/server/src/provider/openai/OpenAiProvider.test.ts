@@ -73,7 +73,7 @@ describe("OpenAI provider snapshot", () => {
       const unauthenticated = yield* checkOpenAiProviderStatus(
         { enabled: true },
         {
-          resolveCredential: Effect.succeed(Option.none()),
+          resolveCredential: Effect.succeedNone,
           listModels: Effect.die("missing credential must not list models"),
         },
       );
@@ -89,9 +89,10 @@ describe("OpenAI provider snapshot", () => {
       const snapshot = yield* checkOpenAiProviderStatus(
         { enabled: true },
         {
-          resolveCredential: Effect.succeed(
-            Option.some({ apiKey: Redacted.make("sk-proj-1234567890"), source: "stored" }),
-          ),
+          resolveCredential: Effect.succeedSome({
+            apiKey: Redacted.make("sk-proj-1234567890"),
+            source: "stored",
+          }),
           listModels: Effect.succeed([MODEL]),
         },
       );
@@ -112,7 +113,6 @@ describe("OpenAI provider snapshot", () => {
         },
       });
       expect(snapshot.models).toHaveLength(1);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(snapshot)).not.toContain("1234567890");
       expect(snapshot.nativeSubagents).toEqual(OPENAI_RESPONSES_PRESENTATION.nativeSubagents);
     }),
@@ -123,9 +123,10 @@ describe("OpenAI provider snapshot", () => {
       const snapshot = yield* checkOpenAiProviderStatus(
         { enabled: true },
         {
-          resolveCredential: Effect.succeed(
-            Option.some({ apiKey: Redacted.make("sk-proj-1234567890"), source: "environment" }),
-          ),
+          resolveCredential: Effect.succeedSome({
+            apiKey: Redacted.make("sk-proj-1234567890"),
+            source: "environment",
+          }),
           listModels: Effect.succeed([]),
         },
       );

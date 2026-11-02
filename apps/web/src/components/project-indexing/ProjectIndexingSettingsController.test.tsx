@@ -12,9 +12,9 @@ import {
   type ProjectIndexStreamEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act, StrictMode, type ComponentProps, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, type ComponentProps, type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../../hooks/useInterfaceTranslator", async () => {
   const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
@@ -189,9 +189,11 @@ function fixture() {
 }
 
 let renderer: ReactTestRenderer | undefined;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -229,7 +231,9 @@ async function setPreference(label: string, checked: boolean) {
   const input = renderer!.root
     .findAllByType("input")
     .find((candidate) => candidate.props["aria-label"] === label)!;
-  await act(() => input.props.onChange({ currentTarget: { checked } }));
+  await act(async () => {
+    await input.props.onChange({ currentTarget: { checked } });
+  });
 }
 
 describe("ProjectIndexingSettingsController", () => {
@@ -247,17 +251,23 @@ describe("ProjectIndexingSettingsController", () => {
     expect(
       renderer!.root.findAllByProps({ "aria-label": "projectIndexing.automaticAiUpdate" }),
     ).toHaveLength(0);
-    await act(() => button("projectIndexing.analyze").props.onClick());
+    await act(async () => {
+      await button("projectIndexing.analyze").props.onClick();
+    });
     expect(api.start).toHaveBeenCalledTimes(1);
     expect(api.checkModel).not.toHaveBeenCalled();
 
     await setPreference("projectIndexing.reviewEnabled", true);
-    await act(() => button("Analysis service · Precise model").props.onClick());
+    await act(async () => {
+      await button("Analysis service · Precise model").props.onClick();
+    });
     expect(api.checkModel).toHaveBeenCalledWith({
       projectId,
       modelSelection: { instanceId, model: "precise-model" },
     });
-    await act(() => renderer!.unmount());
+    await act(async () => {
+      await renderer!.unmount();
+    });
     expect(listeners.size).toBe(0);
     renderer = undefined;
   });
@@ -279,7 +289,9 @@ describe("ProjectIndexingSettingsController", () => {
       .find((input) => input.props["aria-label"] === "projectIndexing.enabled")!;
     expect(enabled.props.disabled).toBe(true);
     await setPreference("projectIndexing.enabled", true);
-    await act(() => button("projectIndexing.analyze").props.onClick());
+    await act(async () => {
+      await button("projectIndexing.analyze").props.onClick();
+    });
     expect(api.updateSettings).not.toHaveBeenCalled();
     expect(api.start).not.toHaveBeenCalled();
   });
@@ -288,14 +300,24 @@ describe("ProjectIndexingSettingsController", () => {
     const { api, getStatus } = fixture();
     await mount(api);
     await setPreference("projectIndexing.enabled", true);
-    await act(() => button("projectIndexing.analyze").props.onClick());
-    await act(() => button("projectIndexing.pause").props.onClick());
+    await act(async () => {
+      await button("projectIndexing.analyze").props.onClick();
+    });
+    await act(async () => {
+      await button("projectIndexing.pause").props.onClick();
+    });
     expect(getStatus().state).toBe("paused");
-    await act(() => button("projectIndexing.resumeIndexing").props.onClick());
+    await act(async () => {
+      await button("projectIndexing.resumeIndexing").props.onClick();
+    });
     expect(getStatus().state).toBe("queued");
-    await act(() => button("projectIndexing.cancel").props.onClick());
+    await act(async () => {
+      await button("projectIndexing.cancel").props.onClick();
+    });
     expect(getStatus().state).toBe("cancelled");
-    await act(() => button("projectIndexing.clear").props.onClick());
+    await act(async () => {
+      await button("projectIndexing.clear").props.onClick();
+    });
     expect(vi.mocked(api.control).mock.calls.map(([input]) => input.action)).toEqual([
       "pause",
       "resume",
@@ -305,7 +327,9 @@ describe("ProjectIndexingSettingsController", () => {
     const confirm = dialog
       .findAllByType("button")
       .find((candidate) => candidate.children.includes("projectIndexing.clear"))!;
-    await act(() => confirm.props.onClick());
+    await act(async () => {
+      await confirm.props.onClick();
+    });
     expect(api.control).toHaveBeenLastCalledWith({ projectId, action: "clear" });
   });
 });

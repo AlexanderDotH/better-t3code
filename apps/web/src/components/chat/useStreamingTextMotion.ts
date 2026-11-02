@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   createStreamingTextMotionFrame,
@@ -132,14 +133,13 @@ export function useStreamingTextMotion({
   });
   const committedRef = useRef<StreamingTextMotionCommitState | null>(null);
 
-  const publishFrames = useCallback(
+  const publishFrames = useStableCallback(
     (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
       const nextSnapshot = { frames: state.frames, animationTimeMs };
       // Publish in the text commit's layout effect so appended text cannot paint
       // fully visible before its reveal animation is attached.
       setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
     },
-    [],
   );
 
   useCommitEffect(() => {
@@ -157,6 +157,7 @@ export function useStreamingTextMotion({
     publishFrames(next, nowMs);
   }, [enabled, animateInitialStreamChunk, isStreaming, streamId, text, publishFrames]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own text-reveal deadlines and visibility listeners for the current stream.
   useEffect(() => {
     if (isStreaming || snapshot.frames.length === 0) return;
     const frames = snapshot.frames;
@@ -179,6 +180,7 @@ export function useStreamingTextMotion({
     return () => clearTimeout(timeout);
   }, [isStreaming, snapshot.frames, publishFrames]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own text-reveal deadlines and visibility listeners for the current stream.
   useEffect(() => {
     if (typeof document === "undefined") return;
 

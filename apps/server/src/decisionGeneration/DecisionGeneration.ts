@@ -16,8 +16,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
-import type { ServerProviderShape } from "../provider/Services/ServerProvider.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type {
   DecisionGenerationProvider,
   DecisionGenerationRequest,
@@ -35,7 +35,7 @@ const RESPONSE_PER_CHOICE_RESERVE_TOKENS = 24;
 const MIDDLE_TRUNCATION_MARKER = "\n[... decision state truncated ...]\n";
 
 export interface DecisionGenerationProviderInstance {
-  readonly snapshot: Pick<ServerProviderShape, "getSnapshot">;
+  readonly snapshot: Pick<ProviderInstance["snapshot"], "getSnapshot">;
   readonly decisionGeneration?: DecisionGenerationProvider;
   readonly textGeneration?: {
     readonly decisionGeneration?: DecisionGenerationProvider;

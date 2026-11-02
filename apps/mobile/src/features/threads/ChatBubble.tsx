@@ -8,7 +8,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { flattenThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
 
 export type ChatBubbleTone = "neutral" | "info" | "success" | "warning" | "error";
-export const ChatBubbleToneContext = createContext<ChatBubbleTone>("neutral");
+const ChatBubbleToneContext = createContext<ChatBubbleTone>("neutral");
 
 export function useChatBubblePalette(tone?: ChatBubbleTone) {
   const inheritedTone = use(ChatBubbleToneContext);

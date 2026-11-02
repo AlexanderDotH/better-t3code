@@ -1,11 +1,13 @@
 import {
   ModelSelection,
-  type OrchestrationMessage,
-  type OrchestrationThreadActivity,
   type RuntimeSessionId,
   type ThreadId,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
+import {
+  type OrchestrationMessage,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts/legacy";
 import type { DecisionGenerationRequest } from "../decisionGeneration/DecisionGenerationProvider.ts";
 import { normalizedModelSelectionKey } from "../decisionGeneration/DecisionGeneration.ts";
 import type { DecisionGenerationResult } from "@t3tools/contracts";
@@ -427,15 +429,14 @@ export const makeContextCompactionEngine = Effect.fn("ContextCompaction.make")(f
     observe,
     replacement,
     applied,
-    forget: (threadId: ThreadId) =>
-      Effect.gen(function* () {
-        prepared.delete(threadId);
-        latestUsage.delete(threadId);
-        attemptedPrefixes.delete(threadId);
-        revisions.set(threadId, (revisions.get(threadId) ?? 0) + 1);
-        const cancel = cancellations.get(threadId);
-        if (cancel) yield* cancel;
-      }),
+    forget: Effect.fn("ContextCompactionEngine.forget")(function* (threadId: ThreadId) {
+      prepared.delete(threadId);
+      latestUsage.delete(threadId);
+      attemptedPrefixes.delete(threadId);
+      revisions.set(threadId, (revisions.get(threadId) ?? 0) + 1);
+      const cancel = cancellations.get(threadId);
+      if (cancel) yield* cancel;
+    }),
     drain: worker.drain,
   };
 });

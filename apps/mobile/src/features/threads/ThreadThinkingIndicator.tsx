@@ -19,7 +19,7 @@ import {
   CHAT_THINKING_PHRASE_KEYS,
   CHAT_THINKING_WAVE_TRAVEL,
 } from "@t3tools/client-runtime/chat-presentation";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useChatPresentationMotion } from "./ChatPresentationMotion";
 import { useChatBubblePalette } from "./ChatBubble";
@@ -109,8 +109,16 @@ export function ThreadThinkingIndicator({ color }: { color: ColorValue }) {
   const [visible, setVisible] = useState(false);
   const [phrase, setPhrase] = useState(0);
   const phase = useSharedValue(0);
-  const characters = Array.from(translate(CHAT_THINKING_PHRASE_KEYS[phrase]!).normalize("NFC"));
+  const occurrences = new Map<string, number>();
+  const characters = Array.from(translate(CHAT_THINKING_PHRASE_KEYS[phrase]!).normalize("NFC")).map(
+    (character) => {
+      const occurrence = (occurrences.get(character) ?? 0) + 1;
+      occurrences.set(character, occurrence);
+      return { character, key: `${character}:${occurrence}` };
+    },
+  );
   useViewabilityAmount(useCallback((token) => setVisible(token.sizeVisible > 0), []));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the visible native thinking animation and phrase timer while motion is enabled.
   useEffect(() => {
     cancelAnimation(phase);
     if (!motion.enabled || !visible) return;
@@ -153,9 +161,9 @@ export function ThreadThinkingIndicator({ color }: { color: ColorValue }) {
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
       >
-        {characters.map((character, index) => (
+        {characters.map(({ character, key }, index) => (
           <ThinkingCharacter
-            key={index}
+            key={key}
             character={character}
             delay={(index / Math.max(1, characters.length - 1)) * CHAT_THINKING_WAVE_TRAVEL}
             phase={phase}

@@ -446,121 +446,119 @@ export const makeMcpRuntimeStateStore = Effect.fn("makeMcpRuntimeStateStore")(fu
     },
   );
 
-  const registerSession = (session: ProviderSession) =>
-    Effect.gen(function* () {
-      if (session.providerInstanceId === undefined || session.runtimeSessionId === undefined) {
-        return;
-      }
-      const providerInstanceId = session.providerInstanceId;
-      const runtimeSessionId = session.runtimeSessionId;
-      const observedAt = yield* nowIso;
-      const target = {
-        providerInstanceId,
-        threadId: session.threadId,
-        runtimeSessionId,
-      };
-      const mutation = yield* mutex.withPermits(1)(
-        Effect.gen(function* () {
-          const entries = yield* Ref.get(state);
-          const next = new Map(entries);
-          const runtimeEvents: RuntimeChangeEnvelope[] = [];
-          for (const [key, candidate] of entries) {
-            if (
-              !sameThread(candidate.context, target) ||
-              candidate.context.runtimeSessionId === target.runtimeSessionId ||
-              candidate.context.state === "inactive"
-            ) {
-              continue;
-            }
-            const revision = candidate.revision + 1;
-            const stoppedServers = new Map<string, McpRuntimeServer>();
-            for (const currentServer of candidate.servers.values()) {
-              const server = { ...currentServer, state: "not-started" as const, observedAt };
-              stoppedServers.set(server.providerKey, server);
-            }
-            const inactiveEntry: RuntimeEntry = {
-              ...candidate,
-              context: { ...candidate.context, state: "inactive", updatedAt: observedAt },
-              revision,
-              observedAt,
-              servers: stoppedServers,
-            };
-            next.set(key, inactiveEntry);
-            runtimeEvents.push({
-              target: {
-                providerInstanceId: candidate.context.providerInstanceId,
-                threadId: candidate.context.threadId,
-                runtimeSessionId: candidate.context.runtimeSessionId,
-              },
-              change: { type: "snapshot", snapshot: toSnapshot(inactiveEntry) },
-            });
+  const registerSession = Effect.fn("registerSession")(function* (session: ProviderSession) {
+    if (session.providerInstanceId === undefined || session.runtimeSessionId === undefined) {
+      return;
+    }
+    const providerInstanceId = session.providerInstanceId;
+    const runtimeSessionId = session.runtimeSessionId;
+    const observedAt = yield* nowIso;
+    const target = {
+      providerInstanceId,
+      threadId: session.threadId,
+      runtimeSessionId,
+    };
+    const mutation = yield* mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const entries = yield* Ref.get(state);
+        const next = new Map(entries);
+        const runtimeEvents: RuntimeChangeEnvelope[] = [];
+        for (const [key, candidate] of entries) {
+          if (
+            !sameThread(candidate.context, target) ||
+            candidate.context.runtimeSessionId === target.runtimeSessionId ||
+            candidate.context.state === "inactive"
+          ) {
+            continue;
           }
-          const key = contextKey(target);
-          const existing = entries.get(key);
-          next.set(key, {
-            context: {
-              providerInstanceId,
-              driver: session.provider,
-              threadId: session.threadId,
-              runtimeSessionId,
-              ...(session.cwd === undefined ? {} : { projectCwd: session.cwd }),
-              state: "active",
-              startedAt: session.createdAt,
-              updatedAt: observedAt,
-            },
-            revision: existing?.revision ?? 0,
-            observedAt,
-            servers: existing?.servers ?? new Map(),
-          });
-          const pruned = pruneInactiveContexts(next, observedAt);
-          yield* Ref.set(state, pruned);
-          const contextEvents = yield* makeContextChanges(entries, pruned, observedAt);
-          return { runtimeEvents, contextEvents };
-        }),
-      );
-      yield* publish(mutation.runtimeEvents);
-      yield* publishContextChanges(mutation.contextEvents);
-    });
-
-  const endSession = (input: McpRuntimeSnapshotInput) =>
-    Effect.gen(function* () {
-      const observedAt = yield* nowIso;
-      const mutation = yield* mutex.withPermits(1)(
-        Effect.gen(function* () {
-          const entries = yield* Ref.get(state);
-          const key = contextKey(input);
-          const current = entries.get(key);
-          if (current === undefined || current.context.state === "inactive") {
-            return { runtimeEvents: [], contextEvents: [] };
-          }
-          const servers = new Map<string, McpRuntimeServer>();
-          for (const currentServer of current.servers.values()) {
+          const revision = candidate.revision + 1;
+          const stoppedServers = new Map<string, McpRuntimeServer>();
+          for (const currentServer of candidate.servers.values()) {
             const server = { ...currentServer, state: "not-started" as const, observedAt };
-            servers.set(server.providerKey, server);
+            stoppedServers.set(server.providerKey, server);
           }
-          const entry: RuntimeEntry = {
-            ...current,
-            context: { ...current.context, state: "inactive", updatedAt: observedAt },
-            revision: current.revision + 1,
+          const inactiveEntry: RuntimeEntry = {
+            ...candidate,
+            context: { ...candidate.context, state: "inactive", updatedAt: observedAt },
+            revision,
             observedAt,
-            servers,
+            servers: stoppedServers,
           };
-          const next = new Map(entries);
-          next.set(key, entry);
-          const pruned = pruneInactiveContexts(next, observedAt);
-          yield* Ref.set(state, pruned);
-          const contextEvents = yield* makeContextChanges(entries, pruned, observedAt);
-          return {
-            runtimeEvents: [
-              { type: "snapshot", snapshot: toSnapshot(entry) } satisfies McpRuntimeChange,
-            ],
-            contextEvents,
-          };
-        }),
-      );
-      yield* publishFor(input, mutation.runtimeEvents);
-      yield* publishContextChanges(mutation.contextEvents);
-    });
+          next.set(key, inactiveEntry);
+          runtimeEvents.push({
+            target: {
+              providerInstanceId: candidate.context.providerInstanceId,
+              threadId: candidate.context.threadId,
+              runtimeSessionId: candidate.context.runtimeSessionId,
+            },
+            change: { type: "snapshot", snapshot: toSnapshot(inactiveEntry) },
+          });
+        }
+        const key = contextKey(target);
+        const existing = entries.get(key);
+        next.set(key, {
+          context: {
+            providerInstanceId,
+            driver: session.provider,
+            threadId: session.threadId,
+            runtimeSessionId,
+            ...(session.cwd === undefined ? {} : { projectCwd: session.cwd }),
+            state: "active",
+            startedAt: session.createdAt,
+            updatedAt: observedAt,
+          },
+          revision: existing?.revision ?? 0,
+          observedAt,
+          servers: existing?.servers ?? new Map(),
+        });
+        const pruned = pruneInactiveContexts(next, observedAt);
+        yield* Ref.set(state, pruned);
+        const contextEvents = yield* makeContextChanges(entries, pruned, observedAt);
+        return { runtimeEvents, contextEvents };
+      }),
+    );
+    yield* publish(mutation.runtimeEvents);
+    yield* publishContextChanges(mutation.contextEvents);
+  });
+
+  const endSession = Effect.fn("endSession")(function* (input: McpRuntimeSnapshotInput) {
+    const observedAt = yield* nowIso;
+    const mutation = yield* mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const entries = yield* Ref.get(state);
+        const key = contextKey(input);
+        const current = entries.get(key);
+        if (current === undefined || current.context.state === "inactive") {
+          return { runtimeEvents: [], contextEvents: [] };
+        }
+        const servers = new Map<string, McpRuntimeServer>();
+        for (const currentServer of current.servers.values()) {
+          const server = { ...currentServer, state: "not-started" as const, observedAt };
+          servers.set(server.providerKey, server);
+        }
+        const entry: RuntimeEntry = {
+          ...current,
+          context: { ...current.context, state: "inactive", updatedAt: observedAt },
+          revision: current.revision + 1,
+          observedAt,
+          servers,
+        };
+        const next = new Map(entries);
+        next.set(key, entry);
+        const pruned = pruneInactiveContexts(next, observedAt);
+        yield* Ref.set(state, pruned);
+        const contextEvents = yield* makeContextChanges(entries, pruned, observedAt);
+        return {
+          runtimeEvents: [
+            { type: "snapshot", snapshot: toSnapshot(entry) } satisfies McpRuntimeChange,
+          ],
+          contextEvents,
+        };
+      }),
+    );
+    yield* publishFor(input, mutation.runtimeEvents);
+    yield* publishContextChanges(mutation.contextEvents);
+  });
 
   const readContextSnapshot = Effect.fn("McpRuntimeStateStore.readContextSnapshot")(function* (
     input: McpRuntimeContextsInput,
@@ -596,38 +594,38 @@ export const makeMcpRuntimeStateStore = Effect.fn("makeMcpRuntimeStateStore")(fu
   const listContexts = (input: McpRuntimeContextsInput): Effect.Effect<McpRuntimeContextsResult> =>
     readContextSnapshot(input).pipe(Effect.map(({ contexts }) => ({ contexts })));
 
-  const subscribeContexts = (input: McpRuntimeContextChangesInput) =>
-    Effect.gen(function* () {
-      const subscription = yield* PubSub.subscribe(contextChanges);
-      const latest = yield* readContextSnapshot(input);
-      const laterChanges = Stream.fromSubscription(subscription).pipe(
-        Stream.filter((envelope) => envelope.providerInstanceId === input.providerInstanceId),
-        Stream.map((envelope) => envelope.change),
-        Stream.filter((change) => {
-          const revision = change.type === "snapshot" ? change.snapshot.revision : change.revision;
-          return revision > latest.revision;
-        }),
-      );
-      return { latest, changes: laterChanges };
-    });
+  const subscribeContexts = Effect.fn("subscribeContexts")(function* (
+    input: McpRuntimeContextChangesInput,
+  ) {
+    const subscription = yield* PubSub.subscribe(contextChanges);
+    const latest = yield* readContextSnapshot(input);
+    const laterChanges = Stream.fromSubscription(subscription).pipe(
+      Stream.filter((envelope) => envelope.providerInstanceId === input.providerInstanceId),
+      Stream.map((envelope) => envelope.change),
+      Stream.filter((change) => {
+        const revision = change.type === "snapshot" ? change.snapshot.revision : change.revision;
+        return revision > latest.revision;
+      }),
+    );
+    return { latest, changes: laterChanges };
+  });
 
   const snapshot = (input: McpRuntimeSnapshotInput) =>
     requireEntry(input, false).pipe(Effect.map(toSnapshot));
 
-  const subscribe = (
+  const subscribe = Effect.fn("subscribe")(function* (
     input: McpRuntimeSnapshotInput,
     loadLatest: Effect.Effect<McpRuntimeSnapshot, McpRuntimeError>,
-  ) =>
-    Effect.gen(function* () {
-      const subscription = yield* PubSub.subscribe(changes);
-      const latest = yield* loadLatest;
-      const laterChanges = Stream.fromSubscription(subscription).pipe(
-        Stream.filter((envelope) => matchesTarget(envelope, input)),
-        Stream.map((envelope) => envelope.change),
-        Stream.filter((change) => changeRevision(change) > latest.revision),
-      );
-      return { latest, changes: laterChanges };
-    });
+  ) {
+    const subscription = yield* PubSub.subscribe(changes);
+    const latest = yield* loadLatest;
+    const laterChanges = Stream.fromSubscription(subscription).pipe(
+      Stream.filter((envelope) => matchesTarget(envelope, input)),
+      Stream.map((envelope) => envelope.change),
+      Stream.filter((change) => changeRevision(change) > latest.revision),
+    );
+    return { latest, changes: laterChanges };
+  });
 
   return {
     state,

@@ -2,11 +2,11 @@ import {
   getProviderAttachmentLimitError,
   type ChatAttachment,
   type MessageReplyReference,
-  type OrchestrationMessage,
   type ProviderTurnTranscriptHandoff,
   type ProviderUserInputAnswers,
   type UserInputQuestion,
 } from "@t3tools/contracts";
+import { type OrchestrationMessage } from "@t3tools/contracts/legacy";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

@@ -1,5 +1,13 @@
 import { type TurnDiffFileChange } from "../../types";
-import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>) {
+  return files.reduce(
+    (totals, file) => ({
+      additions: totals.additions + file.additions,
+      deletions: totals.deletions + file.deletions,
+    }),
+    { additions: 0, deletions: 0 },
+  );
+}
 
 const CHANGED_FILES_AUTO_EXPAND_FILE_LIMIT = 5;
 const CHANGED_FILES_AUTO_EXPAND_LINE_LIMIT = 200;

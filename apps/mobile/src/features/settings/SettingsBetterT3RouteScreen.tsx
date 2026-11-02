@@ -9,7 +9,7 @@ import {
   type BetterT3FeatureId,
   type BetterT3FeatureSection,
   type BetterT3SwitchFeatureId,
-  type EnvironmentId,
+  EnvironmentId,
   type ExecutionEnvironmentCapabilities,
   type ModelSelection,
   type ProjectId,
@@ -33,8 +33,8 @@ import {
 import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/project-indexing";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AsyncResult } from "effect/reactivity";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import {
   isAtomCommandInterrupted,
@@ -45,8 +45,8 @@ import {
   AndroidScreenScaffold,
   ScreenScaffoldScrollView,
 } from "../../components/AndroidScreenScaffold";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -292,7 +292,7 @@ export function SettingsBetterT3RouteScreen() {
   const { environments } = useEnvironments();
   const projects = useProjects();
   const threads = useThreadShells();
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const [requestedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
   const [selectedGitThreadId, setSelectedGitThreadId] = useState<ThreadId | null>(null);
   const [activeChoice, setActiveChoice] = useState<
@@ -301,21 +301,20 @@ export function SettingsBetterT3RouteScreen() {
   const [autoReasoningModelPickerOpen, setAutoReasoningModelPickerOpen] = useState(false);
   const [contextCompactionModelPickerOpen, setContextCompactionModelPickerOpen] = useState(false);
 
-  useEffect(() => {
-    if (
-      selectedEnvironmentId !== null &&
-      environments.some((environment) => environment.environmentId === selectedEnvironmentId)
-    ) {
-      return;
-    }
-    setSelectedGitThreadId(null);
-    setSelectedProjectId(null);
-    setSelectedEnvironmentId(environments[0]?.environmentId ?? null);
-  }, [environments, selectedEnvironmentId]);
+  const selectedEnvironmentId = environments.some(
+    (environment) => environment.environmentId === requestedEnvironmentId,
+  )
+    ? requestedEnvironmentId
+    : (environments[0]?.environmentId ?? null);
 
   const selectedEnvironment =
     environments.find((environment) => environment.environmentId === selectedEnvironmentId) ?? null;
-  const serverConfig = selectedEnvironment?.serverConfig ?? null;
+  const selectedConfig = selectedEnvironment?.serverConfig ?? null;
+  const providerSnapshots = useAtomValue(
+    serverEnvironment.providersValueAtom(selectedEnvironmentId ?? EnvironmentId.make("unselected")),
+  );
+  const serverConfig =
+    selectedConfig === null ? null : { ...selectedConfig, providers: providerSnapshots ?? [] };
   const environmentTargetId = resolveMobileBetterT3EnvironmentTarget({
     environmentId: selectedEnvironmentId,
     connectionPhase: selectedEnvironment?.connection.phase ?? "offline",
@@ -342,21 +341,19 @@ export function SettingsBetterT3RouteScreen() {
     () => sanitizeBetterT3ExpandedSettingsGroups(devicePreferences?.betterT3ExpandedSettingsGroups),
     [devicePreferences?.betterT3ExpandedSettingsGroups],
   );
-  const expandedSettingsGroupsRef = useRef(expandedSettingsGroups);
-  useEffect(() => {
-    expandedSettingsGroupsRef.current = expandedSettingsGroups;
-  }, [expandedSettingsGroups]);
-  const setGroupExpanded = useCallback(
-    (id: BetterT3SettingsSubgroupId, expanded: boolean) => {
-      const current = expandedSettingsGroupsRef.current;
-      const next = expanded
-        ? sanitizeBetterT3ExpandedSettingsGroups([...current, id])
-        : current.filter((candidate) => candidate !== id);
-      expandedSettingsGroupsRef.current = next;
-      savePreferences({ betterT3ExpandedSettingsGroups: next });
-    },
-    [savePreferences],
-  );
+  const setGroupExpanded = (id: BetterT3SettingsSubgroupId, expanded: boolean) =>
+    savePreferences({
+      transform: (current) => {
+        const groups = sanitizeBetterT3ExpandedSettingsGroups(
+          current.betterT3ExpandedSettingsGroups,
+        );
+        return {
+          betterT3ExpandedSettingsGroups: expanded
+            ? sanitizeBetterT3ExpandedSettingsGroups([...groups, id])
+            : groups.filter((candidate) => candidate !== id),
+        };
+      },
+    });
   const deviceSettings = devicePreferences?.betterT3Device
     ? devicePreferences.betterT3Device
     : DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
@@ -421,15 +418,6 @@ export function SettingsBetterT3RouteScreen() {
     environmentId: environmentTargetId,
     threadId: selectedGitThread?.threadId ?? null,
   });
-  useEffect(() => {
-    if (
-      selectedGitThreadId === null ||
-      gitWorkbenchThreadOptions.some((option) => option.threadId === selectedGitThreadId)
-    ) {
-      return;
-    }
-    setSelectedGitThreadId(null);
-  }, [gitWorkbenchThreadOptions, selectedGitThreadId]);
   const preparedStatusModel = useMemo(
     () =>
       prepareBetterT3StatusModel({
@@ -457,7 +445,7 @@ export function SettingsBetterT3RouteScreen() {
             ? null
             : {
                 projectId: selectedProject.id,
-                checkpointsEnabled: selectedProject.checkpointsEnabled,
+                checkpointsEnabled: selectedProject.checkpointsEnabled !== false,
               },
         knowledgeGraphStatus: null,
       }),

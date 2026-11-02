@@ -16,9 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -336,8 +336,10 @@ function SupportedHarnessChatSource(props: {
     [includeArchived, listChats, props.environmentId, props.source.id, query],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load provider chats while this source is active and invalidate pending replies when it closes.
   useEffect(() => {
     if (!props.active) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- The active source request owns its loading/error state until the remote list settles.
     void loadPage(null);
     return () => {
       requestSequence.current += 1;
@@ -404,53 +406,39 @@ function SupportedHarnessChatSource(props: {
     );
   }, [chats, props.environmentId, props.source.id, refreshStatus, refreshingStatus]);
 
-  const performSync = useCallback(
-    async (
-      resolutions: ReadonlyMap<HarnessChatSessionId, ProjectId>,
-      unresolvedProjectId: ProjectId | null,
-    ) => {
-      if (syncing) return;
-      setSyncing(true);
-      setError(null);
-      setLastResult(null);
-      const result = await runSync({
-        environmentId: props.environmentId,
-        input: buildHarnessChatSyncRunInput({
-          sourceId: props.source.id,
-          preferredInstanceId: props.source.preferredInstanceId,
-          selection,
-          query,
-          includeArchived,
-          targetResolutions: resolutions,
-          unresolvedTargetProjectId: unresolvedProjectId,
-        }),
-      });
-      setSyncing(false);
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const message = failureMessage(result, "Could not sync harness chats.");
-          setError(message);
-          Alert.alert("Could not sync chats", message);
-        }
-        return;
+  const performSync = async (
+    resolutions: ReadonlyMap<HarnessChatSessionId, ProjectId>,
+    unresolvedProjectId: ProjectId | null,
+  ) => {
+    if (syncing) return;
+    setSyncing(true);
+    setError(null);
+    setLastResult(null);
+    const result = await runSync({
+      environmentId: props.environmentId,
+      input: buildHarnessChatSyncRunInput({
+        sourceId: props.source.id,
+        preferredInstanceId: props.source.preferredInstanceId,
+        selection,
+        query,
+        includeArchived,
+        targetResolutions: resolutions,
+        unresolvedTargetProjectId: unresolvedProjectId,
+      }),
+    });
+    setSyncing(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const message = failureMessage(result, "Could not sync harness chats.");
+        setError(message);
+        Alert.alert("Could not sync chats", message);
       }
-      setLastResult(result.value);
-      props.onSynced();
-      void loadPage(null);
-    },
-    [
-      includeArchived,
-      loadPage,
-      props.environmentId,
-      props.onSynced,
-      props.source.id,
-      props.source.preferredInstanceId,
-      query,
-      runSync,
-      selection,
-      syncing,
-    ],
-  );
+      return;
+    }
+    setLastResult(result.value);
+    props.onSynced();
+    void loadPage(null);
+  };
 
   const startSync = useCallback(() => {
     if (selectedCount === 0 || syncing) return;
@@ -755,7 +743,9 @@ export function HarnessChatSyncEnvironment(props: {
     setSources(result.value.sources);
   }, [discoverSources, props.environmentId, supported]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Discover provider chat sources for this environment and invalidate the request on unmount.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- The source-discovery request owns its loading/error state until the scan settles.
     void reload();
     return () => {
       requestSequence.current += 1;

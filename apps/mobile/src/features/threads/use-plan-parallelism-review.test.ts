@@ -1,9 +1,10 @@
+import type { MobileProposedPlan } from "./plan-parallelism-review";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  PlanId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationProposedPlan,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -28,8 +29,8 @@ const provider: ServerProvider = {
   skills: [],
   nativeSubagents: { toolName: "spawn_agent", maxRecommendedSubagents: 4 },
 };
-const plan: OrchestrationProposedPlan = {
-  id: "plan-1",
+const plan: MobileProposedPlan = {
+  id: PlanId.make("plan-1"),
   turnId: null,
   planMarkdown: "# Plan",
   implementedAt: null,

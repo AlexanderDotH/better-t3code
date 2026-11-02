@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Shared databases have recorded conflicting migrations in the 33-38 range.
 // Keep this repair at the first fresh ID and make direct reapplication safe.

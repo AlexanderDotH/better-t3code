@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The provider CLI hook reads native process stdin as a Node Readable.
 import * as NodeStream from "node:stream";
 import * as Effect from "effect/Effect";
 

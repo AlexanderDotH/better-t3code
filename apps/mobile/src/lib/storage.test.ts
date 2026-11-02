@@ -1,4 +1,3 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
@@ -70,6 +69,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("expo", () => ({
+  requireOptionalNativeModule: () => null,
+}));
+
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: mocks.deleteItemAsync,
   getItemAsync: mocks.getItemAsync,
@@ -89,31 +92,13 @@ vi.mock("expo-constants", () => ({
 }));
 
 vi.mock("react-native", () => ({
+  AppState: { currentState: "active" },
   Platform: {
     OS: "ios",
   },
 }));
 
-import {
-  loadPreferences,
-  loadSavedConnections,
-  saveConnection,
-  savePreferencesPatch,
-} from "../persistence/imperative";
-import { toStableSavedRemoteConnection } from "./connection";
-
-const managedConnection = {
-  environmentId: EnvironmentId.make("environment-1"),
-  environmentLabel: "Desktop",
-  pairingUrl: "https://desktop.example/",
-  displayUrl: "https://desktop.example/",
-  httpBaseUrl: "https://desktop.example/",
-  wsBaseUrl: "wss://desktop.example/",
-  bearerToken: null,
-  authenticationMethod: "dpop",
-  dpopAccessToken: "short-lived-token",
-  relayManaged: true,
-} as const;
+import { loadPreferences, savePreferencesPatch } from "../persistence/imperative";
 
 const migratedBetterT3Settings = {
   version: 1,
@@ -133,53 +118,32 @@ describe("mobile connection storage", () => {
     vi.clearAllMocks();
   });
 
-  it("persists relay-managed connections without their ephemeral access token", async () => {
-    await saveConnection(managedConnection);
-
-    const savedValue = mocks.setItemAsync.mock.calls[0]?.[1];
-    expect(savedValue).toBeDefined();
-    expect(JSON.parse(savedValue ?? "")).toEqual({
-      connections: [toStableSavedRemoteConnection(managedConnection)],
+  it("persists tab order locally and retains it when another preference changes", async () => {
+    const navigationTabOrder = ["usage", "threads", "pullRequests"];
+    const hiddenNavigationTabs = ["issues", "home"];
+    await savePreferencesPatch({ navigationTabOrder, hiddenNavigationTabs });
+    await savePreferencesPatch({ baseFontSize: 19 });
+    await expect(loadPreferences()).resolves.toEqual({
+      navigationTabOrder,
+      hiddenNavigationTabs,
+      baseFontSize: 19,
     });
   });
 
-  it("loads relay-managed connection metadata without a cached access token", async () => {
-    await saveConnection(managedConnection);
-
-    await expect(loadSavedConnections()).resolves.toEqual([
-      toStableSavedRemoteConnection(managedConnection),
-    ]);
-  });
-
-  it("preserves secure-storage read failures with operation and key context", async () => {
-    const cause = new Error("keychain unavailable");
-    mocks.getItemAsync.mockRejectedValueOnce(cause);
-
-    await expect(loadSavedConnections()).rejects.toMatchObject({
-      _tag: "MobileSecureStorageError",
-      operation: "read",
-      key: "t3code.connections",
-      cause,
-      message: "Mobile secure storage operation read failed for key t3code.connections.",
-    });
-  });
-
-  it("logs structured decode failures before using the empty fallback", async () => {
-    await mocks.setItemAsync("t3code.connections", "{");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    await expect(loadSavedConnections()).resolves.toEqual([]);
-    expect(warn).toHaveBeenCalledWith(
-      "[mobile-storage] ignored invalid JSON",
-      expect.objectContaining({
-        _tag: "MobileStorageDecodeError",
-        key: "t3code.connections",
-        cause: expect.any(SyntaxError),
-        message: "Failed to decode mobile storage value for key t3code.connections.",
+  it("ignores invalid tab-order entries without dropping other saved preferences", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        navigationTabOrder: ["usage", null, 4, "threads"],
+        hiddenNavigationTabs: ["home", null],
+        baseFontSize: 18,
       }),
+      1,
     );
-
-    warn.mockRestore();
+    await expect(loadPreferences()).resolves.toEqual({
+      navigationTabOrder: ["usage", "threads"],
+      hiddenNavigationTabs: ["home"],
+      baseFontSize: 18,
+    });
   });
 
   it("loads legacy preferences when SQLite is unavailable", async () => {

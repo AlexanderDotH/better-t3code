@@ -25,7 +25,7 @@ import {
   DeepPlanSourceSnapshot,
   DeepPlanSourceSummary,
 } from "./deepPlanning.ts";
-import { OrchestrationMessage, OrchestrationThreadActivity } from "./orchestration.ts";
+import { OrchestrationMessage, OrchestrationThreadActivity } from "./legacyOrchestration.ts";
 
 export const DEEP_PLAN_WS_METHODS = {
   getRun: "deepPlan.getRun",

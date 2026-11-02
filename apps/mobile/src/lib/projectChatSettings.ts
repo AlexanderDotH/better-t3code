@@ -68,12 +68,19 @@ export function resolveMobileNewTaskChatSettings(input: {
   const selectableSelection = resolveSelectableModelSelection(
     input.config,
     preferredSettings.modelSelection,
+    input.target?.projectId ?? null,
   );
   const defaultSelection = resolveDefaultableModelSelection(
     input.config,
     input.defaults.modelSelection,
+    input.target?.projectId ?? null,
   );
-  const modelOptions = buildModelOptions(input.config, selectableSelection ?? defaultSelection);
+  const modelOptions = buildModelOptions(
+    input.config,
+    selectableSelection ?? defaultSelection,
+    undefined,
+    input.target?.projectId ?? null,
+  );
   const selection = resolveNewTaskModelSelection({
     draftSelection: selectableSelection,
     projectDefaultSelection: defaultSelection,

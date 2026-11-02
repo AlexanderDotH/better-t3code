@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -18,8 +18,8 @@ describe("buildTranscriptPortabilityOptions", () => {
         title: "Older",
         updatedAt: "2026-08-01T00:00:00.000Z",
         archivedAt: null,
-        latestTurn: null,
-        session: null,
+        latestRun: null,
+        runtime: null,
       },
       {
         environmentId: capable,
@@ -27,8 +27,8 @@ describe("buildTranscriptPortabilityOptions", () => {
         title: "Newer",
         updatedAt: "2026-08-02T00:00:00.000Z",
         archivedAt: null,
-        latestTurn: null,
-        session: null,
+        latestRun: null,
+        runtime: null,
       },
       {
         environmentId: unsupported,
@@ -36,8 +36,8 @@ describe("buildTranscriptPortabilityOptions", () => {
         title: "Unsupported",
         updatedAt: "2026-08-03T00:00:00.000Z",
         archivedAt: null,
-        latestTurn: null,
-        session: null,
+        latestRun: null,
+        runtime: null,
       },
       {
         environmentId: capable,
@@ -45,8 +45,8 @@ describe("buildTranscriptPortabilityOptions", () => {
         title: "Archived",
         updatedAt: "2026-08-04T00:00:00.000Z",
         archivedAt: "2026-08-05T00:00:00.000Z",
-        latestTurn: null,
-        session: null,
+        latestRun: null,
+        runtime: null,
       },
     ];
 
@@ -65,8 +65,8 @@ describe("buildTranscriptPortabilityOptions", () => {
       title: "Thread",
       updatedAt: "2026-08-01T00:00:00.000Z",
       archivedAt: null,
-      latestTurn: null,
-      session: null,
+      latestRun: null,
+      runtime: null,
     }));
     const supported = new Set([local, remote]);
 
@@ -78,47 +78,54 @@ describe("buildTranscriptPortabilityOptions", () => {
 });
 
 describe("isTranscriptExportPending", () => {
-  const completedTurn: NonNullable<TranscriptPortabilityThread["latestTurn"]> = {
-    turnId: TurnId.make("turn"),
-    state: "completed",
+  const completedRun: NonNullable<TranscriptPortabilityThread["latestRun"]> = {
+    runId: RunId.make("turn"),
+    status: "completed",
     requestedAt: "2026-08-01T00:00:00.000Z",
     startedAt: "2026-08-01T00:00:01.000Z",
     completedAt: "2026-08-01T00:00:02.000Z",
     assistantMessageId: null,
   };
-  const readySession = { status: "ready", activeTurnId: null } as const;
+  const idleRuntime = {
+    status: "idle",
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-08-01T00:00:02.000Z",
+  } as const;
 
-  it("blocks queued and unsettled turns even when the session is ready", () => {
-    expect(isTranscriptExportPending({ latestTurn: null, session: readySession })).toBe(true);
+  it("blocks queued and unsettled turns even when the runtime is ready", () => {
+    expect(isTranscriptExportPending({ latestRun: null, runtime: idleRuntime })).toBe(true);
     expect(
       isTranscriptExportPending({
-        latestTurn: { ...completedTurn, startedAt: null, completedAt: null },
-        session: readySession,
+        latestRun: { ...completedRun, status: "queued", startedAt: null, completedAt: null },
+        runtime: idleRuntime,
       }),
     ).toBe(true);
     expect(
       isTranscriptExportPending({
-        latestTurn: { ...completedTurn, completedAt: null },
-        session: readySession,
+        latestRun: { ...completedRun, status: "running", completedAt: null },
+        runtime: idleRuntime,
       }),
     ).toBe(true);
   });
 
-  it("waits for starting or running sessions even with a completed checkpoint", () => {
+  it("waits for starting or running runtimes even with a completed checkpoint", () => {
     for (const status of ["starting", "running"] as const) {
       expect(
         isTranscriptExportPending({
-          latestTurn: completedTurn,
-          session: { status, activeTurnId: completedTurn.turnId },
+          latestRun: completedRun,
+          runtime: { ...idleRuntime, status, activeRunId: completedRun.runId },
         }),
       ).toBe(true);
     }
   });
 
   it("allows export after the latest turn settles", () => {
-    expect(isTranscriptExportPending({ latestTurn: completedTurn, session: readySession })).toBe(
+    expect(isTranscriptExportPending({ latestRun: completedRun, runtime: idleRuntime })).toBe(
       false,
     );
-    expect(isTranscriptExportPending({ latestTurn: completedTurn, session: null })).toBe(false);
+    expect(isTranscriptExportPending({ latestRun: completedRun, runtime: null })).toBe(false);
   });
 });

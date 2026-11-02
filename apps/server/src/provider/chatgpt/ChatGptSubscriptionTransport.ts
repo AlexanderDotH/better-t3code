@@ -6,12 +6,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { ChatGptAuthBroker } from "./ChatGptAuthBroker.ts";
 import type { ChatGptCredential, ChatGptCredentialStore } from "./ChatGptCredentialStore.ts";

@@ -1,12 +1,7 @@
-import type {
-  EnvironmentId,
-  ModelSelection,
-  OrchestrationProposedPlan,
-  ServerProvider,
-  ThreadId,
-} from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useState } from "react";
+import type { MobileProposedPlan } from "./plan-parallelism-review";
+import type { EnvironmentId, ModelSelection, ServerProvider, ThreadId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,7 +33,7 @@ export function useMobilePlanParallelismReview(input: {
   readonly enabled: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly plan: OrchestrationProposedPlan | null;
+  readonly plan: MobileProposedPlan | null;
   readonly implementationProvider: ServerProvider | null;
   readonly reviewerSelection: ModelSelection | null;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -46,32 +41,15 @@ export function useMobilePlanParallelismReview(input: {
   const reviewPlanParallelism = useAtomCommand(serverEnvironment.reviewPlanParallelism, {
     reportFailure: false,
   });
-  const descriptor = useMemo(
-    () => resolveMobilePlanParallelismReviewDescriptor(input),
-    [
-      input.enabled,
-      input.implementationProvider,
-      input.plan,
-      input.providers,
-      input.reviewerSelection,
-      input.threadId,
-    ],
-  );
+  const descriptor = resolveMobilePlanParallelismReviewDescriptor(input);
   const key = descriptor ? descriptorKey(input.environmentId, descriptor) : null;
   const [review, setReview] = useState<{
     readonly key: string;
     readonly count: number | null;
   } | null>(null);
 
-  useEffect(() => {
-    if (!descriptor || !key) return;
-    const cached = reviewCache.get(key);
-    if (cached !== undefined) {
-      setReview({ key, count: cached });
-      return;
-    }
-    let cancelled = false;
-    setReview({ key, count: null });
+  const requestReview = useEffectEvent((requestKey: string, isCancelled: () => boolean) => {
+    if (!descriptor || reviewCache.has(requestKey)) return;
     void reviewPlanParallelism({
       environmentId: input.environmentId,
       input: {
@@ -81,20 +59,26 @@ export function useMobilePlanParallelismReview(input: {
         implementationProviderInstanceId: descriptor.implementationProvider.instanceId,
       },
     }).then((result) => {
-      if (cancelled || !AsyncResult.isSuccess(result)) return;
+      if (isCancelled() || !AsyncResult.isSuccess(result)) return;
       const count = validateMobilePlanParallelismReview(descriptor, result.value);
       if (count === null) return;
       if (reviewCache.size >= MAX_CACHED_REVIEWS) {
         const oldest = reviewCache.keys().next().value;
         if (oldest !== undefined) reviewCache.delete(oldest);
       }
-      reviewCache.set(key, count);
-      setReview({ key, count });
+      reviewCache.set(requestKey, count);
+      setReview({ key: requestKey, count });
     });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the remote reviewer request until this plan revision is replaced or unmounted.
+  useEffect(() => {
+    if (!key) return;
+    let cancelled = false;
+    requestReview(key, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [descriptor, input.environmentId, key, reviewPlanParallelism]);
+  }, [key]);
 
   if (!key) return null;
   return reviewCache.get(key) ?? (review?.key === key ? review.count : null);

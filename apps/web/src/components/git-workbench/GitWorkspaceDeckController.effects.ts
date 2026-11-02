@@ -2,7 +2,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ChatWorkspaceCardId } from "./ChatWorkspaceDeck";
 import { bufferedRevisionDisposition, selectBufferedPathsForScope } from "./gitWorkspaceDeck.logic";
@@ -14,14 +14,8 @@ import {
 } from "./GitWorkspaceDeckController.model";
 import type { useGitWorkspaceDeckQueries } from "./GitWorkspaceDeckController.queries";
 import type { useGitWorkspaceDeckSession } from "./GitWorkspaceDeckController.session";
-import {
-  bufferedFileEdits,
-  deckSelectionByThread,
-  rememberDeckSelection,
-  workspaceFileBufferKey,
-} from "./GitWorkspaceDeckSessionState";
+import { bufferedFileEdits, workspaceFileBufferKey } from "./GitWorkspaceDeckSessionState";
 import { useGitFileDraftStore } from "./gitFileDraftStore";
-import { resolveWorkspaceDeckActiveCard } from "../workspace-deck/workspaceCardDeck.logic";
 
 export function useGitWorkspaceDeckEffects(input: {
   readonly actions: ReturnType<typeof useGitWorkspaceDeckActions>;
@@ -35,121 +29,193 @@ export function useGitWorkspaceDeckEffects(input: {
 }): void {
   const { actions, props, queries, session } = input;
   const { setDiffs } = session;
+  const { onNonChatActiveChange, onExpandedChange } = props;
+  const nonChatLayout = input.isDesktop && input.resolvedActiveCard !== "chat";
+  const expandedLayout = input.isDesktop && session.expandedCard !== null;
   const stateToken = queries.contractSnapshot?.stateToken;
 
-  useEffect(() => {
-    const rememberedCard = deckSelectionByThread.get(input.scopeKey) ?? "chat";
-    const nextCard =
-      resolveWorkspaceDeckActiveCard({
-        activeCard: rememberedCard,
-        cardIds: input.availableCardIds,
-        fallbackCard: "chat",
-      }) ?? "chat";
-    if (nextCard !== rememberedCard) rememberDeckSelection(input.scopeKey, nextCard);
-    session.setCurrentSelection({ card: nextCard, scopeKey: input.scopeKey });
-    if (session.expandedCard !== null && !input.availableCardIds.includes(session.expandedCard)) {
-      session.setExpandedCard(null);
-    }
-  }, [input.availableCardIds, input.scopeKey, session.expandedCard]);
-
-  useEffect(() => {
-    props.onNonChatActiveChange(input.isDesktop && input.resolvedActiveCard !== "chat");
-  }, [input.isDesktop, input.resolvedActiveCard, props.onNonChatActiveChange]);
-
-  useEffect(() => {
-    props.onExpandedChange(input.isDesktop && session.expandedCard !== null);
-  }, [input.isDesktop, props.onExpandedChange, session.expandedCard]);
-
-  useEffect(
-    () => () => {
-      props.onNonChatActiveChange(false);
-      props.onExpandedChange(false);
-    },
-    [props.onExpandedChange, props.onNonChatActiveChange],
-  );
-
-  useEffect(() => {
-    if (stateToken) setDiffs({});
-  }, [stateToken, setDiffs]);
-
-  useEffect(() => {
-    const result = queries.changesDiffQuery.data;
-    const selectedChange = queries.selectedChange;
-    if (!result || !selectedChange || result.path !== selectedChange.path) return;
-    const expectedSource = selectedChange.id.endsWith("::index") ? "staged" : "unstaged";
+  const flushingBufferKeyRef = useRef<string | null>(null);
+  const snapshot = {
+    stateToken,
+    diff: queries.changesDiffQuery.data,
+    selectedChangeId: queries.selectedChange?.id,
+    file: queries.fileQuery.data,
+    fileError: queries.fileQuery.error,
+    selectedFilePath: session.selectedFilePath,
+    cwd: props.cwd,
+    environmentId: props.environmentId,
+    activeTurn: props.activeTurn,
+    history: queries.historyQuery.data,
+    historyCursor: session.historyCursor,
+    historySnapshotOid: session.historySnapshotOid,
+    patch: queries.commitPatchQuery.data,
+    patchTarget: session.commitPatchTarget,
+    rebase: queries.interactiveRebasePlanQuery.data,
+    rebaseTarget: session.rebasePlanTarget,
+  };
+  const [observed, setObserved] = useState<typeof snapshot | null>(null);
+  if (
+    observed === null ||
+    observed.stateToken !== snapshot.stateToken ||
+    observed.diff !== snapshot.diff ||
+    observed.selectedChangeId !== snapshot.selectedChangeId ||
+    observed.file !== snapshot.file ||
+    observed.fileError !== snapshot.fileError ||
+    observed.selectedFilePath !== snapshot.selectedFilePath ||
+    observed.cwd !== snapshot.cwd ||
+    observed.environmentId !== snapshot.environmentId ||
+    observed.activeTurn !== snapshot.activeTurn ||
+    observed.history !== snapshot.history ||
+    observed.historyCursor !== snapshot.historyCursor ||
+    observed.historySnapshotOid !== snapshot.historySnapshotOid ||
+    observed.patch !== snapshot.patch ||
+    observed.patchTarget !== snapshot.patchTarget ||
+    observed.rebase !== snapshot.rebase ||
+    observed.rebaseTarget !== snapshot.rebaseTarget
+  ) {
+    setObserved(snapshot);
+    if (observed?.stateToken !== snapshot.stateToken && snapshot.stateToken) setDiffs({});
     if (
-      result.source !== expectedSource ||
-      result.stateToken !== queries.contractSnapshot?.stateToken
-    ) {
-      return;
-    }
-    setDiffs((current) => {
-      const existing = current[selectedChange.id];
-      return existing?.patchId === result.patchId && !existing.stale
-        ? current
-        : { ...current, [selectedChange.id]: mapDiff(result) };
-    });
-  }, [
-    queries.changesDiffQuery.data,
-    queries.contractSnapshot?.stateToken,
-    queries.selectedChange,
-    setDiffs,
-  ]);
-
+      observed?.diff !== snapshot.diff ||
+      observed?.selectedChangeId !== snapshot.selectedChangeId ||
+      observed?.stateToken !== snapshot.stateToken
+    )
+      (() => {
+        const result = queries.changesDiffQuery.data;
+        const selectedChange = queries.selectedChange;
+        if (!result || !selectedChange || result.path !== selectedChange.path) return;
+        const expectedSource = selectedChange.id.endsWith("::index") ? "staged" : "unstaged";
+        if (
+          result.source !== expectedSource ||
+          result.stateToken !== queries.contractSnapshot?.stateToken
+        ) {
+          return;
+        }
+        setDiffs((current) => {
+          const existing = current[selectedChange.id];
+          return existing?.patchId === result.patchId && !existing.stale
+            ? current
+            : { ...current, [selectedChange.id]: mapDiff(result) };
+        });
+      })();
+    if (
+      observed?.file !== snapshot.file ||
+      observed?.selectedFilePath !== snapshot.selectedFilePath ||
+      observed?.cwd !== snapshot.cwd ||
+      observed?.environmentId !== snapshot.environmentId
+    )
+      (() => {
+        const data = queries.fileQuery.data;
+        if (!data || !props.cwd || data.relativePath !== session.selectedFilePath) return;
+        const key = workspaceFileBufferKey(props.environmentId, props.cwd, data.relativePath);
+        const buffered = bufferedFileEdits.get(key);
+        if (buffered?.conflict) {
+          session.setCurrentFile({
+            baseContent: buffered.baseContent,
+            content: buffered.content,
+            ...(buffered.error ? { error: buffered.error } : {}),
+            loading: false,
+            path: data.relativePath,
+            revision: data.revision ?? buffered.baseRevision,
+            saveState: "conflict",
+            serverContent: data.contents,
+          });
+          return;
+        }
+        session.setCurrentFile({
+          baseContent: buffered?.baseContent ?? data.contents,
+          content: buffered?.content ?? data.contents,
+          ...(buffered?.error ? { error: buffered.error } : {}),
+          loading: false,
+          path: data.relativePath,
+          ...(data.truncated
+            ? { readOnlyReason: "Files over the preview limit are read-only" }
+            : {}),
+          revision: buffered?.baseRevision ?? data.revision ?? "legacy-no-revision",
+          saveState: buffered ? "buffered" : "idle",
+        });
+      })();
+    if (
+      observed?.fileError !== snapshot.fileError ||
+      observed?.file !== snapshot.file ||
+      observed?.selectedFilePath !== snapshot.selectedFilePath
+    )
+      (() => {
+        if (!session.selectedFilePath || !queries.fileQuery.error || queries.fileQuery.data) return;
+        session.setCurrentFile({
+          baseContent: "",
+          content: "",
+          loading: false,
+          path: session.selectedFilePath,
+          readOnlyReason: queries.fileQuery.error,
+          revision: "unavailable",
+          saveState: "idle",
+        });
+      })();
+    if (observed?.activeTurn === true && !props.activeTurn && props.cwd)
+      session.setBufferFlushQueue(
+        selectBufferedPathsForScope(bufferedFileEdits.values(), props.environmentId, props.cwd),
+      );
+    if (
+      observed?.history !== snapshot.history ||
+      observed?.historyCursor !== snapshot.historyCursor ||
+      observed?.historySnapshotOid !== snapshot.historySnapshotOid
+    )
+      (() => {
+        const page = queries.historyQuery.data;
+        if (!page) return;
+        if (session.historyCursor === 0) {
+          session.setHistoryItems(page.items);
+          session.setHistorySnapshotOid(page.snapshotOid);
+        } else if (page.snapshotOid === session.historySnapshotOid) {
+          session.setHistoryItems((current) => {
+            const seen = new Set(current.map((item) => item.oid));
+            return [...current, ...page.items.filter((item) => !seen.has(item.oid))];
+          });
+        }
+        session.setHistoryNextCursor(page.nextCursor);
+      })();
+    if (observed?.patch !== snapshot.patch || observed?.patchTarget !== snapshot.patchTarget)
+      (() => {
+        const patch = queries.commitPatchQuery.data;
+        const target = session.commitPatchTarget;
+        if (!patch || !target || patch.oid !== target.oid || patch.path !== target.path) return;
+        session.setCommitPatches((current) => ({
+          ...current,
+          [`${patch.oid}:${patch.path}`]: patch,
+        }));
+      })();
+    if (observed?.rebase !== snapshot.rebase || observed?.rebaseTarget !== snapshot.rebaseTarget)
+      (() => {
+        const prepared = queries.interactiveRebasePlanQuery.data;
+        if (!prepared || prepared.upstreamRef !== session.rebasePlanTarget) return;
+        session.setRebasePlan(mapInteractiveRebasePlan(prepared.items));
+        session.setRebaseUpstreamRef(prepared.upstreamOid);
+        session.setRebasePreparedTarget(prepared.upstreamRef);
+        session.setRebasePlanTarget(null);
+        session.setActiveTab("operations");
+      })();
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles persistent editor drafts with authoritative workspace file reads
   useEffect(() => {
     const data = queries.fileQuery.data;
-    if (!data || !props.cwd || data.relativePath !== session.selectedFilePath) return;
+    if (!data || !props.cwd) return;
     const key = workspaceFileBufferKey(props.environmentId, props.cwd, data.relativePath);
-    const buffered = bufferedFileEdits.get(key);
     const drafts = useGitFileDraftStore.getState();
     if (drafts.drafts.get(key)?.content === data.contents) drafts.setDraft(key, null);
-    if (buffered?.conflict) {
-      session.setCurrentFile({
-        baseContent: buffered.baseContent,
-        content: buffered.content,
-        ...(buffered.error ? { error: buffered.error } : {}),
-        loading: false,
-        path: data.relativePath,
-        revision: data.revision ?? buffered.baseRevision,
-        saveState: "conflict",
-        serverContent: data.contents,
-      });
-      return;
-    }
-    session.setCurrentFile({
-      baseContent: buffered?.baseContent ?? data.contents,
-      content: buffered?.content ?? data.contents,
-      ...(buffered?.error ? { error: buffered.error } : {}),
-      loading: false,
-      path: data.relativePath,
-      ...(data.truncated ? { readOnlyReason: "Files over the preview limit are read-only" } : {}),
-      revision: buffered?.baseRevision ?? data.revision ?? "legacy-no-revision",
-      saveState: buffered ? "buffered" : "idle",
-    });
-  }, [queries.fileQuery.data, props.cwd, props.environmentId, session.selectedFilePath]);
+  }, [queries.fileQuery.data, props.cwd, props.environmentId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the mounted deck layout with its host and releases that registration on unmount
   useEffect(() => {
-    if (!session.selectedFilePath || !queries.fileQuery.error || queries.fileQuery.data) return;
-    session.setCurrentFile({
-      baseContent: "",
-      content: "",
-      loading: false,
-      path: session.selectedFilePath,
-      readOnlyReason: queries.fileQuery.error,
-      revision: "unavailable",
-      saveState: "idle",
-    });
-  }, [queries.fileQuery.data, queries.fileQuery.error, session.selectedFilePath]);
+    onNonChatActiveChange(nonChatLayout);
+    onExpandedChange(expandedLayout);
+    return () => {
+      onNonChatActiveChange(false);
+      onExpandedChange(false);
+    };
+  }, [nonChatLayout, expandedLayout, onNonChatActiveChange, onExpandedChange]);
 
-  useEffect(() => {
-    const wasActive = session.previousActiveTurnRef.current;
-    session.previousActiveTurnRef.current = props.activeTurn;
-    if (!wasActive || props.activeTurn || !props.cwd) return;
-    session.setBufferFlushQueue(
-      selectBufferedPathsForScope(bufferedFileEdits.values(), props.environmentId, props.cwd),
-    );
-  }, [props.activeTurn, props.cwd, props.environmentId]);
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns queued writes to workspace files after the provider turn releases the workspace
   useEffect(() => {
     const path = session.bufferFlushQueue[0];
     const data = queries.bufferedFileQuery.data;
@@ -157,7 +223,7 @@ export function useGitWorkspaceDeckEffects(input: {
     const key = workspaceFileBufferKey(props.environmentId, props.cwd, path);
     const buffered = bufferedFileEdits.get(key);
     const dequeue = () => {
-      session.flushingBufferKeyRef.current = null;
+      flushingBufferKeyRef.current = null;
       session.setBufferFlushQueue((current) => (current[0] === path ? current.slice(1) : current));
     };
     if (!buffered) {
@@ -181,8 +247,8 @@ export function useGitWorkspaceDeckEffects(input: {
       dequeue();
       return;
     }
-    if (session.flushingBufferKeyRef.current === key) return;
-    session.flushingBufferKeyRef.current = key;
+    if (flushingBufferKeyRef.current === key) return;
+    flushingBufferKeyRef.current = key;
     void (async () => {
       if (buffered.createUndoBeforeWrite) {
         const refreshed = await actions.refreshWorkbench({
@@ -282,52 +348,5 @@ export function useGitWorkspaceDeckEffects(input: {
       }
       dequeue();
     })();
-  }, [
-    actions.createUndo,
-    actions.refreshVcsStatus,
-    actions.refreshWorkbench,
-    actions.writeFile,
-    props.cwd,
-    props.environmentId,
-    queries.bufferedFileQuery.data,
-    queries.fileQuery.refresh,
-    queries.workbenchQuery.refresh,
-    session.bufferFlushQueue,
-    session.selectedFilePath,
-  ]);
-
-  useEffect(() => {
-    const page = queries.historyQuery.data;
-    if (!page) return;
-    if (session.historyCursor === 0) {
-      session.setHistoryItems(page.items);
-      session.setHistorySnapshotOid(page.snapshotOid);
-    } else if (page.snapshotOid === session.historySnapshotOid) {
-      session.setHistoryItems((current) => {
-        const seen = new Set(current.map((item) => item.oid));
-        return [...current, ...page.items.filter((item) => !seen.has(item.oid))];
-      });
-    }
-    session.setHistoryNextCursor(page.nextCursor);
-  }, [queries.historyQuery.data, session.historyCursor, session.historySnapshotOid]);
-
-  useEffect(() => {
-    const patch = queries.commitPatchQuery.data;
-    const target = session.commitPatchTarget;
-    if (!patch || !target || patch.oid !== target.oid || patch.path !== target.path) return;
-    session.setCommitPatches((current) => ({
-      ...current,
-      [`${patch.oid}:${patch.path}`]: patch,
-    }));
-  }, [queries.commitPatchQuery.data, session.commitPatchTarget]);
-
-  useEffect(() => {
-    const prepared = queries.interactiveRebasePlanQuery.data;
-    if (!prepared || prepared.upstreamRef !== session.rebasePlanTarget) return;
-    session.setRebasePlan(mapInteractiveRebasePlan(prepared.items));
-    session.setRebaseUpstreamRef(prepared.upstreamOid);
-    session.setRebasePreparedTarget(prepared.upstreamRef);
-    session.setRebasePlanTarget(null);
-    session.setActiveTab("operations");
-  }, [queries.interactiveRebasePlanQuery.data, session.rebasePlanTarget]);
+  }, [actions, props, queries, session]);
 }

@@ -18,7 +18,7 @@ import * as RcRef from "effect/RcRef";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
 import { probeAiEndpoint } from "../openaiCompatible/OpenAiCompatibleTransport.ts";
 
@@ -205,10 +205,9 @@ export const make = Effect.gen(function* () {
     resource.scan = scan;
     yield* PubSub.publish(updates, scan.latest);
     yield* runScan(scan, plan.hosts).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : finish(scan, "Discovery could not finish. Results may be incomplete."),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterrupts(cause),
+        () => finish(scan, "Discovery could not finish. Results may be incomplete."),
       ),
       Effect.forkIn(resource.scope),
     );

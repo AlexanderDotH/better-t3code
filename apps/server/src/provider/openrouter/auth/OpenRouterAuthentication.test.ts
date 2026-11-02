@@ -128,7 +128,6 @@ describe("OpenRouterAuthentication", () => {
         retryable: false,
       });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("sk-or-new");
       expect(Redacted.value((yield* store.resolve).apiKey)).toBe("sk-or-old");
     }),
@@ -154,7 +153,6 @@ describe("OpenRouterAuthentication", () => {
       });
       expect(error.reason).toContain("cannot run model inference");
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("sk-or-management");
       expect(Redacted.value((yield* store.resolve).apiKey)).toBe("sk-or-old");
     }),
@@ -179,7 +177,6 @@ describe("OpenRouterAuthentication", () => {
         capabilities: { canDisconnect: true },
       });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(result)).not.toContain("1234567890");
     }),
   );
@@ -209,7 +206,6 @@ describe("OpenRouterAuthentication", () => {
 
       expect(error).toMatchObject({ code: "credential-storage-failed", retryable: true });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("sk-or-new");
       expect(Redacted.value((yield* store.resolve).apiKey)).toBe("sk-or-old");
     }),

@@ -178,7 +178,7 @@ describe("mcpMutationToastPresentation", () => {
       ),
     ).toEqual({
       type: "info",
-      title: "MCP server updated — applies to the next session",
+      title: "MCP server updated, applies to the next session",
       description: "No matching live runtime required an update.",
     });
   });

@@ -5,7 +5,7 @@ import type {
   ProjectIndexGraphOverviewV1,
 } from "@t3tools/contracts";
 import { ExpandIcon, MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
@@ -83,14 +83,10 @@ export function ProjectIndexGraph({
   const suppressClick = useRef(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const overviewLayout = useMemo(
-    () =>
-      overview
-        ? layoutProjectIndexOverview(map ?? buildProjectIndexMap(overview, new Map(), new Set()))
-        : null,
-    [overview, map],
-  );
-  const targetLayout = useMemo(() => {
+  const overviewLayout = overview
+    ? layoutProjectIndexOverview(map ?? buildProjectIndexMap(overview, new Map(), new Set()))
+    : null;
+  const targetLayout = (() => {
     if (overviewLayout) return overviewLayout;
     const symbols = layoutProjectIndexGraph(entities, callsites, selectedEntityId, imports);
     const nodes = symbols.nodes.map(({ entity, x, y }) => ({
@@ -110,7 +106,7 @@ export function ProjectIndexGraph({
       y,
     }));
     return { ...symbols, nodes, byId: new Map(nodes.map((node) => [node.id, node])) };
-  }, [entities, callsites, selectedEntityId, imports, overviewLayout]);
+  })();
   const [viewport, setViewport] = useState(() =>
     fitNodes(targetLayout.nodes, targetLayout.width, targetLayout.height),
   );
@@ -118,20 +114,17 @@ export function ProjectIndexGraph({
     targetLayout.nodes,
     targetLayout.edges,
   );
-  const layout = useMemo(
-    () => ({
-      ...targetLayout,
-      nodes,
-      byId: new Map(nodes.map((node) => [node.id, node])),
-    }),
-    [nodes, targetLayout],
-  );
+  const layout = {
+    ...targetLayout,
+    nodes,
+    byId: new Map(nodes.map((node) => [node.id, node])),
+  };
   const focusedId =
     draggedId ??
     hoveredId ??
     (selectedEntityId && layout.byId.has(selectedEntityId) ? selectedEntityId : null);
   const hasNodes = layout.nodes.length > 0;
-  const neighbors = useMemo(() => {
+  const neighbors = (() => {
     if (!focusedId) return null;
     const connected = new Set([focusedId]);
     for (const edge of layout.edges) {
@@ -139,24 +132,21 @@ export function ProjectIndexGraph({
       if (edge.targetId === focusedId) connected.add(edge.sourceId);
     }
     return connected;
-  }, [focusedId, layout.edges]);
+  })();
 
-  const zoom = useCallback(
-    (factor: number, x = layout.width / 2, y = layout.height / 2) => {
-      setViewport((current) => {
-        const scale = Math.max(0.15, Math.min(2.5, current.scale * factor));
-        const ratio = scale / current.scale;
-        return {
-          scale,
-          translateX: x - (x - current.translateX) * ratio,
-          translateY: y - (y - current.translateY) * ratio,
-        };
-      });
-    },
-    [layout.width, layout.height],
-  );
+  const zoom = (factor: number, x = layout.width / 2, y = layout.height / 2) => {
+    setViewport((current) => {
+      const scale = Math.max(0.15, Math.min(2.5, current.scale * factor));
+      const ratio = scale / current.scale;
+      return {
+        scale,
+        translateX: x - (x - current.translateX) * ratio,
+        translateY: y - (y - current.translateY) * ratio,
+      };
+    });
+  };
   const fit = () => setViewport(fitNodes(nodes, layout.width, layout.height));
-  const finishDrag = useCallback(() => {
+  const finishDrag = () => {
     const previous = drag.current;
     drag.current = null;
     dragListenerCleanup.current?.();
@@ -167,42 +157,41 @@ export function ProjectIndexGraph({
     if (previous.node && previous.moved) releaseNode();
     if (previous.capture.hasPointerCapture(previous.pointerId))
       previous.capture.releasePointerCapture(previous.pointerId);
-  }, [releaseNode]);
-  const moveDrag = useCallback(
-    (event: Pick<PointerEvent, "clientX" | "clientY" | "pointerId" | "preventDefault">) => {
-      const previous = drag.current;
-      if (!previous || previous.pointerId !== event.pointerId) return;
-      const matrix = svgRef.current?.getScreenCTM();
-      if (!matrix) return;
-      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
-      if (
-        !previous.moved &&
-        Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <
-          DRAG_THRESHOLD_PX
-      )
-        return;
-      event.preventDefault();
-      previous.moved = true;
-      suppressClick.current = true;
-      if (previous.node) {
-        setDraggedId(previous.node.id);
-        moveNode(previous.node.id, {
-          x: previous.node.x + (point.x - previous.x) / viewport.scale,
-          y: previous.node.y + (point.y - previous.y) / viewport.scale,
-        });
-        return;
-      }
-      setViewport((current) => ({
-        ...current,
-        translateX: current.translateX + point.x - previous.x,
-        translateY: current.translateY + point.y - previous.y,
-      }));
-      previous.x = point.x;
-      previous.y = point.y;
-    },
-    [moveNode, viewport.scale],
-  );
-  const startListeningForDrag = useCallback(() => {
+  };
+  const moveDrag = (
+    event: Pick<PointerEvent, "clientX" | "clientY" | "pointerId" | "preventDefault">,
+  ) => {
+    const previous = drag.current;
+    if (!previous || previous.pointerId !== event.pointerId) return;
+    const matrix = svgRef.current?.getScreenCTM();
+    if (!matrix) return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    if (
+      !previous.moved &&
+      Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <
+        DRAG_THRESHOLD_PX
+    )
+      return;
+    event.preventDefault();
+    previous.moved = true;
+    suppressClick.current = true;
+    if (previous.node) {
+      setDraggedId(previous.node.id);
+      moveNode(previous.node.id, {
+        x: previous.node.x + (point.x - previous.x) / viewport.scale,
+        y: previous.node.y + (point.y - previous.y) / viewport.scale,
+      });
+      return;
+    }
+    setViewport((current) => ({
+      ...current,
+      translateX: current.translateX + point.x - previous.x,
+      translateY: current.translateY + point.y - previous.y,
+    }));
+    previous.x = point.x;
+    previous.y = point.y;
+  };
+  const startListeningForDrag = () => {
     dragListenerCleanup.current?.();
     const finishPointerDrag = (event: PointerEvent) => {
       if (drag.current?.pointerId === event.pointerId) finishDrag();
@@ -215,15 +204,17 @@ export function ProjectIndexGraph({
       window.removeEventListener("pointerup", finishPointerDrag);
       window.removeEventListener("pointercancel", finishPointerDrag);
     };
-  }, [finishDrag, moveDrag]);
+  };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the active drag pointer listeners when the graph unmounts.
   useEffect(
     () => () => {
       dragListenerCleanup.current?.();
     },
-    [],
+    [dragListenerCleanup],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the nonpassive SVG wheel listener and remove it on cleanup.
   useEffect(() => {
     if (!hasNodes) return;
     const svg = svgRef.current;
@@ -237,7 +228,7 @@ export function ProjectIndexGraph({
     };
     svg.addEventListener("wheel", wheel, { passive: false });
     return () => svg.removeEventListener("wheel", wheel);
-  }, [hasNodes, zoom]);
+  }, [drag, hasNodes, svgRef, zoom]);
 
   if (!hasNodes) return null;
 

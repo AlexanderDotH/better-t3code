@@ -37,19 +37,19 @@ import {
 } from "@t3tools/client-runtime/better-t3-settings-layout";
 import { Link } from "@tanstack/react-router";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChatVisualModeSyncNotice } from "./ChatVisualModeSyncNotice";
 import { isElectron } from "../../env";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import {
+  useEnvironmentProviders,
   useEnvironments,
   usePrimaryEnvironmentId,
   type EnvironmentPresentation,
 } from "../../state/environments";
 import {
   useClientSettings,
-  useUpdateClientSettings,
+  updateClientSettings,
   useEnvironmentSettings,
   useUpdateEnvironmentSettings,
 } from "../../hooks/useSettings";
@@ -102,13 +102,10 @@ import { searchableSetting } from "./settingsSearch";
 import { BetterT3SettingsNavigation } from "./BetterT3SettingsNavigation";
 import { ChatWidthPreview } from "./ChatWidthPreview";
 import { ContextWindowMeterChoice } from "./ContextWindowMeterPreview";
-
 type Translate = InterfaceTranslator["message"];
-
 const BETTER_T3_SETTINGS_GROUPS = [
   ...new Set(BETTER_T3_SETTINGS_SUBGROUPS.map((group) => group.categoryId)),
 ].map((id) => ({ id, labelMessageId: `settings.betterT3.tab.${id}` as const }));
-
 export interface BetterT3SettingsPanelViewProps {
   readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
   readonly translate: Translate;
@@ -128,7 +125,6 @@ export interface BetterT3SettingsPanelViewProps {
   readonly subgroupSummaries?: Partial<Record<BetterT3SettingsSubgroupId, string>>;
   readonly consumedFeatureIds?: ReadonlyArray<BetterT3FeatureId>;
 }
-
 const availabilityStatus = (
   feature: BetterT3FeatureControlStateV1,
   translate: Translate,
@@ -140,7 +136,6 @@ const availabilityStatus = (
     reasonMessageId && isInterfaceMessageKey(reasonMessageId) ? reasonMessageId : fallbackMessageId,
   );
 };
-
 function FeatureControl({
   feature,
   control,
@@ -164,7 +159,6 @@ function FeatureControl({
     />
   );
 }
-
 function BetterT3ChatWidthSettings(props: {
   readonly chatWidthAdjustmentPercent: number;
   readonly chatWidthCustomizationEnabled: boolean;
@@ -184,10 +178,7 @@ function BetterT3ChatWidthSettings(props: {
   const chatWidthIsCustomized =
     props.chatWidthCustomizationEnabled !== DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED ||
     props.chatWidthAdjustmentPercent !== DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT;
-  const formattedChatWidthAdjustment = `${
-    props.chatWidthAdjustmentPercent > 0 ? "+" : props.chatWidthAdjustmentPercent < 0 ? "−" : ""
-  }${Math.abs(props.chatWidthAdjustmentPercent)}%`;
-
+  const formattedChatWidthAdjustment = `${props.chatWidthAdjustmentPercent > 0 ? "+" : props.chatWidthAdjustmentPercent < 0 ? "−" : ""}${Math.abs(props.chatWidthAdjustmentPercent)}%`;
   return (
     <>
       <SettingsRow
@@ -271,7 +262,6 @@ function BetterT3ChatWidthSettings(props: {
     </>
   );
 }
-
 function BetterT3AppearanceSettings(props: {
   readonly glassOpacity: number;
   readonly macosWindowTransparency: boolean;
@@ -285,7 +275,6 @@ function BetterT3AppearanceSettings(props: {
     "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
   } as CSSProperties;
-
   return (
     <>
       <SettingsRow
@@ -349,10 +338,9 @@ function BetterT3AppearanceSettings(props: {
     </>
   );
 }
-
 function ResponseMetricsSettings() {
   const enabled = useClientSettings((settings) => settings.responseMetricsEnabled);
-  const updateSettings = useUpdateClientSettings();
+  const updateSettings = updateClientSettings;
   const translate = useInterfaceTranslator().message;
   return (
     <SettingsRow
@@ -371,13 +359,11 @@ function ResponseMetricsSettings() {
     />
   );
 }
-
 export function ContextWindowMeterSettings() {
   const enabled = useClientSettings((settings) => settings.contextWindowMeterEnabled);
-  const updateSettings = useUpdateClientSettings();
+  const updateSettings = updateClientSettings;
   const translator = useInterfaceTranslator();
   const translate = translator.message;
-
   return (
     <SettingsRow
       {...searchableSetting("legacy-context-window-indicator")}
@@ -404,7 +390,6 @@ export function ContextWindowMeterSettings() {
     </SettingsRow>
   );
 }
-
 function visibleBetterT3Features(props: BetterT3SettingsPanelViewProps) {
   return props.features.filter((feature) => {
     const id = feature.descriptor.id;
@@ -422,7 +407,6 @@ function visibleBetterT3Features(props: BetterT3SettingsPanelViewProps) {
     );
   });
 }
-
 function searchableBetterT3Features(props: BetterT3SettingsPanelViewProps) {
   return props.features.filter((feature) => {
     const id = feature.descriptor.id;
@@ -435,7 +419,6 @@ function searchableBetterT3Features(props: BetterT3SettingsPanelViewProps) {
     );
   });
 }
-
 function renderBetterT3FeatureRow(
   feature: BetterT3FeatureControlStateV1,
   props: Pick<
@@ -468,7 +451,6 @@ function renderBetterT3FeatureRow(
     </SettingsRow>
   );
 }
-
 function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const visibleFeatures = visibleBetterT3Features(props);
@@ -481,7 +463,6 @@ function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
     "response-metrics": props.chatSettings,
     "chat-width": props.chatWidthSettings,
   };
-
   const groups = BETTER_T3_SETTINGS_GROUPS.filter(
     (category) =>
       getBetterT3SettingsSubgroups(category.id).some(
@@ -493,7 +474,6 @@ function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
       (category.id === "voice" && props.voiceSettings) ||
       (category.id === "knowledge" && props.projectIndexingSettings),
   );
-
   return (
     <div
       ref={contentRef}
@@ -580,7 +560,6 @@ function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
     </div>
   );
 }
-
 export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
   const expansion = useBetterT3SettingsExpansion();
   const content = (
@@ -596,7 +575,6 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
     <BetterT3SettingsExpansionProvider>{content}</BetterT3SettingsExpansionProvider>
   );
 }
-
 function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
   return (
     <BetterT3SettingsExpansionProvider>
@@ -611,7 +589,6 @@ function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
     </BetterT3SettingsExpansionProvider>
   );
 }
-
 type BetterT3Destination =
   | "/settings/better-t3"
   | "/settings/general"
@@ -624,7 +601,6 @@ type BetterT3Destination =
   | "/settings/import-chats"
   | "/settings/connections"
   | "/settings/diagnostics";
-
 function resolveBetterT3ControlDestination(
   featureId: BetterT3FeatureId,
 ): BetterT3Destination | null {
@@ -642,7 +618,6 @@ function resolveBetterT3ControlDestination(
   if (featureId.startsWith("agent.")) return "/settings/general";
   return null;
 }
-
 function CapabilityControl(props: {
   readonly feature: BetterT3FeatureControlStateV1;
   readonly translate: Translate;
@@ -666,7 +641,6 @@ function CapabilityControl(props: {
     </Button>
   );
 }
-
 type BetterT3PreparedStatusFeatureId =
   | "workspace.checkpoints"
   | "integration.remoteReadiness"
@@ -675,7 +649,6 @@ type BetterT3PreparedStatusFeatureId =
   | "integration.mcp"
   | "integration.skills"
   | "integration.compatibility";
-
 function resolveBetterT3PreparedStatusMessageId(input: {
   readonly featureId: BetterT3PreparedStatusFeatureId;
   readonly state: BetterT3PreparedStatusState;
@@ -710,7 +683,6 @@ function resolveBetterT3PreparedStatusMessageId(input: {
   if (input.state === "unavailable") return "settings.betterT3.availability.unavailable";
   return "settings.betterT3.status.unknown";
 }
-
 function resolveBetterT3PreparedStatusText(input: {
   readonly featureId: BetterT3PreparedStatusFeatureId;
   readonly statuses: BetterT3PreparedStatusModel;
@@ -725,7 +697,6 @@ function resolveBetterT3PreparedStatusText(input: {
       connectionPhase: input.connectionPhase,
     }),
   );
-
   if (input.featureId === "integration.mcp") {
     const configuredCount = input.statuses["integration.mcp"].configuredCount;
     return configuredCount === null
@@ -735,7 +706,6 @@ function resolveBetterT3PreparedStatusText(input: {
           count: configuredCount,
         });
   }
-
   if (input.featureId === "integration.skills") {
     const skills = input.statuses["integration.skills"];
     if (skills.advertisedCount === null) return baseStatus;
@@ -750,7 +720,6 @@ function resolveBetterT3PreparedStatusText(input: {
       loaded: skills.loadedCount,
     });
   }
-
   if (input.featureId === "integration.compatibility") {
     const compatibility = input.statuses["integration.compatibility"];
     return input.translate("settings.betterT3.status.compatibilityCount", {
@@ -759,10 +728,8 @@ function resolveBetterT3PreparedStatusText(input: {
       total: compatibility.totalFeatureCount,
     });
   }
-
   return baseStatus;
 }
-
 function BetterT3PreparedStatusControl(props: {
   readonly status: string;
   readonly destination?: BetterT3Destination;
@@ -779,7 +746,6 @@ function BetterT3PreparedStatusControl(props: {
     </div>
   );
 }
-
 function SidebarPositionControl(props: {
   readonly value: SidebarPosition;
   readonly disabled: boolean;
@@ -814,12 +780,10 @@ function SidebarPositionControl(props: {
     </Select>
   );
 }
-
 export interface BetterT3EnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }
-
 function initializationMessageId(
   initialization: BetterT3SettingsInitialization,
 ): "settings.betterT3.initialization.clean" | "settings.betterT3.initialization.existing" {
@@ -827,7 +791,6 @@ function initializationMessageId(
     ? "settings.betterT3.initialization.clean"
     : "settings.betterT3.initialization.existing";
 }
-
 function BetterT3SettingsIntroduction(props: {
   readonly environmentOptions: ReadonlyArray<BetterT3EnvironmentOption>;
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -905,7 +868,6 @@ function BetterT3SettingsIntroduction(props: {
     </div>
   );
 }
-
 function SelectedEnvironmentBetterT3SettingsPanel(props: {
   readonly environment: EnvironmentPresentation;
   readonly environmentOptions: ReadonlyArray<BetterT3EnvironmentOption>;
@@ -913,21 +875,16 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
 }) {
   const settings = useEnvironmentSettings(props.environment.environmentId);
+  const serverProviders = useEnvironmentProviders().get(props.environment.environmentId) ?? [];
   const updateSettings = useUpdateEnvironmentSettings(props.environment.environmentId);
   const translator = useInterfaceTranslator();
-  const translate = useCallback<Translate>(
-    (messageId, values) => translator.message(messageId, values),
-    [translator],
-  );
-  const capabilities = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(props.environment.serverConfig?.environment.capabilities ?? {}).filter(
-          (entry): entry is [string, number | boolean] =>
-            typeof entry[1] === "number" || typeof entry[1] === "boolean",
-        ),
-      ),
-    [props.environment.serverConfig?.environment.capabilities],
+  const translate = ((messageId, values) =>
+    translator.message(messageId, values)) satisfies Translate;
+  const capabilities = Object.fromEntries(
+    Object.entries(props.environment.serverConfig?.environment.capabilities ?? {}).filter(
+      (entry): entry is [string, number | boolean] =>
+        typeof entry[1] === "number" || typeof entry[1] === "boolean",
+    ),
   );
   const environmentAvailable =
     props.environment.connection.phase === "connected" && props.environment.serverConfig !== null;
@@ -949,97 +906,73 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         })
       : null,
   );
-  const features = useMemo(
-    () =>
-      buildBetterT3ControlStates({
-        registry: BETTER_T3_FEATURE_REGISTRY,
-        device: settings.betterT3Device,
-        environment: settings.betterT3Environment,
-        surface: isElectron ? "desktop" : "web",
-        capabilities,
-        environmentAvailable,
-      }),
-    [capabilities, environmentAvailable, settings.betterT3Device, settings.betterT3Environment],
-  );
+  const features = buildBetterT3ControlStates({
+    registry: BETTER_T3_FEATURE_REGISTRY,
+    device: settings.betterT3Device,
+    environment: settings.betterT3Environment,
+    surface: isElectron ? "desktop" : "web",
+    capabilities,
+    environmentAvailable,
+  });
   const chatVisualMode = useChatVisualMode();
   const setChatVisualMode = useSetChatVisualMode();
   const { count: sidebarPreviewCount } = useProjectThreadPreviewCount();
-  const previewModel = useMemo(
-    () =>
-      buildBetterT3SettingsPreviewModel({
-        features,
-        chatVisualMode,
-        contextWindowSelector: settings.contextWindowSelector,
-        sidebarPosition: settings.sidebarPosition,
-        showReasoning: settings.showReasoning,
-        reasoningWorkingOverlay: resolveBetterT3FeatureFlag(
-          settings.betterT3Device,
-          "agent.reasoningWorkingOverlay",
-        ),
-        reasoningInMessage: resolveBetterT3FeatureFlag(
-          settings.betterT3Device,
-          "agent.reasoningInMessage",
-        ),
-        chatWidth: settings.chatWidth,
-        chatWidthCustomizationEnabled: settings.chatWidthCustomizationEnabled,
-        chatWidthAdjustmentPercent: settings.chatWidthAdjustmentPercent,
-      }),
-    [
-      chatVisualMode,
-      features,
-      settings.contextWindowSelector,
-      settings.sidebarPosition,
-      settings.showReasoning,
+  const previewModel = buildBetterT3SettingsPreviewModel({
+    features,
+    chatVisualMode,
+    contextWindowSelector: settings.contextWindowSelector,
+    sidebarPosition: settings.sidebarPosition,
+    showReasoning: settings.showReasoning,
+    reasoningWorkingOverlay: resolveBetterT3FeatureFlag(
       settings.betterT3Device,
-      settings.chatWidth,
-      settings.chatWidthCustomizationEnabled,
-      settings.chatWidthAdjustmentPercent,
-    ],
-  );
-  const onSwitchChange = useCallback(
-    (featureId: BetterT3SwitchFeatureId, enabled: boolean) => {
-      const descriptor = BETTER_T3_FEATURE_REGISTRY.find((entry) => entry.id === featureId);
-      if (!descriptor) return;
-      updateSettings(buildBetterT3SwitchSettingsPatch(featureId, enabled, descriptor.scope));
-    },
-    [updateSettings],
-  );
-  const onVisualChoiceChange = useCallback(
-    (
-      featureId: (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number],
-      value: BetterT3VisualChoiceValue,
-    ) => {
-      if (featureId === "agent.reasoningVisibility") {
-        if (value === "none" || value === "chat" || value === "working" || value === "message") {
-          updateSettings(buildReasoningDisplaySettingsPatch(value));
-        }
-        return;
+      "agent.reasoningWorkingOverlay",
+    ),
+    reasoningInMessage: resolveBetterT3FeatureFlag(
+      settings.betterT3Device,
+      "agent.reasoningInMessage",
+    ),
+    chatWidth: settings.chatWidth,
+    chatWidthCustomizationEnabled: settings.chatWidthCustomizationEnabled,
+    chatWidthAdjustmentPercent: settings.chatWidthAdjustmentPercent,
+  });
+  const onSwitchChange = (featureId: BetterT3SwitchFeatureId, enabled: boolean) => {
+    const descriptor = BETTER_T3_FEATURE_REGISTRY.find((entry) => entry.id === featureId);
+    if (!descriptor) return;
+    updateSettings(buildBetterT3SwitchSettingsPatch(featureId, enabled, descriptor.scope));
+  };
+  const onVisualChoiceChange = (
+    featureId: (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number],
+    value: BetterT3VisualChoiceValue,
+  ) => {
+    if (featureId === "agent.reasoningVisibility") {
+      if (value === "none" || value === "chat" || value === "working" || value === "message") {
+        updateSettings(buildReasoningDisplaySettingsPatch(value));
       }
-      if (featureId === "chat.sidebarPosition") {
-        if (value === "left" || value === "right") updateSettings({ sidebarPosition: value });
-        return;
+      return;
+    }
+    if (featureId === "chat.sidebarPosition") {
+      if (value === "left" || value === "right") updateSettings({ sidebarPosition: value });
+      return;
+    }
+    if (featureId === "chat.presentation") {
+      const mode = CHAT_VISUAL_MODES.find((mode) => mode === value);
+      if (mode) setChatVisualMode(mode);
+      return;
+    }
+    if (featureId === "chat.contextWindowSelector") {
+      if (value === "native" || value === "better-t3") {
+        updateSettings({ contextWindowSelector: value });
       }
-      if (featureId === "chat.presentation") {
-        const mode = CHAT_VISUAL_MODES.find((mode) => mode === value);
-        if (mode) setChatVisualMode(mode);
-        return;
-      }
-      if (featureId === "chat.contextWindowSelector") {
-        if (value === "native" || value === "better-t3") {
-          updateSettings({ contextWindowSelector: value });
-        }
-        return;
-      }
-      if (featureId === "voice.outputLanguage") {
-        if (value === "native" || value === "english")
-          updateSettings({ voiceInputOutputLanguage: value });
-        return;
-      }
-      if (typeof value === "boolean") onSwitchChange(featureId, value);
-    },
-    [onSwitchChange, setChatVisualMode, updateSettings],
-  );
-  const featureChoices = useMemo(() => {
+      return;
+    }
+    if (featureId === "voice.outputLanguage") {
+      if (value === "native" || value === "english")
+        updateSettings({ voiceInputOutputLanguage: value });
+      return;
+    }
+    if (typeof value === "boolean") onSwitchChange(featureId, value);
+  };
+  const featureChoices = (() => {
     const choices: Partial<Record<BetterT3FeatureId, ReactNode>> = {};
     for (const featureId of BETTER_T3_VISUAL_FEATURE_IDS) {
       const feature = features.find((entry) => entry.descriptor.id === featureId);
@@ -1091,46 +1024,34 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       );
     }
     return choices;
-  }, [features, onVisualChoiceChange, previewModel, settings.voiceInputOutputLanguage, translate]);
+  })();
   const preparedControls = useBetterT3PreparedControls({
     environmentId: props.environment.environmentId,
     settings,
-    providers: props.environment.serverConfig?.providers ?? [],
+    providers: serverProviders,
     features,
     translate,
     updateSettings,
   });
-  const preparedStatuses = useMemo(
-    () =>
-      prepareBetterT3StatusModel({
-        surface: isElectron ? "desktop" : "web",
-        connectionPhase: props.environment.connection.phase,
-        capabilities: props.environment.serverConfig?.environment.capabilities ?? null,
-        lifecycleReceipt: welcomeQuery.data === null ? null : "welcome",
-        registry: BETTER_T3_FEATURE_REGISTRY,
-        mcp: props.environment.serverConfig
-          ? { configuredCount: settings.mcp.servers.length, runtimeServers: null }
-          : null,
-        skills: props.environment.serverConfig
-          ? {
-              advertisedSkills: props.environment.serverConfig.providers.flatMap(
-                (provider) => provider.skills,
-              ),
-              loadedSkills: loadedSkillsQuery.data?.skills ?? null,
-            }
-          : null,
-        project: null,
-        knowledgeGraphStatus: null,
-      }),
-    [
-      loadedSkillsQuery.data?.skills,
-      props.environment.connection.phase,
-      props.environment.serverConfig,
-      settings.mcp.servers.length,
-      welcomeQuery.data,
-    ],
-  );
-  const preparedStatusControls = useMemo(() => {
+  const preparedStatuses = prepareBetterT3StatusModel({
+    surface: isElectron ? "desktop" : "web",
+    connectionPhase: props.environment.connection.phase,
+    capabilities: props.environment.serverConfig?.environment.capabilities ?? null,
+    lifecycleReceipt: welcomeQuery.data === null ? null : "welcome",
+    registry: BETTER_T3_FEATURE_REGISTRY,
+    mcp: props.environment.serverConfig
+      ? { configuredCount: settings.mcp.servers.length, runtimeServers: null }
+      : null,
+    skills: props.environment.serverConfig
+      ? {
+          advertisedSkills: serverProviders.flatMap((provider) => provider.skills),
+          loadedSkills: loadedSkillsQuery.data?.skills ?? null,
+        }
+      : null,
+    project: null,
+    knowledgeGraphStatus: null,
+  });
+  const preparedStatusControls = (() => {
     const controls: Partial<Record<BetterT3FeatureId, ReactNode>> = {};
     const addStatus = (
       featureId: BetterT3PreparedStatusFeatureId,
@@ -1158,8 +1079,8 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     addStatus("integration.skills", "/settings/skills");
     addStatus("integration.compatibility");
     return controls;
-  }, [preparedStatuses, props.environment.connection.phase, translate]);
-  const controls = useMemo(() => {
+  })();
+  const controls = (() => {
     const entries: Array<readonly [BetterT3FeatureId, ReactNode]> = [];
     for (const feature of features) {
       if (feature.descriptor.controlKind === "switch") continue;
@@ -1192,15 +1113,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       ]);
     }
     return Object.fromEntries(entries) as Partial<Record<BetterT3FeatureId, ReactNode>>;
-  }, [
-    features,
-    preparedControls,
-    preparedStatusControls,
-    settings.sidebarPosition,
-    translate,
-    updateSettings,
-  ]);
-
+  })();
   const featureRow = (id: BetterT3FeatureId) => {
     const feature = features.find((candidate) => candidate.descriptor.id === id);
     return feature
@@ -1209,11 +1122,10 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
   };
   const subgroupSummaries = buildBetterT3SubgroupSummaries({
     settings,
-    providers: props.environment.serverConfig?.providers ?? [],
+    providers: serverProviders,
     features,
     translate,
   });
-
   return (
     <BetterT3SettingsPanelView
       features={features}
@@ -1309,7 +1221,6 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     />
   );
 }
-
 export function BetterT3SettingsPanel() {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1326,16 +1237,11 @@ export function BetterT3SettingsPanel() {
   );
   const selectedEnvironment =
     environments.find((environment) => environment.environmentId === selectedEnvironmentId) ?? null;
-  const environmentOptions = useMemo(
-    () =>
-      environments.map((environment) => ({
-        environmentId: environment.environmentId,
-        label: environment.label,
-      })),
-    [environments],
-  );
+  const environmentOptions = environments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+  }));
   const translator = useInterfaceTranslator();
-
   if (!selectedEnvironment) {
     return (
       <BetterT3SettingsPanelView
@@ -1363,7 +1269,6 @@ export function BetterT3SettingsPanel() {
       />
     );
   }
-
   return (
     <SelectedEnvironmentBetterT3SettingsPanel
       environment={selectedEnvironment}

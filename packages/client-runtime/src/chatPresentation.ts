@@ -23,7 +23,6 @@ export const CHAT_THINKING_PHRASE_KEYS = [
   "chat.thinking.tinyDrumroll",
 ] as const;
 
-export const CHAT_THINKING_ROW_ID = "thinking-indicator-row";
 export const CHAT_THINKING_CYCLE_MS = 2400;
 export const CHAT_THINKING_PHRASE_CYCLES = 3;
 export const CHAT_THINKING_WAVE_TRAVEL = 0.65;

@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
-import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useLayoutEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -88,7 +88,6 @@ async function reload(selected = localProvider) {
 
 beforeEach(() => {
   toasts.add.mockClear();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const values = new Map<string, string>();
   vi.stubGlobal("window", {
     localStorage: {

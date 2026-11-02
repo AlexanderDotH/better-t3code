@@ -143,6 +143,7 @@ export function DeepPlanChecklist({
   const detailsId = useId();
   const [now, setNow] = useState(() => Date.now());
   const expiresAt = placement === "composer" ? getDeepPlanComposerChecklistExpiresAt(run) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Expire the mounted checklist when its persisted completion deadline arrives.
   useEffect(() => {
     if (expiresAt === null || expiresAt <= now) return;
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, expiresAt - Date.now()));
@@ -212,7 +213,7 @@ export function DeepPlanChecklist({
                 return (
                   <li key={step.id}>
                     <details className="rounded-md border border-border/70">
-                      <summary className="min-h-11 cursor-pointer px-3 py-2 text-sm focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <summary className="min-h-11 cursor-pointer px-3 py-2 text-sm focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                         {status === "verified" ? (
                           <SquareCheckIcon
                             aria-hidden

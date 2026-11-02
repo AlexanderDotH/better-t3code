@@ -11,13 +11,13 @@ import {
   type ProjectThreadPreviewSyncWrite,
 } from "@t3tools/client-runtime/project-thread-preview-sync";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "./hooks/useSettings";
 import { useEnvironments } from "./state/environments";
 import { serverEnvironment } from "./state/server";
@@ -148,18 +148,14 @@ export function useProjectThreadPreviewCount(): {
   const legacyCount = useClientSettings<ProjectThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
   );
-  const updateClientSettings = useUpdateClientSettings();
   const [record, setRecord] = useProjectThreadPreviewSyncCache();
-  const setCount = useCallback(
-    (count: ProjectThreadPreviewCount) => {
-      setRecord(createProjectThreadPreviewSyncRecord(count));
-      updateClientSettings({
-        projectThreadPreviewMigrationVersion: 1,
-        sidebarThreadPreviewCount: count,
-      });
-    },
-    [setRecord, updateClientSettings],
-  );
+  const setCount = (count: ProjectThreadPreviewCount) => {
+    setRecord(createProjectThreadPreviewSyncRecord(count));
+    updateClientSettings({
+      projectThreadPreviewMigrationVersion: 1,
+      sidebarThreadPreviewCount: count,
+    });
+  };
 
   return { count: record?.count ?? legacyCount, setCount };
 }
@@ -172,7 +168,6 @@ export function ProjectThreadPreviewSyncCoordinator() {
   const migrationVersion = useClientSettings(
     (settings) => settings.projectThreadPreviewMigrationVersion,
   );
-  const updateClientSettings = useUpdateClientSettings();
   const [localRecord, setLocalRecord] = useProjectThreadPreviewSyncCache();
   const { environments, isReady } = useEnvironments();
   const persistServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -189,36 +184,28 @@ export function ProjectThreadPreviewSyncCoordinator() {
   const confirmedWriteKeys = useRef(new Set<string>());
   const mounted = useRef(true);
 
-  const syncEnvironments = useMemo(
-    () =>
-      environments.flatMap((environment) => {
-        const config = environment.serverConfig;
-        if (config === null) return [];
-        return [
-          {
-            environmentId: environment.environmentId,
-            environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
-            connected: environment.connection.phase === "connected",
-            record: config.settings.projectThreadPreviewSyncRecord ?? null,
-          },
-        ];
-      }),
-    [environments],
+  const syncEnvironments = environments.flatMap((environment) => {
+    const config = environment.serverConfig;
+    if (config === null) return [];
+    return [
+      {
+        environmentId: environment.environmentId,
+        environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
+        connected: environment.connection.phase === "connected",
+        record: config.settings.projectThreadPreviewSyncRecord ?? null,
+      },
+    ];
+  });
+  const labelByEnvironmentId = new Map(
+    environments.map(({ environmentId, label }) => [environmentId, label] as const),
   );
-  const labelByEnvironmentId = useMemo(
-    () => new Map(environments.map(({ environmentId, label }) => [environmentId, label] as const)),
-    [environments],
-  );
-  const plan = useMemo(
-    () =>
-      planProjectThreadPreviewSync<EnvironmentId>({
-        localRecord,
-        environments: syncEnvironments,
-        pendingWrites,
-      }),
-    [localRecord, pendingWrites, syncEnvironments],
-  );
+  const plan = planProjectThreadPreviewSync<EnvironmentId>({
+    localRecord,
+    environments: syncEnvironments,
+    pendingWrites,
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clear failed RPC attempts when a server disconnects or its pending setting changes, so reconnect can retry
   useEffect(() => {
     const connectedEnvironmentIds = new Set(
       syncEnvironments
@@ -228,6 +215,7 @@ export function ProjectThreadPreviewSyncCoordinator() {
     const pendingWriteKeyByEnvironment = new Map(
       plan.pendingWrites.map((write) => [write.environmentId, writeKey(write)] as const),
     );
+    // oxlint-disable-next-line react/set-state-in-effect -- reset server retry suppression after disconnect or a replacement settings record
     setFailedWriteKeyByEnvironment((current) => {
       const next = new Map(
         [...current].filter(
@@ -240,6 +228,7 @@ export function ProjectThreadPreviewSyncCoordinator() {
     });
   }, [plan.pendingWrites, syncEnvironments]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retire acknowledged write leases when the server settings snapshot catches up
   useEffect(() => {
     const plannedWriteKeys = new Set(plan.writes.map(writeKey));
     for (const key of confirmedWriteKeys.current) {
@@ -247,6 +236,7 @@ export function ProjectThreadPreviewSyncCoordinator() {
     }
   }, [plan.writes]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prevent in-flight server RPC completions from updating an unmounted coordinator
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -254,6 +244,7 @@ export function ProjectThreadPreviewSyncCoordinator() {
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- migrate persisted preview preferences and reconcile them with connected server settings through RPC writes
   useEffect(() => {
     if (!settingsHydrated || !isReady) return;
 
@@ -278,6 +269,7 @@ export function ProjectThreadPreviewSyncCoordinator() {
         sidebarThreadPreviewCount: plan.winner.count,
       });
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- retain unacknowledged server writes across disconnects and remote settings snapshots
     setPendingWrites((current) =>
       writesMatch(current, plan.pendingWrites) ? current : plan.pendingWrites,
     );
@@ -363,7 +355,6 @@ export function ProjectThreadPreviewSyncCoordinator() {
     plan,
     setLocalRecord,
     settingsHydrated,
-    updateClientSettings,
   ]);
 
   return null;

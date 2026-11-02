@@ -1,4 +1,4 @@
-import { type FocusEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FocusEvent, useEffect, useRef, useState } from "react";
 
 import { useBetterT3DeviceFeature } from "~/hooks/useBetterT3Feature";
 
@@ -93,16 +93,19 @@ const scheduleFrame = (callback: () => void): (() => void) => {
 };
 
 export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
+  return <ChatWorkspaceDeckSession key={props.resetKey} {...props} />;
+}
+
+function ChatWorkspaceDeckSession(props: ChatWorkspaceDeckProps) {
   const cardMorphingEnabled = useBetterT3DeviceFeature("chat.cardMorphing");
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedChatElementRef = useRef<HTMLElement | null>(null);
   const previousActiveCardRef = useRef<ChatWorkspaceCardId>(props.activeCard);
   const didRunBeforeHideRef = useRef(false);
-  const pendingCardRequestRef = useRef<PendingCardRequest | null>(null);
-  const [selectionMode, setSelectionMode] = useState<WorkspaceDeckSelectionMode>("animate");
-  const [selectionLocked, setSelectionLocked] = useState(false);
+  const [pendingCardRequest, setPendingCardRequest] = useState<PendingCardRequest | null>(null);
+  const [selectionMode, setSelectionMode] = useState<WorkspaceDeckSelectionMode>("immediate");
 
-  const cardIds = useMemo(() => props.cards.map((card) => card.id), [props.cards]);
+  const cardIds = props.cards.map((card) => card.id);
   const resolvedActiveCard =
     resolveWorkspaceDeckActiveCard({
       activeCard: props.activeCard,
@@ -111,37 +114,40 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
     }) ?? "chat";
   const chatAvailable = cardIds.includes("chat");
   const policyActiveCard = props.actionRequired && chatAvailable ? "chat" : resolvedActiveCard;
+  const selectionLocked =
+    pendingCardRequest !== null &&
+    !props.actionRequired &&
+    pendingCardRequest.fromCard === policyActiveCard &&
+    cardIds.includes(pendingCardRequest.fromCard) &&
+    cardIds.includes(pendingCardRequest.requestedCard);
+  if (pendingCardRequest !== null && !selectionLocked) setPendingCardRequest(null);
   const deckSelectionMode =
     !cardMorphingEnabled || props.actionRequired || resolvedActiveCard !== props.activeCard
       ? "immediate"
       : selectionMode;
 
-  const cards = useMemo(
-    () =>
-      props.cards.map((card) =>
-        card.id === "chat"
-          ? {
-              ...card,
-              renderBody: (context: { readonly active: boolean; readonly expanded: boolean }) => (
-                <div ref={chatBodyRef} className="contents" data-chat-workspace-card-body="true">
-                  {card.renderBody(context)}
-                </div>
-              ),
-            }
-          : card,
-      ),
-    [props.cards],
+  const cards = props.cards.map((card) =>
+    card.id === "chat"
+      ? {
+          ...card,
+          renderBody: (context: { readonly active: boolean; readonly expanded: boolean }) => (
+            <div ref={chatBodyRef} className="contents" data-chat-workspace-card-body="true">
+              {card.renderBody(context)}
+            </div>
+          ),
+        }
+      : card,
   );
 
-  const rememberChatFocus = useCallback(() => {
+  const rememberChatFocus = () => {
     if (typeof document === "undefined") return;
     const activeElement = document.activeElement;
     if (!(activeElement instanceof HTMLElement)) return;
     if (!chatBodyRef.current?.contains(activeElement)) return;
     previouslyFocusedChatElementRef.current = activeElement;
-  }, []);
+  };
 
-  const restoreChatFocus = useCallback(() => {
+  const restoreChatFocus = () => {
     const previousElement = previouslyFocusedChatElementRef.current;
     if (previousElement?.isConnected) {
       try {
@@ -152,170 +158,102 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
       }
     }
     props.onRestoreChatFocus?.();
-  }, [props.onRestoreChatFocus]);
+  };
 
-  const clearPendingCardRequest = useCallback(() => {
-    pendingCardRequestRef.current = null;
-    setSelectionLocked(false);
-  }, []);
+  const clearPendingCardRequest = () => {
+    setPendingCardRequest(null);
+  };
 
-  const handleFocusCapture = useCallback(
-    (event: FocusEvent<HTMLDivElement>) => {
-      if (!(event.target instanceof HTMLElement)) return;
-      if (chatBodyRef.current?.contains(event.target)) {
-        previouslyFocusedChatElementRef.current = event.target;
-      }
-      if (policyActiveCard !== "chat") return;
-      if (event.target.dataset.workspaceCardBody !== "chat") return;
-      scheduleFrame(restoreChatFocus);
-    },
-    [policyActiveCard, restoreChatFocus],
-  );
+  const handleFocusCapture = (event: FocusEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof HTMLElement)) return;
+    if (chatBodyRef.current?.contains(event.target)) {
+      previouslyFocusedChatElementRef.current = event.target;
+    }
+    if (policyActiveCard !== "chat") return;
+    if (event.target.dataset.workspaceCardBody !== "chat") return;
+    scheduleFrame(restoreChatFocus);
+  };
 
-  const requestCard = useCallback(
-    (requestedCard: ChatWorkspaceCardId, direction: WorkspaceDeckDirection) => {
-      if (selectionLocked) return;
-      const result = resolveChatWorkspaceCardRequest({
-        actionRequired: props.actionRequired,
-        activeCard: policyActiveCard,
-        expandedCard: props.expandedCard,
-        isRecording: props.isRecording,
-        requestedCard,
-      });
-      if (result.blockedReason !== null) {
-        props.onCardSelectionBlocked?.(result.blockedReason);
-        return false;
-      }
-      if (result.shouldDismissChatUi) {
-        rememberChatFocus();
-        props.onBeforeHideChat?.();
-        didRunBeforeHideRef.current = true;
-      }
-      if (result.shouldCollapseExpandedCard) {
-        pendingCardRequestRef.current = {
-          direction,
-          fromCard: policyActiveCard,
-          requestedCard: result.nextCard,
-        };
-        setSelectionLocked(true);
-        props.onExpandedCardChange(null);
-        return true;
-      }
-      if (result.nextCard !== policyActiveCard) {
-        setSelectionMode("animate");
-        props.onActiveCardChange(result.nextCard, direction);
-        return true;
-      }
+  const requestCard = (requestedCard: ChatWorkspaceCardId, direction: WorkspaceDeckDirection) => {
+    if (selectionLocked) return;
+    const result = resolveChatWorkspaceCardRequest({
+      actionRequired: props.actionRequired,
+      activeCard: policyActiveCard,
+      expandedCard: props.expandedCard,
+      isRecording: props.isRecording,
+      requestedCard,
+    });
+    if (result.blockedReason !== null) {
+      props.onCardSelectionBlocked?.(result.blockedReason);
       return false;
-    },
-    [policyActiveCard, props, rememberChatFocus, selectionLocked],
-  );
-
-  const completeExpandedCardCollapse = useCallback(
-    (collapsedCard: ChatWorkspaceCardId) => {
-      const pendingRequest = pendingCardRequestRef.current;
-      if (pendingRequest === null || pendingRequest.fromCard !== collapsedCard) return;
-      clearPendingCardRequest();
-      if (policyActiveCard !== pendingRequest.fromCard) return;
-      if (!cardIds.includes(pendingRequest.requestedCard)) return;
-
-      const result = resolveChatWorkspaceCardRequest({
-        actionRequired: props.actionRequired,
-        activeCard: policyActiveCard,
-        expandedCard: null,
-        isRecording: props.isRecording,
-        requestedCard: pendingRequest.requestedCard,
+    }
+    if (result.shouldDismissChatUi) {
+      rememberChatFocus();
+      props.onBeforeHideChat?.();
+      didRunBeforeHideRef.current = true;
+    }
+    if (result.shouldCollapseExpandedCard) {
+      setPendingCardRequest({
+        direction,
+        fromCard: policyActiveCard,
+        requestedCard: result.nextCard,
       });
-      if (result.blockedReason !== null) {
-        props.onCardSelectionBlocked?.(result.blockedReason);
-        return;
-      }
+      props.onExpandedCardChange(null);
+      return true;
+    }
+    if (result.nextCard !== policyActiveCard) {
       setSelectionMode("animate");
-      props.onActiveCardChange(result.nextCard, pendingRequest.direction);
-    },
-    [
-      cardIds,
-      clearPendingCardRequest,
-      policyActiveCard,
-      props.actionRequired,
-      props.isRecording,
-      props.onActiveCardChange,
-      props.onCardSelectionBlocked,
-    ],
-  );
+      props.onActiveCardChange(result.nextCard, direction);
+      return true;
+    }
+    return false;
+  };
 
-  useEffect(() => {
-    if (resolvedActiveCard === props.activeCard) return;
-    setSelectionMode("immediate");
-    props.onActiveCardChange(resolvedActiveCard, null);
-  }, [props.activeCard, props.onActiveCardChange, resolvedActiveCard]);
+  const completeExpandedCardCollapse = (collapsedCard: ChatWorkspaceCardId) => {
+    const pendingRequest = pendingCardRequest;
+    if (pendingRequest === null || pendingRequest.fromCard !== collapsedCard) return;
+    clearPendingCardRequest();
+    if (policyActiveCard !== pendingRequest.fromCard) return;
+    if (!cardIds.includes(pendingRequest.requestedCard)) return;
 
+    const result = resolveChatWorkspaceCardRequest({
+      actionRequired: props.actionRequired,
+      activeCard: policyActiveCard,
+      expandedCard: null,
+      isRecording: props.isRecording,
+      requestedCard: pendingRequest.requestedCard,
+    });
+    if (result.blockedReason !== null) {
+      props.onCardSelectionBlocked?.(result.blockedReason);
+      return;
+    }
+    setSelectionMode("animate");
+    props.onActiveCardChange(result.nextCard, pendingRequest.direction);
+  };
+
+  const { onBeforeHideChat } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves DOM focus and dismisses the imperative composer UI when its card is hidden
   useEffect(() => {
     const previousActiveCard = previousActiveCardRef.current;
     previousActiveCardRef.current = policyActiveCard;
 
     if (previousActiveCard === "chat" && policyActiveCard !== "chat") {
       rememberChatFocus();
-      if (!didRunBeforeHideRef.current) props.onBeforeHideChat?.();
+      if (!didRunBeforeHideRef.current) onBeforeHideChat?.();
       didRunBeforeHideRef.current = false;
       return;
     }
 
     didRunBeforeHideRef.current = false;
-    if (previousActiveCard !== policyActiveCard && props.expandedCard === previousActiveCard) {
-      props.onExpandedCardChange(null);
-    }
     if (previousActiveCard === "chat" || policyActiveCard !== "chat") return;
 
     return scheduleFrame(restoreChatFocus);
-  }, [
-    props.expandedCard,
-    props.onBeforeHideChat,
-    props.onExpandedCardChange,
-    rememberChatFocus,
-    policyActiveCard,
-    restoreChatFocus,
-  ]);
+  }, [onBeforeHideChat, rememberChatFocus, policyActiveCard, restoreChatFocus]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the first animation-frame boundary so a newly mounted deck starts without a transition
   useEffect(() => {
-    if (!props.actionRequired) return;
-    if (props.activeCard === "chat" && props.expandedCard === null) return;
-    clearPendingCardRequest();
-    setSelectionMode("immediate");
-    if (props.expandedCard !== null) props.onExpandedCardChange(null);
-    if (props.activeCard !== "chat" && chatAvailable) props.onActiveCardChange("chat", null);
-  }, [
-    props.actionRequired,
-    props.activeCard,
-    props.expandedCard,
-    props.onExpandedCardChange,
-    props.onActiveCardChange,
-    chatAvailable,
-    clearPendingCardRequest,
-  ]);
-
-  useEffect(() => {
-    const pendingRequest = pendingCardRequestRef.current;
-    if (pendingRequest === null) return;
-    if (
-      cardIds.includes(pendingRequest.fromCard) &&
-      cardIds.includes(pendingRequest.requestedCard)
-    ) {
-      return;
-    }
-    clearPendingCardRequest();
-  }, [cardIds, clearPendingCardRequest]);
-
-  useEffect(() => {
-    previousActiveCardRef.current = policyActiveCard;
-    previouslyFocusedChatElementRef.current = null;
-    didRunBeforeHideRef.current = false;
-    clearPendingCardRequest();
-    setSelectionMode("immediate");
     return scheduleFrame(() => setSelectionMode("animate"));
-    // A scope change deliberately resets transient deck policy state even when
-    // the remembered active card is the same in both scopes.
-  }, [clearPendingCardRequest, props.resetKey]);
+  }, []);
 
   return (
     <div
@@ -329,7 +267,7 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
         activeCard={policyActiveCard}
         cards={cards}
         compactHeightReferenceCard="chat"
-        expandedCard={props.expandedCard}
+        expandedCard={props.actionRequired ? null : props.expandedCard}
         resetKey={props.resetKey}
         selectionMode={deckSelectionMode}
         selectionLocked={selectionLocked}

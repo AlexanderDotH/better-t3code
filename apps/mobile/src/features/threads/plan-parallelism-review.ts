@@ -1,6 +1,15 @@
+import type { PlanId } from "@t3tools/contracts";
+export interface MobileProposedPlan {
+  readonly id: PlanId;
+  readonly updatedAt: string;
+  readonly planMarkdown: string;
+  readonly implementedAt: string | null;
+  readonly implementationThreadId?: ThreadId | null;
+  readonly createdAt?: string;
+  readonly turnId?: string | null;
+}
 import type {
   ModelSelection,
-  OrchestrationProposedPlan,
   PlanParallelismReviewResult,
   ServerProvider,
   ThreadId,
@@ -9,7 +18,7 @@ import { isPlanParallelismReviewDriverKind } from "@t3tools/contracts";
 
 export interface MobilePlanParallelismReviewDescriptor {
   readonly threadId: ThreadId;
-  readonly plan: Pick<OrchestrationProposedPlan, "id" | "updatedAt">;
+  readonly plan: Pick<MobileProposedPlan, "id" | "updatedAt">;
   readonly implementationProvider: ServerProvider;
   readonly reviewerSelection: ModelSelection;
 }
@@ -17,7 +26,7 @@ export interface MobilePlanParallelismReviewDescriptor {
 export function resolveMobilePlanParallelismReviewDescriptor(input: {
   readonly enabled: boolean;
   readonly threadId: ThreadId;
-  readonly plan: OrchestrationProposedPlan | null;
+  readonly plan: MobileProposedPlan | null;
   readonly implementationProvider: ServerProvider | null;
   readonly reviewerSelection: ModelSelection | null;
   readonly providers: ReadonlyArray<ServerProvider>;

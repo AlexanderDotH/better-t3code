@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { ServerSettingsService } from "../serverSettings.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "./ProviderRegistry.ts";
 
 export function usageHardBudgetBlockReason(
   limits: ServerProviderUsageLimits | undefined,
@@ -42,7 +42,7 @@ export const makeUsageHardBudgetCheck = Effect.gen(function* () {
   return Effect.fn("checkUsageHardBudget")(function* (instanceId: ProviderInstanceId) {
     const enabled = yield* settings.getSettings.pipe(
       Effect.map((value) => value.usageHardBudgetEnabled),
-      Effect.catch(() => Effect.succeed(true)),
+      Effect.orElseSucceed(() => true),
     );
     if (!enabled) return null;
     const snapshots = Option.isSome(providers) ? yield* providers.value.getProviders : [];

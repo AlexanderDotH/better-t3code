@@ -19,20 +19,12 @@ import {
   type ResolvedInterfaceLanguage,
   type ResolvedInterfaceLocale,
 } from "@t3tools/shared/interfaceLanguage";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "./hooks/useSettings";
 import { randomUUID } from "./lib/utils";
 import { setInterfaceLocaleRuntime } from "./interfaceLanguageRuntime";
@@ -130,7 +122,7 @@ function subscribeSystemLocales(onChange: () => void): () => void {
 
 function useSystemInterfaceLocales(): readonly string[] {
   const snapshot = useSyncExternalStore(subscribeSystemLocales, systemLocaleSnapshot, () => "[]");
-  return useMemo(() => JSON.parse(snapshot) as readonly string[], [snapshot]);
+  return JSON.parse(snapshot) as readonly string[];
 }
 
 export interface InterfaceLanguageState extends ResolvedInterfaceLocale {
@@ -143,10 +135,7 @@ export function useInterfaceLanguage(): InterfaceLanguageState {
   const systemLocales = useSystemInterfaceLocales();
   const record = resolveInterfaceLocaleSyncRecord({ localeRecord, legacyRecord });
   const preference = record?.preference ?? DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1;
-  return useMemo(
-    () => ({ preference, ...resolveInterfaceLocale(preference, systemLocales) }),
-    [preference, systemLocales],
-  );
+  return { preference, ...resolveInterfaceLocale(preference, systemLocales) };
 }
 
 export function useSetInterfaceLanguagePreference(): (
@@ -154,25 +143,21 @@ export function useSetInterfaceLanguagePreference(): (
 ) => void {
   const localeRecord = useClientSettings((settings) => settings.interfaceLocaleLocalRecordV1);
   const legacyRecord = useClientSettings((settings) => settings.interfaceLanguageLocalRecord);
-  const updateClientSettings = useUpdateClientSettings();
-  return useCallback(
-    (preference: InterfaceLocalePreferenceV1) => {
-      const effectiveRecord = resolveInterfaceLocaleSyncRecord({ localeRecord, legacyRecord });
-      const nextRecord = createInterfaceLanguageSyncRecord(
-        preference,
-        DEFAULT_UPDATE_CLOCK,
-        effectiveRecord?.updatedAt,
-      );
-      updateClientSettings({
-        interfaceLocaleLocalRecordV1: nextRecord,
-        interfaceLanguageLocalRecord: createInterfaceLocaleCompatibilityMirror(
-          nextRecord,
-          legacyRecord,
-        ),
-      });
-    },
-    [legacyRecord, localeRecord, updateClientSettings],
-  );
+  return (preference: InterfaceLocalePreferenceV1) => {
+    const effectiveRecord = resolveInterfaceLocaleSyncRecord({ localeRecord, legacyRecord });
+    const nextRecord = createInterfaceLanguageSyncRecord(
+      preference,
+      DEFAULT_UPDATE_CLOCK,
+      effectiveRecord?.updatedAt,
+    );
+    updateClientSettings({
+      interfaceLocaleLocalRecordV1: nextRecord,
+      interfaceLanguageLocalRecord: createInterfaceLocaleCompatibilityMirror(
+        nextRecord,
+        legacyRecord,
+      ),
+    });
+  };
 }
 
 export interface InterfaceLanguageSyncStatus {
@@ -302,7 +287,6 @@ export function InterfaceLanguageSyncCoordinator() {
   const localLocaleRecord = useClientSettings((settings) => settings.interfaceLocaleLocalRecordV1);
   const localLegacyRecord = useClientSettings((settings) => settings.interfaceLanguageLocalRecord);
   const settingsHydrated = useClientSettingsHydrated();
-  const updateClientSettings = useUpdateClientSettings();
   const interfaceLocale = useInterfaceLanguage();
   const { environments, isReady } = useEnvironments();
   const persistServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -319,73 +303,57 @@ export function InterfaceLanguageSyncCoordinator() {
     ReadonlyMap<EnvironmentId, string>
   >(() => new Map());
   const activeWriteKeys = useRef(new Set<string>());
-  const confirmedWriteKeys = useRef(new Set<string>());
+  const [confirmedWriteKeys, setConfirmedWriteKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const mounted = useRef(true);
 
-  const syncEnvironments = useMemo(
-    () =>
-      environments.flatMap((environment) => {
-        const config = environment.serverConfig;
-        if (config === null) return [];
-        return [
-          {
-            environmentId: environment.environmentId,
-            environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
-            connected: environment.connection.phase === "connected",
-            localeRecord: config.settings.interfaceLocaleSyncRecordV1 ?? null,
-            legacyRecord: config.settings.interfaceLanguageSyncRecord ?? null,
-          },
-        ];
-      }),
-    [environments],
+  const syncEnvironments = environments.flatMap((environment) => {
+    const config = environment.serverConfig;
+    if (config === null) return [];
+    return [
+      {
+        environmentId: environment.environmentId,
+        environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
+        connected: environment.connection.phase === "connected",
+        localeRecord: config.settings.interfaceLocaleSyncRecordV1 ?? null,
+        legacyRecord: config.settings.interfaceLanguageSyncRecord ?? null,
+      },
+    ];
+  });
+  const labelByEnvironmentId = new Map(
+    environments.map(({ environmentId, label }) => [environmentId, label] as const),
   );
-  const labelByEnvironmentId = useMemo(
-    () => new Map(environments.map(({ environmentId, label }) => [environmentId, label] as const)),
-    [environments],
-  );
-  const plan = useMemo(
-    () =>
-      planInterfaceLocaleCompatibilitySync<EnvironmentId>({
-        localLocaleRecord,
-        localLegacyRecord,
-        environments: syncEnvironments,
-        pendingLocaleWrites,
-        pendingLegacyWrites,
-      }),
-    [
-      localLegacyRecord,
-      localLocaleRecord,
-      pendingLegacyWrites,
-      pendingLocaleWrites,
-      syncEnvironments,
-    ],
-  );
-  const plannedWrites = useMemo<readonly PlannedInterfaceSyncWrite[]>(
-    () => [
-      ...plan.localePlan.writes.map((write) => ({ schema: "locale" as const, write })),
-      ...plan.legacyPlan.writes.map((write) => ({ schema: "legacy" as const, write })),
-    ],
-    [plan.legacyPlan.writes, plan.localePlan.writes],
-  );
-  const pendingWrites = useMemo<readonly PlannedInterfaceSyncWrite[]>(
-    () => [
-      ...plan.localePlan.pendingWrites.map((write) => ({ schema: "locale" as const, write })),
-      ...plan.legacyPlan.pendingWrites.map((write) => ({ schema: "legacy" as const, write })),
-    ],
-    [plan.legacyPlan.pendingWrites, plan.localePlan.pendingWrites],
-  );
+  const plan = planInterfaceLocaleCompatibilitySync<EnvironmentId>({
+    localLocaleRecord,
+    localLegacyRecord,
+    environments: syncEnvironments,
+    pendingLocaleWrites,
+    pendingLegacyWrites,
+  });
+  const plannedWrites: readonly PlannedInterfaceSyncWrite[] = [
+    ...plan.localePlan.writes.map((write) => ({ schema: "locale" as const, write })),
+    ...plan.legacyPlan.writes.map((write) => ({ schema: "legacy" as const, write })),
+  ];
+  const pendingWrites: readonly PlannedInterfaceSyncWrite[] = [
+    ...plan.localePlan.pendingWrites.map((write) => ({ schema: "locale" as const, write })),
+    ...plan.legacyPlan.pendingWrites.map((write) => ({ schema: "legacy" as const, write })),
+  ];
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observe server record timestamps so the next local setting update supersedes the latest remote record
   useEffect(() => {
     if (plan.winner !== null) {
       latestObservedUpdatedAt = Math.max(latestObservedUpdatedAt, plan.winner.updatedAt);
     }
   }, [plan.winner]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep the document language and the external translation runtime in step with the selected locale
   useLayoutEffect(() => {
     setInterfaceLocaleRuntime(interfaceLocale);
     document.documentElement.lang = interfaceLocale.locale;
   }, [interfaceLocale]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clear failed RPC attempts when a server disconnects or its pending setting changes, so reconnect can retry
   useEffect(() => {
     const connectedEnvironmentIds = new Set(
       syncEnvironments
@@ -397,6 +365,7 @@ export function InterfaceLanguageSyncCoordinator() {
         ({ schema, write }) => [write.environmentId, writeKey(schema, write)] as const,
       ),
     );
+    // oxlint-disable-next-line react/set-state-in-effect -- reset server retry suppression after disconnect or a replacement settings record
     setFailedWriteKeyByEnvironment((current) => {
       const next = new Map(
         [...current].filter(
@@ -409,42 +378,42 @@ export function InterfaceLanguageSyncCoordinator() {
     });
   }, [pendingWrites, syncEnvironments]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retire RPC acknowledgements when the corresponding server settings snapshot arrives
   useEffect(() => {
     const plannedWriteKeys = new Set(
       plannedWrites.map(({ schema, write }) => writeKey(schema, write)),
     );
-    for (const key of confirmedWriteKeys.current) {
-      if (!plannedWriteKeys.has(key)) confirmedWriteKeys.current.delete(key);
-    }
+    // oxlint-disable-next-line react/set-state-in-effect -- retire RPC acknowledgements once the corresponding server settings snapshot arrives
+    setConfirmedWriteKeys((current) => {
+      const next = new Set([...current].filter((key) => plannedWriteKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
   }, [plannedWrites]);
 
-  const status = useMemo<InterfaceLanguageSyncStatus>(() => {
-    const labelsFor = (environmentIds: readonly EnvironmentId[]) =>
-      environmentIds.map(
-        (environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId,
-      );
-    const failedEnvironmentIds = pendingWrites
-      .filter(
-        ({ schema, write }) =>
-          failedWriteKeyByEnvironment.get(write.environmentId) === writeKey(schema, write),
-      )
-      .map(({ write }) => write.environmentId);
-    const isSyncing = plannedWrites.some(({ schema, write }) => {
-      const key = writeKey(schema, write);
-      return (
-        !confirmedWriteKeys.current.has(key) &&
-        failedWriteKeyByEnvironment.get(write.environmentId) !== key
-      );
-    });
-    return {
-      deferredEnvironmentLabels: labelsFor(plan.deferredEnvironmentIds),
-      failedEnvironmentLabels: labelsFor(failedEnvironmentIds),
-      isSyncing,
-      unsupportedEnvironmentLabels: labelsFor(plan.unsupportedEnvironmentIds),
-    };
-  }, [failedWriteKeyByEnvironment, labelByEnvironmentId, plan]);
+  const labelsFor = (environmentIds: readonly EnvironmentId[]) =>
+    environmentIds.map((environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId);
+  const failedEnvironmentIds = pendingWrites
+    .filter(
+      ({ schema, write }) =>
+        failedWriteKeyByEnvironment.get(write.environmentId) === writeKey(schema, write),
+    )
+    .map(({ write }) => write.environmentId);
+  const isSyncing = plannedWrites.some(({ schema, write }) => {
+    const key = writeKey(schema, write);
+    return (
+      !confirmedWriteKeys.has(key) && failedWriteKeyByEnvironment.get(write.environmentId) !== key
+    );
+  });
+  const status: InterfaceLanguageSyncStatus = {
+    deferredEnvironmentLabels: labelsFor(plan.deferredEnvironmentIds),
+    failedEnvironmentLabels: labelsFor(failedEnvironmentIds),
+    isSyncing,
+    unsupportedEnvironmentLabels: labelsFor(plan.unsupportedEnvironmentIds),
+  };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publish the mounted coordinator status to the external sync-status subscription used by settings screens
   useEffect(() => replaceSyncStatus(status), [status]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- own the sync-status registry entry and ignore server replies after this coordinator unmounts
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -453,6 +422,7 @@ export function InterfaceLanguageSyncCoordinator() {
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconcile durable locale preferences and compatibility mirrors with connected servers through RPC writes
   useEffect(() => {
     if (!settingsHydrated || !isReady || plan.winner === null) return;
 
@@ -465,6 +435,7 @@ export function InterfaceLanguageSyncCoordinator() {
         interfaceLanguageLocalRecord: plan.nextLocalLegacyRecord,
       });
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- retain unacknowledged locale writes across server reconnects and compatibility updates
     setPendingLocaleWrites((current) =>
       writesMatch("locale", current, plan.localePlan.pendingWrites)
         ? current
@@ -480,7 +451,7 @@ export function InterfaceLanguageSyncCoordinator() {
       const key = writeKey(schema, write);
       return (
         !activeWriteKeys.current.has(key) &&
-        !confirmedWriteKeys.current.has(key) &&
+        !confirmedWriteKeys.has(key) &&
         failedWriteKeyByEnvironment.get(write.environmentId) !== key
       );
     });
@@ -521,11 +492,13 @@ export function InterfaceLanguageSyncCoordinator() {
         .map(({ environmentId, status }) => ({ environmentId, status }));
       const localeSettlement = settleInterfaceLocaleSyncWrites(plan.localePlan, localeOutcomes);
       const legacySettlement = settleInterfaceLanguageSyncWrites(plan.legacyPlan, legacyOutcomes);
-      for (const outcome of outcomes) {
-        if (outcome.status === "success") {
-          confirmedWriteKeys.current.add(writeKey(outcome.schema, outcome.write));
+      setConfirmedWriteKeys((current) => {
+        const next = new Set(current);
+        for (const outcome of outcomes) {
+          if (outcome.status === "success") next.add(writeKey(outcome.schema, outcome.write));
         }
-      }
+        return next.size === current.size ? current : next;
+      });
       setPendingLocaleWrites((current) =>
         writesMatch("locale", current, localeSettlement.pendingWrites)
           ? current
@@ -548,6 +521,7 @@ export function InterfaceLanguageSyncCoordinator() {
       });
     });
   }, [
+    confirmedWriteKeys,
     failedWriteKeyByEnvironment,
     isReady,
     localLegacyRecord,
@@ -556,7 +530,6 @@ export function InterfaceLanguageSyncCoordinator() {
     persistServerSettings,
     plan,
     settingsHydrated,
-    updateClientSettings,
   ]);
 
   return null;

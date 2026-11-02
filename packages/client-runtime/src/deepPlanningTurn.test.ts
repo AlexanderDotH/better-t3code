@@ -6,7 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
+  RunId,
   type DeepPlanRun,
 } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -434,10 +434,12 @@ describe("Deep Plan continuation", () => {
       await continueRun(target, current, { automatic });
       const commands = target.dispatchCommand.mock.calls.map(([command]) => command);
       expect(commands.map((command) => command.type)).toEqual(
-        automatic ? ["thread.turn.start"] : ["thread.interaction-mode.set", "thread.turn.start"],
+        automatic
+          ? ["thread.runtime-mode.set", "message.dispatch"]
+          : ["thread.interaction-mode.set", "thread.runtime-mode.set", "message.dispatch"],
       );
       if (!automatic) expect(commands[0]).toMatchObject({ interactionMode: "plan", threadId });
-      expect(commands.at(-1)).toMatchObject({ background: { runId: current.id } });
+      expect(commands.at(-1)).toMatchObject({ deepPlanRunId: current.id });
     },
   );
 
@@ -462,7 +464,9 @@ describe("Deep Plan continuation", () => {
     ]);
     expect(results).toEqual([current, current, current]);
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
-      "thread.turn.start",
+      "thread.interaction-mode.set",
+      "thread.runtime-mode.set",
+      "message.dispatch",
     ]);
   });
 
@@ -493,27 +497,28 @@ describe("Deep Plan continuation", () => {
       .mockResolvedValueOnce(paused)
       .mockResolvedValueOnce({ ...paused, phase: "implementing", revision: 6 });
     const idleGuard = {
-      latestTurnId: TurnId.make("previous-turn"),
+      latestRunId: RunId.make("previous-turn"),
       latestUserMessageId: MessageId.make("previous-message"),
     };
     await continueRun(target, paused, { idleGuard });
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
       "thread.deep-plan.update",
-      "thread.turn.start",
+      "thread.interaction-mode.set",
+      "thread.runtime-mode.set",
+      "message.dispatch",
     ]);
-    expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
+    expect(target.dispatchCommand.mock.calls.at(-1)?.[0]).toMatchObject({
       threadId: paused.approval!.implementationThreadId,
       modelSelection: paused.approval!.implementation,
-      interactionMode: "default",
       idleGuard: {},
-      background: { runId: paused.id },
-      message: { text: expect.stringContaining("approved plan version 1") },
+      deepPlanRunId: paused.id,
+      text: expect.stringContaining("approved plan version 1"),
     });
-    const started = target.dispatchCommand.mock.calls[1]?.[0];
-    expect(started?.type === "thread.turn.start" && started.message.text).toContain(
+    const started = target.dispatchCommand.mock.calls.at(-1)?.[0];
+    expect(started?.type === "message.dispatch" && started.text).toContain(
       "CONTINUE THE EXISTING APPROVED DEEPPLAN IMPLEMENTATION",
     );
-    expect(started?.type === "thread.turn.start" && started.message.text).not.toContain(
+    expect(started?.type === "message.dispatch" && started.text).not.toContain(
       "PLEASE IMPLEMENT THIS COMPLETE PLAN",
     );
   });
@@ -565,13 +570,11 @@ describe("Deep Plan continuation", () => {
     const target = api();
     target.getRun.mockResolvedValue(validating);
     await continueRun(target, validating);
-    expect(target.dispatchCommand).toHaveBeenCalledExactlyOnceWith(
+    expect(target.dispatchCommand).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        type: "thread.turn.start",
-        background: { runId: validating.id },
-        message: expect.objectContaining({
-          text: expect.stringContaining("saved-validation-request"),
-        }),
+        type: "message.dispatch",
+        deepPlanRunId: validating.id,
+        text: expect.stringContaining("saved-validation-request"),
       }),
     );
   });
@@ -594,13 +597,13 @@ describe("Deep Plan continuation", () => {
     expect(transferDeepPlanSources).not.toHaveBeenCalled();
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
       "thread.interaction-mode.set",
-      "thread.turn.start",
+      "thread.runtime-mode.set",
+      "message.dispatch",
     ]);
-    expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
-      type: "thread.turn.start",
+    expect(target.dispatchCommand.mock.calls.at(-1)?.[0]).toMatchObject({
+      type: "message.dispatch",
       threadId,
-      interactionMode: "plan",
-      message: { text: expect.stringContaining("deep_plan_publish.") },
+      text: expect.stringContaining("deep_plan_publish."),
     });
   });
 

@@ -3,55 +3,26 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
-  claudeSignedOutMessage,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
-  resolveClaudeConfigDir,
+  mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
-    it.effect("treats empty, ~/.claude, and the expanded default as the same Claude home", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const resolved = path.resolve(path.join(NodeOS.homedir(), ".claude"));
-        const environment = yield* makeClaudeEnvironment({ homePath: "" }, { HOME: resolved });
-        const configDir = yield* resolveClaudeConfigDir({ homePath: "" });
-
-        expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
-        expect(configDir).toBe(resolved);
-        expect(environment).toEqual({
-          HOME: resolved,
-          CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000",
-        });
-      }),
-    );
-
-    it.effect("preserves an explicit Claude output-token limit", () =>
-      Effect.gen(function* () {
-        const environment = yield* makeClaudeEnvironment(
-          { homePath: "" },
-          { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000" },
-        );
-
-        expect(environment.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("64000");
-      }),
-    );
-
     it.effect("resolves configured Claude HOME and stamps continuation/cache keys with it", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const homePath = "~/.claude-work";
         const resolved = path.resolve(NodeOS.homedir(), ".claude-work");
-        const configDir = yield* resolveClaudeConfigDir({ homePath });
 
         expect(yield* resolveClaudeHomePath({ homePath })).toBe(resolved);
-        expect(configDir).toBe(resolved);
         expect((yield* makeClaudeEnvironment({ homePath })).CLAUDE_CONFIG_DIR).toBe(resolved);
         expect(yield* makeClaudeContinuationGroupKey({ homePath })).toBe(`claude:home:${resolved}`);
         expect(yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath })).toBe(
@@ -78,17 +49,6 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
-    it("points the signed-out hint at the configured Claude home", () => {
-      expect(claudeSignedOutMessage({ configDir: undefined, cwd: "/synthetic" })).toContain(
-        "run `claude auth login`",
-      );
-      const configDir = "/synthetic/Claude work's $literal";
-      const message = claudeSignedOutMessage({ configDir, cwd: "/synthetic/project" });
-      expect(message).toContain(`CLAUDE_CONFIG_DIR set to "${configDir}"`);
-      expect(message).not.toContain("CLAUDE_CONFIG_DIR=");
-      expect(message).toContain("then start a new thread");
-    });
-
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };
@@ -98,4 +58,45 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
   });
+
+  it.effect(
+    "drops the launching Claude session and labels processes t3-code unless overridden",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+        const host = {
+          CLAUDE_CODE_ENTRYPOINT: "claude-desktop",
+          CLAUDECODE: "1",
+          CLAUDE_CODE_SESSION_ID: "host-session",
+          CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/host-claude.sock",
+          CLAUDE_EFFORT: "high",
+          KEEP: "1",
+        };
+        const instance = [
+          { name: "CLAUDE_CODE_ENTRYPOINT", value: "instance", sensitive: false },
+          { name: "CLAUDE_EFFORT", value: "low", sensitive: false },
+        ];
+
+        expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+          CLAUDE_CODE_ENTRYPOINT: "t3-code",
+          KEEP: "1",
+        });
+        expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
+          CLAUDE_CODE_ENTRYPOINT: "instance",
+          CLAUDE_EFFORT: "low",
+          KEEP: "1",
+        });
+
+        yield* fileSystem.writeFileString(
+          path.join(homePath, "settings.json"),
+          JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: "custom" } }),
+        );
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBe("custom");
+      }),
+  );
 });

@@ -1,27 +1,71 @@
+import * as DateTime from "effect/DateTime";
 import {
   ResponseMetricsSnapshot,
-  type OrchestrationThreadActivity,
+  type OrchestrationV2ThreadProjection,
+  type RunId,
   type TurnId,
 } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { Option, Schema } from "effect";
 
+export interface UsageActivity {
+  readonly id: string;
+  readonly kind: string;
+  readonly tone?: string;
+  readonly summary?: string;
+  readonly payload: unknown;
+  readonly createdAt: string;
+  readonly turnId?: import("@t3tools/contracts").TurnId | null;
+  readonly replyTopicId?: import("@t3tools/contracts").SubagentId;
+}
+
 const decodeSnapshot = Schema.decodeUnknownOption(ResponseMetricsSnapshot);
 
 export function selectResponseMetrics(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  activities: ReadonlyArray<UsageActivity>,
 ): ReadonlyMap<TurnId, ResponseMetricsSnapshot> {
   const snapshots = new Map<TurnId, ResponseMetricsSnapshot>();
   for (const activity of activities) {
     if (
       activity.kind !== "response.metrics" ||
-      activity.turnId === null ||
+      activity.turnId == null ||
       activity.replyTopicId !== undefined ||
       activity.id.startsWith("subagent:")
     )
       continue;
     const snapshot = decodeSnapshot(activity.payload);
     if (Option.isSome(snapshot)) snapshots.set(activity.turnId, snapshot.value);
+  }
+  return snapshots;
+}
+
+export function selectV2ResponseMetrics(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
+): ReadonlyMap<RunId, ResponseMetricsSnapshot> {
+  const snapshots = new Map<RunId, ResponseMetricsSnapshot>();
+  for (const run of projection.runs) {
+    if (run.activeAttemptId === null) continue;
+    const turn = projection.providerTurns.findLast(
+      (candidate) => candidate.runAttemptId === run.activeAttemptId,
+    );
+    if (turn === undefined) continue;
+    const contextUsage = turn.tokenUsage;
+    const duration =
+      turn.startedAt === null || turn.completedAt === null
+        ? undefined
+        : Math.max(
+            0,
+            DateTime.toEpochMillis(turn.completedAt) - DateTime.toEpochMillis(turn.startedAt),
+          );
+    snapshots.set(run.id, {
+      ...(duration === undefined ? {} : { responseDurationMs: duration }),
+      ...(turn.turnTokenUsage === undefined ? {} : { tokenUsage: turn.turnTokenUsage }),
+      ...(contextUsage === undefined ? {} : { contextUsedTokens: contextUsage.usedTokens }),
+      ...(contextUsage?.maxTokens == null || contextUsage.maxTokens === 0
+        ? {}
+        : { contextLimitTokens: contextUsage.maxTokens }),
+      ...turn.responseMetrics,
+    });
   }
   return snapshots;
 }

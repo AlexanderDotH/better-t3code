@@ -1,5 +1,6 @@
+import type { SqlError } from "effect/sql/SqlError";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import { isWorkspaceRelativePath } from "../privacy/WorkspacePrivacy.ts";
 import { decodeRecord } from "./KnowledgeRecords.ts";
@@ -100,10 +101,10 @@ interface SearchRow {
 }
 
 export function makeKnowledgeSearch(sql: SqlClient.SqlClient) {
-  const searchRecords = <Kind extends KnowledgeSearchKind>(
-    input: KnowledgeSearchQuery<Kind>,
-  ): Effect.Effect<KnowledgeSearchPage<Kind>, KnowledgeStoreError> =>
-    Effect.gen(function* () {
+  const searchRecords = Effect.fn("searchRecords")(
+    function* <Kind extends KnowledgeSearchKind>(
+      input: KnowledgeSearchQuery<Kind>,
+    ): Effect.fn.Return<KnowledgeSearchPage<Kind>, KnowledgeStoreError | SqlError> {
       const revision = yield* readKnowledgeRevision(sql, input.revision);
       if (
         input.kinds.length === 0 ||
@@ -223,7 +224,10 @@ export function makeKnowledgeSearch(sql: SqlClient.SqlClient) {
         items,
         nextCursor: last ? { rank: last.rank, kind: last.kind, id: last.id } : null,
       };
-    }).pipe(sql.withTransaction, Effect.mapError(asStoreError("search static knowledge")));
+    },
+    sql.withTransaction,
+    Effect.mapError(asStoreError("search static knowledge")),
+  );
 
   return { searchRecords };
 }

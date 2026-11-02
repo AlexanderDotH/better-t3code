@@ -3,7 +3,7 @@ import { useCallback, type ComponentProps, type ReactNode } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader, type AndroidHeaderAction } from "./AndroidScreenHeader";
+import { AndroidScreenHeader, type AndroidHeaderAction } from "./ui/AndroidScreenHeader";
 import {
   resolveAndroidScreenHeaderVariant,
   resolveNavigationUpAction,

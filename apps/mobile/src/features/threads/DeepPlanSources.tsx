@@ -22,8 +22,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { getMobileDeepPlanningApi } from "../../state/deep-planning";
@@ -138,7 +138,7 @@ export function DeepPlanSourceSheet(props: {
                 <Text className="p-5 text-sm text-foreground-muted">
                   {translator.message("chat.deepPlan.noSources")}
                 </Text>
-              ) : null
+              ) : undefined
             }
             renderItem={({ item: source }) => {
               const key = deepPlanSourceRefKey(source.origin);
@@ -248,6 +248,7 @@ export function DeepPlanSources(props: {
     readonly sources: ReadonlyArray<SourceOption>;
     readonly error: string | null;
   }>({ scopeKey: "", requestKey: "", sources: [], error: null });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load source catalogs from connected environments and abort replaced catalog requests.
   useEffect(() => {
     const controller = new AbortController();
     const requestedProjects = JSON.parse(targetKey) as ReadonlyArray<{

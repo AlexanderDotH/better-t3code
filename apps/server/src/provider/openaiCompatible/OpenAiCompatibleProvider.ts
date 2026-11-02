@@ -11,7 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 
-import { buildServerProvider } from "../providerSnapshot.ts";
+import { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
 import { openAiCompatibleAuth } from "./OpenAiCompatibleAuthentication.ts";
 import type { OpenAiCompatibleCredentialStoreError } from "./OpenAiCompatibleCredentialStore.ts";
 import {

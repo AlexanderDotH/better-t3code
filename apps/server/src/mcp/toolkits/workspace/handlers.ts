@@ -1,18 +1,17 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   WorkspaceEditError,
-  WorkspaceContextUnavailableError,
   type WorkspaceContextInput,
   type WorkspaceContextResult,
   type WorkspaceEditInput,
   type WorkspaceEditResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { resolveMessageReplyExecution } from "../../messageReplyExecution.ts";
-import { ProviderService } from "../../../provider/Services/ProviderService.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { resolveWorkspaceMcpScope } from "../../WorkspaceMcpScope.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import * as WorkspaceContext from "../../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import { WorkspaceEditToolkit, WorkspaceToolkit } from "./tools.ts";
@@ -23,41 +22,12 @@ export const invokeWorkspaceContext = Effect.fn("WorkspaceToolkit.invoke")(funct
   WorkspaceContextResult,
   import("@t3tools/contracts").WorkspaceContextError,
   | McpInvocationContext.McpInvocationContext
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+  | OrchestratorV2
+  | ProjectStoreV2
   | WorkspaceContext.WorkspaceContext
-  | ProviderService
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceMcpCapability();
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const context = yield* projections.getThreadWorkspaceContext(invocation.threadId).pipe(
-    Effect.mapError(
-      (cause) =>
-        new WorkspaceContextUnavailableError({
-          reason: "projection_unavailable",
-          cause,
-        }),
-    ),
-  );
-  if (Option.isNone(context)) {
-    return yield* new WorkspaceContextUnavailableError({ reason: "thread_not_found" });
-  }
-
-  let workspaceRoot = context.value.worktreePath ?? context.value.workspaceRoot;
-  if (invocation.messageReply !== undefined) {
-    const execution = yield* resolveMessageReplyExecution(invocation).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceContextUnavailableError({
-            reason: "projection_unavailable",
-            cause,
-          }),
-      ),
-    );
-    if (Option.isNone(execution)) {
-      return yield* new WorkspaceContextUnavailableError({ reason: "credential_not_authorized" });
-    }
-    workspaceRoot = execution.value.workspacePath;
-  }
+  const { workspaceRoot } = yield* resolveWorkspaceMcpScope(invocation.threadId);
   const workspace = yield* WorkspaceContext.WorkspaceContext;
   return yield* workspace.execute({ workspaceRoot, input }).pipe(
     Effect.withSpan("WorkspaceToolkit.execute", {
@@ -69,10 +39,10 @@ export const invokeWorkspaceContext = Effect.fn("WorkspaceToolkit.invoke")(funct
   );
 });
 
-export const WorkspaceToolkitHandlersLive = WorkspaceToolkit.toLayer({
-  workspace_find: invokeWorkspaceContext,
-  workspace_read: invokeWorkspaceContext,
-  workspace_context: invokeWorkspaceContext,
+export const WorkspaceToolkitHandlersLive = McpToolAccess.toLayer(WorkspaceToolkit, {
+  workspace_find: McpToolAccess.readsAsCaller(invokeWorkspaceContext),
+  workspace_read: McpToolAccess.readsAsCaller(invokeWorkspaceContext),
+  workspace_context: McpToolAccess.readsAsCaller(invokeWorkspaceContext),
 });
 
 const projectionUnavailable = () => new WorkspaceEditError({ reason: "projection_unavailable" });
@@ -83,50 +53,32 @@ export const invokeWorkspaceEdit = Effect.fn("WorkspaceToolkit.invokeEdit")(func
   WorkspaceEditResult,
   WorkspaceEditError,
   | McpInvocationContext.McpInvocationContext
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+  | OrchestratorV2
+  | ProjectStoreV2
   | WorkspaceFileSystem.WorkspaceFileSystem
-  | ProviderService
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceWriteMcpCapability();
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const [context, thread] = yield* Effect.all([
-    projections.getThreadWorkspaceContext(invocation.threadId),
-    projections.getThreadShellById(invocation.threadId),
-  ]).pipe(Effect.mapError(projectionUnavailable));
-  if (Option.isNone(context) || Option.isNone(thread)) {
-    return yield* new WorkspaceEditError({ reason: "thread_not_found" });
+  const { thread, workspaceRoot } = yield* resolveWorkspaceMcpScope(invocation.threadId).pipe(
+    Effect.mapError(projectionUnavailable),
+  );
+  const caller = yield* (yield* OrchestratorV2)
+    .getThreadShell(invocation.thread.threadId)
+    .pipe(Effect.mapError(projectionUnavailable));
+  if (
+    caller === null ||
+    caller.projectId !== thread.projectId ||
+    caller.archivedAt !== null ||
+    caller.activeRunId === null ||
+    caller.providerInstanceId !== invocation.providerInstanceId
+  ) {
+    return yield* new WorkspaceEditError({ reason: "inactive_turn" });
   }
-
-  let workspaceRoot = context.value.worktreePath ?? context.value.workspaceRoot;
-  let runtimeMode = thread.value.session?.runtimeMode;
-  let interactionMode = thread.value.interactionMode;
-  if (invocation.messageReply !== undefined) {
-    const execution = yield* resolveMessageReplyExecution(invocation).pipe(
-      Effect.mapError(projectionUnavailable),
-    );
-    if (Option.isNone(execution) || thread.value.archivedAt !== null) {
-      return yield* new WorkspaceEditError({ reason: "inactive_turn" });
-    }
-    workspaceRoot = execution.value.workspacePath;
-    runtimeMode = execution.value.runtimeMode;
-    interactionMode = execution.value.interactionMode;
-  } else {
-    const session = thread.value.session;
-    if (
-      session?.status !== "running" ||
-      session.activeTurnId === null ||
-      session.providerInstanceId !== invocation.providerInstanceId
-    ) {
-      return yield* new WorkspaceEditError({ reason: "inactive_turn" });
-    }
-  }
-  if (runtimeMode === "approval-required") {
+  if (caller.runtimeMode === "approval-required") {
     return yield* new WorkspaceEditError({ reason: "runtime_mode_not_authorized" });
   }
-  if (interactionMode === "chat") {
+  if (caller.interactionMode === "chat")
     return yield* new WorkspaceEditError({ reason: "chat_mode" });
-  }
-  if (interactionMode === "plan") {
+  if (caller.interactionMode === "plan") {
     return yield* new WorkspaceEditError({ reason: "plan_mode" });
   }
 
@@ -144,6 +96,6 @@ export const invokeWorkspaceEdit = Effect.fn("WorkspaceToolkit.invokeEdit")(func
   );
 });
 
-export const WorkspaceEditToolkitHandlersLive = WorkspaceEditToolkit.toLayer({
-  workspace_edit: invokeWorkspaceEdit,
+export const WorkspaceEditToolkitHandlersLive = McpToolAccess.toLayer(WorkspaceEditToolkit, {
+  workspace_edit: McpToolAccess.actsAsCaller(invokeWorkspaceEdit),
 });

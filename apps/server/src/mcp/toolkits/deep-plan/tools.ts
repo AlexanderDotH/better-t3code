@@ -1,6 +1,7 @@
+import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import {
   SubagentId,
-  OrchestrationSubagentStatus,
   DeepPlanDocument,
   DeepPlanError,
   DeepPlanEvidence,
@@ -21,12 +22,12 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import { GeneralSubagentError } from "../../../subagents/GeneralSubagentProtocol.ts";
 import { DeepPlanSources } from "../../../deepPlanning/DeepPlanSources.ts";
 import { DeepPlanWorkflow } from "../../../deepPlanning/DeepPlanWorkflow.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import { McpInvocationContext, hasThreadCapability } from "../../McpInvocationContext.ts";
 
 export class DeepPlanToolScopeError extends Schema.TaggedError<DeepPlanToolScopeError>()(
   "DeepPlanToolScopeError",
@@ -101,8 +102,18 @@ export const DeepPlanValidationInput = Schema.Union([
 ]);
 export type DeepPlanValidationInput = typeof DeepPlanValidationInput.Type;
 
-const failure = Schema.Union([DeepPlanToolScopeError, DeepPlanError, DeepPlanSourceError]);
-const dependencies = [McpInvocationContext, DeepPlanWorkflow, DeepPlanSources];
+const failure = Schema.Union([
+  OrchestratorMcpFailure,
+  DeepPlanToolScopeError,
+  DeepPlanError,
+  DeepPlanSourceError,
+]);
+const dependencies = [
+  ThreadManagementService,
+  McpInvocationContext,
+  DeepPlanWorkflow,
+  DeepPlanSources,
+];
 
 export const DeepPlanUpdateReceipt = Schema.Struct({
   runId: DeepPlanRunId,
@@ -123,7 +134,8 @@ const DeepPlanStateTool = Tool.make("deep_plan_state", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanSourcesTool = Tool.make("deep_plan_sources", {
   description:
@@ -135,7 +147,8 @@ const DeepPlanSourcesTool = Tool.make("deep_plan_sources", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 export const DeepPlanAnalyzeSourcesInput = Schema.Struct({
   ...RunAssertion,
@@ -154,7 +167,15 @@ const DeepPlanAnalyzeSourcesTool = Tool.make("deep_plan_analyze_sources", {
     agents: Schema.Array(
       Schema.Struct({
         agentId: SubagentId,
-        status: OrchestrationSubagentStatus,
+        status: Schema.Literals([
+          "starting",
+          "running",
+          "waiting",
+          "completed",
+          "error",
+          "interrupted",
+          "unavailable",
+        ]),
         sourceIds: Schema.Array(DeepPlanSourceId),
         outcome: Schema.NullOr(Schema.String),
       }),
@@ -162,12 +183,13 @@ const DeepPlanAnalyzeSourcesTool = Tool.make("deep_plan_analyze_sources", {
     remainingSourceCount: NonNegativeInt,
     complete: Schema.Boolean,
   }),
-  failure: Schema.Union([failure, GeneralSubagentError]),
+  failure: Schema.Union([OrchestratorMcpFailure, Schema.Union([failure, GeneralSubagentError])]),
   dependencies,
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanReadSourceTool = Tool.make("deep_plan_read_source", {
   description:
@@ -179,7 +201,8 @@ const DeepPlanReadSourceTool = Tool.make("deep_plan_read_source", {
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanSummarizeSourceTool = Tool.make("deep_plan_summarize_source", {
   description:
@@ -191,7 +214,8 @@ const DeepPlanSummarizeSourceTool = Tool.make("deep_plan_summarize_source", {
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanPublishTool = Tool.make("deep_plan_publish", {
   description:
@@ -203,7 +227,8 @@ const DeepPlanPublishTool = Tool.make("deep_plan_publish", {
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanStepUpdateTool = Tool.make("deep_plan_step_update", {
   description:
@@ -215,7 +240,8 @@ const DeepPlanStepUpdateTool = Tool.make("deep_plan_step_update", {
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanAdjustProcedureTool = Tool.make("deep_plan_adjust_procedure", {
   description:
@@ -227,7 +253,8 @@ const DeepPlanAdjustProcedureTool = Tool.make("deep_plan_adjust_procedure", {
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 const DeepPlanValidationTool = Tool.make("deep_plan_validation", {
   description:
@@ -239,7 +266,8 @@ const DeepPlanValidationTool = Tool.make("deep_plan_validation", {
 })
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
 
 export const DeepPlanToolkit = Toolkit.make(
   DeepPlanStateTool,

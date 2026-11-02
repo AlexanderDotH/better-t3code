@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Native upstream used ledger ID 41 for these columns, while the fork already
 // owns that immutable ID. Reapply the idempotent schema change at the first

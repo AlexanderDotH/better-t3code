@@ -1,151 +1,144 @@
-import { ProviderDriverKind, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
-
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
 import {
-  FETCH_CONTEXT_MAX_CHARS,
-  FETCH_WORKER_FINDINGS_MAX_CHARS,
-  buildFetchContext,
-} from "./FetchContext.ts";
-import { buildFetchWorkerPrompt, fetchApprovalAction } from "./FetchWorkerPolicy.ts";
-import type { FetchWorkerOutcome } from "./FetchWorkerState.ts";
+  CommandId,
+  MessageId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  TextGenerationError,
+  ThreadId,
+} from "@t3tools/contracts";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import { FetchWorkerCoordinator, FetchWorkerCoordinatorLive } from "./FetchWorkerCoordinator.ts";
 
-const modelSelection: ModelSelection = {
-  instanceId: ProviderInstanceId.make("codex-work"),
-  model: "gpt-5.6-luna",
-  options: [
-    { id: "reasoningEffort", value: "low" },
-    { id: "serviceTier", value: "priority" },
-  ],
-};
+const instanceId = ProviderInstanceId.make("codex");
+const spark = { instanceId, model: "gpt-5.3-codex-spark" };
+const luna = { instanceId, model: "gpt-5.6-luna" };
+const testLayer = ProviderReplayHarness.layerWithRegistry(
+  { name: "fetch-fallback" },
+  ProviderAdapterRegistry.layerFromAdapters([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("No provider process is needed"),
+    } as ProviderAdapter.ProviderAdapterV2["Service"],
+  ]),
+  { runEffectWorker: false },
+);
 
-const providerDriver = ProviderDriverKind.make("codex");
-
-function outcome(index: number, input: Partial<FetchWorkerOutcome> = {}): FetchWorkerOutcome {
-  return {
-    index,
-    scope: `Inspect area ${index}`,
-    status: "completed",
-    findings: `Finding ${index}`,
-    ...input,
-  };
-}
-
-describe("FetchWorkerCoordinator helpers", () => {
-  it("gives a worker only its read-only repository discovery assignment", () => {
-    const prompt = buildFetchWorkerPrompt({
-      userRequest: "Change authentication and update its tests",
-      scope: "Map the authentication boundary",
-      questions: ["Where is session validation?", "Which focused tests cover it?"],
-    });
-
-    expect(prompt).toContain("Change authentication and update its tests");
-    expect(prompt).toContain("Map the authentication boundary");
-    expect(prompt).toContain("Where is session validation?");
-    expect(prompt).toContain("exact paths");
-    expect(prompt).toContain("Do not edit files");
-    expect(prompt).toContain("workspace_find");
-    expect(prompt).toContain("workspace_read");
-    expect(prompt).toContain("workspace_context");
-    expect(prompt).toContain("Do not execute shell or terminal commands");
-    expect(prompt).toContain("Do not start or delegate to nested agents");
-  });
-
-  it("accepts file reads while declining every shell command", () => {
-    expect(fetchApprovalAction("file_read_approval")).toBe("accept");
-    expect(fetchApprovalAction("command_execution_approval")).toBe("decline");
-    expect(fetchApprovalAction("exec_command_approval")).toBe("decline");
-    expect(fetchApprovalAction("apply_patch_approval")).toBe("decline");
-    expect(fetchApprovalAction("tool_user_input")).toBe("fail-worker");
-  });
-
-  it("builds a fair bounded context with provider traits and explicit truncation markers", () => {
-    const oversized = "x".repeat(FETCH_WORKER_FINDINGS_MAX_CHARS);
-    const context = buildFetchContext({
-      plannedWorkers: 3,
-      modelSelection,
-      providerDriver,
-      outcomes: [
-        outcome(0, { findings: oversized }),
-        outcome(1, { findings: oversized }),
-        outcome(2, { status: "timed-out", findings: "", detail: "five-minute timeout" }),
-      ],
-    });
-
-    expect(context).toBeDefined();
-    expect(context!.length).toBeLessThanOrEqual(FETCH_CONTEXT_MAX_CHARS);
-    expect(context).toContain("T3 FETCH CONTEXT");
-    expect(context).toContain("codex-work / gpt-5.6-luna");
-    expect(context).toContain("reasoningEffort=low");
-    expect(context).toContain("Inspect area 0");
-    expect(context).toContain("Inspect area 1");
-    expect(context).toContain("timed-out");
-    expect(context).toContain("truncated fairly");
-
-    const firstLength = context!
-      .split("## Worker 1:")[1]!
-      .split("## Worker 2:")[0]!
-      .split("")
-      .filter((value) => value === "x").length;
-    const secondLength = context!
-      .split("## Worker 2:")[1]!
-      .split("## Worker 3:")[0]!
-      .split("")
-      .filter((value) => value === "x").length;
-    expect(Math.abs(firstLength - secondLength)).toBeLessThanOrEqual(1);
-  });
-
-  it("preserves fair worker shares when the main request leaves little input space", () => {
-    const context = buildFetchContext({
-      plannedWorkers: 2,
-      modelSelection,
-      providerDriver,
-      outcomes: [
-        outcome(0, { findings: "§".repeat(4_000) }),
-        outcome(1, { findings: "¤".repeat(4_000) }),
-      ],
-      maxChars: 1_200,
-    });
-
-    expect(context).toHaveLength(1_200);
-    const firstShare = context!.split("").filter((value) => value === "§").length;
-    const secondShare = context!.split("").filter((value) => value === "¤").length;
-    expect(Math.abs(firstShare - secondShare)).toBeLessThanOrEqual(1);
-    expect(context).toContain("truncated fairly");
-  });
-
-  it("bounds provider failure details so successful evidence keeps its fair share", () => {
-    const context = buildFetchContext({
-      plannedWorkers: 2,
-      modelSelection,
-      providerDriver,
-      outcomes: [
-        outcome(0, {
-          status: "error",
-          findings: "",
-          detail: "provider-stack-line ".repeat(10_000),
+it.effect(
+  "retries Auto Spark with Luna only for typed model failures and preserves the selected model",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fetch-fallback-" });
+      const orchestration = yield* OrchestratorV2;
+      const threadId = ThreadId.make("fetch-fallback-parent");
+      yield* orchestration.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("fetch-create"),
+        threadId,
+        projectId: ProjectId.make("fetch-project"),
+        title: "Fetch parent",
+        modelSelection: spark,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestration.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("fetch-parent-run"),
+        threadId,
+        messageId: MessageId.make("fetch-parent-message"),
+        text: "Inspect the implementation",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const base = {
+        threadId,
+        cwd,
+        userRequest: "Inspect the implementation",
+        modelSelection: spark,
+        providerDriver: ProviderDriverKind.make("codex"),
+        maxRecommendedWorkers: 2,
+        commandExecutionPolicy: "deny" as const,
+      };
+      for (const reason of ["model-unavailable", "entitlement", "rate-limited"] as const) {
+        const dependencies = Layer.merge(
+          Layer.mock(ThreadManagementService)({}),
+          Layer.mock(TextGeneration)({
+            planFetchExploration: (input) =>
+              input.modelSelection.model === spark.model
+                ? Effect.fail(
+                    new TextGenerationError({
+                      operation: "planFetchExploration",
+                      detail: "Unavailable model",
+                      reason,
+                    }),
+                  )
+                : Effect.succeed({ decision: "skip", workers: [] }),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const coordinator = yield* FetchWorkerCoordinator;
+          const automatic = yield* coordinator.run({
+            ...base,
+            lunaFallback: {
+              modelSelection: luna,
+              providerDriver: base.providerDriver,
+              maxRecommendedWorkers: 2,
+              commandExecutionPolicy: "deny",
+            },
+          });
+          assert.equal(automatic.modelSelection.model, luna.model);
+          assert.equal(automatic.status, "skipped");
+          assert.include(automatic.warnings.join(" "), "Luna");
+          const manual = yield* coordinator.run(base);
+          assert.equal(manual.modelSelection.model, spark.model);
+          assert.equal(manual.status, "unavailable");
+        }).pipe(Effect.provide(FetchWorkerCoordinatorLive.pipe(Layer.provide(dependencies))));
+      }
+      const genericFailure = Layer.merge(
+        Layer.mock(ThreadManagementService)({}),
+        Layer.mock(TextGeneration)({
+          planFetchExploration: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "planFetchExploration",
+                detail: "rate limit mentioned without a typed reason",
+              }),
+            ),
         }),
-        outcome(1, { findings: "USEFUL-EVIDENCE ".repeat(500) }),
-      ],
-      maxChars: 3_000,
-    });
-
-    expect(context).toHaveLength(3_000);
-    expect(context).toContain("failure detail truncated");
-    expect(context).toContain("USEFUL-EVIDENCE");
-    expect(context).toContain("truncated fairly");
-  });
-
-  it("omits Fetch context when no worker produced findings", () => {
-    expect(
-      buildFetchContext({
-        plannedWorkers: 2,
-        modelSelection,
-        providerDriver,
-        outcomes: [
-          outcome(0, { status: "error", findings: "", detail: "provider error" }),
-          outcome(1, { status: "interrupted", findings: "", detail: "cancelled" }),
-        ],
-      }),
-    ).toBeUndefined();
-  });
-});
+      );
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const result = yield* coordinator.run({
+          ...base,
+          lunaFallback: {
+            modelSelection: luna,
+            providerDriver: base.providerDriver,
+            maxRecommendedWorkers: 2,
+            commandExecutionPolicy: "deny",
+          },
+        });
+        assert.equal(result.modelSelection.model, spark.model);
+      }).pipe(Effect.provide(FetchWorkerCoordinatorLive.pipe(Layer.provide(genericFailure))));
+    }).pipe(Effect.provide(Layer.merge(testLayer, NodeServices.layer))),
+);

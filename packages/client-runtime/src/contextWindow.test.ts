@@ -1,9 +1,10 @@
+import type { UsageActivity } from "./contextWindow.ts";
 import { describe, expect, it } from "vite-plus/test";
-import { EventId, type OrchestrationThreadActivity, SubagentId, TurnId } from "@t3tools/contracts";
+import { EventId, SubagentId, TurnId } from "@t3tools/contracts";
 
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow.ts";
 
-function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
+function makeActivity(id: string, kind: string, payload: unknown): UsageActivity {
   return {
     id: EventId.make(id),
     tone: "info",

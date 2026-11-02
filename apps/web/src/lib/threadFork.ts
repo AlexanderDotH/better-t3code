@@ -8,17 +8,13 @@ export function resolveForkBoundaryTimelineEntryId(
 ): string | null {
   if (boundary.kind === "message") {
     return (
-      entries.find(
-        (entry) =>
-          entry.kind === "message" && entry.message.historyOrigin?.sourceId === boundary.messageId,
-      )?.id ?? null
+      entries.find((entry) => entry.kind === "message" && entry.message.id === boundary.messageId)
+        ?.id ?? null
     );
   }
   return (
     entries.find(
-      (entry) =>
-        entry.kind === "proposed-plan" &&
-        entry.proposedPlan.historyOrigin?.sourceId === boundary.planId,
+      (entry) => entry.kind === "proposed-plan" && entry.proposedPlan.id === boundary.planId,
     )?.id ?? null
   );
 }

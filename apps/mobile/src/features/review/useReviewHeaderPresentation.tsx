@@ -1,5 +1,3 @@
-import { useMobileGitWorkbenchAvailability } from "../threads/git/use-mobile-git-workbench";
-import { mobileGitWorkbenchCanActivate } from "../threads/git/mobile-git-workbench";
 import { useEnvironmentQuery } from "../../state/query";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
@@ -8,15 +6,15 @@ import { vcsEnvironment } from "../../state/vcs";
 import { useThreadGitMenuDefinition } from "../threads/ThreadGitControls";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ReviewSectionItem } from "./reviewModel";
-import type { ScreenHeaderMenuItem, ScreenHeaderMenu } from "../../components/ScreenHeader.types";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppBarMenuItem, AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 
 interface ReviewHeaderPresentation {
   readonly title: string;
   readonly subtitle: string;
-  readonly gitMenu: ScreenHeaderMenu | null;
+  readonly gitMenu: AppBarMenu | null;
   readonly menuIcon: AppSymbolName;
-  readonly refreshAction?: ScreenHeaderMenuItem;
+  readonly refreshAction?: AppBarMenuItem;
 }
 
 export function useReviewHeaderPresentation(props: {
@@ -40,17 +38,10 @@ export function useReviewHeaderPresentation(props: {
         })
       : null,
   );
-  // The selection-based git hooks only apply when this review belongs to the
-  // selected thread (it always does when reached from the thread's toolbar).
-  const availability = useMobileGitWorkbenchAvailability({
-    environmentId: props.environmentId,
-    threadId: props.threadId,
-  });
-  const gitEnabled = mobileGitWorkbenchCanActivate(availability);
+  // Selection-based git hooks apply only to reviews of the selected thread.
   const gitMenuAvailable =
-    gitEnabled && selectedThread !== null && String(selectedThread.id) === String(props.threadId);
+    selectedThread !== null && String(selectedThread.id) === String(props.threadId);
   const gitMenu = useThreadGitMenuDefinition({
-    gitEnabled,
     environmentId: props.environmentId,
     threadId: props.threadId,
     currentBranch: selectedThread?.branch ?? null,

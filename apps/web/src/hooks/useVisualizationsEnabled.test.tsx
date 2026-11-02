@@ -1,6 +1,5 @@
 import { EnvironmentId, DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1 } from "@t3tools/contracts";
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 const configurations = vi.hoisted(() => new Map<string | null, unknown>());
@@ -14,7 +13,6 @@ vi.mock("@effect/atom-react", () => ({
 import { useVisualizationsEnabled } from "./useVisualizationsEnabled";
 
 it("uses the selected environment's capability and current flag without falling back to another server", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const first = EnvironmentId.make("visualizations-first");
   const second = EnvironmentId.make("visualizations-second");
   const config = (enabled: boolean, version?: number) => ({

@@ -1,59 +1,21 @@
-import {
-  EventId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationThread,
-  type OrchestrationThreadStreamItem,
-} from "@t3tools/contracts";
+import { EventId, type OrchestrationV2ThreadStreamItem } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Metric from "effect/Metric";
 import { describe, expect, it } from "vite-plus/test";
-
 import { createStreamingPipelineMetrics } from "./streamingPipelineMetrics.ts";
-import { applyThreadDetailEvent } from "./state/threadReducer.ts";
+import { applyOrchestrationV2ProjectionEvent } from "./state/orchestrationV2Projection.ts";
+import { v2Now, v2Projection, v2ThreadId } from "./state/orchestrationV2TestFixtures.ts";
 
-const THREAD_ID = ThreadId.make("thread-a");
-const BASE_THREAD: OrchestrationThread = {
-  id: THREAD_ID,
-  projectId: ProjectId.make("project-a"),
-  title: "Initial",
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  branch: null,
-  worktreePath: null,
-  latestTurn: null,
-  createdAt: "2026-10-16T08:00:00.000Z",
-  updatedAt: "2026-10-16T08:00:00.000Z",
-  archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
-  pullRequests: [],
-  deletedAt: null,
-  messages: [],
-  proposedPlans: [],
-  subagents: [],
-  activities: [],
-  checkpoints: [],
-  session: null,
-};
-
-function event(sequence: number, title: string): OrchestrationThreadStreamItem {
+function event(sequence: number, title: string): OrchestrationV2ThreadStreamItem {
   return {
     kind: "event",
+    sequence,
     event: {
-      eventId: EventId.make(`event-${sequence}`),
-      sequence,
-      occurredAt: "2026-10-16T08:00:00.000Z",
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      aggregateKind: "thread",
-      aggregateId: THREAD_ID,
-      type: "thread.meta-updated",
-      payload: { threadId: THREAD_ID, title, updatedAt: "2026-10-16T08:00:00.000Z" },
+      id: EventId.make(`event-${sequence}`),
+      occurredAt: v2Now,
+      threadId: v2ThreadId,
+      type: "thread.metadata-updated",
+      payload: { ...v2Projection.thread, title },
     },
   };
 }
@@ -108,12 +70,13 @@ describe("client streaming pipeline measurements", () => {
   it("keeps independent clients consistent across snapshots, duplicate replay, and live events", () => {
     function client(offset: number) {
       let time = offset;
-      let thread = BASE_THREAD;
+      let thread = v2Projection;
       let sequence = 0;
       const metrics = makeMetrics(() => time);
-      const snapshot: OrchestrationThreadStreamItem = {
+      const snapshot: OrchestrationV2ThreadStreamItem = {
         kind: "snapshot",
-        snapshot: { thread: BASE_THREAD, snapshotSequence: 4 },
+        projection: v2Projection,
+        snapshotSequence: 4,
       };
       const items = [snapshot, event(4, "Stale replay"), event(5, "Live"), event(5, "Duplicate")];
       for (const item of items) {
@@ -121,12 +84,11 @@ describe("client streaming pipeline measurements", () => {
         time += 2;
         const finish = metrics.beginApply([item], sequence);
         if (item.kind === "snapshot") {
-          thread = item.snapshot.thread;
-          sequence = item.snapshot.snapshotSequence;
-        } else if (item.kind === "event" && item.event.sequence > sequence) {
-          const result = applyThreadDetailEvent(thread, item.event);
-          if (result.kind === "updated") thread = result.thread;
-          sequence = item.event.sequence;
+          thread = item.projection;
+          sequence = item.snapshotSequence;
+        } else if (item.kind === "event" && item.sequence > sequence) {
+          thread = applyOrchestrationV2ProjectionEvent(thread, item.event) ?? thread;
+          sequence = item.sequence;
         }
         time += 1;
         finish(sequence);
@@ -135,7 +97,7 @@ describe("client streaming pipeline measurements", () => {
     }
     const first = client(0);
     const second = client(100000000);
-    expect(first.thread.title).toBe("Live");
+    expect(first.thread.thread.title).toBe("Live");
     expect(first.thread).toEqual(second.thread);
     expect(first.sequence).toBe(5);
     expect(first.snapshot).toEqual(second.snapshot);

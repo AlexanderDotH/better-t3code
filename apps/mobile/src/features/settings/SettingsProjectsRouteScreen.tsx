@@ -18,8 +18,8 @@ import {
   AndroidScreenScaffold,
   ScreenScaffoldScrollView,
 } from "../../components/AndroidScreenScaffold";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
@@ -223,7 +223,7 @@ function ProjectSettingsCard(props: {
               disabled={saving}
               icon="clock.arrow.circlepath"
               label={translator.message("mobile.settings.projects.settings.checkpoints")}
-              value={props.project.checkpointsEnabled}
+              value={props.project.checkpointsEnabled !== false}
               onValueChange={(checkpointsEnabled) => void update({ checkpointsEnabled })}
             />
             <Pressable

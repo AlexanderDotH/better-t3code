@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Pressable, View } from "react-native";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -122,10 +122,7 @@ export function AutoSettleSettingsRows() {
           <Pressable
             accessibilityRole="button"
             onPress={() => {
-              const patch = pickSharedServerSettings(
-                referenceSettings,
-                reference.serverConfig?.environment.capabilities,
-              );
+              const patch = pickSharedServerSettings(referenceSettings);
               for (const mismatch of mismatches) {
                 const target = environments.find(
                   (candidate) => candidate.environmentId === mismatch.environmentId,
@@ -135,7 +132,6 @@ export function AutoSettleSettingsRows() {
                   input: {
                     patch: filterSharedServerPatch(
                       patch,
-                      target?.serverConfig?.environment.capabilities,
                       target?.serverConfig?.settings,
                       referenceSettings,
                     ),

@@ -1,17 +1,13 @@
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
-import type { FetchWorkerOutcomeStatus } from "./FetchWorkerState.ts";
-
-export type FetchApprovalAction = "accept" | "decline" | "fail-worker";
-
 export function buildFetchWorkerPrompt(input: {
   readonly userRequest: string;
   readonly scope: string;
   readonly questions: ReadonlyArray<string>;
 }): string {
   const questions = input.questions.map((question) => `- ${question}`).join("\n");
-  return `T3 FETCH — READ-ONLY REPOSITORY EXPLORATION
+  return `T3 FETCH: READ-ONLY REPOSITORY EXPLORATION
 
 Original user request:
 ${input.userRequest}
@@ -32,38 +28,6 @@ Policy:
 - Do not ask the user questions; work only from the supplied request and repository.
 - Do not start or delegate to nested agents.
 - Do not implement the requested change. Return discovery findings only.`;
-}
-
-export function fetchApprovalAction(requestType: string): FetchApprovalAction {
-  if (requestType === "tool_user_input") return "fail-worker";
-  if (requestType === "file_read_approval") return "accept";
-  return "decline";
-}
-
-export function fetchWorkerTerminalStatus(
-  event: ProviderRuntimeEvent,
-): FetchWorkerOutcomeStatus | null {
-  if (event.type === "turn.aborted") return "interrupted";
-  if (event.type === "turn.completed") {
-    if (event.payload.state === "completed") return "completed";
-    if (event.payload.state === "interrupted" || event.payload.state === "cancelled") {
-      return "interrupted";
-    }
-    return "error";
-  }
-  if (event.type === "session.exited") return "error";
-  if (event.type === "session.state.changed" && event.payload.state === "error") return "error";
-  return null;
-}
-
-export function fetchWorkerTerminalDetail(event: ProviderRuntimeEvent): string | undefined {
-  if (event.type === "turn.aborted") return event.payload.reason;
-  if (event.type === "turn.completed") {
-    return event.payload.errorMessage ?? event.payload.stopReason ?? undefined;
-  }
-  if (event.type === "session.exited") return event.payload.reason;
-  if (event.type === "session.state.changed") return event.payload.reason;
-  return undefined;
 }
 
 export function isNestedFetchAgentEvent(event: ProviderRuntimeEvent): boolean {

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 function canAnimate() {
   return (
@@ -16,7 +17,7 @@ export function useMarkdownTableMotion(
   const [animating, setAnimating] = useState(false);
   const beforeRef = useRef<DOMRect | null>(null);
   const animationRef = useRef<Animation | null>(null);
-  const cancel = useCallback(() => {
+  const cancel = useStableCallback(() => {
     const animation = animationRef.current;
     const bounds = animation ? ref.current?.getBoundingClientRect() : undefined;
     animationRef.current = null;
@@ -26,15 +27,19 @@ export function useMarkdownTableMotion(
       ref.current?.removeAttribute("data-table-animating");
     }
     return bounds;
-  }, [ref]);
-  const prepare = useCallback(() => {
+  });
+  const prepare = useStableCallback(() => {
     if (!enabled || !canAnimate()) return;
     const bounds = ref.current?.getBoundingClientRect() ?? null;
     cancel();
     beforeRef.current = bounds;
-  }, [cancel, enabled, ref]);
+  });
 
+  const geometryRef = useRef<typeof geometry | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retarget the mounted table animation after its geometry changes.
   useLayoutEffect(() => {
+    if (geometryRef.current === geometry && beforeRef.current === null) return;
+    geometryRef.current = geometry;
     const before = beforeRef.current;
     beforeRef.current = null;
     cancel();
@@ -66,6 +71,7 @@ export function useMarkdownTableMotion(
     };
   }, [cancel, geometry, enabled, ref]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retarget the mounted table animation after its geometry changes.
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
     const stop = () => {

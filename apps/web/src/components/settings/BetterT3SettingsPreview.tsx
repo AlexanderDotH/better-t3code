@@ -728,7 +728,7 @@ export function BetterT3FeatureChoice(props: {
             aria-description={description}
             aria-label={label}
             className={cn(
-              "better-t3-feature-option min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-card text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
+              "better-t3-feature-option min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-card text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
               selected ? "border-primary/65" : "border-border/70 enabled:hover:border-primary/35",
             )}
             disabled={props.disabled}

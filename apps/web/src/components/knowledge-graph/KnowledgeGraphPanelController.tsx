@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KnowledgeGraphNodeId,
@@ -20,13 +21,11 @@ import {
   projectIndexScopeKey,
   type ProjectIndexClientApi,
 } from "@t3tools/client-runtime/project-indexing";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import {
-  useCallback,
   useDeferredValue,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -186,13 +185,10 @@ function KnowledgeGraphDisabledOwner(props: KnowledgeGraphPanelControllerProps) 
 }
 
 function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps) {
-  const scope = useMemo(
-    () => ({
-      projectId: props.projectId,
-      ...(props.threadId === undefined ? {} : { threadId: props.threadId }),
-    }),
-    [props.projectId, props.threadId],
-  );
+  const scope = {
+    projectId: props.projectId,
+    ...(props.threadId === undefined ? {} : { threadId: props.threadId }),
+  };
   const graphStateResult = useAtomValue(
     knowledgeGraphEnvironment.state({
       environmentId: props.environmentId,
@@ -223,10 +219,7 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
   const [size, setSize] = useState({ width: 640, height: 480 });
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const translator = useInterfaceTranslator();
-  const translate = useCallback<KnowledgeGraphTranslate>(
-    (key, values) => translator.message(key, values),
-    [translator],
-  );
+  const translate: typeof translator.message = (key, values) => translator.message(key, values);
 
   const remoteQueryResult = useAtomValue(
     knowledgeGraphEnvironment.query({
@@ -242,7 +235,7 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
   );
   const remoteQuery = Option.getOrNull(AsyncResult.value(remoteQueryResult));
   const remoteGraphResult = remoteQuery?.results[0] ?? null;
-  const displayedSnapshot = useMemo(() => {
+  const displayedSnapshot = (() => {
     const result = applyKnowledgeGraphQueryResult(
       snapshot,
       remoteGraphResult,
@@ -261,7 +254,7 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
           nodeIds.has(edge.targetNodeId),
       ),
     };
-  }, [remoteGraphResult, remoteQuery?.revision, snapshot]);
+  })();
 
   const layout = useKnowledgeGraphLayout({
     nodes: displayedSnapshot?.nodes ?? EMPTY_NODES,
@@ -272,9 +265,9 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
     prefersReducedMotion,
     restartToken: layoutRestartToken,
   });
-  const pinnedNodeIds = useMemo(() => new Set(pinned.keys()), [pinned]);
+  const pinnedNodeIds = new Set(pinned.keys());
 
-  const panelNode = useCallback((node: HTMLDivElement | null) => {
+  const panelNode = (node: HTMLDivElement | null) => {
     if (!node) {
       panelRef.current = null;
       return;
@@ -286,30 +279,29 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
       width: Math.max(1, Math.round(initialBounds.width)),
       height: Math.max(1, Math.round(initialBounds.height)),
     });
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
+    const stopObserving = observeResize(canvas, ([entry]) => {
       if (!entry) return;
       setSize({
         width: Math.max(1, Math.round(entry.contentRect.width)),
         height: Math.max(1, Math.round(entry.contentRect.height)),
       });
     });
-    observer.observe(canvas);
     return () => {
-      observer.disconnect();
+      stopObserving();
       if (panelRef.current === canvas) panelRef.current = null;
     };
-  }, []);
+  };
 
-  const toggleKind = useCallback((kind: KnowledgeGraphNodeKind) => {
+  const toggleKind = (kind: KnowledgeGraphNodeKind) => {
     setKinds((current) => {
       const next = new Set(current);
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
       return next;
     });
-  }, []);
+  };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release global pointer listeners when the graph panel unmounts.
   useEffect(
     () => () => {
       dragCleanupRef.current?.();
@@ -317,107 +309,101 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
     [],
   );
 
-  const changeZoom = useCallback(
-    (scale: number) => {
-      setViewport((current) => {
-        const center = { x: size.width / 2, y: size.height / 2 };
-        const graphCenter = {
-          x: (center.x - current.translateX) / current.scale,
-          y: (center.y - current.translateY) / current.scale,
-        };
-        return {
-          scale,
-          translateX: center.x - graphCenter.x * scale,
-          translateY: center.y - graphCenter.y * scale,
-        };
+  const changeZoom = (scale: number) => {
+    setViewport((current) => {
+      const center = { x: size.width / 2, y: size.height / 2 };
+      const graphCenter = {
+        x: (center.x - current.translateX) / current.scale,
+        y: (center.y - current.translateY) / current.scale,
+      };
+      return {
+        scale,
+        translateX: center.x - graphCenter.x * scale,
+        translateY: center.y - graphCenter.y * scale,
+      };
+    });
+  };
+
+  const startCanvasPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    dragCleanupRef.current?.();
+    const start = { x: event.clientX, y: event.clientY };
+    const initialViewport = viewport;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const move = (pointerEvent: PointerEvent) => {
+      setViewport({
+        ...initialViewport,
+        translateX: initialViewport.translateX + pointerEvent.clientX - start.x,
+        translateY: initialViewport.translateY + pointerEvent.clientY - start.y,
       });
-    },
-    [size.height, size.width],
-  );
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      if (dragCleanupRef.current === finish) dragCleanupRef.current = null;
+    };
+    dragCleanupRef.current = finish;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", finish, { once: true });
+  };
 
-  const startCanvasPan = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return;
-      dragCleanupRef.current?.();
-      const start = { x: event.clientX, y: event.clientY };
-      const initialViewport = viewport;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      const move = (pointerEvent: PointerEvent) => {
-        setViewport({
-          ...initialViewport,
-          translateX: initialViewport.translateX + pointerEvent.clientX - start.x,
-          translateY: initialViewport.translateY + pointerEvent.clientY - start.y,
+  const startNodeDrag = (
+    nodeId: KnowledgeGraphNodeId,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    dragCleanupRef.current?.();
+    suppressNodeClickRef.current = false;
+    const start = { x: event.clientX, y: event.clientY };
+    const canvas = event.currentTarget.offsetParent;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    let dragging = false;
+    const move = (pointerEvent: PointerEvent) => {
+      if (!dragging) {
+        dragging = isKnowledgeGraphDragGesture(start, {
+          x: pointerEvent.clientX,
+          y: pointerEvent.clientY,
         });
-      };
-      const finish = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", finish);
-        window.removeEventListener("pointercancel", finish);
-        if (dragCleanupRef.current === finish) dragCleanupRef.current = null;
-      };
-      dragCleanupRef.current = finish;
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", finish, { once: true });
-      window.addEventListener("pointercancel", finish, { once: true });
-    },
-    [viewport],
-  );
-
-  const startNodeDrag = useCallback(
-    (nodeId: KnowledgeGraphNodeId, event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (event.button !== 0) return;
-      event.stopPropagation();
-      dragCleanupRef.current?.();
-      suppressNodeClickRef.current = false;
-      const start = { x: event.clientX, y: event.clientY };
-      const canvas = event.currentTarget.offsetParent;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      let dragging = false;
-      const move = (pointerEvent: PointerEvent) => {
-        if (!dragging) {
-          dragging = isKnowledgeGraphDragGesture(start, {
-            x: pointerEvent.clientX,
-            y: pointerEvent.clientY,
-          });
-          if (!dragging) return;
-          suppressNodeClickRef.current = true;
-          setDraggingNodeId(nodeId);
-        }
-        const bounds = canvas?.getBoundingClientRect() ?? panelRef.current?.getBoundingClientRect();
-        if (!bounds) return;
-        const position = resolveKnowledgeGraphDraggedPosition(
-          { x: pointerEvent.clientX, y: pointerEvent.clientY },
-          bounds,
-          viewport,
-        );
-        setPinned((current) => new Map(current).set(nodeId, position));
-      };
-      const finish = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", finish);
-        window.removeEventListener("pointercancel", finish);
-        if (dragging) {
-          setDraggingNodeId(null);
-          window.setTimeout(() => {
-            suppressNodeClickRef.current = false;
-          }, 0);
-        }
-        if (dragCleanupRef.current === finish) dragCleanupRef.current = null;
-      };
-      dragCleanupRef.current = finish;
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", finish, { once: true });
-      window.addEventListener("pointercancel", finish, { once: true });
-    },
-    [viewport],
-  );
-  const expandNode = useCallback((nodeId: KnowledgeGraphNodeId | null) => {
+        if (!dragging) return;
+        suppressNodeClickRef.current = true;
+        setDraggingNodeId(nodeId);
+      }
+      const bounds = canvas?.getBoundingClientRect() ?? panelRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const position = resolveKnowledgeGraphDraggedPosition(
+        { x: pointerEvent.clientX, y: pointerEvent.clientY },
+        bounds,
+        viewport,
+      );
+      setPinned((current) => new Map(current).set(nodeId, position));
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      if (dragging) {
+        setDraggingNodeId(null);
+        window.setTimeout(() => {
+          suppressNodeClickRef.current = false;
+        }, 0);
+      }
+      if (dragCleanupRef.current === finish) dragCleanupRef.current = null;
+    };
+    dragCleanupRef.current = finish;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", finish, { once: true });
+  };
+  const expandNode = (nodeId: KnowledgeGraphNodeId | null) => {
     if (suppressNodeClickRef.current) {
       suppressNodeClickRef.current = false;
       return;
     }
     setExpandedNodeId(nodeId);
-  }, []);
+  };
 
   if (loadState === "error") {
     return <KnowledgeGraphUnavailable messageKey="knowledgeGraph.error" />;

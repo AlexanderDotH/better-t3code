@@ -7,7 +7,7 @@ import {
   type ChatAttachment,
   type HarnessChatActivity,
   type HarnessChatLink,
-  type OrchestrationMessage,
+  type OrchestrationV2ConversationMessage,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,7 +22,7 @@ import type { ProjectionHarnessChatSyncLink } from "../persistence/Services/Proj
 import type {
   ProviderHistoryAttachment,
   ProviderHistoryThreadSummary,
-} from "../provider/Services/ProviderHistorySync.ts";
+} from "@t3tools/provider-core/server/ProviderHistorySync";
 import { makeHarnessChatSyncAttachmentId } from "./Identifiers.ts";
 
 const isIsoDateTime = Schema.is(IsoDateTime);
@@ -44,15 +44,17 @@ export interface NormalizedHistorySummary {
  * Reuses a message already projected from a live provider turn before creating
  * a second local message during a later history refresh.
  */
-export function findExistingHarnessMessageMatch(input: {
+export function findExistingHarnessMessageMatch<
+  Message extends Pick<OrchestrationV2ConversationMessage, "id" | "role" | "text">,
+>(input: {
   readonly nativeMessageId: string;
   readonly role: "user" | "assistant";
   readonly text: string;
-  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly messages: ReadonlyArray<Message>;
   readonly linkedMessageIds: ReadonlySet<MessageId>;
   readonly claimedMessageIds: ReadonlySet<MessageId>;
-}): OrchestrationMessage | undefined {
-  const available = (message: OrchestrationMessage) =>
+}): Message | undefined {
+  const available = (message: Message) =>
     !input.linkedMessageIds.has(message.id) && !input.claimedMessageIds.has(message.id);
   if (input.role === "assistant") {
     const nativeAssistantId = MessageId.make(`assistant:${input.nativeMessageId}`);

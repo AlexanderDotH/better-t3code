@@ -5,7 +5,7 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { useEnvironmentServerConfig } from "./entities";
 import { mobilePreferencesAtom } from "./preferences";

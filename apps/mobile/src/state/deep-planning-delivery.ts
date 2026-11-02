@@ -5,7 +5,8 @@ import {
 } from "@t3tools/client-runtime/deep-planning";
 import {
   CommandId,
-  type ClientOrchestrationCommand,
+  type OrchestrationV2Command,
+  type DeepPlanRun,
   type EnvironmentId,
   type ProjectId,
   type ExecutionEnvironmentCapabilities,
@@ -15,9 +16,9 @@ import {
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
 type ThreadCreation = Omit<
-  Extract<ClientOrchestrationCommand, { type: "thread.create" }>,
-  "type" | "commandId" | "threadId"
->;
+  Extract<OrchestrationV2Command, { type: "thread.create" }>,
+  "type" | "commandId" | "threadId" | "createdBy" | "creationSource"
+> & { readonly createdAt?: string };
 
 async function identifierFactory(injected: (() => string) | undefined): Promise<() => string> {
   if (injected !== undefined) return injected;
@@ -33,7 +34,7 @@ export async function prepareQueuedDeepPlan(input: {
   readonly provider: ServerProvider | undefined;
   readonly apiForEnvironment?: (environmentId: EnvironmentId) => DeepPlanningApi;
   readonly createId?: () => string;
-}): Promise<void> {
+}): Promise<DeepPlanRun | undefined> {
   if (input.message.composerMode !== "deep-plan") return;
   const availability = resolveDeepPlanningAvailability({
     capabilities: input.capabilities,
@@ -51,9 +52,11 @@ export async function prepareQueuedDeepPlan(input: {
       type: "thread.create",
       commandId: CommandId.make(input.message.commandId + ":deep-plan-owner"),
       threadId: input.message.threadId,
+      createdBy: "user",
+      creationSource: "mobile",
     });
   }
-  await prepareDeepPlanForTurn({
+  return prepareDeepPlanForTurn({
     environmentId: input.message.environmentId,
     projectId: input.projectId,
     threadId: input.message.threadId,

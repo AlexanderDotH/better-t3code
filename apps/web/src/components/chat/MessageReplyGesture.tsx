@@ -186,8 +186,10 @@ export function MessageReplyGesture({
     if (pointerRef.current?.id === event.pointerId) reset();
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own pointer and visibility listeners for the mounted reply gesture.
   useEffect(() => () => cleanupPointerListenersRef.current?.(), []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own pointer and visibility listeners for the mounted reply gesture.
   useEffect(() => {
     if (!onReply) return;
     const surface = surfaceRef.current;

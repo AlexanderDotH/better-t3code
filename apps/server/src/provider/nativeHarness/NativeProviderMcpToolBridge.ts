@@ -2,4 +2,4 @@ export {
   makeNativeProviderMcpToolBridge,
   type NativeProviderMcpClientFactory,
   type NativeProviderMcpToolBridge,
-} from "../Layers/ChatGptMcpToolBridge.ts";
+} from "../ChatGptMcpToolBridge.ts";

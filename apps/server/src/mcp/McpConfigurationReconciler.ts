@@ -119,17 +119,17 @@ export function affectedMcpProviderInstanceIds(
   return [...affected].sort();
 }
 
-export function makeMcpConfigurationReconcilerCore(input: {
-  readonly initialSettings: ServerSettings;
-  readonly readSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
-  readonly reconcileConfiguration: (
-    input: McpConfigurationReconcileInput,
-  ) => Effect.Effect<ReadonlyArray<McpLiveApplyResult>>;
-  readonly providerCapability?:
-    | ((providerInstanceId: ProviderInstanceId) => Effect.Effect<McpProviderCapability>)
-    | undefined;
-}): Effect.Effect<McpConfigurationReconcilerShape> {
-  return Effect.gen(function* () {
+export const makeMcpConfigurationReconcilerCore = Effect.fn("makeMcpConfigurationReconcilerCore")(
+  function* (input: {
+    readonly initialSettings: ServerSettings;
+    readonly readSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly reconcileConfiguration: (
+      input: McpConfigurationReconcileInput,
+    ) => Effect.Effect<ReadonlyArray<McpLiveApplyResult>>;
+    readonly providerCapability?:
+      | ((providerInstanceId: ProviderInstanceId) => Effect.Effect<McpProviderCapability>)
+      | undefined;
+  }): Effect.fn.Return<McpConfigurationReconcilerShape> {
     const state = yield* Ref.make<ReconcilerState>({
       settings: input.initialSettings,
       generation: 0,
@@ -215,5 +215,5 @@ export function makeMcpConfigurationReconcilerCore(input: {
       providerCapability:
         input.providerCapability ?? (() => Effect.succeed("unsupported" as const)),
     } satisfies McpConfigurationReconcilerShape;
-  });
-}
+  },
+);

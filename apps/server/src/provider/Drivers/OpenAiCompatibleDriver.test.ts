@@ -5,12 +5,13 @@ import {
   LM_STUDIO_BASE_URL,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -27,10 +28,12 @@ const decodeCompatibleSettings = Schema.decodeSync(OpenAiCompatibleDriver.config
 const decodeStudioSettings = Schema.decodeSync(LmStudioDriver.configSchema);
 
 const testLayer = Layer.mergeAll(
+  IdAllocator.layer,
+  TestProviderHost.layer(),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-compatible-driver-test-" }),
   ServerSettingsService.layerTest(),
   NoOpMcpConfigEngineLayer,
-  Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeed(Option.none()) }),
+  Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({ shouldRunScopeWork: () => Effect.succeed(true) }),
   Layer.mock(SubagentResourceGovernor)({}),
   Layer.mock(WorkspaceContext.WorkspaceContext)({}),

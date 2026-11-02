@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Skill archive identities synchronously hash canonical extracted file bytes.
 import * as NodeCrypto from "node:crypto";
 import { isValidSkillName, parseSkillFile } from "./skillFile.ts";
 

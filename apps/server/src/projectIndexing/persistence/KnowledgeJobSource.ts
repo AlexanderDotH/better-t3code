@@ -10,13 +10,13 @@ export const validateKnowledgeJobSource = Effect.fn("validateKnowledgeJobSource"
 ) {
   if (job.filePath === "" || job.contentHash === "") return;
   const currentHash = yield* hashProjectSourceFile(workspaceRoot, job.filePath).pipe(
-    Effect.catch((error) =>
-      error.code === "source-unavailable" &&
-      error.cause instanceof Error &&
-      "code" in error.cause &&
-      error.cause.code === "ENOENT"
-        ? Effect.succeed(null)
-        : Effect.fail(error),
+    Effect.catchIf(
+      (error) =>
+        error.code === "source-unavailable" &&
+        error.cause instanceof Error &&
+        "code" in error.cause &&
+        error.cause.code === "ENOENT",
+      () => Effect.succeed(null),
     ),
     Effect.mapError(asStoreError("validate job source")),
   );

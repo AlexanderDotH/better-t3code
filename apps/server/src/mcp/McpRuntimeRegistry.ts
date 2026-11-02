@@ -1,3 +1,6 @@
+import { supportsManagedMcpConfiguration } from "@t3tools/provider-core/server/mcpConfiguration";
+import { ServerSettingsService } from "../serverSettings.ts";
+import * as Option from "effect/Option";
 import {
   type McpLiveApplyResult,
   type McpRuntimeActionInput,
@@ -20,9 +23,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
+import * as Ref from "effect/Ref";
 
-import type { ProviderMcpSupportMode } from "../provider/Services/ProviderAdapter.ts";
-import * as ProviderAdapterRegistry from "../provider/Services/ProviderAdapterRegistry.ts";
+import type { ProviderAdapterShape, ProviderMcpSupportMode } from "./McpRuntimeAdapters.ts";
+import { McpRuntimeAdapters } from "./McpRuntimeAdapters.ts";
 import { makeMcpRuntimeActionCoordinator } from "./McpRuntimeActionCoordinator.ts";
 import { makeMcpRuntimeConfigurationCoordinator } from "./McpRuntimeConfigurationCoordinator.ts";
 import type { McpRuntimeConfigurationReconcileInput } from "./McpRuntimeConfigurationTypes.ts";
@@ -45,6 +49,10 @@ export type {
 } from "./McpRuntimeStateStore.ts";
 
 export interface McpRuntimeRegistryShape {
+  readonly registerAdapter: (
+    providerInstanceId: ProviderInstanceId,
+    adapter: ProviderAdapterShape<Error>,
+  ) => Effect.Effect<void, never, Scope.Scope>;
   readonly registerSession: (session: ProviderSession) => Effect.Effect<void>;
   readonly endSession: (input: McpRuntimeSnapshotInput) => Effect.Effect<void>;
   readonly listContexts: (
@@ -87,17 +95,61 @@ export class McpRuntimeRegistry extends Context.Service<
 >()("t3/mcp/McpRuntimeRegistry") {}
 
 export const makeMcpRuntimeRegistry = Effect.fn("makeMcpRuntimeRegistry")(function* () {
-  const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
+  const nativeAdapters = yield* Effect.serviceOption(McpRuntimeAdapters);
+  const settings = yield* Effect.serviceOption(ServerSettingsService);
+  const adapters: McpRuntimeAdapters["Service"] = Option.isSome(nativeAdapters)
+    ? nativeAdapters.value
+    : {
+        getByInstance: Effect.fn("McpRuntimeRegistry.configurationAdapter")(function* (
+          instanceId: ProviderInstanceId,
+        ) {
+          const current = Option.isSome(settings) ? yield* settings.value.getSettings : undefined;
+          const driver =
+            current?.providerInstances[instanceId]?.driver ??
+            (current !== undefined && Object.hasOwn(current.providers, instanceId)
+              ? instanceId
+              : undefined);
+          return {
+            capabilities: {
+              mcp: supportsManagedMcpConfiguration(driver)
+                ? ("sessionConfig" as const)
+                : ("unsupported" as const),
+            },
+          };
+        }),
+      };
   const stateStore = yield* makeMcpRuntimeStateStore();
+  const registeredAdapters = yield* Ref.make<
+    ReadonlyMap<ProviderInstanceId, { readonly adapter: ProviderAdapterShape<Error> }>
+  >(new Map());
+  const registerAdapter: McpRuntimeRegistryShape["registerAdapter"] = Effect.fn(
+    "McpRuntimeRegistry.registerAdapter",
+  )(function* (instanceId: ProviderInstanceId, adapter: ProviderAdapterShape<Error>) {
+    const registration = { adapter };
+    yield* Effect.acquireRelease(
+      Ref.update(registeredAdapters, (current) => new Map(current).set(instanceId, registration)),
+      () =>
+        Ref.update(registeredAdapters, (current) => {
+          if (current.get(instanceId) !== registration) return current;
+          const next = new Map(current);
+          next.delete(instanceId);
+          return next;
+        }),
+    );
+  });
+  const resolveAdapter = Effect.fn("McpRuntimeRegistry.resolveAdapter")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const registered = (yield* Ref.get(registeredAdapters)).get(instanceId);
+    return registered?.adapter ?? (yield* adapters.getByInstance(instanceId));
+  });
 
   const adapterFor = (providerInstanceId: ProviderInstanceId) =>
-    adapters
-      .getByInstance(providerInstanceId)
-      .pipe(
-        Effect.mapError((error) =>
-          runtimeError("provider-error", `Provider adapter is unavailable: ${errorDetail(error)}`),
-        ),
-      );
+    resolveAdapter(providerInstanceId).pipe(
+      Effect.mapError((error) =>
+        runtimeError("provider-error", `Provider adapter is unavailable: ${errorDetail(error)}`),
+      ),
+    );
 
   const { refresh, refreshAfterProviderEvent } = yield* makeMcpRuntimeRefreshCoordinator({
     contextKey,
@@ -124,7 +176,7 @@ export const makeMcpRuntimeRegistry = Effect.fn("makeMcpRuntimeRegistry")(functi
     });
 
   const providerCapability: McpRuntimeRegistryShape["providerCapability"] = (providerInstanceId) =>
-    adapters.getByInstance(providerInstanceId).pipe(
+    resolveAdapter(providerInstanceId).pipe(
       Effect.map((adapter) => adapter.capabilities.mcp ?? "unsupported"),
       Effect.orElseSucceed(() => "unsupported" as const),
     );
@@ -151,6 +203,7 @@ export const makeMcpRuntimeRegistry = Effect.fn("makeMcpRuntimeRegistry")(functi
   };
 
   return {
+    registerAdapter,
     registerSession: stateStore.registerSession,
     endSession: stateStore.endSession,
     listContexts: stateStore.listContexts,

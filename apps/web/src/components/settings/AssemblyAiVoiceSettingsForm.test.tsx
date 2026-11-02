@@ -1,9 +1,8 @@
-// @vitest-environment jsdom
-
+import { installMemoryStorage } from "../../../test/memoryStorage";
 import { DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../../hooks/useInterfaceTranslator", async () => {
   const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
@@ -78,6 +77,7 @@ vi.mock("../ui/select", () => ({
       {children}
     </select>
   ),
+
   SelectTrigger: () => null,
   SelectValue: () => null,
   SelectPopup: ({ children }: { children: ReactNode }) => children,
@@ -116,10 +116,15 @@ import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
 import { Collapsible } from "../ui/collapsible";
 
 describe("AssemblyAI voice settings editing", () => {
+  beforeEach(() => {
+    installMemoryStorage();
+  });
   let renderer: ReactTestRenderer | undefined;
-  beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+
   afterEach(async () => {
-    await act(() => renderer?.unmount());
+    await act(async () => {
+      await renderer?.unmount();
+    });
     vi.unstubAllGlobals();
   });
 
@@ -128,14 +133,16 @@ describe("AssemblyAI voice settings editing", () => {
       (node) => typeof node.type === "string" && node.props["aria-label"] === label,
     )[0]!;
   const expandCleanup = (expanded: boolean) =>
-    act(() =>
-      renderer!.root
+    act(async () => {
+      await renderer!.root
         .findAllByType(Collapsible)
         .find((node) => node.props["data-better-t3-subgroup"] === "voice-cleanup")!
-        .props.onOpenChange(expanded),
-    );
+        .props.onOpenChange(expanded);
+    });
   const submit = () =>
-    act(() => renderer!.root.findByType("form").props.onSubmit({ preventDefault: vi.fn() }));
+    act(async () => {
+      await renderer!.root.findByType("form").props.onSubmit({ preventDefault: vi.fn() });
+    });
   const mount = async (
     onSave: (settings: typeof DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS) => Promise<boolean>,
     value = DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
@@ -170,10 +177,12 @@ describe("AssemblyAI voice settings editing", () => {
     const instructions = renderer!.root
       .findAllByType("textarea")
       .find((node) => node.props.maxLength === 4000)!;
-    await act(() =>
-      instructions.props.onChange({ target: { value: "Keep project names intact" } }),
-    );
-    await act(() => field("Minimum pause (ms)").props.onChange({ target: { value: "500" } }));
+    await act(async () => {
+      await instructions.props.onChange({ target: { value: "Keep project names intact" } });
+    });
+    await act(async () => {
+      await field("Minimum pause (ms)").props.onChange({ target: { value: "500" } });
+    });
     await expandCleanup(false);
     expect(save).not.toHaveBeenCalled();
     await expandCleanup(true);
@@ -196,12 +205,12 @@ describe("AssemblyAI voice settings editing", () => {
     const save = vi.fn().mockResolvedValue(true);
     await mount(save, { ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, cleanupMode: "custom" });
     await expandCleanup(true);
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("textarea")
         .find((node) => node.props.maxLength === 4000)!
-        .props.onChange({ target: { value: "x".repeat(4001) } }),
-    );
+        .props.onChange({ target: { value: "x".repeat(4001) } });
+    });
     await expandCleanup(false);
     await submit();
     expect(save).not.toHaveBeenCalled();
@@ -217,14 +226,18 @@ describe("AssemblyAI voice settings editing", () => {
     const save = vi.fn().mockResolvedValue(true);
     await mount(save);
     await expandCleanup(true);
-    await act(() => renderer!.root.findByProps({ children: "T3 model" }).props.onClick());
+    await act(async () => {
+      await renderer!.root.findByProps({ children: "T3 model" }).props.onClick();
+    });
     await submit();
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
         cleanupModelSelection: { instanceId: "codex", model: "gpt-5.6-luna" },
       }),
     );
-    await act(() => renderer!.root.findByProps({ children: "AssemblyAI model" }).props.onClick());
+    await act(async () => {
+      await renderer!.root.findByProps({ children: "AssemblyAI model" }).props.onClick();
+    });
     await submit();
     expect(save).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -237,18 +250,22 @@ describe("AssemblyAI voice settings editing", () => {
   it("blocks conflicting pauses and keeps edits available after a failed save", async () => {
     const save = vi.fn().mockResolvedValue(false);
     await mount(save);
-    await act(() => field("Minimum pause (ms)").props.onChange({ target: { value: "2000" } }));
+    await act(async () => {
+      await field("Minimum pause (ms)").props.onChange({ target: { value: "2000" } });
+    });
     await submit();
     expect(save).not.toHaveBeenCalled();
     expect(JSON.stringify(renderer!.toJSON())).toContain(
       "minimum silence must not exceed maximum silence",
     );
-    await act(() => field("Maximum pause (ms)").props.onChange({ target: { value: "2500" } }));
-    await act(() =>
-      field("Additional recognition context").props.onChange({
+    await act(async () => {
+      await field("Maximum pause (ms)").props.onChange({ target: { value: "2500" } });
+    });
+    await act(async () => {
+      await field("Additional recognition context").props.onChange({
         target: { value: "React code review" },
-      }),
-    );
+      });
+    });
     await submit();
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -267,14 +284,14 @@ describe("AssemblyAI voice settings editing", () => {
   it("normalizes language hints and keyterms and exposes only supported controls", async () => {
     const save = vi.fn().mockResolvedValue(true);
     await mount(save);
-    await act(() =>
-      field("Expected languages").props.onChange({ target: { value: " DE, en, de " } }),
-    );
-    await act(() =>
-      field("Additional terms").props.onChange({
+    await act(async () => {
+      await field("Expected languages").props.onChange({ target: { value: " DE, en, de " } });
+    });
+    await act(async () => {
+      await field("Additional terms").props.onChange({
         target: { value: " ChatComposer\nuseAssemblyAiDictation\nChatComposer " },
-      }),
-    );
+      });
+    });
     await submit();
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -282,12 +299,12 @@ describe("AssemblyAI voice settings editing", () => {
         customKeyterms: ["ChatComposer", "useAssemblyAiDictation"],
       }),
     );
-    await act(() =>
-      renderer!.root
+    await act(async () => {
+      await renderer!.root
         .findAllByType("select")
         .find((node) => node.props.value === "universal-3-5-pro")!
-        .props.onChange({ target: { value: "universal-streaming-english" } }),
-    );
+        .props.onChange({ target: { value: "universal-streaming-english" } });
+    });
     expect(field("Expected languages").props.disabled).toBe(true);
     expect(
       renderer!.root.findAllByType("select").find((node) => node.props.value === "balanced")!.props
@@ -300,9 +317,9 @@ describe("AssemblyAI voice settings editing", () => {
   it("rejects overlong keyterms before sending settings", async () => {
     const save = vi.fn().mockResolvedValue(true);
     await mount(save);
-    await act(() =>
-      field("Additional terms").props.onChange({ target: { value: "x".repeat(51) } }),
-    );
+    await act(async () => {
+      await field("Additional terms").props.onChange({ target: { value: "x".repeat(51) } });
+    });
     await submit();
     expect(save).not.toHaveBeenCalled();
     expect(JSON.stringify(renderer!.toJSON())).toContain("Check the values");

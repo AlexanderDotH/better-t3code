@@ -1,6 +1,6 @@
 import { EnvironmentId, type ExtensionCatalogSearchInput } from "@t3tools/contracts";
-import { act, type ComponentProps } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type ComponentProps } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 vi.mock("~/hooks/useInterfaceTranslator", () => ({
@@ -58,7 +58,6 @@ vi.mock("./ExtensionSourceDialog", () => ({ ExtensionSourceDialog: () => null })
 import { ExtensionStore } from "./ExtensionStore";
 
 it("shows skill suggestions immediately and restores them after clearing a search", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let renderer: ReactTestRenderer | undefined;
   try {
     await act(() => {
@@ -71,16 +70,20 @@ it("shows skill suggestions immediately and restores them after clearing a searc
         .findAllByType("h3")
         .map((heading) => heading.findByType("button").children.join(""));
     expect(titles()).toEqual(["suggested-skill"]);
-    await act(() =>
-      renderer!.root.findByType("input").props.onChange({ currentTarget: { value: "testing" } }),
-    );
+    await act(async () => {
+      await renderer!.root
+        .findByType("input")
+        .props.onChange({ currentTarget: { value: "testing" } });
+    });
     expect(titles()).toEqual(["testing"]);
-    await act(() =>
-      renderer!.root.findByType("input").props.onChange({ currentTarget: { value: "" } }),
-    );
+    await act(async () => {
+      await renderer!.root.findByType("input").props.onChange({ currentTarget: { value: "" } });
+    });
     expect(titles()).toEqual(["suggested-skill"]);
   } finally {
-    await act(() => renderer?.unmount());
+    await act(async () => {
+      await renderer?.unmount();
+    });
     vi.unstubAllGlobals();
   }
 });
