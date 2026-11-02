@@ -25,6 +25,21 @@ const cursorSdkMock = vi.hoisted(() => {
     durationMs: 1,
   }));
   const runCancel = vi.fn(async () => {});
+  const summaryWait = vi.fn(async () => ({
+    id: "run-cursor-summary-test",
+    requestId: "request-cursor-summary-test",
+    status: "finished",
+    result: "Summary of the conversation so far",
+    model: { id: "default" },
+    durationMs: 1,
+  }));
+  const summaryCancel = vi.fn(async () => {});
+  const summarize = vi.fn(async () => ({
+    id: "run-cursor-summary-test",
+    agentId: "agent-cursor-agent-sdk-test",
+    wait: summaryWait,
+    cancel: summaryCancel,
+  }));
   const agentClose = vi.fn(() => {
     closeExecutionOrder.push("sdk:agent.close");
     if (agentCloseFailure !== undefined) {
@@ -57,11 +72,13 @@ const cursorSdkMock = vi.hoisted(() => {
   const create = vi.fn(async () => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
+    summarize,
     close: agentClose,
   }));
   const resume = vi.fn(async () => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
+    summarize,
     close: agentClose,
   }));
   const listRuns = vi.fn(async () => {
@@ -86,6 +103,9 @@ const cursorSdkMock = vi.hoisted(() => {
     runCancel,
     runWait,
     send,
+    summarize,
+    summaryWait,
+    summaryCancel,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
@@ -135,7 +155,65 @@ const layerTest = CursorAgentSdk.layer.pipe(
   Layer.provide(NodeServices.layer),
 );
 
+const openSummarySession = Effect.fnUntraced(function* () {
+  const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+  return yield* runner.open({
+    operation: "create",
+    options: { model: { id: "default" }, mode: "agent" },
+    threadId: ThreadId.make("cursor-summary-thread"),
+    providerSessionId: ProviderSessionId.make("cursor-summary-session"),
+  });
+});
+
 describe("CursorAgentSdkRunner", () => {
+  it.effect("delegates compaction to summarize without sending a prompt or send-time options", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.send.mockClear();
+      cursorSdkMock.summarize.mockClear();
+      const session = yield* openSummarySession();
+      const run = yield* session.send({
+        message: "/compress",
+        summarize: true,
+        options: { mode: "plan", model: { id: "ignored-for-summary" } },
+      });
+      assert.deepStrictEqual(cursorSdkMock.summarize.mock.calls, [[]]);
+      assert.strictEqual(cursorSdkMock.send.mock.calls.length, 0);
+      assert.strictEqual(run.runId, "run-cursor-summary-test");
+      assert.strictEqual((yield* run.wait).result, "Summary of the conversation so far");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("cancels the summarization run through its native SDK handle", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.summaryCancel.mockClear();
+      cursorSdkMock.runCancel.mockClear();
+      const session = yield* openSummarySession();
+      const run = yield* session.send({ message: "/compress", summarize: true });
+      yield* run.cancel;
+      assert.strictEqual(cursorSdkMock.summaryCancel.mock.calls.length, 1);
+      assert.strictEqual(cursorSdkMock.runCancel.mock.calls.length, 0);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["start", "wait"] as const)(
+    "surfaces a summarization %s failure through the existing SDK error boundary",
+    (stage) =>
+      Effect.gen(function* () {
+        const failure = new Error(`Summarization ${stage} failed`);
+        const session = yield* openSummarySession();
+        if (stage === "start") cursorSdkMock.summarize.mockRejectedValueOnce(failure);
+        else cursorSdkMock.summaryWait.mockRejectedValueOnce(failure);
+        const operation = Effect.gen(function* () {
+          const run = yield* session.send({ message: "/compress", summarize: true });
+          return yield* run.wait;
+        });
+        const error = yield* operation.pipe(Effect.flip);
+        assert.instanceOf(error, CursorAgentSdk.CursorAgentSdkRunnerError);
+        assert.strictEqual(error.method, `run.${stage}`);
+        assert.strictEqual(error.cause, failure);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
     Effect.gen(function* () {
       const failure = new Error("missing SDK chunk");
