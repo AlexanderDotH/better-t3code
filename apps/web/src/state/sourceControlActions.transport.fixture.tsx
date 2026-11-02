@@ -36,7 +36,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 import {
   deferredResult,
   workbenchSnapshot,
@@ -65,7 +65,6 @@ const testState = vi.hoisted(() => ({
   runtime: undefined as
     | Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore, never>
     | undefined,
-  registry: undefined as AtomRegistry.AtomRegistry | undefined,
   sessionAuthorized: true,
   sessionRequests: new Array<string>(),
   rpcInputs: new Array<GitRunStackedActionInput>(),
@@ -79,23 +78,12 @@ const testState = vi.hoisted(() => ({
   threadId: null as ThreadId | null,
 }));
 
-vi.mock("../rpc/atomRegistry", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../rpc/atomRegistry")>()),
-  get appAtomRegistry() {
-    if (testState.registry === undefined)
-      throw new Error("The test atom registry is not initialized.");
-    return testState.registry;
-  },
-}));
-
-vi.mock("../connection/runtime", () => ({
-  get connectionAtomRuntime() {
-    if (testState.runtime === undefined) {
-      throw new Error("The source control test runtime has not been initialized.");
-    }
-    return testState.runtime;
-  },
-}));
+vi.mock("../connection/runtime", () => {
+  const connectionAtomRuntime = testState.runtime;
+  if (connectionAtomRuntime === undefined)
+    throw new Error("The source control test runtime has not been initialized.");
+  return { connectionAtomRuntime };
+});
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -176,8 +164,9 @@ export function deferStackedResponse() {
 }
 
 export async function setupTransportTest(options: { status?: VcsStatusResult } = {}) {
-  const registry = AtomRegistry.make();
-  testState.registry = registry;
+  // Match AppAtomRegistryProvider: callback grants and rendered hooks must read the same instance.
+  const { appAtomRegistry: registry } = await import("../rpc/atomRegistry");
+  registry.reset();
   testState.sessionAuthorized = true;
   testState.sessionRequests.length = 0;
   if (testState.runtime === undefined) {
@@ -336,7 +325,7 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
     environmentSession.sessionStateAtom(environmentId),
   );
   if (session._tag === "Failure") {
-    registry.dispose();
+    registry.reset();
     throw squashAtomCommandFailure(session);
   }
   return registry;

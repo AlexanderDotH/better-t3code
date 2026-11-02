@@ -8,6 +8,7 @@ import {
   GitActionsControl,
 } from "./sourceControlActions.transport.fixture";
 import { RegistryContext } from "@effect/atom-react";
+import { AuthSourceControlWriteScope } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { act, render } from "../../test/render";
@@ -26,9 +27,11 @@ import { requestGitActionsControl } from "../components/gitActionsControlBus";
 import { subscribeGitWorkbenchEntry } from "../components/git-workbench/gitWorkbenchEntryBus";
 
 const testState = transportTestState();
+let useEnvironmentScope: (typeof import("./session"))["useEnvironmentScope"];
 
 function CommitPreparation({ onSettled }: { onSettled: () => void }) {
   const [preparing, setPreparing] = useState(false);
+  const canWrite = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   useEffect(
     () =>
       subscribeGitWorkbenchEntry((request) => {
@@ -47,7 +50,7 @@ function CommitPreparation({ onSettled }: { onSettled: () => void }) {
           stateToken="state-1"
           stagedCount={1}
           partialStagedCount={1}
-          blocked={false}
+          blocked={!canWrite}
           activeTurn={false}
           hasQueuedWorkflow={false}
           focusRequest={0}
@@ -66,7 +69,18 @@ it("submits the actual composer through the actual control and web hook to the r
     status: vcsStatus({ hasPrimaryRemote: false, hasUpstream: false }),
   });
   testState.stackedResult = commitResult();
-  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  using _registry = { [Symbol.dispose]: () => registry.reset() };
+  const { appAtomRegistry } = await import("../rpc/atomRegistry");
+  const { connectionAtomRuntime } = await import("../connection/runtime");
+  const sessionModule = await import("./session");
+  const { environmentSession, readEnvironmentScope } = sessionModule;
+  useEnvironmentScope = sessionModule.useEnvironmentScope;
+  const sessionAtom = environmentSession.sessionStateAtom(environmentId);
+  expect(registry).toBe(appAtomRegistry);
+  expect(connectionAtomRuntime).toBe(testState.runtime);
+  expect(registry.get(sessionAtom)._tag).toBe("Success");
+  expect(testState.sessionRequests).toContain("https://environment.example.test/api/auth/session");
+  expect(readEnvironmentScope(environmentId, AuthSourceControlWriteScope)).toBe(true);
   using response = deferStackedResponse();
   const _draftCleanup = { [Symbol.dispose]: () => useGitCommitDraftStore.getState().clear() };
   useGitCommitDraftStore.getState().clear();
@@ -79,6 +93,8 @@ it("submits the actual composer through the actual control and web hook to the r
     </RegistryContext.Provider>,
   );
   const container = screen.container;
+  expect(registry).toBe(appAtomRegistry);
+  expect(readEnvironmentScope(environmentId, AuthSourceControlWriteScope)).toBe(true);
   expect(container.querySelector("[data-git-commit-composer]")).toBeNull();
   await act(() => requestGitActionsControl({ ...scope, intent: "commit-staged" }));
   const preparation = screen.getByRole("form", { name: "Prepare commit", exact: true });
@@ -93,6 +109,11 @@ it("submits the actual composer through the actual control and web hook to the r
   await message.fill(commitMessage);
   const button = preparation.getByRole("button", { name: "Commit staged changes", exact: true });
   await expect.element(button).not.toBeDisabled();
+  expect(registry).toBe(appAtomRegistry);
+  expect(
+    readEnvironmentScope(environmentId, AuthSourceControlWriteScope),
+    `Call-time source control grant before submission: ${JSON.stringify(registry.get(sessionAtom))}`,
+  ).toBe(true);
   await button.click();
   const observed = await Promise.race([
     response.received.then((input) => ({ status: "request" as const, input })),
@@ -101,6 +122,13 @@ it("submits the actual composer through the actual control and web hook to the r
       outcome: useGitCommitDraftStore
         .getState()
         .drafts.get(gitCommitDraftKey(environmentId, scope.cwd))?.outcome,
+      permission: {
+        environmentId,
+        requiredScope: AuthSourceControlWriteScope,
+        allowed: readEnvironmentScope(environmentId, AuthSourceControlWriteScope),
+        sameRegistry: registry === appAtomRegistry,
+        session: registry.get(sessionAtom),
+      },
     })),
   ]);
   expect(

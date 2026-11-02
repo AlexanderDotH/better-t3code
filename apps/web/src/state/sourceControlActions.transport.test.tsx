@@ -46,10 +46,49 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await act(() => renderer?.unmount());
-  registry.dispose();
+  registry.reset();
 });
 
 describe("useGitStackedAction commit selection transport", () => {
+  it("keeps captured module bindings authorized after resetting and setting up again", async () => {
+    const { appAtomRegistry: capturedRegistry } = await import("../rpc/atomRegistry");
+    const { connectionAtomRuntime: capturedRuntime } = await import("../connection/runtime");
+    const { environmentSession, readEnvironmentScope: capturedReadScope } =
+      await import("./session");
+    const sessionAtom = environmentSession.sessionStateAtom(scope.environmentId);
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    registry.reset();
+    registry = await setupTransportTest({
+      status: vcsStatus({ hasPrimaryRemote: false, hasUpstream: false }),
+    });
+
+    expect(registry).toBe(capturedRegistry);
+    expect(testState.runtime).toBe(capturedRuntime);
+    expect(capturedRegistry.get(sessionAtom)._tag).toBe("Success");
+    expect(capturedReadScope(scope.environmentId, AuthSourceControlWriteScope)).toBe(true);
+    await act(() => {
+      renderer = create(
+        <RegistryContext.Provider value={capturedRegistry}>
+          <Probe />
+        </RegistryContext.Provider>,
+      );
+    });
+    expect(latest.isAllowed).toBe(true);
+    testState.stackedResult = commitResult();
+    await act(async () => {
+      const committed = await latest.run({ actionId: "captured-registry", action: "commit" });
+      expect(committed._tag).toBe("Success");
+    });
+    expect(testState.rpcInputs).toEqual([
+      {
+        actionId: createVcsActionTransportId(scope, "captured-registry"),
+        cwd: scope.cwd,
+        action: "commit",
+      },
+    ]);
+  });
+
   it("shares initialized decoded grants between the web hook and its callback guard", async () => {
     const { appAtomRegistry } = await import("../rpc/atomRegistry");
     const { readEnvironmentScope, environmentSession } = await import("./session");
