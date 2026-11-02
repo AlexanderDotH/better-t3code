@@ -541,7 +541,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     if (!snapshot.text.trim()) return;
     promptImprovementPending.current = true;
     setImprovingPrompt(true);
-    try {
+    const result = await settlePromise(async () => {
       const improved = await translateVoiceDictationResult(
         { text: snapshot.text.trim(), references: snapshot.voiceFileReferences ?? [] },
         async (text) => {
@@ -555,14 +555,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       );
       if (getComposerDraftSnapshot(composerDraftKey).text === snapshot.text)
         setComposerDraftText(composerDraftKey, improved.text, improved.references);
-    } catch (error) {
+    });
+    promptImprovementPending.current = false;
+    setImprovingPrompt(false);
+    if (AsyncResult.isFailure(result)) {
+      const error = squashAtomCommandFailure(result);
       Dialog.alert(
         "Could not improve prompt",
         error instanceof Error ? error.message : String(error),
       );
-    } finally {
-      promptImprovementPending.current = false;
-      setImprovingPrompt(false);
     }
   };
   const hasContent =

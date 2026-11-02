@@ -262,13 +262,15 @@ function MobileVoiceSettingsForm({
       return;
     }
     setBusy(true);
-    try {
+    return (async () => {
       setMessage((await onSave(next)) ? "saved" : "saveFailed");
-    } catch {
-      setMessage("saveFailed");
-    } finally {
-      setBusy(false);
-    }
+    })()
+      .catch(() => {
+        setMessage("saveFailed");
+      })
+      .finally(() => {
+        setBusy(false);
+      });
   }
 
   return (
@@ -608,13 +610,15 @@ export function MobileAssemblyAiVoiceSettings({
   const changeOverride = async (projectId: ProjectId, voice: AssemblyAiVoiceSettings | null) => {
     setProjectBusy(projectId);
     setProjectError(null);
-    try {
+    return (async () => {
       if (!(await save(voice, projectId))) setProjectError(projectId);
-    } catch {
-      setProjectError(projectId);
-    } finally {
-      setProjectBusy(null);
-    }
+    })()
+      .catch(() => {
+        setProjectError(projectId);
+      })
+      .finally(() => {
+        setProjectBusy(null);
+      });
   };
 
   return (

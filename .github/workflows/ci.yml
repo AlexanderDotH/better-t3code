@@ -331,6 +331,10 @@ jobs:
             node apps/web/node_modules/playwright/cli.js install-deps chromium
           fi
 
+      - name: Verify staged-commit transport
+        working-directory: apps/web
+        run: vp test run --project browser src/state/sourceControlActions.transport.browser.test.tsx
+
       - name: Test
         run: vp run --filter @t3tools/web test
 

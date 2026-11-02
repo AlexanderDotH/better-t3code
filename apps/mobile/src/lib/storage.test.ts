@@ -127,6 +127,7 @@ describe("mobile connection storage", () => {
       navigationTabOrder,
       hiddenNavigationTabs,
       baseFontSize: 19,
+      betterT3Device: cleanBetterT3Settings,
     });
   });
 
@@ -143,6 +144,7 @@ describe("mobile connection storage", () => {
       navigationTabOrder: ["usage", "threads"],
       hiddenNavigationTabs: ["home"],
       baseFontSize: 18,
+      betterT3Device: migratedBetterT3Settings,
     });
   });
 

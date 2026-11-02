@@ -12,7 +12,13 @@ const { EnvironmentRegistry } = Registry;
 type EnvironmentRegistry = Registry.EnvironmentRegistry;
 const { EnvironmentSupervisor } = Supervisor;
 import { Persistence } from "@t3tools/client-runtime/platform";
-import type { RpcSession, WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
+import type {
+  EnvironmentRpcInput,
+  EnvironmentRpcSuccess,
+  EnvironmentRpcStreamValue,
+  RpcSession,
+  WsRpcProtocolClient,
+} from "@t3tools/client-runtime/rpc";
 import {
   EnvironmentId,
   ThreadId,
@@ -34,12 +40,30 @@ import {
 } from "../components/git-workbench/gitCommitTestFixtures";
 import { vi } from "vite-plus/test";
 
+type FixtureUnaryRpc =
+  | typeof WS_METHODS.serverDiscoverSourceControl
+  | typeof WS_METHODS.vcsRefreshStatus
+  | typeof WS_METHODS.gitRefreshWorkbench;
+type FixtureStreamRpc =
+  | typeof WS_METHODS.subscribeVcsStatus
+  | typeof WS_METHODS.gitRunStackedAction;
+type FixtureProtocol = {
+  [Tag in FixtureUnaryRpc]: (
+    input: EnvironmentRpcInput<Tag>,
+  ) => Effect.Effect<EnvironmentRpcSuccess<Tag>>;
+} & {
+  [Tag in FixtureStreamRpc]: (
+    input: EnvironmentRpcInput<Tag>,
+  ) => Stream.Stream<EnvironmentRpcStreamValue<Tag>>;
+};
+
 const testState = vi.hoisted(() => ({
   runtime: undefined as
     | Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore, never>
     | undefined,
   rpcInputs: new Array<GitRunStackedActionInput>(),
   refreshInputs: new Array<unknown>(),
+  statusRefreshInputs: new Array<EnvironmentRpcInput<typeof WS_METHODS.vcsRefreshStatus>>(),
   metadataInputs: new Array<unknown>(),
   stackedResult: null as GitRunStackedActionResult | null,
   stackedResponse: undefined as Promise<GitRunStackedActionResult> | undefined,
@@ -159,7 +183,7 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
     testState.runtime = Atom.runtime(
       Layer.unwrap(
         Effect.gen(function* () {
-          const client = {
+          const methods = {
             [WS_METHODS.subscribeVcsStatus]: () =>
               Stream.make({
                 _tag: "snapshot" as const,
@@ -167,7 +191,11 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
                 remote: testState.status ?? vcsStatus(),
               }).pipe(Stream.concat(Stream.never)),
             [WS_METHODS.serverDiscoverSourceControl]: () =>
-              Effect.succeed({ sourceControlProviders: [] }),
+              Effect.succeed({ versionControlSystems: [], sourceControlProviders: [] }),
+            [WS_METHODS.vcsRefreshStatus]: (input) => {
+              testState.statusRefreshInputs.push(input);
+              return Effect.succeed(testState.status ?? vcsStatus());
+            },
             [WS_METHODS.gitRefreshWorkbench]: (input: unknown) => {
               testState.refreshInputs.push(input);
               return Effect.succeed(workbenchSnapshot());
@@ -190,7 +218,8 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
                 })),
               );
             },
-          } as unknown as WsRpcProtocolClient;
+          } satisfies FixtureProtocol;
+          const client = methods as unknown as WsRpcProtocolClient;
           const session: RpcSession = {
             client,
             inboundFrames: Effect.succeed(0),
@@ -263,6 +292,7 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
   }
   testState.rpcInputs.length = 0;
   testState.refreshInputs.length = 0;
+  testState.statusRefreshInputs.length = 0;
   testState.metadataInputs.length = 0;
   testState.stackedResult = null;
   testState.stackedResponse = undefined;

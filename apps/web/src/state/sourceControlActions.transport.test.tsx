@@ -107,11 +107,19 @@ describe("useGitStackedAction commit selection transport", () => {
     expect(latest.isPending).toBe(false);
   });
 
-  it("commits the staged index after refreshing the real workbench command", async () => {
+  it("commits the staged index after refreshing checkout status and the real workbench command", async () => {
     const { gitWorkbenchEnvironment } = await import("./gitWorkbench");
+    const { vcsEnvironment } = await import("./vcs");
     const actionId = "after-workbench-refresh";
     const commitMessage = "  A deliberate subject\n\nBody with details.  ";
     await act(async () => {
+      const status = await runAtomCommand(registry, vcsEnvironment.refreshStatus, {
+        environmentId: scope.environmentId,
+        input: { cwd: scope.cwd },
+      });
+      expect(status._tag).toBe("Success");
+      if (status._tag === "Success")
+        expect(status.value).toEqual(vcsStatus({ hasPrimaryRemote: false, hasUpstream: false }));
       const refreshed = await runAtomCommand(registry, gitWorkbenchEnvironment.refresh, {
         environmentId: scope.environmentId,
         input: { cwd: scope.cwd },
@@ -127,6 +135,7 @@ describe("useGitStackedAction commit selection transport", () => {
       expect(committed._tag).toBe("Success");
     });
 
+    expect(testState.statusRefreshInputs).toEqual([{ cwd: scope.cwd }]);
     expect(testState.refreshInputs).toEqual([{ cwd: scope.cwd }]);
     expect(testState.rpcInputs).toEqual([
       {

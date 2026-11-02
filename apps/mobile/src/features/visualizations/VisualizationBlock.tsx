@@ -292,18 +292,20 @@ export function VisualizationBlock({
         : null,
     [request],
   );
+  const requestId = request?.requestId;
+  const previewRequestId = preview?.requestId;
+  const interactiveRequestId = interactiveRequest?.requestId;
+  const failedRequestId = interactiveFailure?.requestId;
   const interactiveError =
-    interactiveFailure?.requestId === interactiveRequest?.requestId
-      ? interactiveFailure?.error
-      : null;
-  const interactiveReady = readyRequestId === interactiveRequest?.requestId && !interactiveError;
-  const current = preview?.requestId === request?.requestId ? preview : null;
+    failedRequestId === interactiveRequestId ? interactiveFailure?.error : null;
+  const interactiveReady = readyRequestId === interactiveRequestId && !interactiveError;
+  const current = previewRequestId === requestId ? preview : null;
   const svg = current?.svg;
   const error = parsed.error ?? current?.error;
   const document = parsed.document;
   const previewReady = Boolean(svg) && !error && !isStreaming;
   const sourceRequired = Boolean(error) || isStreaming;
-  const exporting = activeExport !== null && activeExport.requestId === request?.requestId;
+  const exporting = activeExport !== null && activeExport.requestId === requestId;
   const pngExportRequest = exporting ? activeExport.pngRequest : null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the clipboard feedback timer when this diagram unmounts.

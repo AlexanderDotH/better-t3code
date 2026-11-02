@@ -86,11 +86,9 @@ function ProjectMemorySettingsController({ project }: { project: EnvironmentProj
       };
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
-    try {
-      await operation();
-    } finally {
-      setBusy(false);
-    }
+    await Promise.resolve()
+      .then(operation)
+      .finally(() => setBusy(false));
   };
   const target = { environmentId: project.environmentId } as const;
 

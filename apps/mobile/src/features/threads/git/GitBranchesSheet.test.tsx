@@ -17,6 +17,13 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ goBack() {} }) }));
+vi.mock("../../../localization/useMobileInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useMobileInterfaceTranslator: () =>
+      createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
 vi.mock("react-native", () => ({
   Platform: { OS: "android" },
   useWindowDimensions: () => ({ height: 800 }),

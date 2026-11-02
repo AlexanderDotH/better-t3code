@@ -45,6 +45,7 @@ const state = vi.hoisted(() => ({
     environment: { capabilities: {} },
   },
 }));
+vi.mock("./project-chat-settings", () => ({ rememberMobileProjectChatSettings: vi.fn() }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),

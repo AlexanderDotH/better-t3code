@@ -105,86 +105,89 @@ export function ProposedPlanCard(props: {
     if (!available || !thread || !config || implementationPending.current) return;
     implementationPending.current = true;
     setImplementing(true);
-    try {
-      const metadata = makeQueuedMessageMetadata();
-      const targetThreadId = newThread ? ThreadId.make(uuidv4()) : thread.id;
-      let text = buildPlanImplementationPrompt(props.markdown, {
-        strategy,
-        provider: implementationProvider ?? undefined,
-      });
-      let deepPlan;
-      if (deepPlanReference) {
-        const api = getMobileDeepPlanningApi(props.environmentId);
-        const run = await api.getRun({
-          threadId: props.plan.threadId,
-          runId: deepPlanReference.runId,
-        });
-        if (!run)
-          throw new Error("The Deep Plan is unavailable. Refresh the thread and try again.");
-        const reason = getDeepPlanApprovalBlockReason(run);
-        if (reason) throw new Error(reason);
-        const approved = await approveDeepPlanImplementation({
-          run,
-          implementation: implementationModel ?? thread.modelSelection,
-          implementationThreadId: targetThreadId,
-          requestedParallelism: strategy.kind === "subagents" ? strategy.count : 1,
-          commandId: CommandId.make(`${metadata.commandId}:approve`),
-          operationId: uuidv4(),
-          createdAt: metadata.createdAt,
-          getRun: api.getRun,
-          dispatchCommand: api.dispatchCommand,
-        });
-        text = buildDeepPlanImplementationPrompt(approved, {
+    await Promise.resolve()
+      .then(async () => {
+        const metadata = makeQueuedMessageMetadata();
+        const targetThreadId = newThread ? ThreadId.make(uuidv4()) : thread.id;
+        let text = buildPlanImplementationPrompt(props.markdown, {
           strategy,
           provider: implementationProvider ?? undefined,
         });
-        deepPlan = deepPlanReference;
-      }
-      await enqueueThreadOutboxMessage({
-        environmentId: props.environmentId,
-        threadId: targetThreadId,
-        commandId: CommandId.make(metadata.commandId),
-        messageId: MessageId.make(metadata.messageId),
-        text,
-        attachments: [],
-        createdAt: metadata.createdAt,
-        modelSelection: implementationModel ?? thread.modelSelection,
-        runtimeMode: draftSettings.runtimeMode ?? thread.runtimeMode,
-        interactionMode: "default",
-        composerMode: "default",
-        sourceProposedPlan: {
-          threadId: props.plan.threadId,
-          planId: PlanId.make(props.plan.planId),
-          ...(deepPlan ? { deepPlan } : {}),
-        },
-        ...(newThread
-          ? {
-              creation: {
-                projectId: thread.projectId,
-                projectCwd: props.workspaceRoot ?? undefined,
-                workspaceMode: "local",
-                branch: thread.branch,
-                worktreePath: thread.worktreePath,
-              },
-            }
-          : {}),
-      });
-      if (newThread)
-        navigation.dispatch(
-          StackActions.push("Thread", {
-            environmentId: String(props.environmentId),
-            threadId: String(targetThreadId),
-          }),
+        let deepPlan;
+        if (deepPlanReference) {
+          const api = getMobileDeepPlanningApi(props.environmentId);
+          const run = await api.getRun({
+            threadId: props.plan.threadId,
+            runId: deepPlanReference.runId,
+          });
+          if (!run)
+            throw new Error("The Deep Plan is unavailable. Refresh the thread and try again.");
+          const reason = getDeepPlanApprovalBlockReason(run);
+          if (reason) throw new Error(reason);
+          const approved = await approveDeepPlanImplementation({
+            run,
+            implementation: implementationModel ?? thread.modelSelection,
+            implementationThreadId: targetThreadId,
+            requestedParallelism: strategy.kind === "subagents" ? strategy.count : 1,
+            commandId: CommandId.make(`${metadata.commandId}:approve`),
+            operationId: uuidv4(),
+            createdAt: metadata.createdAt,
+            getRun: api.getRun,
+            dispatchCommand: api.dispatchCommand,
+          });
+          text = buildDeepPlanImplementationPrompt(approved, {
+            strategy,
+            provider: implementationProvider ?? undefined,
+          });
+          deepPlan = deepPlanReference;
+        }
+        await enqueueThreadOutboxMessage({
+          environmentId: props.environmentId,
+          threadId: targetThreadId,
+          commandId: CommandId.make(metadata.commandId),
+          messageId: MessageId.make(metadata.messageId),
+          text,
+          attachments: [],
+          createdAt: metadata.createdAt,
+          modelSelection: implementationModel ?? thread.modelSelection,
+          runtimeMode: draftSettings.runtimeMode ?? thread.runtimeMode,
+          interactionMode: "default",
+          composerMode: "default",
+          sourceProposedPlan: {
+            threadId: props.plan.threadId,
+            planId: PlanId.make(props.plan.planId),
+            ...(deepPlan ? { deepPlan } : {}),
+          },
+          ...(newThread
+            ? {
+                creation: {
+                  projectId: thread.projectId,
+                  projectCwd: props.workspaceRoot ?? undefined,
+                  workspaceMode: "local",
+                  branch: thread.branch,
+                  worktreePath: thread.worktreePath,
+                },
+              }
+            : {}),
+        });
+        if (newThread)
+          navigation.dispatch(
+            StackActions.push("Thread", {
+              environmentId: String(props.environmentId),
+              threadId: String(targetThreadId),
+            }),
+          );
+      })
+      .catch((error: unknown) => {
+        Dialog.alert(
+          "Could not implement plan",
+          error instanceof Error ? error.message : String(error),
         );
-    } catch (error) {
-      Dialog.alert(
-        "Could not implement plan",
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      implementationPending.current = false;
-      setImplementing(false);
-    }
+      })
+      .finally(() => {
+        implementationPending.current = false;
+        setImplementing(false);
+      });
   };
   const refine = () => {
     if (!thread) return;

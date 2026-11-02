@@ -229,7 +229,7 @@ export function MobileAiEndpointSetup(props: {
       return;
     }
     setSaving(true);
-    try {
+    const persistEndpoint = async () => {
       if (!(await props.updateSettings(patch, label))) return;
       setHasSaved(true);
       const savedDraft = mobileAiEndpointDraft(
@@ -271,11 +271,12 @@ export function MobileAiEndpointSetup(props: {
       setModelCatalog({ baseUrl: savedDraft.baseUrl, models });
       setChoosingModel(models.length > 0);
       if (provider?.message) setError(provider.message);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not save endpoint.");
-    } finally {
-      setSaving(false);
-    }
+    };
+    await persistEndpoint()
+      .catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not save endpoint.");
+      })
+      .finally(() => setSaving(false));
   };
 
   return (

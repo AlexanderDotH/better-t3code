@@ -1615,31 +1615,34 @@ export function ExistingThreadSettingsRouteScreen({
     if (!transcriptExportAvailable || transcriptExportPending.current) return;
     transcriptExportPending.current = true;
     setTranscriptExportBusy(true);
-    try {
-      await copyThreadTranscript({
-        threadId: route.params.threadId,
-        exportThreadTranscript: async (input) => {
-          const result = await exportThreadTranscript({
-            environmentId: route.params.environmentId,
-            input,
-          });
-          if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
-          return result.value;
-        },
-        writeText: async (content) => {
-          if (!(await Clipboard.setStringAsync(content)))
-            throw new Error("The clipboard did not accept the transcript.");
-        },
+    await Promise.resolve()
+      .then(() =>
+        copyThreadTranscript({
+          threadId: route.params.threadId,
+          exportThreadTranscript: async (input) => {
+            const result = await exportThreadTranscript({
+              environmentId: route.params.environmentId,
+              input,
+            });
+            if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
+            return result.value;
+          },
+          writeText: async (content) => {
+            if (!(await Clipboard.setStringAsync(content)))
+              throw new Error("The clipboard did not accept the transcript.");
+          },
+        }),
+      )
+      .catch((error: unknown) => {
+        Dialog.alert(
+          "Could not copy transcript",
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .finally(() => {
+        transcriptExportPending.current = false;
+        setTranscriptExportBusy(false);
       });
-    } catch (error) {
-      Dialog.alert(
-        "Could not copy transcript",
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      transcriptExportPending.current = false;
-      setTranscriptExportBusy(false);
-    }
   };
 
   const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);

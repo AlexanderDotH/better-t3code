@@ -60,6 +60,22 @@ const audio = vi.hoisted(() => ({
   navigate: vi.fn(),
   query: vi.fn(),
 }));
+vi.mock("../localization/useMobileInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useMobileInterfaceTranslator: () =>
+      createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
+vi.mock("react-native-svg", () => ({
+  default: ({ children }: { children?: ReactNode }) => createElement("svg", null, children),
+  Defs: ({ children }: { children?: ReactNode }) => createElement("defs", null, children),
+  LinearGradient: ({ children }: { children?: ReactNode }) =>
+    createElement("linearGradient", null, children),
+  Path: () => null,
+  Rect: () => null,
+  Stop: () => null,
+}));
 vi.mock("expo-audio", () => ({
   AudioModule: { setAudioSessionOwner: audio.setSessionOwner },
   useAudioPlayer: () => audio.player,
@@ -171,9 +187,17 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("../state/preferences", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return {
+    mobilePreferencesAtom: Atom.make(AsyncResult.success({ responseMetricsEnabled: false })),
+  };
+});
+vi.mock("../state/use-thread-detail", () => ({ useSelectedThreadProjection: () => null }));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
+  useEnvironmentServerConfig: () => null,
 }));
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
@@ -196,6 +220,10 @@ vi.mock("../native/SelectableMarkdownText", () => ({
     );
   },
 }));
+vi.mock("../features/visualizations/VisualizationMarkdownText", async () => ({
+  VisualizationMarkdownText: (await import("../native/SelectableMarkdownText"))
+    .SelectableMarkdownText,
+}));
 vi.mock("@legendapp/list/keyboard", () => ({
   KeyboardAwareLegendList: (props: {
     data: ThreadFeedEntry[];
@@ -210,12 +238,20 @@ vi.mock("@legendapp/list/react-native", () => ({
     useEffect(() => callback({ sizeVisible: 1 }), [callback]),
 }));
 vi.mock("react-native-reanimated", () => {
-  const transition = { delay: () => transition, duration: () => transition };
+  const transition = {
+    delay: () => transition,
+    duration: () => transition,
+    springify: () => transition,
+    dampingRatio: () => transition,
+    reduceMotion: () => transition,
+  };
   return {
     default: { View: ({ children }: { children?: ReactNode }) => children },
     FadeIn: transition,
     FadeInDown: transition,
     FadeInUp: transition,
+    LinearTransition: transition,
+    ReduceMotion: { System: "system" },
   };
 });
 vi.mock("react-native-safe-area-context", () => ({
@@ -257,9 +293,24 @@ vi.mock("../native/native-layout-metrics", () => ({ useDeviceType: () => "phone"
 vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));
-vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ appearance: { baseFontSize: 14 }, themeAppearance: "dark" }),
-}));
+vi.mock("../features/settings/appearance/AppearancePreferencesProvider", async () => {
+  const { resolveChatPresentation } = await import("@t3tools/client-runtime/chat-presentation");
+  const chatPresentation = resolveChatPresentation({
+    mode: "current",
+    presentationMotion: false,
+    characterStreamingMotion: false,
+    reducedMotion: false,
+  });
+  return {
+    useAppearancePreferences: () => ({
+      appearance: { baseFontSize: 14 },
+      themeAppearance: "dark",
+      chatVisualMode: "current",
+      chatPresentation,
+      themeVariables: new Proxy({}, { get: () => "#000000" }),
+    }),
+  };
+});
 vi.mock("./useUniwindTheme", () => ({
   useUniwindTheme: () => new Proxy({}, { get: () => "#000000" }),
 }));
@@ -268,6 +319,9 @@ vi.mock("./copyTextWithHaptic", () => ({}));
 vi.mock("./openExternalUrl", () => ({}));
 vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
+vi.mock("../features/threads/MessageReplyGesture", () => ({
+  MessageReplyGesture: ({ children }: { children?: ReactNode }) => children,
+}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({ ThreadModelSwitchDivider: () => null }));
 vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));

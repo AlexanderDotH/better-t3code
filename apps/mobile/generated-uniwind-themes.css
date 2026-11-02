@@ -299,6 +299,8 @@
       --color-adaptive-neutral-600-300: oklch(87% 0 none);
       --color-adaptive-neutral-600-400: oklch(70.8% 0 none);
       --color-adaptive-neutral-950-50: oklch(98.5% 0 none);
+      --color-adaptive-neutral-950-a5-white-a5: rgb(255 255 255 / 5%);
+      --color-adaptive-neutral-950-a10-white-a10: rgb(255 255 255 / 10%);
       --color-adaptive-red-50-950-a80: oklch(25.8% 0.092 26.042 / 80%);
       --color-adaptive-red-200-800: oklch(44.4% 0.177 26.899);
       --color-adaptive-red-600-a80-400-a80: oklch(70.4% 0.191 22.216 / 80%);
@@ -311,6 +313,8 @@
       --color-adaptive-rose-600-400: oklch(71.2% 0.194 13.428);
       --color-adaptive-rose-700-300: oklch(81% 0.117 11.638);
       --color-adaptive-sky-500-a12-a16: oklch(68.5% 0.169 237.323 / 16%);
+      --color-adaptive-sky-500-a10-400-a10: oklch(74.6% 0.16 232.661 / 10%);
+      --color-adaptive-sky-500-a25-400-a25: oklch(74.6% 0.16 232.661 / 25%);
       --color-adaptive-sky-600-400: oklch(74.6% 0.16 232.661);
       --color-adaptive-sky-700-300: oklch(82.8% 0.111 230.318);
       --color-adaptive-violet-500-a12-a16: oklch(60.6% 0.25 292.717 / 16%);
@@ -332,7 +336,7 @@
       --color-sheet: rgba(250, 249, 247, 0.98);
       --color-sheet-solid: #faf9f7;
       --color-card: #ffffff;
-      --color-grouped-card: #ffffff;
+      --color-grouped-card: #f0edf2;
       --color-card-alt: #f6f3f8;
       --color-card-translucent: rgba(255, 255, 255, 0.8);
       --color-thread-canvas: #faf9f7;
@@ -342,8 +346,8 @@
       --color-thread-hover: #eae3ef;
       --color-row-hover: #e5dced;
       --color-composer-panel: rgba(250, 249, 247, 0.88);
-      --color-composer-surface: rgba(255, 255, 255, 0.94);
-      --color-composer-border: rgba(221, 216, 225, 0.54);
+      --color-composer-surface: rgba(240, 237, 242, 0.94);
+      --color-composer-border: rgba(221, 216, 225, 0.8);
       --color-foreground: #34323d;
       --color-foreground-secondary: #696572;
       --color-foreground-muted: #696572;
@@ -358,6 +362,8 @@
       --color-inline-skill-border: rgba(123, 99, 143, 0.42);
       --color-inline-skill-foreground: #483954;
       --color-primary: #665181;
+      --color-prominent-action: #34323d;
+      --color-prominent-action-foreground: #faf9f7;
       --color-primary-foreground: #ffffff;
       --color-primary-text: #665181;
       --color-primary-shadow: #000000;
@@ -387,7 +393,7 @@
       --color-header-foreground: #34323d;
       --color-header-border: #ddd8e1;
       --color-glass-surface: rgba(255, 255, 255, 0.74);
-      --color-glass-fallback: rgba(255, 255, 255, 0.94);
+      --color-glass-fallback: rgba(240, 237, 242, 0.94);
       --color-glass-tint: rgba(255, 255, 255, 0.22);
       --color-status-bar: #faf9f7;
       --color-md-body: #34323d;
@@ -419,6 +425,8 @@
       --color-adaptive-amber-50-950-a40: oklch(98.7% 0.022 95.277);
       --color-adaptive-amber-200-900-a60: oklch(92.4% 0.12 95.746);
       --color-adaptive-amber-500-a12-a16: oklch(76.9% 0.188 70.08 / 12%);
+      --color-adaptive-amber-500-a10-400-a10: oklch(76.9% 0.188 70.08 / 10%);
+      --color-adaptive-amber-500-a25-400-a25: oklch(76.9% 0.188 70.08 / 25%);
       --color-adaptive-amber-700-300: oklch(55.5% 0.163 48.998);
       --color-adaptive-amber-700-400: oklch(55.5% 0.163 48.998);
       --color-adaptive-amber-800-200: oklch(47.3% 0.137 46.201);
@@ -429,9 +437,12 @@
       --color-adaptive-blue-600-400: oklch(54.6% 0.245 262.881);
       --color-adaptive-black-a10-a25: rgb(0 0 0 / 10%);
       --color-adaptive-black-a15-a35: rgb(0 0 0 / 15%);
+      --color-adaptive-black-a2p5-white-a2p5: rgb(0 0 0 / 2.5%);
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -453,6 +464,8 @@
       --color-adaptive-neutral-600-300: oklch(43.9% 0 none);
       --color-adaptive-neutral-600-400: oklch(43.9% 0 none);
       --color-adaptive-neutral-950-50: oklch(14.5% 0 none);
+      --color-adaptive-neutral-950-a5-white-a5: oklch(14.5% 0 none / 5%);
+      --color-adaptive-neutral-950-a10-white-a10: oklch(14.5% 0 none / 10%);
       --color-adaptive-red-50-950-a80: oklch(97.1% 0.013 17.38);
       --color-adaptive-red-200-800: oklch(88.5% 0.062 18.334);
       --color-adaptive-red-600-a80-400-a80: oklch(57.7% 0.245 27.325 / 80%);
@@ -465,6 +478,8 @@
       --color-adaptive-rose-600-400: oklch(58.6% 0.253 17.585);
       --color-adaptive-rose-700-300: oklch(51.4% 0.222 16.935);
       --color-adaptive-sky-500-a12-a16: oklch(68.5% 0.169 237.323 / 12%);
+      --color-adaptive-sky-500-a10-400-a10: oklch(68.5% 0.169 237.323 / 10%);
+      --color-adaptive-sky-500-a25-400-a25: oklch(68.5% 0.169 237.323 / 25%);
       --color-adaptive-sky-600-400: oklch(58.8% 0.158 241.966);
       --color-adaptive-sky-700-300: oklch(50% 0.134 242.749);
       --color-adaptive-violet-500-a12-a16: oklch(60.6% 0.25 292.717 / 12%);
@@ -486,7 +501,7 @@
       --color-sheet: rgba(27, 27, 32, 0.98);
       --color-sheet-solid: #1b1b20;
       --color-card: #23232b;
-      --color-grouped-card: #23232b;
+      --color-grouped-card: #2d2934;
       --color-card-alt: #292831;
       --color-card-translucent: rgba(35, 35, 43, 0.8);
       --color-thread-canvas: #1b1b20;
@@ -496,8 +511,8 @@
       --color-thread-hover: #322b3d;
       --color-row-hover: #43394e;
       --color-composer-panel: rgba(27, 27, 32, 0.92);
-      --color-composer-surface: rgba(35, 35, 43, 0.9);
-      --color-composer-border: rgba(57, 53, 63, 0.46);
+      --color-composer-surface: rgba(45, 41, 52, 0.9);
+      --color-composer-border: rgba(57, 53, 63, 0.8);
       --color-foreground: #eeeaf1;
       --color-foreground-secondary: #b4aebb;
       --color-foreground-muted: #b4aebb;
@@ -512,6 +527,8 @@
       --color-inline-skill-border: rgba(196, 175, 223, 0.42);
       --color-inline-skill-foreground: #eeeaf1;
       --color-primary: #c4afdf;
+      --color-prominent-action: #eeeaf1;
+      --color-prominent-action-foreground: #1b1b20;
       --color-primary-foreground: #272030;
       --color-primary-text: #c4afdf;
       --color-primary-shadow: #000000;
@@ -541,7 +558,7 @@
       --color-header-foreground: #eeeaf1;
       --color-header-border: #39353f;
       --color-glass-surface: rgba(46, 44, 53, 0.74);
-      --color-glass-fallback: rgba(35, 35, 43, 0.9);
+      --color-glass-fallback: rgba(45, 41, 52, 0.9);
       --color-glass-tint: rgba(46, 44, 53, 0.22);
       --color-status-bar: #1b1b20;
       --color-md-body: #eeeaf1;
@@ -573,6 +590,8 @@
       --color-adaptive-amber-50-950-a40: oklch(27.9% 0.077 45.635 / 40%);
       --color-adaptive-amber-200-900-a60: oklch(41.4% 0.112 45.904 / 60%);
       --color-adaptive-amber-500-a12-a16: oklch(76.9% 0.188 70.08 / 16%);
+      --color-adaptive-amber-500-a10-400-a10: oklch(82.8% 0.189 84.429 / 10%);
+      --color-adaptive-amber-500-a25-400-a25: oklch(82.8% 0.189 84.429 / 25%);
       --color-adaptive-amber-700-300: oklch(87.9% 0.169 91.605);
       --color-adaptive-amber-700-400: oklch(82.8% 0.189 84.429);
       --color-adaptive-amber-800-200: oklch(92.4% 0.12 95.746);
@@ -583,9 +602,12 @@
       --color-adaptive-blue-600-400: oklch(70.7% 0.165 254.624);
       --color-adaptive-black-a10-a25: rgb(0 0 0 / 25%);
       --color-adaptive-black-a15-a35: rgb(0 0 0 / 35%);
+      --color-adaptive-black-a2p5-white-a2p5: rgb(255 255 255 / 2.5%);
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -835,8 +857,8 @@
       --color-inline-skill-border: rgba(163, 0, 76, 0.42);
       --color-inline-skill-foreground: #f8f1f5;
       --color-primary: #a3004c;
-      --color-prominent-action: #fbd0e8;
-      --color-prominent-action-foreground: #a3004c;
+      --color-prominent-action: #f9f8fb;
+      --color-prominent-action-foreground: #1f1a24;
       --color-primary-foreground: #fbd0e8;
       --color-primary-text: #d07ea4;
       --color-primary-shadow: #000000;
@@ -1000,8 +1022,8 @@
       --color-inline-skill-border: rgba(27, 125, 80, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #8f6410;
-      --color-prominent-action: #8f6410;
-      --color-prominent-action-foreground: #fffaff;
+      --color-prominent-action: #241523;
+      --color-prominent-action-foreground: #f3f7f4;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #8d6210;
       --color-primary-shadow: #000000;
@@ -1165,8 +1187,8 @@
       --color-inline-skill-border: rgba(105, 214, 154, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #e3b34e;
-      --color-prominent-action: #e3b34e;
-      --color-prominent-action-foreground: #241523;
+      --color-prominent-action: #fffaff;
+      --color-prominent-action-foreground: #1b2821;
       --color-primary-foreground: #241523;
       --color-primary-text: #e3b34e;
       --color-primary-shadow: #000000;
@@ -1330,8 +1352,8 @@
       --color-inline-skill-border: rgba(38, 114, 175, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #0a6f75;
-      --color-prominent-action: #0a6f75;
-      --color-prominent-action-foreground: #fffaff;
+      --color-prominent-action: #241523;
+      --color-prominent-action-foreground: #f5f7f8;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #0a6f75;
       --color-primary-shadow: #000000;
@@ -1495,8 +1517,8 @@
       --color-inline-skill-border: rgba(112, 185, 238, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #5bd0d6;
-      --color-prominent-action: #5bd0d6;
-      --color-prominent-action-foreground: #241523;
+      --color-prominent-action: #fffaff;
+      --color-prominent-action-foreground: #17212b;
       --color-primary-foreground: #241523;
       --color-primary-text: #5bd0d6;
       --color-primary-shadow: #000000;
@@ -1660,8 +1682,8 @@
       --color-inline-skill-border: rgba(174, 85, 42, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #b23535;
-      --color-prominent-action: #b23535;
-      --color-prominent-action-foreground: #fffaff;
+      --color-prominent-action: #241523;
+      --color-prominent-action-foreground: #f9f7f5;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #b23535;
       --color-primary-shadow: #000000;
@@ -1825,8 +1847,8 @@
       --color-inline-skill-border: rgba(240, 154, 100, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #f78a7a;
-      --color-prominent-action: #f78a7a;
-      --color-prominent-action-foreground: #241523;
+      --color-prominent-action: #fffaff;
+      --color-prominent-action-foreground: #291e1a;
       --color-primary-foreground: #241523;
       --color-primary-text: #f78a7a;
       --color-primary-shadow: #000000;
@@ -1990,8 +2012,8 @@
       --color-inline-skill-border: rgba(114, 83, 185, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #a82c87;
-      --color-prominent-action: #a82c87;
-      --color-prominent-action-foreground: #fffaff;
+      --color-prominent-action: #241523;
+      --color-prominent-action-foreground: #f8f7f9;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #a82c87;
       --color-primary-shadow: #000000;
@@ -2155,8 +2177,8 @@
       --color-inline-skill-border: rgba(157, 125, 242, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #f099d8;
-      --color-prominent-action: #f099d8;
-      --color-prominent-action-foreground: #241523;
+      --color-prominent-action: #fffaff;
+      --color-prominent-action-foreground: #1d1929;
       --color-primary-foreground: #241523;
       --color-primary-text: #f099d8;
       --color-primary-shadow: #000000;

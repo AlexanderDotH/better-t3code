@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   ProjectIndexModelCheckResult,
@@ -52,15 +53,14 @@ export function ProjectIndexReviewCard(props: {
     setBusy(true);
     setError(null);
     setResult(null);
-    try {
-      setResult(await props.onReview(selection));
-    } catch (failure) {
+    const reviewed = await settlePromise(() => props.onReview(selection));
+    if (reviewed._tag === "Failure") {
+      const failure = squashAtomCommandFailure(reviewed);
       setError(
         failure instanceof Error ? failure.message : translator.message("knowledgeGraph.error"),
       );
-    } finally {
-      setBusy(false);
-    }
+    } else setResult(reviewed.value);
+    setBusy(false);
   };
 
   return (

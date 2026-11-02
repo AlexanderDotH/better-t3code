@@ -197,7 +197,7 @@ export function useNativeAssemblyAiDictation(input: {
     setAudioWaveform(EMPTY_WAVEFORM);
     transition("starting");
 
-    try {
+    return (async () => {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) throw new Error("Microphone permission was denied.");
       if (abortController.signal.aborted) return;
@@ -277,7 +277,7 @@ export function useNativeAssemblyAiDictation(input: {
         return;
       }
       transition("recording");
-    } catch (error) {
+    })().catch((error) => {
       if (attemptRef.current !== attempt || abortController.signal.aborted) return;
       releaseAudio();
       sessionRef.current?.cancel();
@@ -287,7 +287,7 @@ export function useNativeAssemblyAiDictation(input: {
         "Could not start voice input",
         error instanceof Error ? error : new Error("Voice input setup failed."),
       );
-    }
+    });
   }, [
     audioStream.stream,
     cancelStreamingSession,
@@ -316,15 +316,15 @@ export function useNativeAssemblyAiDictation(input: {
     const abortController = abortRef.current;
     transition("stopping");
     releaseAudio();
-    try {
+    await (async () => {
       await session?.stop();
-    } catch (error) {
+    })().catch((error) => {
       if (attemptRef.current === attempt)
         onNoticeRef.current(
           "Could not stop voice input cleanly",
           error instanceof Error ? error : new Error("Voice input stop failed."),
         );
-    }
+    });
 
     if (attemptRef.current !== attempt || !draftSession?.isCurrent() || !abortController) return;
     const transcript = draftSession.transcript.trim();

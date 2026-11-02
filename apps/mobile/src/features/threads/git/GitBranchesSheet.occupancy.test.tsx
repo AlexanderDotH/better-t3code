@@ -8,6 +8,13 @@ const checkout = vi.hoisted(() => ({
   branches: [] as Array<{ name: string; worktreePath: string | null }>,
 }));
 
+vi.mock("../../../localization/useMobileInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useMobileInterfaceTranslator: () =>
+      createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
 vi.mock("react-native", () => ({
   Platform: { OS: "android" },
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -36,6 +43,12 @@ vi.mock("../../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({
     selectedThread: { environmentId: "environment-1", worktreePath: checkout.worktreePath },
     selectedThreadProject: { workspaceRoot: checkout.projectRoot },
+  }),
+}));
+vi.mock("../../../state/use-selected-thread-worktree", () => ({
+  useSelectedThreadWorktree: () => ({
+    selectedThreadWorktreePath: checkout.worktreePath,
+    selectedThreadCwd: checkout.worktreePath ?? checkout.projectRoot,
   }),
 }));
 vi.mock("../../../state/use-thread-detail", () => ({

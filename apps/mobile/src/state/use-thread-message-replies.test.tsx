@@ -34,9 +34,16 @@ vi.mock("../lib/composerContext", () => ({
   serializeComposerMessageForServer: (text: string) => ({ text }),
   uploadedComposerContext: () => undefined,
 }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  squashAtomCommandFailure: () => new Error("Connection lost"),
-}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>();
+  return {
+    ...actual,
+    squashAtomCommandFailure: (result: Parameters<typeof actual.squashAtomCommandFailure>[0]) =>
+      result.cause === undefined
+        ? new Error("Connection lost")
+        : actual.squashAtomCommandFailure(result),
+  };
+});
 vi.mock("./threads", () => ({ threadEnvironment: { startReply: "startReply" } }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => fixture.dispatch }));
 vi.mock("./use-composer-drafts", () => ({
@@ -127,9 +134,42 @@ describe("mobile reply submission", () => {
   it("keeps the draft and source after a rejected send", async () => {
     fixture.dispatch.mockResolvedValueOnce({ _tag: "Failure" });
     const before = fixture.draft;
-    expect(await (await replies()).sendReply(before)).toBeNull();
+    const actions = await replies();
+    expect(await actions.sendReply(before)).toBeNull();
     expect(fixture.draft).toEqual(before);
     expect(fixture.alert).toHaveBeenCalled();
+    expect(await actions.sendReply(before)).toBe(MessageId.make("sent"));
+    expect(fixture.dispatch).toHaveBeenCalledTimes(2);
+  });
+  it("releases an abandoned upload and sends the replacement reply without losing its draft", async () => {
+    const before = fixture.draft;
+    fixture.prepare.mockImplementationOnce(async () => {
+      fixture.draft = {
+        ...before,
+        text: "Replacement",
+        messageReply: {
+          ...before.messageReply!,
+          replyTopicId: SubagentId.make("replacement-topic"),
+        },
+      };
+      return { status: "ready", attachments: [], draftAttachments: [], pendingAttachmentIds: [] };
+    });
+    const actions = await replies();
+    expect(await actions.sendReply(before)).toBeNull();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(fixture.draft.text).toBe("Replacement");
+    expect(fixture.draft.messageReply?.replyTopicId).toBe("replacement-topic");
+    expect(await actions.sendReply(fixture.draft)).toBe(MessageId.make("sent"));
+    expect(fixture.dispatch).toHaveBeenCalledTimes(1);
+  });
+  it("preserves upload error details and releases the reply for retry", async () => {
+    fixture.prepare.mockRejectedValueOnce(new Error("Upload failed"));
+    const actions = await replies();
+    const before = fixture.draft;
+    expect(await actions.sendReply(before)).toBeNull();
+    expect(fixture.alert).toHaveBeenCalledWith("chat.reply.sendFailed", "Upload failed");
+    expect(fixture.draft).toEqual(before);
+    expect(await actions.sendReply(before)).toBe(MessageId.make("sent"));
   });
   it("dispatches to the selected topic and clears only after acceptance", async () => {
     const before = fixture.draft;

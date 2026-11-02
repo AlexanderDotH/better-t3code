@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Alert, Pressable } from "react-native";
 
 import {
@@ -30,6 +30,10 @@ type TranscriptPortabilityParams = {
   SettingsBetterT3TranscriptPortability: { readonly environmentId: EnvironmentId };
 };
 
+async function writeTranscriptToClipboard(text: string): Promise<void> {
+  if (!(await Clipboard.setStringAsync(text))) throw new Error("Clipboard write failed.");
+}
+
 export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
   const route =
     useRoute<RouteProp<TranscriptPortabilityParams, "SettingsBetterT3TranscriptPortability">>();
@@ -37,10 +41,7 @@ export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const config = useEnvironmentServerConfig(environmentId);
   const threads = useThreadShells();
-  const options = useMemo(
-    () => buildMobileTranscriptPortabilityOptions(threads, environmentId),
-    [environmentId, threads],
-  );
+  const options = buildMobileTranscriptPortabilityOptions(threads, environmentId);
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
   const [busy, setBusy] = useState(false);
   const exportThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
@@ -54,7 +55,7 @@ export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
   const copyTranscript = async () => {
     if (!supported || selectedThread === null || busy) return;
     setBusy(true);
-    try {
+    const copySelectedTranscript = async () => {
       const result = await exportThreadTranscript({
         environmentId,
         input: { threadId: selectedThread.threadId },
@@ -75,9 +76,7 @@ export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
         await copyThreadTranscript({
           threadId: result.value.threadId,
           exportThreadTranscript: async () => result.value,
-          writeText: async (text) => {
-            if (!(await Clipboard.setStringAsync(text))) throw new Error("Clipboard write failed.");
-          },
+          writeText: writeTranscriptToClipboard,
         });
       } catch {
         Alert.alert(
@@ -90,9 +89,8 @@ export function SettingsBetterT3TranscriptPortabilityRouteScreen() {
         translator.message("settings.betterT3.mobile.transcript.copiedTitle"),
         translator.message("settings.betterT3.mobile.transcript.copiedDescription"),
       );
-    } finally {
-      setBusy(false);
-    }
+    };
+    await copySelectedTranscript().finally(() => setBusy(false));
   };
 
   return (

@@ -103,7 +103,10 @@ it("submits the actual composer through the actual control and web hook to the r
         .drafts.get(gitCommitDraftKey(environmentId, scope.cwd))?.outcome,
     })),
   ]);
-  expect(observed).toMatchObject({ status: "request" });
+  expect(
+    observed.status,
+    `Expected the runtime RPC request before settlement: ${JSON.stringify(observed)}`,
+  ).toBe("request");
 
   expect(testState.refreshInputs).toEqual([{ cwd: scope.cwd }]);
   expect(testState.rpcInputs).toEqual([

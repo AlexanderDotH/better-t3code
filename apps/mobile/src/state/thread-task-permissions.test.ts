@@ -58,6 +58,7 @@ const state = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("./project-chat-settings", () => ({ rememberMobileProjectChatSettings: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: () => {},
