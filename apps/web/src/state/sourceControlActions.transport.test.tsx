@@ -8,9 +8,10 @@ import {
 } from "./sourceControlActions.transport.fixture";
 import { RegistryContext } from "@effect/atom-react";
 import { it as effectIt } from "@effect/vitest";
-import type { GitRunStackedActionInput } from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, type GitRunStackedActionInput } from "@t3tools/contracts";
 import { createVcsActionTransportId } from "@t3tools/client-runtime/state/vcs";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { useLayoutEffect } from "react";
@@ -49,6 +50,48 @@ afterEach(async () => {
 });
 
 describe("useGitStackedAction commit selection transport", () => {
+  it("shares initialized decoded grants between the web hook and its callback guard", async () => {
+    const { appAtomRegistry } = await import("../rpc/atomRegistry");
+    const { readEnvironmentScope, environmentSession } = await import("./session");
+    expect(appAtomRegistry).toBe(registry);
+    expect(latest.isAllowed).toBe(true);
+    expect(readEnvironmentScope(scope.environmentId, AuthSourceControlWriteScope)).toBe(true);
+    const session = registry.get(environmentSession.sessionStateAtom(scope.environmentId));
+    expect(session._tag).toBe("Success");
+    if (session._tag === "Success")
+      expect(session.value.permissions).toContain(AuthSourceControlWriteScope);
+    expect(testState.sessionRequests).toContain(
+      "https://environment.example.test/api/auth/session",
+    );
+  });
+
+  it("denies a retained callback after the decoded connection grant is revoked", async () => {
+    const { readEnvironmentScope, environmentSession } = await import("./session");
+    const retained = latest.run;
+    testState.sessionAuthorized = false;
+    await act(async () => {
+      const session = await executeAtomQuery(
+        registry,
+        environmentSession.sessionStateAtom(scope.environmentId),
+        {
+          refresh: true,
+        },
+      );
+      expect(session._tag).toBe("Success");
+      if (session._tag === "Success") expect(session.value.permissions).toEqual([]);
+    });
+    expect(latest.isAllowed).toBe(false);
+    expect(readEnvironmentScope(scope.environmentId, AuthSourceControlWriteScope)).toBe(false);
+    const denied = await retained({ actionId: "revoked-commit", action: "commit" });
+    expect(denied._tag).toBe("Failure");
+    if (denied._tag === "Failure")
+      expect(Cause.squash(denied.cause)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthSourceControlWriteScope,
+      });
+    expect(testState.rpcInputs).toEqual([]);
+  });
+
   effectIt.effect(
     "loads the configured checkout through the runtime before selecting commit preparation",
     () =>

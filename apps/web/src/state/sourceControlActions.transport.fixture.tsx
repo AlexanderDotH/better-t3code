@@ -19,13 +19,17 @@ import type {
   RpcSession,
   WsRpcProtocolClient,
 } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthStandardClientScopes,
   EnvironmentId,
   ThreadId,
   WS_METHODS,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type VcsStatusResult,
+  type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -61,6 +65,9 @@ const testState = vi.hoisted(() => ({
   runtime: undefined as
     | Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore, never>
     | undefined,
+  registry: undefined as AtomRegistry.AtomRegistry | undefined,
+  sessionAuthorized: true,
+  sessionRequests: new Array<string>(),
   rpcInputs: new Array<GitRunStackedActionInput>(),
   refreshInputs: new Array<unknown>(),
   statusRefreshInputs: new Array<EnvironmentRpcInput<typeof WS_METHODS.vcsRefreshStatus>>(),
@@ -72,24 +79,14 @@ const testState = vi.hoisted(() => ({
   threadId: null as ThreadId | null,
 }));
 
-vi.mock("@t3tools/client-runtime/state/session", async () => {
-  const { Atom, AsyncResult } = await import("effect/reactivity");
-  const { AuthStandardClientScopes } = await import("@t3tools/contracts");
-  const session = Atom.make(
-    AsyncResult.success({
-      authenticated: true,
-      scopes: AuthStandardClientScopes,
-      permissions: AuthStandardClientScopes,
-      auth: {
-        policy: "remote-reachable",
-        bootstrapMethods: [],
-        sessionMethods: [],
-        sessionCookieName: "test",
-      },
-    }),
-  );
-  return { createEnvironmentSessionAtoms: () => ({ sessionStateAtom: () => session }) };
-});
+vi.mock("../rpc/atomRegistry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../rpc/atomRegistry")>()),
+  get appAtomRegistry() {
+    if (testState.registry === undefined)
+      throw new Error("The test atom registry is not initialized.");
+    return testState.registry;
+  },
+}));
 
 vi.mock("../connection/runtime", () => ({
   get connectionAtomRuntime() {
@@ -179,6 +176,10 @@ export function deferStackedResponse() {
 }
 
 export async function setupTransportTest(options: { status?: VcsStatusResult } = {}) {
+  const registry = AtomRegistry.make();
+  testState.registry = registry;
+  testState.sessionAuthorized = true;
+  testState.sessionRequests.length = 0;
   if (testState.runtime === undefined) {
     testState.runtime = Atom.runtime(
       Layer.unwrap(
@@ -229,13 +230,22 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
             probe: Effect.void,
             closed: Effect.never,
           };
+          const target = new PrimaryConnectionTarget({
+            environmentId,
+            label: "Test environment",
+            httpBaseUrl: "https://environment.example.test",
+            wsBaseUrl: "wss://environment.example.test",
+          });
+          const prepared: PreparedConnection = {
+            environmentId,
+            label: target.label,
+            httpBaseUrl: target.httpBaseUrl,
+            socketUrl: "wss://environment.example.test/ws",
+            httpAuthorization: { _tag: "Bearer", token: "test-bearer-token" },
+            target,
+          };
           const supervisor = EnvironmentSupervisor.of({
-            target: new PrimaryConnectionTarget({
-              environmentId,
-              label: "Test environment",
-              httpBaseUrl: "https://environment.example.test",
-              wsBaseUrl: "wss://environment.example.test",
-            }),
+            target,
             state: yield* SubscriptionRef.make<SupervisorConnectionState>({
               ...AVAILABLE_CONNECTION_STATE,
               desired: true,
@@ -245,7 +255,7 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
               generation: 1,
             }),
             session: yield* SubscriptionRef.make(Option.some(session)),
-            prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+            prepared: yield* SubscriptionRef.make(Option.some(prepared)),
             connect: Effect.void,
             disconnect: Effect.void,
             retryNow: Effect.void,
@@ -279,9 +289,31 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
             clearVcsRefs: cacheWrite,
             clear: cacheWrite,
           });
-          return Layer.merge(
+          return Layer.mergeAll(
             Layer.succeed(EnvironmentRegistry, environmentRegistry),
             Layer.succeed(Persistence.EnvironmentCacheStore, cache),
+            layerRemoteHttpClient(async (request, init) => {
+              const url = request instanceof Request ? request.url : String(request);
+              const headers =
+                request instanceof Request ? request.headers : new Headers(init?.headers);
+              if (
+                url !== "https://environment.example.test/api/auth/session" ||
+                headers.get("authorization") !== "Bearer test-bearer-token"
+              )
+                throw new Error(`Unexpected auth request in source control fixture: ${url}`);
+              testState.sessionRequests.push(url);
+              return Response.json({
+                authenticated: true,
+                scopes: testState.sessionAuthorized ? AuthStandardClientScopes : [],
+                permissions: testState.sessionAuthorized ? AuthStandardClientScopes : [],
+                auth: {
+                  policy: "remote-reachable",
+                  bootstrapMethods: [],
+                  sessionMethods: [],
+                  sessionCookieName: "test",
+                },
+              } satisfies AuthSessionState);
+            }),
           );
         }),
       ),
@@ -298,5 +330,14 @@ export async function setupTransportTest(options: { status?: VcsStatusResult } =
   testState.stackedResponse = undefined;
   testState.onStackedRequest = undefined;
   testState.status = options.status ?? vcsStatus();
-  return AtomRegistry.make();
+  const { environmentSession } = await import("./session");
+  const session = await executeAtomQuery(
+    registry,
+    environmentSession.sessionStateAtom(environmentId),
+  );
+  if (session._tag === "Failure") {
+    registry.dispose();
+    throw squashAtomCommandFailure(session);
+  }
+  return registry;
 }
