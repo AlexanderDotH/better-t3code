@@ -542,6 +542,11 @@ describe("EnvironmentSupervisor", () => {
       const waiting = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
       expect(presentConnectionState(waiting)).toEqual({
         phase: "reconnecting",
+        network: "online",
+        stage: null,
+        attempt: 1,
+        failure: null,
+        retry: { mode: "automatic", at: 2_000 },
         error: null,
         traceId: null,
       });

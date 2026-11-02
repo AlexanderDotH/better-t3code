@@ -32,6 +32,8 @@ export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
   readonly cwd: string;
   readonly prompt: string;
+  /** Select only after resolving and supplying image inputs to the provider. */
+  readonly promptWithImages?: string | undefined;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
@@ -130,6 +132,9 @@ export function fromRunner(name: string, run: Runner) {
       cwd: input.cwd,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
+      promptWithImages: input.attachments?.some((attachment) => attachment.type === "image")
+        ? buildBranchNamePrompt({ ...input, imageInputs: true }).prompt
+        : undefined,
       ...buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
@@ -147,6 +152,9 @@ export function fromRunner(name: string, run: Runner) {
       cwd: input.cwd,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
+      promptWithImages: input.attachments?.some((attachment) => attachment.type === "image")
+        ? buildThreadTitlePrompt({ ...input, imageInputs: true }).prompt
+        : undefined,
       ...buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
@@ -190,8 +198,9 @@ export function fromRunner(name: string, run: Runner) {
   });
   const generateThreadMetadata: NonNullable<ProviderTextGeneration["generateThreadMetadata"]> =
     Effect.fn(`${name}.generateThreadMetadata`)(function* (input) {
+      const { attachments: _attachments, ...request } = input;
       const result = yield* run({
-        ...input,
+        ...request,
         operation: "generateThreadMetadata",
         ...buildThreadMetadataPrompt(input),
       });

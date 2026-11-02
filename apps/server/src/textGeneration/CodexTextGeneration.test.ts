@@ -403,6 +403,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           branch: "fix/ui-regression",
         }),
         requireImage: true,
+        stdinMustContain: "Use attached images as primary context",
+        stdinMustNotContain: "Attachment contents are unavailable",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -443,6 +445,37 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           expect(generated.branch).toBe("fix/ui-regression");
         }),
     ),
+  );
+
+  it.effect(
+    "keeps combined thread metadata generation text-only even when an image is available",
+    () =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Fix layout", branch: "fix-layout" }),
+          forbidArg: "--image",
+          stdinMustContain: "Attachment contents are unavailable",
+          stdinMustNotContain: "Use attached images as primary context",
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+            yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+            const id = "thread-metadata-image";
+            yield* fs.writeFile(path.join(attachmentsDir, `${id}.png`), Buffer.from("image"));
+            const result = yield* textGeneration.generateThreadMetadata({
+              cwd: process.cwd(),
+              message: "Fix the layout",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              attachments: [
+                { type: "image", id, name: "layout.png", mimeType: "image/png", sizeBytes: 5 },
+              ],
+            });
+            expect(result).toEqual({ title: "Fix layout", branch: "feature/fix-layout" });
+          }),
+      ),
   );
 });
 

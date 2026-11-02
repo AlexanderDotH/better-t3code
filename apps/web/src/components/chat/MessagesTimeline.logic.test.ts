@@ -33,6 +33,44 @@ import {
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
+import { buildToolCallExpandedBody } from "./TimelineWorkEntryRow.logic";
+
+it("projects the presentation-switch command as one named expandable tool in each layout", () => {
+  const createdAt = "2026-03-17T19:12:28.000Z";
+  const tool: Extract<TimelineEntry, { kind: "work" }> = {
+    id: "presentation-tool",
+    kind: "work",
+    createdAt,
+    entry: {
+      id: "presentation-tool",
+      createdAt,
+      tone: "tool",
+      label: "Run command",
+      command: "printf preserved",
+      detail: "Preserved tool output",
+      toolCallId: "presentation-tool",
+      itemType: "command_execution",
+      toolLifecycleStatus: "completed",
+      runId: null,
+    },
+  };
+  const input = {
+    timelineEntries: [tool],
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+  const current = deriveMessagesTimelineRows({ ...input, chatVisualMode: "current" });
+  expect(current).toHaveLength(1);
+  expect(current[0]).toMatchObject({ kind: "work", displayLabel: "printf preserved" });
+  expect(buildToolCallExpandedBody(tool.entry, undefined, "printf preserved", null)).toBe(
+    "Preserved tool output",
+  );
+  const better = deriveMessagesTimelineRows({ ...input, chatVisualMode: "better-t3" });
+  expect(better).toEqual(current);
+  const classic = deriveMessagesTimelineRows({ ...input, chatVisualMode: "classic" });
+  expect(classic).toEqual(current);
+});
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {

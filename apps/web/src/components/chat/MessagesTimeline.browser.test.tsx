@@ -1521,11 +1521,10 @@ it("preserves the user message and expanded tool output while presentation modes
     '[data-message-id="presentation-user"] [data-user-message-body]',
   );
   expect(user).not.toBeNull();
-  const disclosure = screen.container.querySelector<HTMLElement>(
-    '[role="button"][aria-expanded="false"]',
-  );
-  expect(disclosure).not.toBeNull();
-  await click(disclosure!);
+  const disclosure = screen.getByRole("button", { name: "printf preserved", exact: true });
+  await expect.element(disclosure).toBeVisible();
+  await expect.element(disclosure).toHaveAttribute("aria-expanded", "false");
+  await disclosure.click();
   await expect.element(page.getByText("Preserved tool output", { exact: true })).toBeVisible();
   for (const mode of ["better-t3", "classic", "current"] as const) {
     await act(() => {
@@ -1544,10 +1543,6 @@ it("preserves the user message and expanded tool output while presentation modes
       ),
     ).toBe(user);
     await expect.element(page.getByText("Preserved tool output", { exact: true })).toBeVisible();
-    expect(
-      screen.container
-        .querySelector('[role="button"][aria-expanded]')
-        ?.getAttribute("aria-expanded"),
-    ).toBe("true");
+    await expect.element(disclosure).toHaveAttribute("aria-expanded", "true");
   }
 });

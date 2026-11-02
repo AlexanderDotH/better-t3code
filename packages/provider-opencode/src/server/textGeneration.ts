@@ -243,7 +243,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 model: parsedModel,
                 ...(selectedAgent ? { agent: selectedAgent } : {}),
                 ...(selectedVariant ? { variant: selectedVariant } : {}),
-                parts: [{ type: "text", text: input.prompt }, ...fileParts],
+                parts: [
+                  {
+                    type: "text",
+                    text:
+                      fileParts.length > 0
+                        ? (input.promptWithImages ?? input.prompt)
+                        : input.prompt,
+                  },
+                  ...fileParts,
+                ],
               },
               { signal },
             ),

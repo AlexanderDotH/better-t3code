@@ -1,5 +1,6 @@
 import {
   setupTransportTest,
+  deferStackedResponse,
   transportTestState,
   scope,
   threadId,
@@ -13,6 +14,7 @@ import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { commitResult } from "../components/git-workbench/gitCommitTestFixtures";
 
 const testState = transportTestState();
 
@@ -42,6 +44,39 @@ afterEach(async () => {
 });
 
 describe("useGitStackedAction commit selection transport", () => {
+  it("observes the runtime request before releasing its terminal result", async () => {
+    using response = deferStackedResponse();
+    const actionId = "held-commit-response";
+    let pending!: ReturnType<typeof latest.run>;
+    await act(() => {
+      pending = latest.run({
+        actionId,
+        action: "commit",
+        commitSelection: { mode: "staged" },
+        threadId,
+      });
+    });
+    await act(async () => {
+      expect(await response.received).toEqual({
+        actionId: createVcsActionTransportId(scope, actionId),
+        cwd: scope.cwd,
+        action: "commit",
+        commitSelection: { mode: "staged" },
+        threadId,
+      });
+    });
+    expect(latest.isPending).toBe(true);
+
+    const result = commitResult();
+    await act(async () => {
+      response.complete(result);
+      const completed = await pending;
+      expect(AsyncResult.isSuccess(completed)).toBe(true);
+      if (completed._tag === "Success") expect(completed.value).toEqual(result);
+    });
+    expect(latest.isPending).toBe(false);
+  });
+
   it("commits the staged index after refreshing the real workbench command", async () => {
     const { gitWorkbenchEnvironment } = await import("./gitWorkbench");
     const actionId = "after-workbench-refresh";

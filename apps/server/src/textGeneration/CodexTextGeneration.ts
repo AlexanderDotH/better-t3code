@@ -214,6 +214,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     operation,
     cwd,
     prompt,
+    promptWithImages,
     outputSchema: outputSchemaJson,
     modelSelection,
     attachments,
@@ -307,7 +308,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         cwd,
         shell: spawnCommand.shell,
         stdin: {
-          stream: Stream.encodeText(Stream.make(prompt)),
+          stream: Stream.encodeText(
+            Stream.make(imagePaths.length > 0 ? (promptWithImages ?? prompt) : prompt),
+          ),
         },
         forceKillAfter: "1 second",
       });

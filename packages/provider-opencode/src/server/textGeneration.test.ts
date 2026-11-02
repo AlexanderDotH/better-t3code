@@ -376,9 +376,15 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         });
 
         expect(runtimeMock.state.promptParts[0]).toEqual([
-          expect.objectContaining({ type: "text" }),
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringContaining("Use attached images as primary context"),
+          }),
           expect.objectContaining({ type: "file", filename: "screenshot.png" }),
         ]);
+        expect(JSON.stringify(runtimeMock.state.promptParts[0])).toContain(
+          "Other attachment contents are unavailable",
+        );
       }),
     ),
   );

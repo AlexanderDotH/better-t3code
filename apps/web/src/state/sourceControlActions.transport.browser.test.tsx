@@ -1,5 +1,6 @@
 import {
   setupTransportTest,
+  deferStackedResponse,
   transportTestState,
   scope,
   threadId,
@@ -24,6 +25,7 @@ it("submits the actual composer through the actual control and web hook to the r
   const registry = await setupTransportTest();
   testState.stackedResult = commitResult();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  using response = deferStackedResponse();
   const _draftCleanup = { [Symbol.dispose]: () => useGitCommitDraftStore.getState().clear() };
   useGitCommitDraftStore.getState().clear();
   using _draft = _draftCleanup;
@@ -66,15 +68,18 @@ it("submits the actual composer through the actual control and web hook to the r
   });
   const button = container.querySelector<HTMLButtonElement>('[data-git-commit-action="commit"]')!;
   await expect.element(button).not.toBeDisabled();
-  await act(async () => {
-    button.click();
-    await settled.promise;
-  });
+  await act(() => button.click());
+  const observed = await Promise.race([
+    response.received.then((input) => ({ status: "request" as const, input })),
+    settled.promise.then(() => ({
+      status: "settled" as const,
+      outcome: useGitCommitDraftStore
+        .getState()
+        .drafts.get(gitCommitDraftKey(environmentId, scope.cwd))?.outcome,
+    })),
+  ]);
+  expect(observed).toMatchObject({ status: "request" });
 
-  expect(
-    useGitCommitDraftStore.getState().drafts.get(gitCommitDraftKey(environmentId, scope.cwd))
-      ?.outcome,
-  ).toEqual({ status: "success", result: testState.stackedResult });
   expect(testState.refreshInputs).toEqual([{ cwd: scope.cwd }]);
   expect(testState.rpcInputs).toEqual([
     {
@@ -86,6 +91,13 @@ it("submits the actual composer through the actual control and web hook to the r
       threadId,
     },
   ]);
+  expect(textarea.value).toBe(commitMessage);
+  await act(() => response.complete(testState.stackedResult!));
+  await settled.promise;
+  expect(
+    useGitCommitDraftStore.getState().drafts.get(gitCommitDraftKey(environmentId, scope.cwd))
+      ?.outcome,
+  ).toEqual({ status: "success", result: testState.stackedResult });
   await expect.element(textarea).toHaveValue("");
   expect(testState.metadataInputs).toEqual([]);
 });

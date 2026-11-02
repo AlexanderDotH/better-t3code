@@ -26,7 +26,11 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { workbenchSnapshot, vcsStatus } from "../components/git-workbench/gitCommitTestFixtures";
+import {
+  deferredResult,
+  workbenchSnapshot,
+  vcsStatus,
+} from "../components/git-workbench/gitCommitTestFixtures";
 import { vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
@@ -37,6 +41,8 @@ const testState = vi.hoisted(() => ({
   refreshInputs: new Array<unknown>(),
   metadataInputs: new Array<unknown>(),
   stackedResult: null as GitRunStackedActionResult | null,
+  stackedResponse: undefined as Promise<GitRunStackedActionResult> | undefined,
+  onStackedRequest: undefined as ((input: GitRunStackedActionInput) => void) | undefined,
   threadId: null as ThreadId | null,
 }));
 
@@ -130,6 +136,22 @@ export function transportTestState() {
   return testState;
 }
 
+export function deferStackedResponse() {
+  const received = deferredResult<GitRunStackedActionInput>();
+  const response = deferredResult<GitRunStackedActionResult>();
+  testState.onStackedRequest = received.resolve;
+  testState.stackedResponse = response.promise;
+  return {
+    received: received.promise,
+    complete: response.resolve,
+    [Symbol.dispose]() {
+      response.resolve(testState.stackedResult ?? result);
+      testState.onStackedRequest = undefined;
+      testState.stackedResponse = undefined;
+    },
+  };
+}
+
 export async function setupTransportTest() {
   if (testState.runtime === undefined) {
     testState.runtime = Atom.runtime(
@@ -150,13 +172,21 @@ export async function setupTransportTest() {
             },
             [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) => {
               testState.rpcInputs.push(input);
-              return Stream.make({
-                kind: "action_finished" as const,
-                actionId: input.actionId,
-                cwd: input.cwd,
-                action: input.action,
-                result: testState.stackedResult ?? result,
-              });
+              const response = testState.stackedResponse;
+              testState.onStackedRequest?.(input);
+              return Stream.fromEffect(
+                response === undefined
+                  ? Effect.succeed(testState.stackedResult ?? result)
+                  : Effect.promise(() => response),
+              ).pipe(
+                Stream.map((result) => ({
+                  kind: "action_finished" as const,
+                  actionId: input.actionId,
+                  cwd: input.cwd,
+                  action: input.action,
+                  result,
+                })),
+              );
             },
           } as unknown as WsRpcProtocolClient;
           const session: RpcSession = {
@@ -233,5 +263,7 @@ export async function setupTransportTest() {
   testState.refreshInputs.length = 0;
   testState.metadataInputs.length = 0;
   testState.stackedResult = null;
+  testState.stackedResponse = undefined;
+  testState.onStackedRequest = undefined;
   return AtomRegistry.make();
 }

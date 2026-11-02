@@ -138,7 +138,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     });
     yield* client.session.prompt({
       sessionID: session.id,
-      text: input.prompt,
+      text: images.length > 0 ? (input.promptWithImages ?? input.prompt) : input.prompt,
       ...(images.length === 0 ? {} : { files: images }),
     });
     return yield* Deferred.await(outcome);

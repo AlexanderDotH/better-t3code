@@ -271,6 +271,7 @@ export interface BranchNamePromptInput {
   naming?: BranchNamingOptions | undefined;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  imageInputs?: boolean | undefined;
   policy?: TextGenerationPolicy | undefined;
 }
 
@@ -280,7 +281,21 @@ interface PromptFromMessageInput {
   rules: ReadonlyArray<string>;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  imageInputs?: boolean | undefined;
   additionalInstructions?: string | undefined;
+}
+
+function attachmentContentInstruction(
+  input: Pick<PromptFromMessageInput, "attachments" | "imageInputs">,
+): string {
+  if (!input.imageInputs)
+    return "Attachment contents are unavailable. Use the user message and attachment metadata only; do not infer unseen contents.";
+  return (
+    "Use attached images as primary context for visual/UI issues." +
+    (input.attachments?.some((attachment) => attachment.type !== "image")
+      ? " Other attachment contents are unavailable; use their metadata only."
+      : "")
+  );
 }
 
 function buildPromptFromMessage(input: PromptFromMessageInput): string {
@@ -303,6 +318,7 @@ function buildPromptFromMessage(input: PromptFromMessageInput): string {
       "",
       "Attachment metadata:",
       limitSection(attachmentLines.join("\n"), 4_000),
+      attachmentContentInstruction(input),
     );
   }
 
@@ -330,10 +346,10 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
                   "Return only the descriptive branch fragment, without a prefix or namespace. The application adds the configured prefix.",
                 ]),
           ]),
-      "If images are attached, use them as primary context for visual/UI issues.",
     ],
     message: input.message,
     attachments: input.attachments,
+    imageInputs: input.imageInputs,
     additionalInstructions:
       input.naming?.mode === "custom"
         ? input.naming.instructions
@@ -352,6 +368,7 @@ export interface ThreadTitlePromptInput {
   previousTitle?: string | undefined;
   forkSource?: ThreadTitleForkSource | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  imageInputs?: boolean | undefined;
   instructions?: string | undefined;
 }
 
@@ -384,7 +401,6 @@ Editorial rules:
 - Do not claim the work is complete.
 - Do not copy and truncate the user's message.
 - Avoid project names already visible in the UI, quotes, labels, filler, and trailing punctuation.
-- Use attached images as primary context for UI issues.
 - When a URL or attachment is the only source of the subject, use available tools to inspect it directly.
 - Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
 - If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.`;
@@ -413,7 +429,6 @@ Editorial rules:
 - Do not claim the work is complete.
 - Do not copy and truncate a thread message.
 - Avoid project names already visible in the UI, PR numbers, quotes, labels, filler, and trailing punctuation.
-- Use attached images as primary context for UI issues.
 - When a URL or attachment is the only source of the subject, use available tools to inspect it directly.
 - Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
 - If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.
@@ -458,7 +473,7 @@ function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
     suffix += `\n${additionalInstructions.join("\n")}`;
   }
   if (attachmentLines.length > 0) {
-    suffix += `\n\nAttachment metadata:\n${limitSection(attachmentLines.join("\n"), 4_000)}`;
+    suffix += `\n\nAttachment metadata:\n${limitSection(attachmentLines.join("\n"), 4_000)}\n${attachmentContentInstruction(input)}`;
   }
   return suffix;
 }
@@ -489,7 +504,7 @@ function metadataPrompt(prompt: string) {
 
 export type ThreadMetadataPromptInput = BranchNamePromptInput;
 export function buildThreadMetadataPrompt(input: ThreadMetadataPromptInput) {
-  const title = buildThreadTitlePrompt(input);
+  const title = buildThreadTitlePrompt({ ...input, imageInputs: false });
   return {
     prompt: metadataPrompt(
       `${title.prompt.replace("Return JSON with keys title and needsRefinement.", 'Return JSON with exactly two keys: "title" and "branch".').replace(/Set needsRefinement[^\n]*\n/, "")}\nbranch must be a concise semantic git branch fragment for the requested work.`,

@@ -16,6 +16,67 @@ import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts
 const layer = TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("OpenCode2TextGeneration", (it) => {
+  it.effect("pairs image inputs with an image-aware naming prompt through the native SDK", () =>
+    Effect.gen(function* () {
+      let prompt: unknown;
+      const sessionID = "ses_f0ec85cf6ffebfalpvV2E9nocu";
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer(
+        {
+          provider: "opencode",
+          protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+          version: "2.0.18",
+          scenario: "opencode2_image_title_generation",
+          entries: [
+            ...OPENCODE2_TITLE_GENERATION.map((entry) =>
+              entry.type === "expect_outbound" && entry.label === "session.prompt"
+                ? {
+                    ...entry,
+                    frame: {
+                      type: "session.prompt",
+                      input: {
+                        sessionID,
+                        text: "<any>",
+                        files: [{ uri: "<any>", name: "screenshot.png" }],
+                      },
+                    },
+                  }
+                : entry,
+            ),
+            { type: "runtime_exit", status: "success" },
+          ],
+        },
+        {
+          onPrompt: (input) => {
+            prompt = input;
+          },
+        },
+      );
+      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+      );
+      const result = yield* textGeneration.generateThreadTitle({
+        cwd: process.cwd(),
+        message: "Name the screenshot issue",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "opencode/big-pickle",
+        },
+        attachments: [
+          {
+            type: "image",
+            id: "thread-image",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+      });
+      assert.equal(result.title, "Fix OAuth Login Redirect Loop");
+      assert.include(JSON.stringify(prompt), "Use attached images as primary context");
+      assert.notInclude(JSON.stringify(prompt), "Attachment contents are unavailable");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("generates a title in a temporary session on the free tier and removes it", () =>
     Effect.gen(function* () {
       const server = yield* OpenCode2AdapterV2Testkit.replayServer({

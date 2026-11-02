@@ -7,6 +7,9 @@ const rendererTests = [
   "src/visualizations/visualization.acceptance.test.ts",
 ];
 const assetTests = ["src/visualizations/visualization.assets.test.ts"];
+// pnpm can resolve Effect's wrapper through another Vite+ peer instance.
+// Evaluate it in each active runner so its suite context is initialized there.
+const testServer = { deps: { inline: ["@effect/vitest"] } };
 
 export default defineConfig({
   test: {
@@ -14,6 +17,7 @@ export default defineConfig({
       {
         test: {
           name: "client-runtime",
+          server: testServer,
           environment: "node",
           include: ["src/**/*.test.ts"],
           exclude: [...rendererTests, ...assetTests],
@@ -23,6 +27,7 @@ export default defineConfig({
       {
         test: {
           name: "client-runtime-renderers",
+          server: testServer,
           environment: "jsdom",
           include: rendererTests,
           setupFiles,
@@ -32,6 +37,7 @@ export default defineConfig({
       {
         test: {
           name: "client-runtime-assets",
+          server: testServer,
           environment: "node",
           include: assetTests,
           setupFiles,
