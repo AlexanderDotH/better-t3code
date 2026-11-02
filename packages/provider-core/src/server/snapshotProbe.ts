@@ -79,6 +79,7 @@ export interface ProviderProbeResult {
   readonly auth: ServerProviderAuth;
   readonly message?: string;
   readonly usageLimits?: ServerProviderUsageLimits;
+  readonly rateLimit?: NonNullable<ServerProvider["rateLimit"]>;
 }
 
 export interface ServerProviderPresentation {
@@ -278,6 +279,7 @@ export function buildServerProvider(input: {
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
+    ...(input.probe.rateLimit ? { rateLimit: input.probe.rateLimit } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }

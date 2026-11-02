@@ -129,9 +129,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
-  filePaths: Schema.optional(
-    Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
-  ),
+  filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
   /** Standard-index semantics used by Git workbench clients. `filePaths`
       remains decodable for legacy clients whose server path resets and
       rebuilds the index before committing. */
@@ -141,7 +139,7 @@ export const GitRunStackedActionInput = Schema.Struct({
       Schema.Struct({ mode: Schema.Literal("all") }),
       Schema.Struct({
         mode: Schema.Literal("paths"),
-        paths: Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
+        paths: Schema.Array(GitFilePath).check(Schema.isMinLength(1)),
       }),
     ]),
   ),

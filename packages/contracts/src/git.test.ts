@@ -24,6 +24,7 @@ const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCom
 const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadResult,
 );
+const encodeRunStackedActionInput = Schema.encodeSync(GitRunStackedActionInput);
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
 describe("GitCommandError", () => {
@@ -83,14 +84,27 @@ describe("GitPreparePullRequestThreadResult", () => {
 
 describe("GitRunStackedActionInput", () => {
   it("preserves leading and trailing whitespace in file paths", () => {
-    const parsed = decodeRunStackedActionInput({
-      actionId: "action-1",
-      cwd: "/repo",
-      action: "commit",
-      filePaths: [" leading.txt", "trailing.txt "],
+    const filePaths = [" leading.txt", "trailing.txt "];
+    const input = { actionId: "action-1", cwd: "/repo", action: "commit" };
+    const legacy = decodeRunStackedActionInput({ ...input, filePaths });
+    const selected = decodeRunStackedActionInput({
+      ...input,
+      commitSelection: { mode: "paths", paths: filePaths },
     });
 
-    expect(parsed.filePaths).toEqual([" leading.txt", "trailing.txt "]);
+    expect(legacy.filePaths).toEqual(filePaths);
+    expect(encodeRunStackedActionInput(legacy).filePaths).toEqual(filePaths);
+    expect(selected.commitSelection).toEqual({ mode: "paths", paths: filePaths });
+    expect(encodeRunStackedActionInput(selected).commitSelection).toEqual({
+      mode: "paths",
+      paths: filePaths,
+    });
+    for (const paths of [[], [""]]) {
+      expect(() => decodeRunStackedActionInput({ ...input, filePaths: paths })).toThrow();
+      expect(() =>
+        decodeRunStackedActionInput({ ...input, commitSelection: { mode: "paths", paths } }),
+      ).toThrow();
+    }
   });
 
   it("accepts explicit stacked actions and requires a client-provided actionId", () => {

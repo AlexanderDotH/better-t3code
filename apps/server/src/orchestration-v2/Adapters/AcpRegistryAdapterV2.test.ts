@@ -1250,7 +1250,11 @@ describe("AcpRegistryAdapterV2", () => {
       Effect.gen(function* () {
         const runtimeInstructions = {
           type: "text",
-          text: buildRuntimeInstructions({ harness: "acpRegistry", model: "default" }),
+          text: buildRuntimeInstructions({
+            harness: "acpRegistry",
+            model: "default",
+            interactionMode: "default",
+          }),
         };
         const promptBlocks = (ordinal: number) => [
           {
@@ -1276,10 +1280,17 @@ describe("AcpRegistryAdapterV2", () => {
             .map((block) => block.text)
             .join("\n");
         const frames = (ordinal: number) => {
-          const [request, , acknowledgment] = claudeFrames.prompt(ordinal);
+          const [, , acknowledgment] = claudeFrames.prompt(ordinal);
           const matching = echo(`echo-${ordinal}`, promptBlocks(ordinal));
           return [
-            request,
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "request",
+                method: "session/prompt",
+                params: { sessionId: CLAUDE_ROOT_SESSION, prompt: promptBlocks(ordinal) },
+              },
+            },
             echo("different-blocks", [
               {
                 type: "text",

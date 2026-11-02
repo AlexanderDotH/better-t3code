@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 
 import type { ChatGptAuthBroker } from "./chatgpt/ChatGptAuthBroker.ts";
 import { ChatGptAdapterBoundaryError, type ChatGptAdapterTransport } from "./ChatGptAdapter.ts";
@@ -72,12 +74,21 @@ describe("ChatGptProvider", () => {
         defaultTokens: 400_000,
         maxTokens: 400_000,
       });
+      const wire = Schema.fromJsonString(ServerProvider);
+      const encoded = yield* Schema.encodeEffect(wire)({
+        ...snapshot,
+        instanceId: ProviderInstanceId.make("chatgpt-test"),
+        driver: ProviderDriverKind.make("chatgpt"),
+      });
+      const published = yield* Schema.decodeEffect(wire)(encoded);
+      expect(published.rateLimit).toEqual({ status: "limited", retryAfterSeconds: 30 });
     }),
   );
 
   it.effect("fails closed without fallback models when live discovery drifts", () =>
     Effect.gen(function* () {
       const transport: ChatGptAdapterTransport = {
+        rateLimit: Effect.succeed({ status: "limited", retryAfterSeconds: 30 }),
         listModels: Effect.fail(
           new ChatGptAdapterBoundaryError({
             operation: "models/list",
@@ -97,6 +108,33 @@ describe("ChatGptProvider", () => {
       expect(snapshot.status).toBe("error");
       expect(snapshot.models).toEqual([]);
       expect(snapshot.message).toContain("protocol drift");
+      expect(snapshot.rateLimit).toEqual({ status: "limited", retryAfterSeconds: 30 });
+    }),
+  );
+
+  it.effect("keeps the live model catalog available when the rate-limit status is unknown", () =>
+    Effect.gen(function* () {
+      const transport: ChatGptAdapterTransport = {
+        rateLimit: Effect.succeed({ status: "unknown" }),
+        listModels: Effect.succeed([
+          {
+            id: "live-model",
+            displayName: "Live model",
+            contextWindow: 400_000,
+            reasoningEfforts: [],
+          },
+        ]),
+        streamResponse: () => Stream.empty,
+        compact: () => Effect.die("not used"),
+      };
+      const snapshot = yield* checkChatGptProviderStatus(
+        { enabled: true },
+        authenticatedBroker,
+        transport,
+      );
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["live-model"]);
+      expect(snapshot.rateLimit).toEqual({ status: "unknown" });
     }),
   );
 
