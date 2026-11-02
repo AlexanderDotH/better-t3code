@@ -17,7 +17,11 @@ export function materializeReplayTranscriptRuntimeInstructions(
             ? "fx"
             : undefined;
   if (harness === undefined) return transcript;
-  const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
+  const instructions = buildRuntimeInstructions({
+    harness,
+    model: runtime.model,
+    ...(runtime.driver === "grok" ? { interactionMode: "default" as const } : {}),
+  });
 
   return {
     ...transcript,

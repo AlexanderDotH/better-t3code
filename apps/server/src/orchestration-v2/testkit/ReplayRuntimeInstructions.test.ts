@@ -68,3 +68,46 @@ it("keeps Cursor's native compression command verbatim", () => {
   const original = transcript("/compress");
   assert.deepEqual(materializeReplayTranscriptRuntimeInstructions(original, runtime), original);
 });
+
+it("keeps the Grok request and real protocol references while adding the current mode reset once", () => {
+  const frame = {
+    kind: "request",
+    method: "session/prompt",
+    params: {
+      sessionId: "fixture-native-session",
+      prompt: [{ type: "text", text: "Inspect the existing code" }],
+      _meta: { promptId: "t3-xai-prompt-1", requestId: "t3-xai-prompt-1" },
+    },
+  };
+  const original: ProviderReplayTranscript = {
+    provider: "grok",
+    protocol: "acp",
+    version: "1",
+    scenario: "mode-reset",
+    entries: [{ type: "expect_outbound", frame }],
+  };
+  const grok = { driver: ProviderDriverKind.make("grok"), model: "grok-build" };
+  const result = materializeReplayTranscriptRuntimeInstructions(original, grok);
+  assert.deepEqual(result.entries[0], {
+    type: "expect_outbound",
+    frame: {
+      ...frame,
+      params: {
+        ...frame.params,
+        prompt: [
+          ...frame.params.prompt,
+          {
+            type: "text",
+            text: buildRuntimeInstructions({
+              harness: "Grok",
+              model: grok.model,
+              interactionMode: "default",
+            }),
+          },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(original.entries[0], { type: "expect_outbound", frame });
+  assert.deepEqual(materializeReplayTranscriptRuntimeInstructions(result, grok), result);
+});
