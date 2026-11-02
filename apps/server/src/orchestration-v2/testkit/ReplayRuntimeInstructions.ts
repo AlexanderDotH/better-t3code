@@ -20,7 +20,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
   const instructions = buildRuntimeInstructions({
     harness,
     model: runtime.model,
-    ...(runtime.driver === "grok" ? { interactionMode: "default" as const } : {}),
+    ...(runtime.driver === "cursor" ? {} : { interactionMode: "default" as const }),
   });
 
   return {

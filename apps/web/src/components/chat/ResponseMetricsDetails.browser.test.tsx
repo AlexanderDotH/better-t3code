@@ -76,7 +76,7 @@ it("explains each metric on keyboard focus and closes with Escape", async () => 
   for (const [index, label] of triggers().entries()) {
     await focusLabel(label);
     expect(document.activeElement).toBe(label);
-    await expect.element(page.getByRole("tooltip")).toHaveTextContent(explanations[index]!);
+    await expect.element(page.getByRole("tooltip")).toMatchTextContent(explanations[index]!);
     expect(label.getAttribute("aria-describedby")).toBe(popup()?.id);
     await userEvent.keyboard("{Escape}");
     await expect.poll(popup).toBeNull();

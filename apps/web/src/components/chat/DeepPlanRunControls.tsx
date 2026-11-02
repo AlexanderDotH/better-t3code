@@ -16,7 +16,7 @@ export function DeepPlanRunControls({
   disabled,
   canContinue = false,
   connected = true,
-  threadId = run.threadId,
+  threadId: requestedThreadId,
   latestRunId,
   onResume,
   onFinalValidation,
@@ -31,6 +31,7 @@ export function DeepPlanRunControls({
   onResume: (automatic?: boolean) => Promise<void>;
   onFinalValidation: () => Promise<void>;
 }) {
+  const threadId = requestedThreadId ?? run.threadId;
   const translate = useInterfaceTranslator().message;
   const [busy, setBusy] = useState(false);
   const [failure, setError] = useState<{
@@ -56,17 +57,18 @@ export function DeepPlanRunControls({
     inFlight.current = true;
     setBusy(true);
     setError(null);
-    try {
-      await operation();
-    } catch (cause) {
-      setError({
-        revision: run.revision,
-        message: cause instanceof Error ? cause.message : translate("chat.deepPlan.resumeFailed"),
+    await Promise.resolve()
+      .then(operation)
+      .catch((cause: unknown) => {
+        setError({
+          revision: run.revision,
+          message: cause instanceof Error ? cause.message : translate("chat.deepPlan.resumeFailed"),
+        });
+      })
+      .finally(() => {
+        inFlight.current = false;
+        setBusy(false);
       });
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Resume persisted work when the connected thread becomes idle.
   useEffect(() => {

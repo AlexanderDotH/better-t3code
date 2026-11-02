@@ -665,7 +665,7 @@ export interface StableMessagesTimelineRowsState {
   result: MessagesTimelineRow[];
 }
 
-function workGroupId(timelineEntryId: string): string {
+export function workGroupId(timelineEntryId: string): string {
   return `work-group:${timelineEntryId}`;
 }
 

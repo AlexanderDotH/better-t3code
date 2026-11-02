@@ -122,7 +122,7 @@ export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
 export function DeepPlanChecklist({
   run,
   environmentId,
-  threadId = run.threadId,
+  threadId: requestedThreadId,
   placement = "composer",
   actions,
   notice,
@@ -134,6 +134,7 @@ export function DeepPlanChecklist({
   actions?: ReactNode;
   notice?: ReactNode;
 }) {
+  const threadId = requestedThreadId ?? run.threadId;
   const translate = useInterfaceTranslator().message;
   const [expanded, setExpanded] = useLocalStorage(
     `t3code:deep-plan-checklist-expanded:${threadKey({ environmentId, threadId })}`,

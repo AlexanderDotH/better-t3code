@@ -51,7 +51,9 @@ describe("ChangedFilesCard", () => {
     }
     await using screen = await render(<Card />);
     await expect.element(screen.getByRole("button", { name: "src/file-1.ts" })).toBeVisible();
-    await expect.element(screen.getByRole("button", { name: "src/file-4.ts" })).not.toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "src/file-4.ts" }))
+      .not.toBeInTheDocument();
     await screen.getByRole("button", { name: "src/file-1.ts" }).click();
     expect(onOpenTurnDiff).toHaveBeenCalledWith(runId, "src/file-1.ts");
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
@@ -70,7 +72,9 @@ describe("ChangedFilesCard", () => {
     await screen.getByRole("button", { name: "src/file-4.ts" }).click();
     expect(onOpenTurnDiff).toHaveBeenLastCalledWith(runId, "src/file-4.ts");
     await screen.getByRole("button", { name: "Show fewer" }).click();
-    await expect.element(screen.getByRole("button", { name: "src/file-4.ts" })).not.toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "src/file-4.ts" }))
+      .not.toBeInTheDocument();
   });
 
   it("keeps root files actionable while collapsed folders expand through the public card", async () => {
@@ -94,16 +98,22 @@ describe("ChangedFilesCard", () => {
       );
     }
     await using screen = await render(<Card />);
-    await expect.element(screen.getByRole("button", { name: "apps/web/src" })).toBeVisible();
-    await expect.element(screen.getByRole("button", { name: "App.tsx" })).not.toBeVisible();
-    await screen.getByRole("button", { name: "README.md" }).click();
+    await expect
+      .element(screen.getByRole("button", { name: /^apps\/web\/src(?:\s|$)/ }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /^App\.tsx(?:\s|$)/ }))
+      .not.toBeInTheDocument();
+    await screen.getByRole("button", { name: /^README\.md(?:\s|$)/ }).click();
     expect(onOpenTurnDiff).toHaveBeenCalledWith(runId, "README.md");
     await screen.getByRole("button", { name: "Expand all folders" }).click();
-    await expect.element(screen.getByRole("button", { name: "App.tsx" })).toBeVisible();
-    await screen.getByRole("button", { name: "App.tsx" }).click();
+    await expect.element(screen.getByRole("button", { name: /^App\.tsx(?:\s|$)/ })).toBeVisible();
+    await screen.getByRole("button", { name: /^App\.tsx(?:\s|$)/ }).click();
     expect(onOpenTurnDiff).toHaveBeenLastCalledWith(runId, "apps/web/src/App.tsx");
     await screen.getByRole("button", { name: "Collapse all folders" }).click();
-    await expect.element(screen.getByRole("button", { name: "App.tsx" })).not.toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /^App\.tsx(?:\s|$)/ }))
+      .not.toBeInTheDocument();
   });
 
   it("expands a classic preview and hides older cards until requested", async () => {
@@ -129,19 +139,19 @@ describe("ChangedFilesCard", () => {
       );
     }
     await using screen = await render(<Card latest />);
-    const main = screen.getByRole("button", { name: "main.ts" });
-    const hidden = screen.getByRole("button", { name: "hidden.ts" });
+    const main = screen.getByRole("button", { name: /^main\.ts(?:\s|$)/ });
+    const hidden = screen.getByRole("button", { name: /^hidden\.ts(?:\s|$)/ });
     const header = () =>
       screen.container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
     await expect.element(main).toBeVisible();
-    await expect.element(hidden).not.toBeVisible();
+    await expect.element(hidden).not.toBeInTheDocument();
     await act(() => header().click());
     await expect.element(hidden).toBeVisible();
     await act(() => header().click());
-    await expect.element(hidden).not.toBeVisible();
+    await expect.element(hidden).not.toBeInTheDocument();
     await expect.element(main).toBeVisible();
     await screen.rerender(<Card latest={false} />);
-    await expect.element(main).not.toBeVisible();
+    await expect.element(main).not.toBeInTheDocument();
     await act(() => header().click());
     await expect.element(hidden).toBeVisible();
   });

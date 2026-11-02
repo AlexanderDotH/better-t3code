@@ -69,45 +69,52 @@ it("keeps Cursor's native compression command verbatim", () => {
   assert.deepEqual(materializeReplayTranscriptRuntimeInstructions(original, runtime), original);
 });
 
-it("keeps the Grok request and real protocol references while adding the current mode reset once", () => {
-  const frame = {
-    kind: "request",
-    method: "session/prompt",
-    params: {
-      sessionId: "fixture-native-session",
-      prompt: [{ type: "text", text: "Inspect the existing code" }],
-      _meta: { promptId: "t3-xai-prompt-1", requestId: "t3-xai-prompt-1" },
-    },
-  };
-  const original: ProviderReplayTranscript = {
-    provider: "grok",
-    protocol: "acp",
-    version: "1",
-    scenario: "mode-reset",
-    entries: [{ type: "expect_outbound", frame }],
-  };
-  const grok = { driver: ProviderDriverKind.make("grok"), model: "grok-build" };
-  const result = materializeReplayTranscriptRuntimeInstructions(original, grok);
-  assert.deepEqual(result.entries[0], {
-    type: "expect_outbound",
-    frame: {
-      ...frame,
+it.each([
+  { driver: "grok", harness: "Grok", model: "grok-build" },
+  { driver: "acpRegistry", harness: "acpRegistry", model: "default" },
+  { driver: "fx", harness: "fx", model: "fixture-model" },
+])(
+  "preserves $driver request references while adding the mode reset once",
+  ({ driver, harness, model }) => {
+    const frame = {
+      kind: "request",
+      method: "session/prompt",
       params: {
-        ...frame.params,
-        prompt: [
-          ...frame.params.prompt,
-          {
-            type: "text",
-            text: buildRuntimeInstructions({
-              harness: "Grok",
-              model: grok.model,
-              interactionMode: "default",
-            }),
-          },
-        ],
+        sessionId: "fixture-native-session",
+        prompt: [{ type: "text", text: "Inspect the existing code" }],
+        _meta: { promptId: "t3-xai-prompt-1", requestId: "t3-xai-prompt-1" },
       },
-    },
-  });
-  assert.deepEqual(original.entries[0], { type: "expect_outbound", frame });
-  assert.deepEqual(materializeReplayTranscriptRuntimeInstructions(result, grok), result);
-});
+    };
+    const original: ProviderReplayTranscript = {
+      provider: driver,
+      protocol: "acp",
+      version: "1",
+      scenario: "mode-reset",
+      entries: [{ type: "expect_outbound", frame }],
+    };
+    const provider = { driver: ProviderDriverKind.make(driver), model };
+    const result = materializeReplayTranscriptRuntimeInstructions(original, provider);
+    assert.deepEqual(result.entries[0], {
+      type: "expect_outbound",
+      frame: {
+        ...frame,
+        params: {
+          ...frame.params,
+          prompt: [
+            ...frame.params.prompt,
+            {
+              type: "text",
+              text: buildRuntimeInstructions({
+                harness,
+                model,
+                interactionMode: "default",
+              }),
+            },
+          ],
+        },
+      },
+    });
+    assert.deepEqual(original.entries[0], { type: "expect_outbound", frame });
+    assert.deepEqual(materializeReplayTranscriptRuntimeInstructions(result, provider), result);
+  },
+);

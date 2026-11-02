@@ -179,8 +179,8 @@ export function useGitWorkspaceDeckActions(input: {
     const isCurrent = () =>
       stagingRequestRef.current === request &&
       JSON.stringify([readLatestInput().environmentId, readLatestInput().cwd]) === scope;
+    let failure: string | null = null;
     void (async () => {
-      let failure: string | null = null;
       try {
         const result = await applySelection({
           environmentId: input.environmentId,
@@ -213,14 +213,14 @@ export function useGitWorkspaceDeckActions(input: {
             ? error.message
             : input.translate("git.changes.stagingFailed");
         if (staleGitState(error)) input.setDiffs({});
-      } finally {
-        if (isCurrent()) {
-          input.refreshChangesDiff();
-          input.refreshWorkbenchQuery();
-          finishStaging(request, failure);
-        }
       }
-    })();
+    })().finally(() => {
+      if (isCurrent()) {
+        input.refreshChangesDiff();
+        input.refreshWorkbenchQuery();
+        finishStaging(request, failure);
+      }
+    });
   };
 
   const setFilesStaged = (paths: readonly string[], staged: boolean) => {

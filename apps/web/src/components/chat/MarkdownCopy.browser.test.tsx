@@ -10,9 +10,15 @@ import { MarkdownTable } from "./MarkdownTable";
 function withoutAsyncClipboard() {
   const original = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
-  const execCommand = vi.spyOn(document, "execCommand").mockReturnValue(true);
+  const copiedText: string[] = [];
+  const execCommand = vi.spyOn(document, "execCommand").mockImplementation(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement) copiedText.push(active.value);
+    return true;
+  });
   return {
     execCommand,
+    copiedText,
     [Symbol.dispose]() {
       execCommand.mockRestore();
       Reflect.deleteProperty(navigator, "clipboard");
@@ -43,6 +49,7 @@ describe("markdown copy without the async clipboard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copy code" }));
     await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
+    expect(clipboard.copiedText).toEqual(["echo hi"]);
   });
 
   it("copies a table through the execCommand fallback", async () => {
@@ -68,5 +75,6 @@ describe("markdown copy without the async clipboard", () => {
     await userEvent.click(page.getByRole("menuitem", { name: "Copy as Markdown" }));
     await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
+    expect(clipboard.copiedText).toEqual(["| Name |\n| --- |\n| Ada |"]);
   });
 });

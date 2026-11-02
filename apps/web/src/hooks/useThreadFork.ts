@@ -52,7 +52,7 @@ export function useThreadFork(input: {
     pendingRef.current = true;
     setPendingBoundary(boundary);
     input.onError(thread.id, null);
-    try {
+    return (async () => {
       const environmentSettings = { ...DEFAULT_SERVER_SETTINGS, ...input.settings };
       const settingsTier = resolveProjectSettings(
         environmentSettings,
@@ -107,15 +107,17 @@ export function useThreadFork(input: {
         params: { environmentId: thread.environmentId, threadId },
       });
       input.onReady();
-    } catch (error) {
-      input.onError(
-        thread.id,
-        error instanceof Error ? error.message : "Could not fork this chat.",
-      );
-    } finally {
-      pendingRef.current = false;
-      setPendingBoundary(null);
-    }
+    })()
+      .catch((error) => {
+        input.onError(
+          thread.id,
+          error instanceof Error ? error.message : "Could not fork this chat.",
+        );
+      })
+      .finally(() => {
+        pendingRef.current = false;
+        setPendingBoundary(null);
+      });
   });
   return { pendingBoundary, onFork };
 }

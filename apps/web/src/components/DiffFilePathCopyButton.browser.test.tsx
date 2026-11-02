@@ -21,6 +21,8 @@ it("explains a denied clipboard write and lets the same path be copied again", a
   await copy.click();
 
   await expect.element(page.getByText("Failed to copy text to the clipboard.")).toBeVisible();
+  await expect.element(copy).toBeEnabled();
+  expect(write).toHaveBeenCalledTimes(1);
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await copy.click();
 

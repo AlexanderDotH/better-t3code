@@ -148,7 +148,7 @@ export function useMessageReplies({
     inFlightRef.current.add(threadKey);
     setSendingKeys(new Set(inFlightRef.current));
     setError(null);
-    try {
+    return (async () => {
       const capabilities = readCapabilities();
       const blockReason = fileAttachmentCapabilityBlockReason({
         files: send.files,
@@ -254,15 +254,17 @@ export function useMessageReplies({
         releaseDraftAttachments(attachments);
       }
       if (currentThreadKeyRef.current === threadKey) onSent();
-    } catch (cause) {
-      setError({
-        threadKey,
-        message: cause instanceof Error ? cause.message : translate("chat.reply.sendFailed"),
+    })()
+      .catch((cause) => {
+        setError({
+          threadKey,
+          message: cause instanceof Error ? cause.message : translate("chat.reply.sendFailed"),
+        });
+      })
+      .finally(() => {
+        inFlightRef.current.delete(threadKey);
+        setSendingKeys(new Set(inFlightRef.current));
       });
-    } finally {
-      inFlightRef.current.delete(threadKey);
-      setSendingKeys(new Set(inFlightRef.current));
-    }
   };
 
   return {

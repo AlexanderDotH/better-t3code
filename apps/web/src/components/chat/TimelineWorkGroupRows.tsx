@@ -21,6 +21,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   workEntryIsVisibleInGroup,
+  workGroupId,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -73,7 +74,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   const { workspaceRoot, routeThreadKey, onToggleWorkEntry, pendingApprovals } =
     use(TimelineRowCtx);
   const onToggleStandaloneEntry = (collapsed: boolean) =>
-    onToggleWorkEntry(disclosureAnchorKey, collapsed);
+    onToggleWorkEntry(disclosureAnchorKey, collapsed, workGroupId(anchorKey));
   const nonEmptyEntries = groupedEntries.filter((entry) => {
     const item = entry.projectedItem?.item;
     return (

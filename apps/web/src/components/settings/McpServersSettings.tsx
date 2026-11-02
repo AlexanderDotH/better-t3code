@@ -1623,40 +1623,43 @@ export function McpServersSettingsPanel(props: {
   ) => {
     setIsExporting(true);
     setExportError(null);
-    try {
-      const project =
-        projectEntries.find((option) => option.key === input.projectKey) ??
-        projectEntries[0] ??
-        null;
-      if (input.scope === "project" && !project) {
-        throw new Error("Select a project before exporting.");
-      }
-      const target = requireSettingsEnvironment({
-        primaryEnvironmentId:
-          deepLinkedEnvironmentId === null && input.scope !== "project"
-            ? primaryEnvironmentId
-            : null,
-        selectedEnvironmentId:
-          deepLinkedEnvironmentId ??
-          (input.scope === "project" ? (project?.environmentId ?? null) : null),
-      });
-      const result = await exportServers({
-        environmentId: target.environmentId,
-        input: {
-          ...buildExportInput({
-            scope: input.scope,
-            project,
-            includeDisabled: input.includeDisabled,
-          }),
-          ...(selectedProviderInstanceId ? { providerInstanceId: selectedProviderInstanceId } : {}),
-        },
-      });
-      setExportJson(result.json);
-    } catch (error) {
-      setExportError(errorMessage(error, "Failed to export MCP servers."));
-    } finally {
-      setIsExporting(false);
-    }
+    await Promise.resolve()
+      .then(() => {
+        const project =
+          projectEntries.find((option) => option.key === input.projectKey) ??
+          projectEntries[0] ??
+          null;
+        if (input.scope === "project" && !project) {
+          throw new Error("Select a project before exporting.");
+        }
+        const target = requireSettingsEnvironment({
+          primaryEnvironmentId:
+            deepLinkedEnvironmentId === null && input.scope !== "project"
+              ? primaryEnvironmentId
+              : null,
+          selectedEnvironmentId:
+            deepLinkedEnvironmentId ??
+            (input.scope === "project" ? (project?.environmentId ?? null) : null),
+        });
+        return exportServers({
+          environmentId: target.environmentId,
+          input: {
+            ...buildExportInput({
+              scope: input.scope,
+              project,
+              includeDisabled: input.includeDisabled,
+            }),
+            ...(selectedProviderInstanceId
+              ? { providerInstanceId: selectedProviderInstanceId }
+              : {}),
+          },
+        });
+      })
+      .then((result) => setExportJson(result.json))
+      .catch((error: unknown) =>
+        setExportError(errorMessage(error, "Failed to export MCP servers.")),
+      )
+      .finally(() => setIsExporting(false));
   };
 
   const openExportDialog = () => {
@@ -1745,33 +1748,38 @@ export function McpServersSettingsPanel(props: {
     const detailsKey = mcpRuntimeServerDetailsKey(target);
     if (loadingRuntimeDetails.has(detailsKey)) return;
     setLoadingRuntimeDetails((current) => new Set(current).add(detailsKey));
-    try {
-      const result = await runRuntimeDetailsQuery({
-        environmentId: target.environmentId,
-        input: {
-          providerInstanceId: target.providerInstanceId,
-          threadId: target.threadId,
-          runtimeSessionId: target.runtimeSessionId,
-          providerKey: target.providerKey,
-        },
+    await Promise.resolve()
+      .then(() =>
+        runRuntimeDetailsQuery({
+          environmentId: target.environmentId,
+          input: {
+            providerInstanceId: target.providerInstanceId,
+            threadId: target.threadId,
+            runtimeSessionId: target.runtimeSessionId,
+            providerKey: target.providerKey,
+          },
+        }),
+      )
+      .then((result) => {
+        if (result._tag === "Failure") throw Cause.squash(result.cause);
+        if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
+        setRuntimeDetails((current) => new Map(current).set(detailsKey, result.value));
+      })
+      .catch((error: unknown) => {
+        if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
+        toastManager.add({
+          type: "error",
+          title: translate("settings.mcp.toast.inventoryFailed"),
+          description: errorMessage(error, "The provider did not return server details."),
+        });
+      })
+      .finally(() => {
+        setLoadingRuntimeDetails((current) => {
+          const next = new Set(current);
+          next.delete(detailsKey);
+          return next;
+        });
       });
-      if (result._tag === "Failure") throw Cause.squash(result.cause);
-      if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
-      setRuntimeDetails((current) => new Map(current).set(detailsKey, result.value));
-    } catch (error) {
-      if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
-      toastManager.add({
-        type: "error",
-        title: translate("settings.mcp.toast.inventoryFailed"),
-        description: errorMessage(error, "The provider did not return server details."),
-      });
-    } finally {
-      setLoadingRuntimeDetails((current) => {
-        const next = new Set(current);
-        next.delete(detailsKey);
-        return next;
-      });
-    }
   };
 
   const configuredServerViews: ReadonlyArray<McpConfiguredServerView> = visibleServers.map(

@@ -225,18 +225,17 @@ function ProjectDetail({
     await runExclusiveProjectGroupUpdate(checkpointUpdateFence, async () => {
       if (checkProjectAccess(group.memberProjects, "Could not update checkpoints")) return;
       setIsSavingCheckpoints(true);
-      try {
-        const { failures } = await updateProjectGroupMembers(group.memberProjects, (member) =>
-          updateProject({
-            environmentId: member.environmentId,
-            input: { projectId: member.id, checkpointsEnabled: enabled },
-          }),
-        );
-        for (const { member, result } of failures)
-          reportProjectFailure(`Could not update checkpoints for "${member.title}"`, result);
-      } finally {
-        setIsSavingCheckpoints(false);
-      }
+      await updateProjectGroupMembers(group.memberProjects, (member) =>
+        updateProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, checkpointsEnabled: enabled },
+        }),
+      )
+        .then(({ failures }) => {
+          for (const { member, result } of failures)
+            reportProjectFailure(`Could not update checkpoints for "${member.title}"`, result);
+        })
+        .finally(() => setIsSavingCheckpoints(false));
     });
   };
   const projectNameEditedRef = useRef(false);

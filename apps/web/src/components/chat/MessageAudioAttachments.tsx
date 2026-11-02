@@ -33,15 +33,17 @@ function MessageAudioAttachment({
   const retry = async () => {
     if (retrying) return;
     setRetrying(true);
-    try {
+    await (async () => {
       await refreshAssetUrl();
       setPlaybackSrc(null);
       setFailedSrc(null);
-    } catch {
-      setFailedSrc(src);
-    } finally {
-      setRetrying(false);
-    }
+    })()
+      .catch(() => {
+        setFailedSrc(src);
+      })
+      .finally(() => {
+        setRetrying(false);
+      });
   };
 
   return (

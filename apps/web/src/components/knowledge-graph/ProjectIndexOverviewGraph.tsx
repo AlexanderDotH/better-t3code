@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ProjectIndexController } from "@t3tools/client-runtime/project-indexing";
 import { PROJECT_INDEX_MAX_QUERY_TOKENS, type ProjectIndexQueryResultV1 } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
@@ -90,45 +91,48 @@ export function ProjectIndexOverviewGraph({
     }
     const version = ++requestVersion.current;
     setLoadingPath(node.filePath);
-    try {
-      const result = await query({
+    const loaded = await settlePromise(() =>
+      query({
         operation: "overview",
         scopes: [node.filePath],
         maxTokens: PROJECT_INDEX_MAX_QUERY_TOKENS,
         limit: 128,
         includeStale,
-      });
-      if (version !== requestVersion.current) return;
-      if (
-        result.scope.projectId !== snapshot.scope.projectId ||
-        result.scope.scopeId !== snapshot.scope.scopeId ||
-        result.scope.workspaceFingerprint !== snapshot.scope.workspaceFingerprint ||
-        result.revision !== snapshot.revision
-      ) {
-        setNotice(message("projectIndexing.scopeChanged"));
-        return;
-      }
-      if (node.kind === "directory" && result.graph?.rootPath !== node.filePath) {
-        setNotice(message("projectIndexing.graphBranchUnavailable"));
-        return;
-      }
-      if (
-        node.kind === "file" &&
-        !result.entities.some(
-          (entity) =>
-            entity.filePath === node.filePath &&
-            entity.kind !== "file" &&
-            entity.provenance !== "llm",
-        )
-      )
-        setNotice(message("projectIndexing.graphNoSymbols"));
-      setBranches((current) => new Map(current).set(node.filePath, result));
-    } catch (error) {
-      if (version === requestVersion.current)
-        setNotice(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (version === requestVersion.current) setLoadingPath(null);
+      }),
+    );
+    if (version !== requestVersion.current) return;
+    setLoadingPath(null);
+    if (loaded._tag === "Failure") {
+      const error = squashAtomCommandFailure(loaded);
+      setNotice(error instanceof Error ? error.message : String(error));
+      return;
     }
+    const result = loaded.value;
+    if (
+      result.scope.projectId !== snapshot.scope.projectId ||
+      result.scope.scopeId !== snapshot.scope.scopeId ||
+      result.scope.workspaceFingerprint !== snapshot.scope.workspaceFingerprint ||
+      result.revision !== snapshot.revision
+    ) {
+      setNotice(message("projectIndexing.scopeChanged"));
+      return;
+    }
+    if (node.kind === "directory" && result.graph?.rootPath !== node.filePath) {
+      setNotice(message("projectIndexing.graphBranchUnavailable"));
+      return;
+    }
+    if (
+      node.kind === "file" &&
+      !result.entities.some(
+        (entity) =>
+          entity.filePath === node.filePath &&
+          entity.kind !== "file" &&
+          entity.provenance !== "llm",
+      )
+    ) {
+      setNotice(message("projectIndexing.graphNoSymbols"));
+    }
+    setBranches((current) => new Map(current).set(node.filePath, result));
   };
 
   return (

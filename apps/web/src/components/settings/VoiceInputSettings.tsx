@@ -374,13 +374,13 @@ export function VoiceInputSettings({
   ) => {
     setProjectSettingsBusy(projectId);
     setProjectSettingsError(null);
-    try {
-      if (!(await persistVoiceOptions(voice, projectId))) setProjectSettingsError(projectId);
-    } catch {
-      setProjectSettingsError(projectId);
-    } finally {
-      setProjectSettingsBusy(null);
-    }
+    await Promise.resolve()
+      .then(() => persistVoiceOptions(voice, projectId))
+      .then((saved) => {
+        if (!saved) setProjectSettingsError(projectId);
+      })
+      .catch(() => setProjectSettingsError(projectId))
+      .finally(() => setProjectSettingsBusy(null));
   };
   const allProjects = useProjects();
   const projects = allProjects.filter((project) => project.environmentId === environmentId);
@@ -531,24 +531,29 @@ export function VoiceInputSettings({
       setBusyActionByProject((current) => ({ ...current, [key]: action }));
       setActionErrorByProject((current) => ({ ...current, [key]: undefined }));
 
-      try {
-        const response = await (action === "index" ? indexProfile : createBasicProfile)({
-          environmentId: project.environmentId,
-          input: { projectId: project.id },
+      await Promise.resolve()
+        .then(() =>
+          (action === "index" ? indexProfile : createBasicProfile)({
+            environmentId: project.environmentId,
+            input: { projectId: project.id },
+          }),
+        )
+        .then((response) => {
+          if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+          refreshEnvironmentProfiles(project.environmentId);
+        })
+        .catch(() => {
+          setActionErrorByProject((current) => ({
+            ...current,
+            [key]:
+              action === "index"
+                ? translate("settings.voice.profile.indexFailed")
+                : translate("settings.voice.profile.basicFailed"),
+          }));
+        })
+        .finally(() => {
+          setBusyActionByProject((current) => ({ ...current, [key]: undefined }));
         });
-        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-        await refreshEnvironmentProfiles(project.environmentId);
-      } catch {
-        setActionErrorByProject((current) => ({
-          ...current,
-          [key]:
-            action === "index"
-              ? translate("settings.voice.profile.indexFailed")
-              : translate("settings.voice.profile.basicFailed"),
-        }));
-      } finally {
-        setBusyActionByProject((current) => ({ ...current, [key]: undefined }));
-      }
     },
   );
 

@@ -1,4 +1,5 @@
 import { observeResize } from "~/lib/observeResize";
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import React, {
   useEffect,
@@ -283,16 +284,14 @@ export function MarkdownTable({
 
   const handleCopy = useStableCallback((format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
+    if (!table) return;
     const text =
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    void writeTextToClipboard(text, "table")
+      .then((didCopy) => {
+        if (!didCopy) return;
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
         }

@@ -62,6 +62,17 @@ async function saveBlob(blob: Blob, filename: string) {
   }
 }
 
+async function saveSvgPreview(svg: string, background: string, type: "svg" | "png") {
+  const prepared = prepareVisualizationSvgExport(svg, background);
+  const url = URL.createObjectURL(new Blob([prepared], { type: "image/svg+xml" }));
+  try {
+    if (type === "svg") await downloadMedia(url, "diagram.svg");
+    else await saveBlob(await readMediaPng(url), "diagram.png");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function reportExportFailure(cause: unknown, labels: Labels) {
   toastManager.add(
     stackedThreadToast({
@@ -614,16 +625,10 @@ function VisualizationContent({
     : undefined;
   const exportPreview = async (type: "svg" | "png") => {
     if (!currentRender?.svg) return;
-    let exportUrl: string | undefined;
     try {
-      const svg = prepareVisualizationSvgExport(currentRender.svg, appearance.background);
-      exportUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-      if (type === "svg") await downloadMedia(exportUrl, "diagram.svg");
-      else await saveBlob(await readMediaPng(exportUrl), "diagram.png");
+      await saveSvgPreview(currentRender.svg, appearance.background, type);
     } catch (cause) {
       reportExportFailure(cause, labels);
-    } finally {
-      if (exportUrl) URL.revokeObjectURL(exportUrl);
     }
   };
 

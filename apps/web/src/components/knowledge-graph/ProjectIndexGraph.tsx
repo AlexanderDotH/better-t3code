@@ -134,14 +134,16 @@ export function ProjectIndexGraph({
     return connected;
   })();
 
-  const zoom = (factor: number, x = layout.width / 2, y = layout.height / 2) => {
+  const zoom = (factor: number, x?: number, y?: number) => {
+    const anchorX = x ?? layout.width / 2;
+    const anchorY = y ?? layout.height / 2;
     setViewport((current) => {
       const scale = Math.max(0.15, Math.min(2.5, current.scale * factor));
       const ratio = scale / current.scale;
       return {
         scale,
-        translateX: x - (x - current.translateX) * ratio,
-        translateY: y - (y - current.translateY) * ratio,
+        translateX: anchorX - (anchorX - current.translateX) * ratio,
+        translateY: anchorY - (anchorY - current.translateY) * ratio,
       };
     });
   };

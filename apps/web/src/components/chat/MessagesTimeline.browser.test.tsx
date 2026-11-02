@@ -72,10 +72,16 @@ vi.mock(import("~/state/query"), async (original) => ({
 
 const presentationMode = vi.hoisted(() => ({
   mode: "current" as "current" | "classic" | "better-t3",
+  listeners: new Set<() => void>(),
 }));
-vi.mock(import("../../chatVisualModeSync"), () => ({
-  useChatVisualMode: () => presentationMode.mode,
-}));
+vi.mock(import("../../chatVisualModeSync"), async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    presentationMode.listeners.add(listener);
+    return () => presentationMode.listeners.delete(listener);
+  };
+  return { useChatVisualMode: () => useSyncExternalStore(subscribe, () => presentationMode.mode) };
+});
 
 const audioAsset = vi.hoisted(() => ({ url: "" }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
@@ -1515,21 +1521,33 @@ it("preserves the user message and expanded tool output while presentation modes
     '[data-message-id="presentation-user"] [data-user-message-body]',
   );
   expect(user).not.toBeNull();
-  const disclosure = screen.container.querySelector<HTMLButtonElement>(
-    'button[aria-expanded="false"]',
+  const disclosure = screen.container.querySelector<HTMLElement>(
+    '[role="button"][aria-expanded="false"]',
   );
   expect(disclosure).not.toBeNull();
   await click(disclosure!);
   await expect.element(page.getByText("Preserved tool output", { exact: true })).toBeVisible();
   for (const mode of ["better-t3", "classic", "current"] as const) {
-    presentationMode.mode = mode;
+    await act(() => {
+      presentationMode.mode = mode;
+      presentationMode.listeners.forEach((listener) => listener());
+    });
     await screen.rerender(element());
+    expect(
+      screen.container
+        .querySelector("[data-chat-presentation]")
+        ?.getAttribute("data-chat-presentation"),
+    ).toBe(mode);
     expect(
       screen.container.querySelector(
         '[data-message-id="presentation-user"] [data-user-message-body]',
       ),
     ).toBe(user);
     await expect.element(page.getByText("Preserved tool output", { exact: true })).toBeVisible();
-    expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      screen.container
+        .querySelector('[role="button"][aria-expanded]')
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
   }
 });

@@ -59,7 +59,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
     setState("loading");
 
     let interrupted = false;
-    try {
+    await (async () => {
       const transcript = await copyThreadTranscript({
         threadId,
         exportThreadTranscript: async (input) => {
@@ -93,23 +93,25 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
           data: { threadRef: { environmentId, threadId } },
         }),
       );
-    } catch (error) {
-      if (mountedRef.current) {
-        setState("idle");
-      }
-      if (interrupted) return;
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: translate("chat.transcript.copyFailed"),
-          description:
-            error instanceof Error ? error.message : translate("chat.transcript.unexpectedError"),
-          data: { threadRef: { environmentId, threadId } },
-        }),
-      );
-    } finally {
-      requestInFlightRef.current = false;
-    }
+    })()
+      .catch((error: unknown) => {
+        if (mountedRef.current) {
+          setState("idle");
+        }
+        if (interrupted) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: translate("chat.transcript.copyFailed"),
+            description:
+              error instanceof Error ? error.message : translate("chat.transcript.unexpectedError"),
+            data: { threadRef: { environmentId, threadId } },
+          }),
+        );
+      })
+      .finally(() => {
+        requestInFlightRef.current = false;
+      });
   });
 
   const disabled = environmentUnavailable || activeTurnInProgress || state !== "idle";

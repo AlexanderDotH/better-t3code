@@ -72,7 +72,7 @@ it("waits for reviewed implementation in Build while keeping typed messages as n
   await expect
     .element(screen.getByRole("button", { name: "Implement with 4 subagents" }))
     .toBeDisabled();
-  await expect.element(screen.getByText("Analyzing plan")).toBeVisible();
+  await expect.element(screen.getByText("Analyzing plan…", { exact: true })).toBeVisible();
   await screen.rerender(element({ ...planActions, planParallelismReviewStatus: "ready" }));
   await screen.getByRole("button", { name: "Implement with 4 subagents" }).click();
   expect(implement).toHaveBeenCalledExactlyOnceWith({ kind: "subagents", count: 4 });
@@ -86,7 +86,9 @@ it("waits for reviewed implementation in Build while keeping typed messages as n
     }),
   );
   await expect.element(screen.getByText("Refine", { exact: true })).not.toBeInTheDocument();
-  await expect.element(screen.getByText("Analyzing plan")).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByText("Analyzing plan…", { exact: true }))
+    .not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Submit message" }).click();
   expect(submit).toHaveBeenCalledOnce();
   expect(implement).toHaveBeenCalledOnce();

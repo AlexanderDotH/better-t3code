@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "~/state/session";
 import type {
@@ -14,7 +15,6 @@ import type {
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import type { RefObject } from "react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 
@@ -245,32 +245,27 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
       ...current,
       [server.providerKey]: undefined,
     }));
-    try {
-      const result = await runRuntimeDetailsQuery({
+    const response = await settlePromise(() =>
+      runRuntimeDetailsQuery({
         environmentId: props.environmentId,
         input: { ...selector, providerKey: server.providerKey },
-      });
-      if (result._tag === "Failure") throw Cause.squash(result.cause);
-      if (requestGeneration.current !== generation) return;
-      setDetailsByProviderKey((current) => ({
-        ...current,
-        [server.providerKey]: result.value,
-      }));
-    } catch (error) {
-      if (requestGeneration.current !== generation) return;
+      }),
+    );
+    if (requestGeneration.current !== generation) return;
+    const result = response._tag === "Failure" ? response : response.value;
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
       setDetailsErrorByProviderKey((current) => ({
         ...current,
         [server.providerKey]: error instanceof Error ? error.message : "MCP inventory unavailable.",
       }));
-    } finally {
-      if (requestGeneration.current === generation) {
-        setDetailsLoadingKeys((current) => {
-          const next = new Set(current);
-          next.delete(server.providerKey);
-          return next;
-        });
-      }
-    }
+    } else
+      setDetailsByProviderKey((current) => ({ ...current, [server.providerKey]: result.value }));
+    setDetailsLoadingKeys((current) => {
+      const next = new Set(current);
+      next.delete(server.providerKey);
+      return next;
+    });
   };
 
   const runRuntimeAction = useSettingsCommand(agentSettingsEnvironment.mcp.runtimeAction);
@@ -296,38 +291,31 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
       ...current,
       [server.providerKey]: undefined,
     }));
-    try {
+    const outcome = await settlePromise(async () => {
       const result = await runRuntimeAction({
         environmentId: props.environmentId,
-        input: {
-          ...selector,
-          providerKey: server.providerKey,
-          action,
-        },
+        input: { ...selector, providerKey: server.providerKey, action },
       });
       if (requestGeneration.current !== generation) return;
-      if (!result.accepted) {
+      if (!result.accepted)
         throw new Error(result.message ?? `The ${action} action was not accepted.`);
-      }
-      if (result.authorizationUrl) {
+      if (result.authorizationUrl)
         await ensureLocalApi().shell.openExternal(result.authorizationUrl);
-      }
-    } catch (error) {
-      if (requestGeneration.current !== generation) return;
+    });
+    if (requestGeneration.current !== generation) return;
+    if (outcome._tag === "Failure") {
+      const error = squashAtomCommandFailure(outcome);
       setActionErrorByProviderKey((current) => ({
         ...current,
         [server.providerKey]: error instanceof Error ? error.message : "MCP action failed.",
       }));
-    } finally {
-      if (requestGeneration.current === generation) {
-        setPendingAction((current) =>
-          current?.serverKey === nextPendingAction.serverKey &&
-          current.action === nextPendingAction.action
-            ? null
-            : current,
-        );
-      }
     }
+    setPendingAction((current) =>
+      current?.serverKey === nextPendingAction.serverKey &&
+      current.action === nextPendingAction.action
+        ? null
+        : current,
+    );
   };
 
   return (

@@ -240,13 +240,11 @@ export function AssemblyAiVoiceSettingsForm({
       return;
     }
     setBusy(true);
-    try {
-      setMessage((await onSave(next)) ? "saved" : "saveFailed");
-    } catch {
-      setMessage("saveFailed");
-    } finally {
-      setBusy(false);
-    }
+    await Promise.resolve()
+      .then(() => onSave(next))
+      .then((saved) => setMessage(saved ? "saved" : "saveFailed"))
+      .catch(() => setMessage("saveFailed"))
+      .finally(() => setBusy(false));
   }
 
   return (

@@ -927,18 +927,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation: navigateTimeline,
   });
   const [findListReady, setFindListReady] = useState(false);
-  const reportContentOverflow = useStableCallback(
-    (
-      rowCount: number = rows.length,
-      inset: number = composerOverflowInset ?? contentInsetEndAdjustment,
-    ) =>
-      onContentOverflowChange?.(
-        rowCount > 0 &&
-          timelineContentOverflowsViewport(listRef.current?.getState(), {
-            composerInset: inset,
-            anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-          }),
-      ),
+  const reportContentOverflow = useStableCallback((rowCount?: number, inset?: number) =>
+    onContentOverflowChange?.(
+      (rowCount ?? rows.length) > 0 &&
+        timelineContentOverflowsViewport(listRef.current?.getState(), {
+          composerInset: inset ?? composerOverflowInset ?? contentInsetEndAdjustment,
+          anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+        }),
+    ),
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Report measured transcript overflow after committed rows or reserved composer space change.
   useLayoutEffect(
@@ -1266,7 +1262,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
-    onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    onToggleWorkEntry: (anchorKey, collapsed, groupId) => {
+      suspendEndScrollMaintenanceForDisclosure(anchorKey);
+      if (groupId !== undefined)
+        setExpandedWorkGroupIds((current) => {
+          if (current.has(groupId) === !collapsed) return current;
+          const next = new Set(current);
+          if (collapsed) next.delete(groupId);
+          else next.add(groupId);
+          return next;
+        });
+    },
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,

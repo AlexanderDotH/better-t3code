@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   ProjectIndexReviewResultV1,
   ProjectIndexReviewSelection,
@@ -42,20 +43,19 @@ export function ProjectIndexReview({
   );
 
   async function review() {
-    if (disabled || busy || !api.review) return;
+    const reviewIndex = api.review;
+    if (disabled || busy || !reviewIndex) return;
     const generation = ++requestGeneration.current;
     setBusy(true);
     setError(null);
     setResult(null);
-    try {
-      const next = await api.review({ ...scope, selection });
-      if (generation === requestGeneration.current) setResult(next);
-    } catch (failure) {
-      if (generation === requestGeneration.current)
-        setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      if (generation === requestGeneration.current) setBusy(false);
-    }
+    const next = await settlePromise(() => reviewIndex({ ...scope, selection }));
+    if (generation !== requestGeneration.current) return;
+    if (next._tag === "Failure") {
+      const failure = squashAtomCommandFailure(next);
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } else setResult(next.value);
+    setBusy(false);
   }
 
   return (

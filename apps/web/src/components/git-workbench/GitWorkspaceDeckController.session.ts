@@ -1,5 +1,5 @@
 import type { EnvironmentId, GitCommitFileDiffResult, GitHistoryItem } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 import type { ChatWorkspaceCardId } from "./ChatWorkspaceDeck";
 import type {
@@ -19,6 +19,27 @@ import {
 export interface GitWorkbenchOpenChangesOptions {
   readonly focusCommit?: boolean;
   readonly returnFocusTarget?: HTMLElement | null;
+}
+
+interface WorkbenchEntryFocusTarget {
+  readonly scopeKey: string;
+  readonly element: HTMLElement | null;
+}
+
+function createWorkbenchFocusTargets() {
+  const entryReturnFocusTargetRef: RefObject<WorkbenchEntryFocusTarget | null> = { current: null };
+  const expandButtonRef: RefObject<HTMLButtonElement | null> = { current: null };
+  const workbenchReturnFocusRef: RefObject<HTMLElement | null> = {
+    get current() {
+      const origin = entryReturnFocusTargetRef.current?.element;
+      return origin?.isConnected &&
+        origin !== origin.ownerDocument.body &&
+        !origin.closest("[inert]")
+        ? origin
+        : expandButtonRef.current;
+    },
+  };
+  return { entryReturnFocusTargetRef, expandButtonRef, workbenchReturnFocusRef };
 }
 
 export function useGitWorkspaceDeckSession(input: {
@@ -62,21 +83,9 @@ export function useGitWorkspaceDeckSession(input: {
   const [rebasePreparedTarget, setRebasePreparedTarget] = useState<string | null>(null);
   const [rebaseUpstreamRef, setRebaseUpstreamRef] = useState<string | null>(null);
   const [resetScope, setResetScope] = useState(input.scopeKey);
-  const expandButtonRef = useRef<HTMLButtonElement | null>(null);
-  const entryReturnFocusTargetRef = useRef<{
-    readonly scopeKey: string;
-    readonly element: HTMLElement | null;
-  } | null>(null);
-  const [workbenchReturnFocusRef] = useState(() => ({
-    get current() {
-      const origin = entryReturnFocusTargetRef.current?.element;
-      return origin?.isConnected &&
-        origin !== origin.ownerDocument.body &&
-        !origin.closest("[inert]")
-        ? origin
-        : expandButtonRef.current;
-    },
-  }));
+  const [{ entryReturnFocusTargetRef, expandButtonRef, workbenchReturnFocusRef }] = useState(
+    createWorkbenchFocusTargets,
+  );
 
   if (resetScope !== input.scopeKey) {
     setResetScope(input.scopeKey);
@@ -113,7 +122,7 @@ export function useGitWorkspaceDeckSession(input: {
   useEffect(() => {
     if (entryReturnFocusTargetRef.current?.scopeKey !== input.scopeKey)
       entryReturnFocusTargetRef.current = null;
-  }, [input.scopeKey]);
+  }, [entryReturnFocusTargetRef, input.scopeKey]);
 
   const openChanges = (options: GitWorkbenchOpenChangesOptions = {}) => {
     if (expandedCard !== "git") {

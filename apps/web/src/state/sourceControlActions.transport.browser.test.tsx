@@ -10,7 +10,10 @@ import { RegistryContext } from "@effect/atom-react";
 import { expect, it } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { GitCommitComposer } from "../components/git-workbench/GitCommitComposer";
-import { useGitCommitDraftStore } from "../components/git-workbench/gitCommitDraftStore";
+import {
+  gitCommitDraftKey,
+  useGitCommitDraftStore,
+} from "../components/git-workbench/gitCommitDraftStore";
 import { commitResult, deferredResult } from "../components/git-workbench/gitCommitTestFixtures";
 import { TooltipProvider } from "../components/ui/tooltip";
 
@@ -45,6 +48,9 @@ it("submits the actual composer through the actual control and web hook to the r
     </RegistryContext.Provider>,
   );
   const container = screen.container;
+  await expect
+    .element(screen.getByRole("button", { name: "Commit, push & PR", exact: true }))
+    .not.toBeDisabled();
   expect(testState.rpcInputs).toEqual([]);
   expect(testState.refreshInputs).toEqual([]);
   const manual = container.querySelector<HTMLInputElement>('[data-git-commit-mode="manual"]')!;
@@ -65,6 +71,10 @@ it("submits the actual composer through the actual control and web hook to the r
     await settled.promise;
   });
 
+  expect(
+    useGitCommitDraftStore.getState().drafts.get(gitCommitDraftKey(environmentId, scope.cwd))
+      ?.outcome,
+  ).toEqual({ status: "success", result: testState.stackedResult });
   expect(testState.refreshInputs).toEqual([{ cwd: scope.cwd }]);
   expect(testState.rpcInputs).toEqual([
     {

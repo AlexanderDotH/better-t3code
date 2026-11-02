@@ -636,6 +636,9 @@ export function UsageLimitsPooled({
             ) : null}
             <div className="min-w-0 space-y-1">
               <h2 className="text-sm font-medium">{link.label}</h2>
+              {link.accounts.length > 0 ? (
+                <p className="text-xs text-muted-foreground">{link.accounts.join(", ")}</p>
+              ) : null}
               {link.url === CHATGPT_USAGE_URL ? (
                 <p className="text-xs text-muted-foreground">
                   View usage in ChatGPT with your connected account.

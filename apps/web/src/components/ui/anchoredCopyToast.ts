@@ -28,13 +28,9 @@ export function showAnchoredCopyErrorToast(
   if (!ref.current) return;
   anchoredToastManager.add({
     type: "error",
-    data: {
-      tooltipStyle: true,
-    },
     positionerProps: {
       anchor: ref.current,
     },
-    timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
     title,
     description: error.message,
   });

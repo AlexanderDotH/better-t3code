@@ -3,7 +3,6 @@ import {
   preparedComposerTurnRequest,
   shouldImproveComposerPrompt,
   composerFetchMode,
-  type PreparedComposerSend,
   type ComposerSendPreparationInput,
 } from "./composerSendPreparation";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -1067,20 +1066,12 @@ export function useComposerSend(input: ComposerSendInput) {
           text: appendVoiceFileContext(text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, references),
         }),
     } satisfies ComposerSendPreparationInput;
-    let prepared: PreparedComposerSend | null;
     sendInFlightRef.current = true;
     if (shouldImproveComposerPrompt(preparationInput))
       setPromptPreparation({ routeThreadKey, generation: preparationGeneration });
-    try {
-      prepared = await prepareComposerSend(preparationInput);
-    } catch (error) {
-      if (isPreparationCurrent())
-        setThreadError(
-          threadIdForSend,
-          error instanceof Error ? error.message : "Could not improve the prompt.",
-        );
-      return;
-    } finally {
+    const preparationResult = await settlePromise(() =>
+      prepareComposerSend(preparationInput),
+    ).finally(() => {
       if (composerSendGenerationRef.current === preparationGeneration)
         sendInFlightRef.current = false;
       setPromptPreparation((current) =>
@@ -1088,7 +1079,17 @@ export function useComposerSend(input: ComposerSendInput) {
           ? null
           : current,
       );
+    });
+    if (preparationResult._tag === "Failure") {
+      const error = squashAtomCommandFailure(preparationResult);
+      if (isPreparationCurrent())
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Could not improve the prompt.",
+        );
+      return;
     }
+    const prepared = preparationResult.value;
     if (prepared === null) return;
     const messageTextForSend = prepared.prompt;
     // Records bind attachments by the id each side knows: the local id for the optimistic

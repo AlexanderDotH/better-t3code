@@ -366,7 +366,7 @@ function HarnessChatSyncSourceView({
   isSyncing,
   result,
   errorMessage,
-  selectedProviderInstanceId = source.preferredInstanceId,
+  selectedProviderInstanceId: configuredProviderInstanceId,
   onProviderInstanceChange,
   onSearchChange,
   onArchiveChange,
@@ -377,6 +377,10 @@ function HarnessChatSyncSourceView({
   onRefresh,
   onSync,
 }: HarnessChatSyncSourceViewProps) {
+  const selectedProviderInstanceId =
+    configuredProviderInstanceId === undefined
+      ? source.preferredInstanceId
+      : configuredProviderInstanceId;
   const translator = useInterfaceTranslator();
   const visibleSessionIds = chats.map((chat) => chat.sessionId);
   const selectionState = getHarnessChatSelectionState(selection, visibleSessionIds);

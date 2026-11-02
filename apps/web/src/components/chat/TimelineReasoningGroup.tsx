@@ -7,11 +7,12 @@ import { ChatReasoningDisclosure } from "./ChatReasoningDisclosure";
 
 export function TimelineReasoningGroup({
   row,
-  anchorKey = row.id,
+  anchorKey,
 }: {
   row: Extract<MessagesTimelineRow, { kind: "activity-group" }>;
   anchorKey?: string;
 }) {
+  const resolvedAnchorKey = anchorKey === undefined ? row.id : anchorKey;
   const ctx = use(TimelineRowCtx);
   const traces = row.entries.map(({ entry }) => ({
     id: entry.id,
@@ -31,7 +32,7 @@ export function TimelineReasoningGroup({
       traces={traces}
       expanded={expanded}
       onExpandedChange={(next) => {
-        if (next !== expanded) ctx.onToggleWorkGroup(row.groupId, anchorKey);
+        if (next !== expanded) ctx.onToggleWorkGroup(row.groupId, resolvedAnchorKey);
       }}
       motion={ctx.presentationMotion === true}
       markdown={{

@@ -616,7 +616,18 @@ describe.each([
     await pointer(text, "pointermove", left + 12, 210, "mouse");
     expect(action.dataset.nearby).toBe("false");
     await pointer(button, "pointermove", left + 12, 112, "mouse");
-    await pointer(button, "pointerout", left + 12, 112, "mouse");
+    await act(() =>
+      button.dispatchEvent(
+        new PointerEvent("pointerout", {
+          bubbles: true,
+          pointerId: 1,
+          pointerType: "mouse",
+          clientX: left + 12,
+          clientY: 112,
+          relatedTarget: document.body,
+        }),
+      ),
+    );
     expect(action.dataset.nearby).toBe("false");
     expect(renderContent).toHaveBeenCalledTimes(1);
   });

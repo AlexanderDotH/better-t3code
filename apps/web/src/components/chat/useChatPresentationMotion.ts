@@ -314,7 +314,8 @@ export function useChatPresentationMotion({
             if (content.kind === "assistant" && textMotion) {
               animateElement(surface, { opacity: [0, 1] }, animation.options);
             }
-            arrivalRef.current ??= createChatMessageArrival(viewport);
+            if (arrivalRef.current === null)
+              arrivalRef.current = createChatMessageArrival(viewport);
             arrivalRef.current.play(surface);
           }
         }
