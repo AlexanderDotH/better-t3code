@@ -77,7 +77,10 @@ it("clears Completed after visiting and leaving a chat despite an older local wa
   await expect.element(page.getByText("Answer 0 for other.")).toBeVisible();
   await expect.element(status()).not.toBeInTheDocument();
   using _menu = vi.spyOn(ensureLocalApi().contextMenu, "show").mockResolvedValue("mark-unread");
-  await row.click({ button: "right" });
+  // A dispatched event does not wait on Playwright's actionability budget on slow CI runners.
+  row
+    .element()
+    .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
   await expect.element(status()).toBeVisible();
   await row.click();
   await expect.element(page.getByText("Answer 0 for completed.")).toBeVisible();
