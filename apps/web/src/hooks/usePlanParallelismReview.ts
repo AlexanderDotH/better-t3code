@@ -64,7 +64,13 @@ export function usePlanParallelismReview(
       if (cancelled) {
         return;
       }
-      setReviewState({ cacheKey, ...result });
+      setReviewState((current) =>
+        current.cacheKey === cacheKey &&
+        current.status === result.status &&
+        current.reviewedSubagentCount === result.reviewedSubagentCount
+          ? current
+          : { cacheKey, ...result },
+      );
     });
 
     return () => {

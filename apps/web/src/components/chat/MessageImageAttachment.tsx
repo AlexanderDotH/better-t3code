@@ -57,7 +57,7 @@ export function MessageImageAttachment({
     <div className="better-chat-capture">
       <div className="better-chat-capture-preview">
         {preview}
-        <SnapShotAttachmentDetails source={source} />
+        <SnapShotAttachmentDetails source={source} appearance="message" />
       </div>
       <details
         className="better-chat-capture-accessibility"

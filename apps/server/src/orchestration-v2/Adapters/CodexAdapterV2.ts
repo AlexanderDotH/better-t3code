@@ -771,19 +771,17 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
   }) {
-    if (input.runtimePolicy.commandExecutionPolicy === "deny")
-      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-        driver: CODEX_PROVIDER,
-        detail:
-          "Codex cannot guarantee a session with command execution disabled. Choose a provider that supports read-only workers.",
-      });
-    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
+    // Fetch workers ask before every unsafe command, and the adapter declines each request.
+    const fetchWorker = isCodexFetchWorker(input.runtimePolicy);
+    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(
+      fetchWorker ? "approval-required" : input.runtimePolicy.runtimeMode,
+    );
     const approvalPolicy =
-      input.runtimePolicy.approvalPolicy === undefined
+      fetchWorker || input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
-      input.runtimePolicy.sandboxPolicy === undefined
+      fetchWorker || input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
     const selectedEffort =
@@ -1131,6 +1129,13 @@ function isCodexCompactionConflict(error: {
   );
 }
 
+const CODEX_CONTEXT_FULL_PATTERN =
+  /context[_ ](?:window|length)(?:[_ ](?:limit|is))?[_ ](?:exceeded|full)|exceeds? (?:the |your |this model's )?(?:maximum )?context (?:window|length)/i;
+
+function isCodexContextFull(message: string, code: string | null | undefined): boolean {
+  return code === "contextWindowExceeded" || CODEX_CONTEXT_FULL_PATTERN.test(message);
+}
+
 /**
  * Retry exhaustion only says why it failed through the last attempt's HTTP
  * status. Exhaustion on 429 is a usage or rate limit, so it keeps the Limited
@@ -1388,8 +1393,19 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 // `t3-code-direct.<tool>`; t3McpToolPresentation.ts must keep resolving that form.
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOL = "t3_thread_wait";
+// Read-only workspace tools a Fetch worker may call; the worker prompt names these.
+export const CODEX_FETCH_WORKER_T3_TOOLS = [
+  "project_context",
+  "knowledge_graph_query",
+  "workspace_find",
+  "workspace_read",
+  "workspace_context",
+];
 
-function codexThreadRuntimeParams(input: {
+const isCodexFetchWorker = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined) =>
+  policy?.commandExecutionPolicy === "deny";
+
+export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly managedMcpConfig?: Readonly<Record<string, Schema.Json>>;
@@ -1410,6 +1426,8 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  const fetchWorker = isCodexFetchWorker(input.runtimePolicy);
+  const memoryMode = input.runtimePolicy?.projectMemoryMode;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
@@ -1422,24 +1440,36 @@ function codexThreadRuntimeParams(input: {
             model_context_window: contextWindow,
             model_auto_compact_token_limit: Math.max(1, Math.floor(contextWindow * 0.8)),
           }),
-      ...input.managedMcpConfig,
+      ...(memoryMode === "project" || memoryMode === "off"
+        ? { "memories.use_memories": false, "memories.generate_memories": false }
+        : {}),
+      ...(fetchWorker ? {} : input.managedMcpConfig),
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
         : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
-      ...(t3Server === undefined
-        ? {}
-        : {
-            // Override only T3's servers so launch-argument MCP servers survive.
-            "mcp_servers.t3-code": { ...t3Server, disabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL] },
-            // Code Mode runs a blocking wait as a nested call, and the model keeps working
-            // around it. A second, direct-only registration makes it a plain tool call.
-            [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
-              ...t3Server,
-              enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
-              omit_tools_from: ["code_mode", "deferred"],
-            },
-          }),
+      // The app-server is shared, so a worker's leaf and tool limits are per-thread config.
+      ...(fetchWorker
+        ? {
+            "features.multi_agent": false,
+            mcp_servers:
+              t3Server === undefined
+                ? {}
+                : { "t3-code": { ...t3Server, enabled_tools: CODEX_FETCH_WORKER_T3_TOOLS } },
+          }
+        : t3Server === undefined
+          ? {}
+          : {
+              // Override only T3's servers so launch-argument MCP servers survive.
+              "mcp_servers.t3-code": { ...t3Server, disabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL] },
+              // Code Mode runs a blocking wait as a nested call, and the model keeps working
+              // around it. A second, direct-only registration makes it a plain tool call.
+              [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
+                ...t3Server,
+                enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
+                omit_tools_from: ["code_mode", "deferred"],
+              },
+            }),
     },
   };
 }
@@ -1600,20 +1630,12 @@ export const layerAppServerClientFactory: Layer.Layer<
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
-        if (input.runtimePolicy.commandExecutionPolicy === "deny")
-          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
-            driver: CODEX_PROVIDER,
-            providerSessionId: input.providerSessionId,
-            cause:
-              "Codex cannot guarantee a session with command execution disabled. Choose a provider that supports read-only workers.",
-          });
         const scope = yield* Scope.Scope;
         const mcpSession = providerSessions
           ? yield* providerSessions.read(input.threadId)
           : undefined;
         const resourceHook = codexResourceGovernorHookLaunchConfiguration({
           resourceProtection: governor !== undefined && mcpSession !== undefined,
-          leafWorker: input.runtimePolicy.commandExecutionPolicy === "deny",
         });
         const environment = {
           ...codexAppServerEnvironment(input.environment),
@@ -1879,6 +1901,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }
         >();
         const compactionRevisions = new Map<string, number>();
+        // Native thread ids whose next turn must compact first.
+        const contextFullThreads = new Set<string>();
         const observeCompaction = Effect.fnUntraced(function* (threadId: string, turnId?: string) {
           const existing = compactions.get(threadId);
           if (existing !== undefined) {
@@ -1900,6 +1924,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const pending = compactions.get(threadId);
           if (pending?.turnId !== undefined && pending.turnId !== turnId) return;
           compactionRevisions.set(threadId, (compactionRevisions.get(threadId) ?? 0) + 1);
+          if (failure === undefined) contextFullThreads.delete(threadId);
           if (pending === undefined) return;
           compactions.delete(threadId);
           if (failure === undefined) yield* Deferred.succeed(pending.done, undefined);
@@ -1908,6 +1933,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               pending.done,
               CodexErrors.CodexAppServerRequestError.internalError(failure),
             );
+        });
+
+        // Observed before the request so a fast compaction cannot finish unwatched. The flag
+        // clears first: a compaction that fails surfaces once instead of blocking every later turn.
+        const compactFullContext = Effect.fnUntraced(function* (threadId: string) {
+          contextFullThreads.delete(threadId);
+          const pending = yield* observeCompaction(threadId);
+          yield* client.request("thread/compact/start", { threadId });
+          yield* Deferred.await(pending.done).pipe(Effect.raceFirst(client.awaitTermination));
         });
 
         // Codex drops client developer messages during compaction but only
@@ -4678,6 +4712,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
           Effect.gen(function* () {
+            const contextLimit = payload.tokenUsage.modelContextWindow;
+            if (contextLimit != null && payload.tokenUsage.last.totalTokens >= contextLimit)
+              contextFullThreads.add(payload.threadId);
             accumulateCodexTurnTokenUsage(
               usageStateForThread(payload.threadId),
               payload.turnId,
@@ -4882,11 +4919,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         yield* client.handleServerNotification("error", (payload) =>
           Effect.gen(function* () {
             if (isCodexCompactionConflict(payload.error)) return;
+            const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
+            if (!payload.willRetry && isCodexContextFull(payload.error.message, notificationCode))
+              contextFullThreads.add(payload.threadId);
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
             }
-            const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
@@ -5507,6 +5546,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
@@ -5577,6 +5621,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for file change approval turn ${payload.turnId}.`,
                 payload,
               );
+            }
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.FileChangeRequestApprovalResponse;
             }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("file-change")) {
@@ -5652,6 +5701,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const requestKind = providerRequestKindFromPermissions(payload.permissions);
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return permissionsResponseFromDecision({
+                decision: requestKind === "file-read" ? "accept" : "decline",
+                permissions: payload.permissions,
+              });
+            }
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
@@ -5726,6 +5781,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 action: "decline",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
+            // A worker's only server is T3's, limited to read-only tools.
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return toMcpElicitationResponse(
+                payload,
+                payload.serverName === "t3-code" ? "accept" : "decline",
+              );
+            }
 
             const nativeRequestId =
               payload.mode === "url"
@@ -5789,6 +5851,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for exec approval thread ${payload.conversationId}.`,
                 payload,
               );
+            }
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return {
+                decision: approvalDecisionToLegacyReviewDecision("decline"),
+              } satisfies CodexSchema.ExecCommandApprovalResponse;
             }
             const allowance = sessionAllowance(payload.conversationId, context);
             if (allowance.has("command")) {
@@ -5859,6 +5926,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return {
+                decision: approvalDecisionToLegacyReviewDecision("decline"),
+              } satisfies CodexSchema.ApplyPatchApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.conversationId, context);
             if (allowance.has("file-change")) {
               return {
@@ -5926,6 +5998,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for user input request turn ${payload.turnId}.`,
                 payload,
               );
+            }
+            // Nobody sees a worker's questions, so an unanswered one would hold it forever.
+            if (isCodexFetchWorker(context.input.runtimePolicy)) {
+              return { answers: {} } satisfies CodexSchema.ToolRequestUserInputResponse;
             }
 
             const artifacts = yield* buildUserInputRequestArtifacts({
@@ -6622,7 +6698,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }),
           );
 
-        // Codex can end an overloaded turn without retry advice. Continue its
+        // Codex can end an overloaded or full-context turn without retry advice. Continue its
         // persisted history with empty input instead of resending the user message.
         const retryCapacityFailure = Effect.fn("CodexAdapterV2.retryCapacityFailure")(function* (
           terminal: Parameters<typeof finalizeCodexTurn>[0],
@@ -6632,21 +6708,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             terminal.failureErrorInfo == null
               ? context.latestProviderFailure?.nativeCode
               : codexErrorInfoCode(terminal.failureErrorInfo);
+          const contextFull = isCodexContextFull(
+            terminal.failureMessage ?? context.latestProviderFailure?.nativeMessage ?? "",
+            code,
+          );
           if (
             terminal.status !== "failed" ||
-            code !== "serverOverloaded" ||
+            (code !== "serverOverloaded" && !contextFull) ||
             context.subagent !== null ||
             (context.input.message.attachments.length === 0 &&
               context.input.message.text.trim().toLowerCase() === "/compact")
           )
             return false;
 
+          // Compaction either makes room or will not; a second pass would only repeat it.
+          const maxAttempts = contextFull ? 1 : CODEX_CAPACITY_MAX_RETRIES;
           return yield* turnTerminalizationPermit.withPermits(1)(
             Effect.gen(function* () {
               if ((yield* Ref.get(activeTurns)).get(terminal.nativeTurnId) !== context) return true;
               if (context.capacityRetryPending !== undefined) return true;
               if (
-                (context.capacityRetryAttempt ?? 0) >= CODEX_CAPACITY_MAX_RETRIES ||
+                (context.capacityRetryAttempt ?? 0) >= maxAttempts ||
                 (yield* Ref.get(interruptingNativeTurns)).has(terminal.nativeTurnId)
               )
                 return false;
@@ -6655,7 +6737,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               context.capacityRetryAttempt = attempt;
               const pending = yield* Deferred.make<ActiveCodexTurnContext | undefined>();
               context.capacityRetryPending = pending;
-              const retryDelayMs = Math.min(2_000 * 2 ** (attempt - 1), 30_000);
+              const retryDelayMs = contextFull ? 0 : Math.min(2_000 * 2 ** (attempt - 1), 30_000);
               const now = yield* DateTime.now;
               const previous = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
               const state: ActiveCodexProviderRetry = {
@@ -6663,8 +6745,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeMessage:
                   terminal.failureMessage ??
                   context.latestProviderFailure?.nativeMessage ??
-                  "Selected model is at capacity.",
-                nativeCode: code,
+                  (contextFull ? "Context window is full." : "Selected model is at capacity."),
+                nativeCode: code ?? null,
                 failure: makeProviderFailure({
                   message:
                     context.latestProviderFailure?.failure.message ?? terminal.failureMessage,
@@ -6672,7 +6754,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   class: "provider_error",
                   retryable: true,
                 }),
-                retry: { attempt, maxAttempts: CODEX_CAPACITY_MAX_RETRIES, retryDelayMs },
+                retry: { attempt, maxAttempts, retryDelayMs },
                 itemOrdinal:
                   previous?.itemOrdinal ??
                   (yield* resolveItemOrdinal(
@@ -6689,7 +6771,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 driver: CODEX_PROVIDER,
                 turnItem: codexRetryTurnItem(context, state, "running", now),
               });
-              yield* Effect.sleep(retryDelayMs).pipe(
+              yield* (contextFull ? Effect.void : Effect.sleep(retryDelayMs)).pipe(
                 Effect.andThen(
                   Effect.gen(function* () {
                     const nativeThreadId = yield* getNativeThreadId(context.providerThread);
@@ -6707,6 +6789,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       }),
                     );
                     if (!claimed) return;
+                    if (contextFull) contextFullThreads.add(nativeThreadId);
                     // Notifications before the RPC response also take the terminalization permit.
                     yield* startNativeTurn(
                       {
@@ -6760,6 +6843,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
             if (payload.turn.error && isCodexCompactionConflict(payload.turn.error)) return;
+            if (
+              payload.turn.status === "failed" &&
+              payload.turn.error &&
+              isCodexContextFull(
+                payload.turn.error.message,
+                codexErrorInfoCode(payload.turn.error.codexErrorInfo),
+              )
+            )
+              contextFullThreads.add(payload.threadId);
             const compaction = compactions.get(payload.threadId);
             if (compaction?.turnId === payload.turn.id)
               yield* finishCompaction(
@@ -6974,6 +7066,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* Deferred.await(compaction.done).pipe(
                 Effect.raceFirst(client.awaitTermination),
               );
+            if (contextFullThreads.has(threadId)) yield* compactFullContext(threadId);
             const compactionRevision = compactionRevisions.get(threadId) ?? 0;
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             yield* bindMcpThread(
@@ -7015,7 +7108,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const started = yield* start.pipe(
               Effect.catchTags({
                 CodexAppServerRequestError: (error) => {
-                  if (!isCodexCompactionConflictMessage(error.errorMessage))
+                  const contextFull = isCodexContextFull(error.errorMessage, null);
+                  if (!contextFull && !isCodexCompactionConflictMessage(error.errorMessage))
                     return Effect.fail(error);
                   return Effect.gen(function* () {
                     // A rejected start did not consume the input. Keep it off compaction's lifecycle and retry once after its receipt.
@@ -7025,7 +7119,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       next.delete(threadId);
                       return next;
                     });
-                    if ((compactionRevisions.get(threadId) ?? 0) === compactionRevision) {
+                    if (contextFull) {
+                      yield* compactFullContext(threadId);
+                    } else if ((compactionRevisions.get(threadId) ?? 0) === compactionRevision) {
                       const pending = yield* observeCompaction(threadId);
                       yield* Deferred.await(pending.done).pipe(
                         Effect.raceFirst(client.awaitTermination),
@@ -7198,11 +7294,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
         );
 
+        // Status refreshes make RPC calls, so they must leave the protocol reader free.
         yield* client.handleServerNotification("mcpServer/startupStatus/updated", (payload) =>
-          liveMcp.observe(client, "mcpServer/startupStatus/updated", payload),
+          liveMcp
+            .observe(client, "mcpServer/startupStatus/updated", payload)
+            .pipe(Effect.forkIn(scope), Effect.asVoid),
         );
         yield* client.handleServerNotification("mcpServer/oauthLogin/completed", (payload) =>
-          liveMcp.observe(client, "mcpServer/oauthLogin/completed", payload),
+          liveMcp
+            .observe(client, "mcpServer/oauthLogin/completed", payload)
+            .pipe(Effect.forkIn(scope), Effect.asVoid),
         );
         const mcpAppsError = (detail: string) => (cause: unknown) =>
           new ProviderAdapter.ProviderAdapterProtocolError({

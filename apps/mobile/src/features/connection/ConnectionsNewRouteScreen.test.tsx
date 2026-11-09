@@ -53,7 +53,10 @@ vi.mock("../../components/ui/FrostedCutout", () => ({ FrostedCutout: () => null 
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
 vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ themeAppearance: "dark" }),
+  useAppearancePreferences: () => ({
+    themeAppearance: "dark",
+    interfaceLanguage: { language: "en", locale: "en-US" },
+  }),
 }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../settings/settings-navigation", () => ({

@@ -21,6 +21,7 @@ import {
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
 } from "./android-workspace-tabs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
@@ -34,6 +35,7 @@ interface NativeNavigationProps extends ViewProps {
   readonly rail: boolean;
   readonly floating: boolean;
   readonly tabs: readonly string[];
+  readonly labels: Readonly<Record<string, string>>;
   readonly selectedTab: AndroidWorkspaceNavigationTab;
   readonly dark: boolean;
   readonly textScale: number;
@@ -81,6 +83,7 @@ export function AndroidWorkspaceNavigation(props: {
   const connectionState = useWorkspaceConnectionState();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const translator = useMobileInterfaceTranslator();
   const { scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
   const rail = Boolean(props.rail);
@@ -118,6 +121,14 @@ export function AndroidWorkspaceNavigation(props: {
         rail={rail}
         floating={floating}
         tabs={tabs}
+        labels={{
+          threads: translator.message("mobile.navigation.chats"),
+          pullRequests: translator.message("mobile.navigation.pulls"),
+          pullRequestsExpanded: translator.message("pullRequest.title"),
+          usage: translator.message("sidebar.navigation.usage"),
+          settings: translator.message("mobile.settings.title"),
+          newThread: translator.message("sidebar.thread.new"),
+        }}
         selectedTab={selectedTab}
         dark={themeAppearance === "dark"}
         textScale={scale}

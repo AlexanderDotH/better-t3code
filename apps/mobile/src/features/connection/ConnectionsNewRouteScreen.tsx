@@ -32,6 +32,7 @@ import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
 import { splitEnvironmentSections } from "./environmentSections";
 import { leaveSettingsPage } from "../settings/settings-navigation";
 import { workspaceHasColumns } from "../workspace/workspace-selection-store";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -63,6 +64,7 @@ function PairingForm({
   readonly routePairingUrl: string;
   readonly routeFor: EnvironmentId | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
     useRemoteConnections();
   const navigation = useNavigation();
@@ -115,11 +117,14 @@ function PairingForm({
     }
     if (permission.canAskAgain) return;
     Dialog.alert(
-      "Camera access needed",
-      "Camera access was denied for this app. Open Settings to enable it.",
+      translator.message("mobile.connection.cameraAccessNeeded"),
+      translator.message("mobile.connection.cameraAccessDenied"),
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: translator.message("common.cancel"), style: "cancel" },
+        {
+          text: translator.message("mobile.settings.notifications.openSettings"),
+          onPress: () => void Linking.openSettings(),
+        },
       ],
     );
   };
@@ -142,8 +147,10 @@ function PairingForm({
     } catch (error) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Dialog.alert(
-        "Invalid QR code",
-        error instanceof Error ? error.message : "Scanned QR code was not recognized.",
+        translator.message("mobile.connection.invalidQr"),
+        error instanceof Error
+          ? error.message
+          : translator.message("mobile.connection.invalidQrDescription"),
       );
       setTimeout(() => {
         setScannerLocked(false);
@@ -179,10 +186,12 @@ function PairingForm({
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
-      title="Add environment"
+      title={translator.message("mobile.connection.addEnvironment")}
       actions={[
         {
-          accessibilityLabel: connecting ? "Connecting" : "Add environment",
+          accessibilityLabel: connecting
+            ? translator.message("mobile.thread.voiceConnecting")
+            : translator.message("mobile.connection.addEnvironment"),
           loading: connecting,
           icon: "checkmark",
           tintColor: headerIconColor,
@@ -215,7 +224,9 @@ function PairingForm({
           />
 
           <View collapsable={false} className="gap-2">
-            <Text className="px-4 text-sm font-t3-medium text-foreground-muted">Or enter it</Text>
+            <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
+              {translator.message("mobile.ui.orEnterIt")}
+            </Text>
             <View
               collapsable={false}
               className={cn(
@@ -224,7 +235,7 @@ function PairingForm({
               )}
             >
               <PairingInputRow
-                label="Address"
+                label={translator.message("mobile.ui.address")}
                 keyboardType="url"
                 placeholder="192.168.1.100:3773"
                 value={hostInput}
@@ -232,8 +243,8 @@ function PairingForm({
               />
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
-                label="Code"
-                placeholder="Pairing code"
+                label={translator.message("settings.betterT3.preview.examples.flow.code")}
+                placeholder={translator.message("mobile.connection.pairingCode")}
                 returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}
@@ -250,7 +261,7 @@ function PairingForm({
               )}
             >
               {pairingConnectionError ??
-                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+                translator.message("mobile.ui.forMachinesOnYourLocalNetworkOr")}
             </Text>
           </View>
 
@@ -271,11 +282,14 @@ function PairingScanCard(props: {
   readonly onScan: (result: { readonly data: string }) => void;
   readonly onScanPress: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const light = useAppearancePreferences().themeAppearance === "light";
   return (
     <Pressable
       accessibilityRole={props.cameraActive ? undefined : "button"}
-      accessibilityLabel={props.cameraActive ? undefined : "Scan QR code"}
+      accessibilityLabel={
+        props.cameraActive ? undefined : translator.message("mobile.connection.scanQr")
+      }
       disabled={props.cameraActive}
       onPress={props.onScanPress}
       className={cn(
@@ -340,13 +354,13 @@ function PairingScanCard(props: {
               <Text
                 className={cn("font-t3-medium text-sm", light ? "text-black/70" : "text-white/80")}
               >
-                Tap to scan
+                {translator.message("mobile.ui.tapToScan")}
               </Text>
             </>
           )}
         </View>
         <Text className={cn("text-center text-sm", light ? "text-black/70" : "text-white/80")}>
-          Scan the code from t3 pair or desktop Connections settings
+          {translator.message("mobile.ui.scanTheCodeFromT3PairOr")}
         </Text>
       </View>
     </Pressable>
@@ -354,6 +368,7 @@ function PairingScanCard(props: {
 }
 
 function T3ConnectSection() {
+  const translator = useMobileInterfaceTranslator();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
   const { connectedEnvironments, onSetEnvironmentEnabled, onRemoveEnvironmentPress } =
@@ -366,7 +381,7 @@ function T3ConnectSection() {
   return (
     <View collapsable={false} className="gap-2">
       <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
-        Or use the managed relay
+        {translator.message("mobile.ui.orUseTheManagedRelay")}
       </Text>
       {isSignedIn ? (
         <CloudEnvironmentRows
@@ -377,8 +392,8 @@ function T3ConnectSection() {
         />
       ) : (
         <ListRow
-          label="Sign in to T3 Connect"
-          description="Reach your machines from anywhere, no network setup."
+          label={translator.message("mobile.settings.connect.signInTitle")}
+          description={translator.message("mobile.ui.reachYourMachinesFromAnywhereNoNetwork")}
           disabled={!isLoaded}
           onPress={() => navigation.navigate("SettingsAuth")}
         />

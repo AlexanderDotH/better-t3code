@@ -44,6 +44,7 @@ import {
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
 
@@ -457,7 +458,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
     const activity = startAgentLiveActivity(
       {
         title: "T3 Code",
-        subtitle: "Agent work in progress",
+        subtitle: currentInterfaceTranslator().message("mobile.ui.agentWorkInProgress"),
         activeCount: 1,
         updatedAt: nowIso,
         activities: [
@@ -668,7 +669,9 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       deviceId,
       label:
         Constants.deviceName?.trim() ||
-        (Platform.OS === "android" ? "Android device" : "iOS device"),
+        (Platform.OS === "android"
+          ? currentInterfaceTranslator().message("mobile.ui.androidDevice")
+          : "iOS device"),
       ...(Platform.OS === "android"
         ? { platform: "android" as const, androidApiLevel: Number(Platform.Version) }
         : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),

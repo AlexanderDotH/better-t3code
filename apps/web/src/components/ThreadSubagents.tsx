@@ -3,8 +3,12 @@ import type { ScopedThreadRef, SubagentId } from "@t3tools/contracts";
 import type { OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
-import { SubagentId as SubagentIdSchema, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { useLayoutEffect, useRef, useState } from "react";
+import {
+  runtimeSubagentSummary,
+  runtimeSubagentTranscript,
+} from "./subagents/subagentPresentation";
 import { ChatAgentStack } from "./ChatAgentStack";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 
@@ -28,44 +32,15 @@ export function ThreadSubagents({
   const [selectedId, setSelectedId] = useState<SubagentId | null>(null);
   const stackRef = useRef<HTMLDivElement>(null);
   const chatWidthProbeRef = useRef<HTMLDivElement>(null);
-  const agents = subagents.map((agent): OrchestrationSubagentSummary =>
-    "providerThreadId" in agent
-      ? agent
-      : {
-          id: SubagentIdSchema.make(agent.id),
-          origin: "provider-native",
-          providerInstanceId: null,
-          providerDriver: null,
-          providerThreadId: agent.childThreadId ?? agent.id,
-          parentId: agent.parentAgentId ? SubagentIdSchema.make(agent.parentAgentId) : null,
-          path: null,
-          name: agent.title,
-          nickname: agent.title,
-          role: agent.role,
-          task: agent.progress,
-          model: agent.model,
-          reasoningEffort: agent.effort,
-          depth: agent.parentAgentId ? 1 : 0,
-          status:
-            agent.status === "failed"
-              ? "error"
-              : agent.status === "cancelled"
-                ? "interrupted"
-                : agent.status === "pending"
-                  ? "starting"
-                  : agent.status === "idle"
-                    ? "waiting"
-                    : agent.status,
-          statusMessage: agent.error ?? agent.progress,
-          latestProgress: null,
-          latestTurn: null,
-          startedAt: agent.startedAt ?? agent.firstSeenAt,
-          updatedAt: agent.updatedAt,
-          completedAt: agent.completedAt,
-        },
+  const agents = subagents.map((agent) =>
+    "providerThreadId" in agent ? agent : runtimeSubagentSummary(agent),
   );
-  const selected = agents.find((agent) => agent.id === selectedId);
-  const detail = selected ? { ...selected, messages: [], proposedPlans: [], activities: [] } : null;
+  const selected = subagents.find((agent) => agent.id === selectedId);
+  const detail = selected
+    ? "providerThreadId" in selected
+      ? { ...selected, messages: [], proposedPlans: [], activities: [] }
+      : runtimeSubagentTranscript(selected)
+    : null;
   const error = null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the floating agent stack clear of the measured chat lane.
@@ -111,7 +86,7 @@ export function ThreadSubagents({
         <div
           ref={chatWidthProbeRef}
           data-chat-width-probe=""
-          className="mx-auto h-0 w-full max-w-full sm:max-w-[var(--chat-content-width,48rem)]"
+          className="mx-auto h-0 w-full max-w-full sm:max-w-(--chat-content-max-width)"
         />
       </div>
       <ChatAgentStack

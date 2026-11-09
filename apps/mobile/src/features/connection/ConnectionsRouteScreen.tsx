@@ -12,16 +12,24 @@ import { useRemoteConnections } from "../../state/use-remote-environment-registr
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
+import { useEnvironmentRecoveryNavigation } from "./useEnvironmentRecoveryNavigation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ConnectionsRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const {
     connectedEnvironments,
+    onChangeConnectionPairingUrl,
     onReconnectEnvironment,
     onRemoveEnvironmentPress,
     onSetEnvironmentEnabled,
     onUpdateEnvironment,
   } = useRemoteConnections();
   const navigation = useNavigation();
+  const recovery = useEnvironmentRecoveryNavigation({
+    pairingRoute: "ConnectionsNew",
+    onChangeConnectionPairingUrl,
+  });
   const insets = useSafeAreaInsets();
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const handleToggle = (environmentId: EnvironmentId) => {
@@ -32,11 +40,11 @@ export function ConnectionsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Environments"
+          title={translator.message("mobile.settings.environments")}
           onBack={() => navigation.goBack()}
           actions={[
             {
-              accessibilityLabel: "Add environment",
+              accessibilityLabel: translator.message("mobile.connection.addEnvironment"),
               icon: "plus",
               onPress: () => navigation.navigate("ConnectionsNew"),
             },
@@ -69,6 +77,8 @@ export function ConnectionsRouteScreen() {
           onRemove={onRemoveEnvironmentPress}
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={onUpdateEnvironment}
+          onPairAgain={recovery.onPairAgain}
+          onSignIn={recovery.onSignIn}
         />
         {connectedEnvironments
           .filter((environment) => environment.connectionState === "connected")

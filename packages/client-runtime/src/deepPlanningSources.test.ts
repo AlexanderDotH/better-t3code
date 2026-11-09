@@ -63,12 +63,16 @@ function apiFor(sources: ReadonlyArray<DeepPlanSourceSnapshot>) {
     catalogSources: vi
       .fn<DeepPlanningSourceApi["catalogSources"]>()
       .mockResolvedValue({ sources, nextCursor: null }),
-    exportSources: vi.fn<DeepPlanningSourceApi["exportSources"]>().mockResolvedValue({
-      exportId: DeepPlanExportId.make(`export-${sources[0]?.origin.environmentId ?? "empty"}`),
-      capturedAt,
-      sources,
-      nextCursor: null,
-    }),
+    exportSources: vi
+      .fn<DeepPlanningSourceApi["exportSources"]>()
+      .mockImplementation(async (input) => ({
+        exportId: DeepPlanExportId.make(`export-${sources[0]?.origin.environmentId ?? "empty"}`),
+        capturedAt,
+        sources: sources.filter(
+          (source) => !input.threadIds || input.threadIds.includes(source.origin.threadId),
+        ),
+        nextCursor: null,
+      })),
     readExportChunk: vi
       .fn<DeepPlanningSourceApi["readExportChunk"]>()
       .mockImplementation(async (input) => {
@@ -189,6 +193,44 @@ describe("DeepPlan source collection", () => {
     expect(remoteApi.exportSources).toHaveBeenCalledWith(
       expect.objectContaining({ threadIds: [remote.origin.threadId], includeArchived: true }),
     );
+  });
+
+  it("collects only chosen chats, or none, when project chats are excluded", async () => {
+    const chosen = snapshot("chosen-chat");
+    const remote = snapshot("remote-chat", {
+      origin: { environmentId: remoteId, projectId, threadId: ThreadId.make("remote-chat") },
+    });
+    const localApi = apiFor([chosen, snapshot("skipped-chat")]);
+    const remoteApi = apiFor([remote]);
+    const result = await transfer(localApi, {
+      includeProjectChats: false,
+      additionalSourceRefs: [chosen.origin, remote.origin],
+      apiForEnvironment: (id) => (id === remoteId ? remoteApi : localApi),
+    });
+    expect(result.sources).toEqual([chosen, remote]);
+    expect(localApi.exportSources).toHaveBeenCalledTimes(1);
+    expect(localApi.exportSources).toHaveBeenCalledWith(
+      expect.objectContaining({ threadIds: [chosen.origin.threadId] }),
+    );
+    expect(localApi.initializeSources).toHaveBeenCalledWith({
+      threadId,
+      runId,
+      includeProjectChats: false,
+      snapshots: [chosen, remote],
+    });
+
+    const emptyApi = apiFor([snapshot("skipped-chat")]);
+    expect(await transfer(emptyApi, { includeProjectChats: false })).toEqual({
+      sources: [],
+      coverage: [],
+    });
+    expect(emptyApi.exportSources).not.toHaveBeenCalled();
+    expect(emptyApi.initializeSources).toHaveBeenCalledWith({
+      threadId,
+      runId,
+      includeProjectChats: false,
+      snapshots: [],
+    });
   });
 
   it("reuses the export identity for manifest and record pages", async () => {

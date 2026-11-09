@@ -3,6 +3,11 @@ import { threadAutoReasoningEffort } from "./thread-settings-summary";
 import { translateVoiceDictationResult } from "@t3tools/shared/voiceFileContext";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
+import { agentSettingsEnvironment } from "../../state/agent-settings";
+import { activeMobileHarnessSession } from "../../state/active-harness-session";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { useEnvironmentQuery } from "../../state/query";
+import { resolveMobileResourceProtectionStatus } from "./resource-protection-status";
 import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
 import { resolveDeepPlanningAvailability } from "@t3tools/client-runtime/deep-planning";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
@@ -15,7 +20,7 @@ import {
   resolveComposerMode,
 } from "@t3tools/client-runtime/deep-planning";
 import { resolveBetterT3FeatureFlag, type ComposerMode } from "@t3tools/contracts";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadMessageReplies } from "../../state/use-thread-message-replies";
 import { updateComposerDraftSettings } from "../../state/use-composer-drafts";
 import { ComposerModeControl } from "./ComposerModeControl";
@@ -35,7 +40,7 @@ import {
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
@@ -57,7 +62,7 @@ import {
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { I18nManager, Keyboard, Platform, View, type ViewStyle } from "react-native";
+import { I18nManager, Keyboard, Platform, ScrollView, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -105,7 +110,11 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import {
+  ComposerActionButton,
+  ComposerInlineControl,
+  ComposerToolbarRow,
+} from "../../components/ComposerToolbar";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
@@ -144,6 +153,7 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
@@ -179,9 +189,10 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
-    value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
+    Platform.OS === "android" ||
+    (value.length > 0 &&
+      (contentHeight > text.lineHeight * 1.5 ||
+        (compactWidth > 0 && contentSize.width > compactWidth)));
   const compactRowHeight = Math.max(44, minimum);
   const isRTL = I18nManager.isRTL;
   const editorStyle = useAnimatedStyle(() => ({
@@ -315,15 +326,27 @@ const COMPOSER_ATTACHMENT_ENTERING =
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
 const FOLLOW_UP_ACTION_LABEL = {
-  queue: "Queue",
-  steer: "Steer now",
-  restart: "Restart turn",
+  get queue() {
+    return currentInterfaceTranslator().message("mobile.ui.queueLabel");
+  },
+  get steer() {
+    return currentInterfaceTranslator().message("mobile.ui.steerNow");
+  },
+  get restart() {
+    return currentInterfaceTranslator().message("mobile.ui.restartTurn");
+  },
 } as const;
 
 const FOLLOW_UP_ACTION_SUBTITLE = {
-  queue: "Run after the current turn",
-  steer: "Interrupt what the agent is doing",
-  restart: "Start the turn over with this message",
+  get queue() {
+    return currentInterfaceTranslator().message("mobile.ui.runAfterTheCurrentTurn");
+  },
+  get steer() {
+    return currentInterfaceTranslator().message("mobile.ui.interruptWhatTheAgentIsDoing");
+  },
+  get restart() {
+    return currentInterfaceTranslator().message("mobile.ui.startTheTurnOverWithThisMessage");
+  },
 } as const;
 
 function SendActionButton(props: {
@@ -333,6 +356,7 @@ function SendActionButton(props: {
   readonly disabled: boolean;
   readonly onSend: (followUp?: ActiveTurnComposerAction) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { presentation } = props;
   const button = (
     <ComposerActionButton
@@ -352,7 +376,7 @@ function SendActionButton(props: {
   );
   return (
     <Menu
-      accessibilityLabel="Choose how to send this message"
+      accessibilityLabel={translator.message("mobile.ui.chooseHowToSendThisMessage")}
       shouldOpenOnLongPress
       actions={actions.map((action) => ({
         id: action,
@@ -435,8 +459,19 @@ export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
-  const { themeVariables: materialTheme } = useAppearancePreferences();
+  const { themeVariables: materialTheme, interfaceLanguage } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
+  const resourceProtection = useEnvironmentQuery(
+    !props.isDraft &&
+      (props.serverConfig?.environment.capabilities.resourceProtectionVersion ?? 0) >= 1
+      ? serverEnvironment.resourceProtection({ environmentId: props.environmentId, input: {} })
+      : null,
+  );
+  const resourceStatus = resolveMobileResourceProtectionStatus(
+    resourceProtection.data,
+    props.selectedThread.id,
+    interfaceLanguage.language,
+  );
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
   const bodyText = useScaledTextRole("body");
@@ -481,6 +516,35 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       : null;
   const contextSnapshot = projection ? deriveLatestContextWindowSnapshot(projection) : null;
   const deepPlan = projection?.thread.deepPlan;
+  const translator = useMobileInterfaceTranslator();
+  const activeHarness = activeMobileHarnessSession(
+    props.isDraft ? null : props.selectedThread.id,
+    projection?.thread,
+    props.selectedThread,
+  );
+  const refreshHarness = useAtomCommand(agentSettingsEnvironment.harnessChatSync.status, {
+    reportFailure: false,
+  });
+  const canRefreshHarness = useAtomValue(
+    agentSettingsEnvironment.harnessChatSync.status.permissionAtom(props.environmentId),
+  );
+  const [refreshingHarness, setRefreshingHarness] = useState(false);
+  const refreshHarnessStatus = async () => {
+    if (refreshingHarness || !canRefreshHarness) return;
+    setRefreshingHarness(true);
+    const result = await refreshHarness({
+      environmentId: props.environmentId,
+      input: { threadId: props.selectedThread.id },
+    });
+    setRefreshingHarness(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        translator.message("chat.harness.statusRefreshFailed"),
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const replies = useThreadMessageReplies({
@@ -500,6 +564,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       composerMode: mode,
       interactionMode: getProviderInteractionMode(mode),
     });
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const fetchToggleOffered =
+    props.serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined &&
+    composerMode !== "chat" &&
+    !draft.messageReply;
+  const fetchEnabled =
+    AsyncResult.isSuccess(preferencesResult) && preferencesResult.value.experimentalFetch === true;
   const assemblyAiKey = props.serverConfig?.settings.speechTranscription.assemblyAi.apiKey;
   const voiceConfigured =
     props.serverConfig !== null &&
@@ -561,7 +632,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     if (AsyncResult.isFailure(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not improve prompt",
+        translator.message("mobile.ui.couldNotImprovePrompt"),
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -647,7 +718,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
     onShowUsageLimits(report);
     if (!report) {
-      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert(
+        translator.message("mobile.ui.usageLimitsUnavailable"),
+        translator.message("mobile.ui.thisProviderDoesNotCurrentlyReportLimits"),
+      );
     }
     return report !== null;
   };
@@ -682,7 +756,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
-    label: props.selectedThread.title || "Untitled thread",
+    label: props.selectedThread.title || translator.message("mobile.ui.untitledThread"),
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
@@ -728,9 +802,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
-    (queuedEdit?.saving === true ? "Saving…" : null) ??
+    (queuedEdit?.saving === true ? translator.message("mobile.settings.agents.saving") : null) ??
     props.sendBlockedReason ??
-    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    (activeHarness && !draft.messageReply
+      ? translator.message("chat.harness.sendingPaused")
+      : null) ??
+    (pendingPastedTextAttachmentCount > 0
+      ? translator.message("mobile.ui.attachingPastedText")
+      : null) ??
     attachmentBlockReason ??
     (composerMode === "deep-plan" && !draft.messageReply
       ? resolveDeepPlanningAvailability({
@@ -935,16 +1014,35 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     <View className="min-w-0 shrink flex-row items-center">
       {props.serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined ? (
         <ComposerActionButton
-          accessibilityLabel="Improve prompt"
+          accessibilityLabel={translator.message("mobile.thread.improvePrompt")}
           icon="sparkles"
           disabled={!canImprovePrompt || isSubmissionLocked || !draftMessage.trim()}
           onPress={() => void improveDraft()}
+        />
+      ) : null}
+      {fetchToggleOffered ? (
+        <ComposerInlineControl
+          size={usesLargeControls ? "large" : "regular"}
+          accessibilityLabel={translator.message(
+            fetchEnabled ? "mobile.thread.fetchOn" : "mobile.thread.fetchOff",
+          )}
+          disabled={isSubmissionLocked || !AsyncResult.isSuccess(preferencesResult)}
+          icon="magnifyingglass"
+          iconOnly={Platform.OS === "android" || !compactEditor.isExpanded}
+          label={translator.message(
+            fetchEnabled ? "mobile.thread.fetchOn" : "mobile.thread.fetchOff",
+          )}
+          selected={fetchEnabled}
+          showChevron={false}
+          onPress={() => savePreferences({ experimentalFetch: !fetchEnabled })}
         />
       ) : null}
       {!draft.messageReply ? (
         <ComposerModeControl
           mode={composerMode}
           disabled={isSubmissionLocked}
+          iconOnly={!compactEditor.isExpanded}
+          size={usesLargeControls ? "large" : "regular"}
           onChange={setComposerMode}
         />
       ) : null}
@@ -991,6 +1089,34 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         style={{ maxWidth: props.contentMaxWidth }}
       >
         {props.draftControls}
+        {activeHarness ? (
+          <View className="mb-2 gap-1 px-2">
+            <Text className="text-sm text-foreground-muted">
+              {translator.message("chat.harness.activeElsewhere", {
+                provider: activeHarness.providerLabel,
+              })}
+            </Text>
+            <Button
+              label={translator.message(
+                refreshingHarness ? "chat.harness.checking" : "chat.harness.checkAgain",
+              )}
+              tone="text"
+              disabled={
+                refreshingHarness || !canRefreshHarness || props.connectionState !== "connected"
+              }
+              onPress={() => void refreshHarnessStatus()}
+            />
+          </View>
+        ) : null}
+        {resourceStatus ? (
+          <Text
+            accessibilityRole="text"
+            accessibilityLiveRegion="polite"
+            className="mb-2 px-2 text-sm text-foreground-muted"
+          >
+            {resourceStatus.label}
+          </Text>
+        ) : null}
         {!props.isDraft &&
         props.serverConfig &&
         (props.serverConfig.environment.capabilities.projectIndexingVersion ?? 0) >= 1 ? (
@@ -1069,9 +1195,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             environmentId={props.environmentId}
             projectId={props.selectedThread.projectId}
             selected={draft.deepPlanSourceRefs ?? []}
+            includeProjectChats={draft.deepPlanIncludeProjectChats !== false}
             disabled={isSubmissionLocked}
-            onChange={(deepPlanSourceRefs) =>
-              updateComposerDraftSettings(composerDraftKey, { deepPlanSourceRefs })
+            onChange={(deepPlanSourceRefs, include) =>
+              updateComposerDraftSettings(composerDraftKey, {
+                deepPlanSourceRefs,
+                deepPlanIncludeProjectChats: include ? undefined : false,
+              })
             }
           />
         ) : null}
@@ -1112,7 +1242,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
         {modelUnavailable ? (
           <Button
-            label="Model unavailable. Open model settings."
+            label={translator.message("mobile.ui.modelUnavailableOpenModelSettings")}
             tone="text"
             onPress={openSettings}
           />
@@ -1266,8 +1396,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         insertPaste();
                       } else {
                         Dialog.alert(
-                          "Pasted text is too large for this message",
-                          "Remove some text or an attachment, then paste again.",
+                          translator.message("mobile.ui.pastedTextIsTooLargeForThis"),
+                          translator.message("mobile.ui.removeSomeTextOrAnAttachmentThen"),
                         );
                       }
                       return;
@@ -1326,7 +1456,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {modelControl}
+                {Platform.OS === "android" || compactEditor.isExpanded ? (
+                  <ScrollView
+                    horizontal
+                    className="min-w-0 flex-1"
+                    keyboardShouldPersistTaps="always"
+                    showsHorizontalScrollIndicator={false}
+                  >
+                    {modelControl}
+                  </ScrollView>
+                ) : (
+                  modelControl
+                )}
                 {voiceConfigured ? (
                   <NativeVoiceDictationControl
                     state={voiceDictation.state}
@@ -1351,7 +1492,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={translator.message("mobile.ui.stopAgent")}
                     icon="stop.fill"
                     variant="danger"
                     disabled={!props.canOperateThread}
@@ -1360,7 +1501,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : showResumeAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Resume thread"
+                    accessibilityLabel={translator.message("mobile.ui.resumeThread")}
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
@@ -1420,7 +1561,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   {showStopAction ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={translator.message("mobile.ui.stopAgent")}
                       icon="stop.fill"
                       variant="danger"
                       disabled={!props.canOperateThread}
@@ -1429,7 +1570,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Resume thread"
+                      accessibilityLabel={translator.message("mobile.ui.resumeThread")}
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
                       onPress={() => void handleResumeQueue()}
@@ -1451,7 +1592,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
         {props.connectionState === "connected" && !props.canOperateThread ? (
           <Text className="pt-2 text-xs text-foreground-muted">
-            This connection cannot control this task. You can still edit your draft.
+            {translator.message("mobile.ui.thisConnectionCannotControlThisTaskYou")}
           </Text>
         ) : null}
       </Animated.View>

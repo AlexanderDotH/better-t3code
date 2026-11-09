@@ -47,6 +47,7 @@ import {
   removeIncomingShareDraft,
   writeIncomingShareDraft,
 } from "./incoming-share-storage";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 function receiveSharingEnabled(): boolean {
   if (Platform.OS === "android") {
@@ -235,9 +236,12 @@ function reportRefreshFailure(cause: unknown) {
     cause instanceof Error ? cause.cause : null,
   );
   const error = cause instanceof Error ? cause : new Error("Could not import shared content.");
-  Dialog.alert("Could not import shared content", error.message, [
-    { text: "Dismiss", style: "cancel" },
-    { text: "Retry", onPress: () => void refreshIncomingShares() },
+  Dialog.alert(currentInterfaceTranslator().message("mobile.share.importFailed"), error.message, [
+    { text: currentInterfaceTranslator().message("mobile.thread.dismiss"), style: "cancel" },
+    {
+      text: currentInterfaceTranslator().message("common.retry"),
+      onPress: () => void refreshIncomingShares(),
+    },
   ]);
 }
 
@@ -318,30 +322,46 @@ export const incomingShareImports = makeIncomingShareImports({
     }),
   releaseUnusedAttachments: scheduleUnusedComposerAttachmentCleanup,
   onWarnings: (warnings) => {
-    Dialog.alert("Some shared content was skipped", warnings.join("\n"));
+    Dialog.alert(
+      currentInterfaceTranslator().message("mobile.thread.importSkippedTitle"),
+      warnings.join("\n"),
+    );
   },
   onImportFailure: (target, error) => {
     Dialog.alert(
-      "Could not import shared content",
-      error instanceof Error ? error.message : "The shared content could not be saved.",
+      currentInterfaceTranslator().message("mobile.share.importFailed"),
+      error instanceof Error
+        ? error.message
+        : currentInterfaceTranslator().message("mobile.thread.importSaveFailed"),
       [
         {
-          text: "Cancel import",
+          text: currentInterfaceTranslator().message("mobile.thread.cancelImport"),
           style: "cancel",
           onPress: () => void incomingShareImports.cancel(target),
         },
-        { text: "Retry", onPress: () => incomingShareImports.retry(target) },
+        {
+          text: currentInterfaceTranslator().message("common.retry"),
+          onPress: () => incomingShareImports.retry(target),
+        },
       ],
       { cancelable: false },
     );
   },
   onCancelFailure: (target, error) => {
     Dialog.alert(
-      "Could not cancel import",
-      error instanceof Error ? error.message : "The shared content could not be restored safely.",
+      currentInterfaceTranslator().message("mobile.thread.importCancelFailed"),
+      error instanceof Error
+        ? error.message
+        : currentInterfaceTranslator().message("mobile.thread.importRestoreFailed"),
       [
-        { text: "Retry import", onPress: () => incomingShareImports.retry(target) },
-        { text: "Retry cancel", onPress: () => void incomingShareImports.cancel(target) },
+        {
+          text: currentInterfaceTranslator().message("mobile.thread.retryImport"),
+          onPress: () => incomingShareImports.retry(target),
+        },
+        {
+          text: currentInterfaceTranslator().message("mobile.thread.retryCancel"),
+          onPress: () => void incomingShareImports.cancel(target),
+        },
       ],
       { cancelable: false },
     );

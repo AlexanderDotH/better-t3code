@@ -42,6 +42,7 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { useProjectThreadPreviewCount } from "../../projectThreadPreviewSync";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import {
@@ -70,6 +71,7 @@ import {
 } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { isMacPlatform } from "../../lib/utils";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -424,6 +426,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
+  const translate = useInterfaceTranslator().message;
   const {
     theme,
     setTheme,
@@ -435,6 +438,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   } = useTheme();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const { count: sidebarPreviewCount, setCount: setSidebarPreviewCount } =
+    useProjectThreadPreviewCount();
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -453,7 +458,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? ["Diff colors"]
       : []),
-    ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+    ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ||
+    settings.chatWidthCustomizationEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.chatWidthCustomizationEnabled ||
+    settings.chatWidthAdjustmentPercent !== DEFAULT_UNIFIED_SETTINGS.chatWidthAdjustmentPercent
+      ? ["Chat width"]
+      : []),
     ...(settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay
       ? ["Effort display"]
       : []),
@@ -475,6 +485,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.inAppNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled
       ? ["In-app notifications"]
+      : []),
+    ...(sidebarPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
+      ? ["Visible threads"]
       : []),
     ...(settings.sidebarProjectGroupingMode !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
       ? ["Project Grouping"]
@@ -526,12 +539,21 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
+    ...(settings.composerLayout !== DEFAULT_UNIFIED_SETTINGS.composerLayout
+      ? [translate("settings.composer.layout.label")]
+      : []),
+    ...(settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
+      ? ["Collapse composer on scroll"]
+      : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
     ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
-      ? ["Context window indicator"]
+      ? [translate("settings.contextMeter.label")]
+      : []),
+    ...(settings.responseMetricsEnabled !== DEFAULT_UNIFIED_SETTINGS.responseMetricsEnabled
+      ? [translate("settings.responseMetrics.label")]
       : []),
     ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
       ? ["Response streaming"]
@@ -625,10 +647,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       notifyThemeRestoreFailure();
       return;
     }
+    if (sidebarPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount) {
+      setSidebarPreviewCount(DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount);
+    }
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+      chatWidthCustomizationEnabled: DEFAULT_UNIFIED_SETTINGS.chatWidthCustomizationEnabled,
+      chatWidthAdjustmentPercent: DEFAULT_UNIFIED_SETTINGS.chatWidthAdjustmentPercent,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -642,14 +669,18 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      composerLayout: DEFAULT_UNIFIED_SETTINGS.composerLayout,
+      composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      responseMetricsEnabled: DEFAULT_UNIFIED_SETTINGS.responseMetricsEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -1075,6 +1106,11 @@ export function GeneralSettingsPanel() {
 }
 
 export function ChatSettingsPanel() {
+  const translate = useInterfaceTranslator().message;
+  const composerLayoutOptions = [
+    { value: "current", label: translate("settings.composer.layout.current") },
+    { value: "classic", label: translate("settings.composer.layout.classic") },
+  ] as const;
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },
@@ -1087,6 +1123,50 @@ export function ChatSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="composer" title="Composer">
+        <SettingsRow
+          {...searchableSetting("composer-layout")}
+          title={translate("settings.composer.layout.label")}
+          description={translate("settings.composer.layout.description")}
+          resetAction={
+            settings.composerLayout !== DEFAULT_UNIFIED_SETTINGS.composerLayout ? (
+              <SettingResetButton
+                label={translate("settings.composer.layout.label")}
+                onClick={() =>
+                  updateSettings({ composerLayout: DEFAULT_UNIFIED_SETTINGS.composerLayout })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.composerLayout}
+              onValueChange={(value) => {
+                const option = composerLayoutOptions.find((option) => option.value === value);
+                if (option) updateSettings({ composerLayout: option.value });
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-auto min-w-0 max-w-full"
+                aria-label={translate("settings.composer.layout.label")}
+              >
+                <SelectValue>
+                  {
+                    composerLayoutOptions.find((option) => option.value === settings.composerLayout)
+                      ?.label
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {composerLayoutOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...searchableSetting("composer-rich-text")}
           description="Show formatted Markdown as you type."
@@ -1110,6 +1190,32 @@ export function ChatSettingsPanel() {
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
               aria-label="Rich text composer"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("composer-collapse")}
+          description="Collapse the composer to one line when you scroll the conversation. Focus it or start typing to expand it again."
+          resetAction={
+            settings.composerCollapseOnScroll !==
+            DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
+              <SettingResetButton
+                label="collapse composer on scroll"
+                onClick={() =>
+                  updateSettings({
+                    composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerCollapseOnScroll}
+              onCheckedChange={(checked) =>
+                updateSettings({ composerCollapseOnScroll: Boolean(checked) })
+              }
+              aria-label="Collapse composer on scroll"
             />
           }
         />

@@ -2,6 +2,7 @@ import type { PullRequestReviewPosition, PullRequestReviewThread } from "@t3tool
 import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 import type { NativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import type { PendingReviewComment } from "./pullRequestReviewDrafts";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function reviewPosition(row: NativeReviewDiffRow): PullRequestReviewPosition | null {
   if (row.kind !== "line") return null;
@@ -24,7 +25,7 @@ export function discussionCommentCountLabel(count: number) {
 export function reviewPositionLabel(position: PullRequestReviewPosition) {
   const oldSide =
     position.kind === "deleted" || (position.kind === "context" && position.side === "left");
-  return `${oldSide ? "Old line" : "Line"} ${reviewLine(position)}`;
+  return `${oldSide ? currentInterfaceTranslator().message("mobile.ui.oldLine") : currentInterfaceTranslator().message("mobile.ui.line")} ${reviewLine(position)}`;
 }
 function reviewLine(position: PullRequestReviewPosition) {
   if (position.kind === "deleted" || (position.kind === "context" && position.side === "left"))

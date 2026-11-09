@@ -9,6 +9,7 @@ import { AppText } from "./ui/AppText";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { PresentationSource } from "./ui/NativePresentation";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 export function VideoAttachmentTile(props: {
   readonly name: string;
@@ -21,6 +22,7 @@ export function VideoAttachmentTile(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const mediaActions = useMediaActions(props.disabled ? undefined : props.actionsSource);
   const hasActions = mediaActions.actions.length > 0;
   return (
@@ -46,7 +48,9 @@ export function VideoAttachmentTile(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Play ${props.name}`}
-          accessibilityHint={hasActions ? "Touch and hold for media actions" : undefined}
+          accessibilityHint={
+            hasActions ? translator.message("mobile.ui.touchAndHoldForMediaActions") : undefined
+          }
           accessibilityState={{ disabled: props.disabled ?? false }}
           disabled={props.disabled}
           onPress={() => props.onPress(props.sourceIdentifier)}

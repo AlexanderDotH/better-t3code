@@ -28,6 +28,8 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -90,6 +92,7 @@ export type ThreadGitMenuProps = {
   readonly environmentId: EnvironmentId | string;
   readonly threadId: ThreadId | string;
   readonly currentBranch: string | null;
+  readonly gitEnabled?: boolean;
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
@@ -101,6 +104,10 @@ export type ThreadGitMenuProps = {
 };
 
 type ThreadGitControlsProps = ThreadGitMenuProps & {
+  readonly knowledgeGraphControl?: {
+    readonly accessibilityLabel: string;
+    readonly onPress: () => void;
+  };
   readonly auxiliaryPaneControl?: {
     readonly accessibilityLabel: string;
     readonly onPress: () => void;
@@ -118,6 +125,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
 };
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const environmentId = props.environmentId;
@@ -137,10 +145,10 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const quickAction = (() => {
     if (!isRepo) {
       return {
-        label: "Git unavailable",
+        label: translator.message("mobile.git.unavailable"),
         disabled: true,
         kind: "show_hint" as const,
-        hint: "This workspace is not a git repository.",
+        hint: translator.message("mobile.git.notRepositoryDetail"),
       };
     }
     const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
@@ -148,7 +156,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       ? {
           ...action,
           disabled: true,
-          hint: "This connection cannot change source control.",
+          hint: translator.message("mobile.ui.thisConnectionCannotChangeSourceControl"),
         }
       : action;
   })();
@@ -183,7 +191,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   const runActionWithPrompt = async (input: GitActionRequestInput) => {
-    if (!canWriteSourceControl) return;
+    if (props.gitEnabled === false || !canWriteSourceControl) return;
     const confirmableAction =
       input.action === "push" ||
       input.action === "create_pr" ||
@@ -200,8 +208,8 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ) {
       if (props.hasThread === false) {
         Dialog.alert(
-          "Choose a feature branch",
-          "Switch branches before publishing changes from this draft.",
+          translator.message("mobile.ui.chooseAFeatureBranch"),
+          translator.message("mobile.ui.switchBranchesBeforePublishingChangesFromThis"),
         );
         return;
       }
@@ -219,7 +227,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   const runQuickAction = async () => {
-    if (quickAction.disabled) return;
+    if (props.gitEnabled === false || quickAction.disabled) return;
     if (quickAction.kind === "open_pr") {
       await openExistingPr();
       return;
@@ -245,6 +253,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   const openReview = () => {
+    if (props.gitEnabled === false) return;
     navigation.navigate("ThreadReview", {
       environmentId: EnvironmentId.make(String(environmentId)),
       threadId: ThreadId.make(String(threadId)),
@@ -252,6 +261,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   const openGitInspector = () => {
+    if (props.gitEnabled === false) return;
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
       return;
@@ -276,15 +286,16 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 }
 
 function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGitHeaderActionItems {
+  const translator = useMobileInterfaceTranslator();
   const model = useThreadGitControlModel(props);
 
   return {
     terminal: {
-      accessibilityLabel: "Open terminal",
+      accessibilityLabel: translator.message("mobile.git.openTerminal"),
       disabled: !props.canOpenTerminal,
       icon: { name: "terminal", type: "sfSymbol" },
       identifier: "thread-right-terminal",
-      label: "Terminal",
+      label: translator.message("mobile.git.terminal"),
       menu: {
         items: [
           ...props.projectScripts.map((script) => ({
@@ -298,10 +309,10 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           ...(props.projectScripts.length === 0
             ? [
                 {
-                  description: "This project has no saved scripts yet",
+                  description: translator.message("mobile.git.noProjectScriptsDetail"),
                   disabled: true,
                   icon: { name: "play", type: "sfSymbol" as const },
-                  label: "No project scripts",
+                  label: translator.message("mobile.git.noProjectScripts"),
                   onPress: () => {},
                   type: "action" as const,
                 },
@@ -323,36 +334,36 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
             type: "action" as const,
           })),
           {
-            description: "Start another shell for this thread",
+            description: translator.message("mobile.git.openNewTerminalDetail"),
             disabled: !props.canOperateTerminal,
             icon: { name: "plus", type: "sfSymbol" },
-            label: "Open new terminal",
+            label: translator.message("mobile.git.openNewTerminal"),
             onPress: props.onOpenNewTerminal,
             type: "action",
           },
         ],
-        title: "Terminal",
+        title: translator.message("mobile.git.terminal"),
       },
       sharesBackground: true,
       type: "menu",
       variant: "plain",
     },
     files: {
-      accessibilityLabel: "Open files",
+      accessibilityLabel: translator.message("mobile.git.openFiles"),
       disabled: !props.canOpenFiles,
       icon: { name: "folder", type: "sfSymbol" },
       identifier: "thread-right-files",
-      label: "Files",
+      label: translator.message("mobile.files.title"),
       onPress: model.openFiles,
       sharesBackground: true,
       type: "button",
       variant: "plain",
     },
     git: {
-      accessibilityLabel: "Git actions",
+      accessibilityLabel: translator.message("mobile.git.gitActions"),
       icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
       identifier: "thread-right-git",
-      label: "Git",
+      label: translator.message("mobile.git.git"),
       menu: {
         items: [
           {
@@ -377,20 +388,20 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           {
             description:
               props.hasThread === false
-                ? "Available after the first message"
-                : "Turn diffs and worktree changes",
+                ? translator.message("mobile.ui.availableAfterTheFirstMessage")
+                : translator.message("mobile.git.reviewChangesDetail"),
             disabled: !model.isRepo || props.hasThread === false,
             icon: { name: "text.bubble", type: "sfSymbol" },
-            label: "Review changes",
+            label: translator.message("mobile.git.reviewChanges"),
             onPress: model.openReview,
             type: "action",
           },
           ...(props.onMergeBack
             ? [
                 {
-                  description: "Bring this thread's latest turn into its source",
+                  description: translator.message("mobile.ui.bringThisThreadsLatestTurnIntoIts"),
                   icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
-                  label: "Merge back to source",
+                  label: translator.message("mobile.ui.mergeBackToSource"),
                   onPress: props.onMergeBack,
                   type: "action" as const,
                 },
@@ -399,16 +410,16 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           {
             description:
               props.hasThread === false
-                ? "Available after the first message"
-                : "Commit, files, branches",
+                ? translator.message("mobile.ui.availableAfterTheFirstMessage")
+                : translator.message("mobile.git.moreDetail"),
             disabled: props.hasThread === false,
             icon: { name: "ellipsis", type: "sfSymbol" },
-            label: "More",
+            label: translator.message("mobile.git.more"),
             onPress: model.openGitInspector,
             type: "action",
           },
         ],
-        title: "Git",
+        title: translator.message("mobile.git.git"),
       },
       sharesBackground: true,
       type: "menu",
@@ -417,17 +428,46 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
   };
 }
 
+function knowledgeGraphHeaderItems(props: ThreadGitControlsProps): HeaderItems {
+  const control = props.knowledgeGraphControl;
+  return control
+    ? [
+        {
+          accessibilityLabel: control.accessibilityLabel,
+          icon: { name: "point.3.connected.trianglepath.dotted", type: "sfSymbol" },
+          identifier: "thread-right-knowledge-graph",
+          label: control.accessibilityLabel,
+          onPress: control.onPress,
+          sharesBackground: true,
+          type: "button",
+          variant: "plain",
+        },
+      ]
+    : [];
+}
+
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems;
+  return [
+    ...(props.gitEnabled === false ? [] : [actionItems.git]),
+    ...knowledgeGraphHeaderItems(props),
+    actionItems.files,
+    actionItems.terminal,
+  ];
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems;
+  return [
+    actionItems.files,
+    ...(props.gitEnabled === false ? [] : [actionItems.git]),
+    ...knowledgeGraphHeaderItems(props),
+    actionItems.terminal,
+  ];
 }
 
 export function ThreadGitControls(props: ThreadGitControlsProps) {
+  const translator = useMobileInterfaceTranslator();
   const model = useThreadGitControlModel(props);
   const showActionControls = props.showActionControls ?? true;
 
@@ -447,7 +487,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
       ) : null}
       {showActionControls ? (
         <Toolbar.Menu
-          accessibilityLabel="Open terminal"
+          accessibilityLabel={translator.message("mobile.git.openTerminal")}
           icon="terminal"
           disabled={!props.canOpenTerminal}
           separateBackground
@@ -469,9 +509,9 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
               icon="play"
               disabled
               onPress={() => {}}
-              subtitle="This project has no saved scripts yet"
+              subtitle={translator.message("mobile.git.noProjectScriptsDetail")}
             >
-              <Toolbar.Label>No project scripts</Toolbar.Label>
+              <Toolbar.Label>{translator.message("mobile.git.noProjectScripts")}</Toolbar.Label>
             </Toolbar.MenuAction>
           )}
           {props.terminalSessions.map((session) => (
@@ -496,22 +536,32 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
             icon="plus"
             disabled={!props.canOperateTerminal}
             onPress={props.onOpenNewTerminal}
-            subtitle="Start another shell for this thread"
+            subtitle={translator.message("mobile.git.openNewTerminalDetail")}
           >
-            <Toolbar.Label>Open new terminal</Toolbar.Label>
+            <Toolbar.Label>{translator.message("mobile.git.openNewTerminal")}</Toolbar.Label>
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       ) : null}
       {showActionControls && props.showDirectFileControl ? (
         <Toolbar.Button
-          accessibilityLabel="Open files"
+          accessibilityLabel={translator.message("mobile.git.openFiles")}
           disabled={!props.canOpenFiles}
           icon="folder"
           onPress={model.openFiles}
           separateBackground
         />
       ) : null}
-      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {props.knowledgeGraphControl ? (
+        <Toolbar.Button
+          accessibilityLabel={props.knowledgeGraphControl.accessibilityLabel}
+          icon="point.3.connected.trianglepath.dotted"
+          onPress={props.knowledgeGraphControl.onPress}
+          separateBackground
+        />
+      ) : null}
+      {showActionControls && props.gitEnabled !== false
+        ? createNativeHeaderMenu(threadGitMenuDefinition(props, model))
+        : null}
     </Toolbar>
   );
 }
@@ -523,7 +573,8 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
 
 /** Returns menu data because native toolbars serialize direct items rather than rendering component children. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  return threadGitMenuDefinition(props, useThreadGitControlModel(props));
+  const model = useThreadGitControlModel(props);
+  return props.gitEnabled === false ? null : threadGitMenuDefinition(props, model);
 }
 
 function threadGitMenuDefinition(
@@ -531,7 +582,7 @@ function threadGitMenuDefinition(
   model: ReturnType<typeof useThreadGitControlModel>,
 ): AppBarMenu {
   return {
-    title: "Git controls",
+    title: currentInterfaceTranslator().message("mobile.ui.gitControls"),
     icon: "point.topleft.down.curvedto.point.bottomright.up",
     separateBackground: false,
     items: [
@@ -555,24 +606,24 @@ function threadGitMenuDefinition(
       },
       {
         id: "git-review",
-        title: "Review changes",
+        title: currentInterfaceTranslator().message("mobile.review.changes"),
         icon: "text.bubble",
         disabled: !model.isRepo || props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Turn diffs and worktree changes",
+            ? currentInterfaceTranslator().message("mobile.ui.availableAfterTheFirstMessage")
+            : currentInterfaceTranslator().message("mobile.git.reviewChangesDetail"),
         onPress: model.openReview,
       },
       {
         id: "git-more",
-        title: "More",
+        title: currentInterfaceTranslator().message("mobile.git.more"),
         icon: "ellipsis",
         disabled: props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Commit, files, branches",
+            ? currentInterfaceTranslator().message("mobile.ui.availableAfterTheFirstMessage")
+            : currentInterfaceTranslator().message("mobile.git.moreDetail"),
         onPress: model.openGitInspector,
       },
     ],

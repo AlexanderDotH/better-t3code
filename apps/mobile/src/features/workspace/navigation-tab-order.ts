@@ -7,12 +7,6 @@ export function navigationCustomizationAvailable(
   return registeredSections > 4;
 }
 
-export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
-  threads: "Threads",
-  pullRequests: "Pulls",
-  usage: "Usage",
-};
-
 function isNavigationTab(value: unknown): value is NavigationTab {
   return NAVIGATION_TAB_ORDER.some((tab) => tab === value);
 }

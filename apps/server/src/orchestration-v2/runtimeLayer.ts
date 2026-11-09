@@ -1,3 +1,4 @@
+import * as ProjectAgentMessageDelivery from "../projectAgent/ProjectAgentMessageDelivery.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -314,6 +315,9 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
   ),
 );
+const layerProjectAgentMessages = ProjectAgentMessageDelivery.layer.pipe(
+  Layer.provide(Layer.merge(layerOrchestratorProvided, layerEventSink)),
+);
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -325,6 +329,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
+      layerProjectAgentMessages,
     ),
   ),
 );

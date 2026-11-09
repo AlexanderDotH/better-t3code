@@ -4,12 +4,19 @@ import { AndroidScreenHeader } from "./AndroidScreenHeader";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 import type { SheetCloseButtonProps, SheetHeaderProps } from "./SheetHeader.types";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SheetCloseButton(props: SheetCloseButtonProps) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <IconButton
       icon="xmark"
-      accessibilityLabel={props.accessibilityLabel ?? (props.onCancel ? "Cancel" : "Close")}
+      accessibilityLabel={
+        props.accessibilityLabel ??
+        (props.onCancel
+          ? translator.message("mobile.settings.projects.settings.cancel")
+          : translator.message("common.close"))
+      }
       disabled={props.disabled}
       tintColorClassName="accent-header-foreground"
       onPress={props.onCancel ?? props.onClose}

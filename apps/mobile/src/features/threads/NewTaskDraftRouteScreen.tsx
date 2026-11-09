@@ -36,6 +36,8 @@ import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
 
 import type { NewTaskDraftRouteParams } from "./thread-route-state";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 export type { NewTaskDraftRouteParams } from "./thread-route-state";
 
 const branchCheckouts = makeNewTaskBranchCheckouts({
@@ -66,8 +68,10 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch branch",
-        error instanceof Error ? error.message : "The branch could not be checked out.",
+        currentInterfaceTranslator().message("mobile.thread.switchBranchFailed"),
+        error instanceof Error
+          ? error.message
+          : currentInterfaceTranslator().message("mobile.thread.checkoutFailed"),
       );
     }
     rootNavigationRef.dispatch({
@@ -88,6 +92,7 @@ const idleBranchCheckoutAtom = Atom.make(AsyncResult.initial<BranchCheckoutResul
 );
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+  const translator = useMobileInterfaceTranslator();
   const currentRoute = useRoute();
   const params = route.params ?? {};
   const draftId = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
@@ -198,9 +203,11 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     <>
       {preparingBranch ? (
         <ThreadScreenFallback>
-          <NativeStackScreenOptions options={{ title: "New thread" }} />
+          <NativeStackScreenOptions options={{ title: translator.message("sidebar.thread.new") }} />
           <View className="flex-1 items-center justify-center bg-screen">
-            <Text className="text-foreground">Switching branch...</Text>
+            <Text className="text-foreground">
+              {translator.message("mobile.ui.switchingBranch")}
+            </Text>
           </View>
         </ThreadScreenFallback>
       ) : (

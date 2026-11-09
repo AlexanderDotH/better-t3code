@@ -29,6 +29,7 @@ import {
   questionAttachmentDraftKey,
   questionAttachmentPreparationAtom,
 } from "../../state/question-attachments";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function QuestionAttachments(props: {
   requestId: string;
@@ -39,6 +40,7 @@ export function QuestionAttachments(props: {
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { selectedThread } = useThreadSelection();
   const navigation = useNavigation();
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
@@ -103,13 +105,16 @@ export function QuestionAttachments(props: {
           (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
         ) {
           if (append(key, images) > 0)
-            Dialog.alert("Could not paste image", "Too many attachments.");
+            Dialog.alert(
+              translator.message("mobile.ui.couldNotPasteImage"),
+              translator.message("mobile.ui.tooManyAttachments2"),
+            );
         } else await releaseUnusedComposerAttachmentFiles(images);
       })
       .catch((error) =>
         Dialog.alert(
-          "Could not paste image",
-          error instanceof Error ? error.message : "Try again.",
+          translator.message("mobile.ui.couldNotPasteImage"),
+          error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
         ),
       )
       .finally(() => changeQuestionAttachmentPreparation(key, -1));
@@ -151,12 +156,18 @@ export function QuestionAttachments(props: {
       }
       const rejected = append(key, picked);
       if (result.error || rejected > 0)
-        Dialog.alert("Could not attach file", result.error ?? "Too many attachments.");
+        Dialog.alert(
+          translator.message("mobile.ui.couldNotAttachFile"),
+          result.error ?? translator.message("mobile.ui.tooManyAttachments2"),
+        );
     });
     changeQuestionAttachmentPreparation(key, -1);
     if (AsyncResult.isFailure(picked)) {
       const error = squashAtomCommandFailure(picked);
-      Dialog.alert("Could not attach file", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(
+        translator.message("mobile.ui.couldNotAttachFile"),
+        error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
+      );
     }
   };
   return (
@@ -208,7 +219,7 @@ export function QuestionAttachments(props: {
             focusedRef.current = false;
             onInputFocusChange?.(false);
           }}
-          placeholder="Or type a custom answer"
+          placeholder={translator.message("mobile.thread.customAnswer")}
           className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
         />
       </TextInputWrapper>

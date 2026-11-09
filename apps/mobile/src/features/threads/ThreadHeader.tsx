@@ -7,6 +7,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -19,6 +20,7 @@ export function ThreadHeader(
     readonly onOpenFilesInspector: () => void;
   },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const goBack = useWorkspaceBackNavigation("threads");
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
@@ -28,7 +30,7 @@ export function ThreadHeader(
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
       actions.push({
-        accessibilityLabel: "Return to chat",
+        accessibilityLabel: translator.message("mobile.files.returnToChat"),
         icon: "chevron.left",
         onPress: props.onReturnToThread,
       });
@@ -36,7 +38,9 @@ export function ThreadHeader(
     if (props.hasThreadCwd) {
       const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
       actions.push({
-        accessibilityLabel: filesVisible ? "Close files" : "Open files",
+        accessibilityLabel: filesVisible
+          ? translator.message("mobile.ui.closeFiles")
+          : translator.message("mobile.git.openFiles"),
         selected: filesVisible,
         icon: "folder",
         onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
@@ -44,21 +48,29 @@ export function ThreadHeader(
     }
     if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
       actions.push({
-        accessibilityLabel: "Open terminal",
+        accessibilityLabel: translator.message("mobile.git.openTerminal"),
         icon: "terminal",
         onPress: () => onOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: props.onOpenGitInspector,
-    });
-    if (onMergeBack) {
+    if (props.gitControls.gitEnabled !== false)
       actions.push({
-        accessibilityLabel: "Merge back to source",
+        accessibilityLabel: translator.message("mobile.thread.openGit"),
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: props.onOpenGitInspector,
+      });
+    if (props.gitControls.gitEnabled !== false && onMergeBack) {
+      actions.push({
+        accessibilityLabel: translator.message("mobile.ui.mergeBackToSource"),
         icon: PullRequestGlyph.merged,
         onPress: onMergeBack,
+      });
+    }
+    if (props.gitControls.knowledgeGraphControl) {
+      actions.push({
+        accessibilityLabel: props.gitControls.knowledgeGraphControl.accessibilityLabel,
+        icon: "point.3.connected.trianglepath.dotted",
+        onPress: props.gitControls.knowledgeGraphControl.onPress,
       });
     }
     return actions;
@@ -74,6 +86,9 @@ export function ThreadHeader(
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
+    props.gitControls.gitEnabled,
+    props.gitControls.knowledgeGraphControl,
+    translator,
   ]);
 
   return (
@@ -89,8 +104,8 @@ export function ThreadHeader(
             <ScreenHeaderButton
               accessibilityLabel={
                 props.inspectorMode !== null && panes.auxiliaryPaneVisible
-                  ? "Hide inspector"
-                  : "Show inspector"
+                  ? translator.message("mobile.ui.hideInspector")
+                  : translator.message("mobile.ui.showInspector")
               }
               icon="sidebar.right"
               selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}

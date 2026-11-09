@@ -26,7 +26,7 @@ export function BetterT3SettingsSubgroup(props: {
           accessibilityLabel={props.title}
           accessibilityValue={props.summary ? { text: props.summary } : undefined}
           accessibilityState={{ expanded: open }}
-          className="min-h-11 flex-row items-center gap-2 px-1 py-2"
+          className="min-h-11 flex-row items-center gap-3 px-4 py-3"
           onPress={() => props.onExpandedChange?.(!open)}
         >
           <SymbolView
@@ -44,7 +44,7 @@ export function BetterT3SettingsSubgroup(props: {
       ) : props.showTitle !== false ? (
         <Text
           accessibilityRole="header"
-          className="px-1 text-sm font-t3-medium text-foreground-muted"
+          className="px-4 pt-3 text-sm font-t3-medium text-foreground-muted"
         >
           {props.title}
         </Text>
@@ -54,7 +54,7 @@ export function BetterT3SettingsSubgroup(props: {
           accessibilityElementsHidden={!open}
           importantForAccessibility={open ? "auto" : "no-hide-descendants"}
           pointerEvents={open ? "auto" : "none"}
-          className="ml-1 border-l border-border pl-2"
+          className={props.collapsible ? "ml-6 border-l border-border" : undefined}
           style={open ? undefined : { display: "none" }}
         >
           {props.children}

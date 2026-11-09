@@ -12,6 +12,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 /** A No project thread that already has its own folder, on a server that can promote it. */
 export function canTurnThreadIntoProject(thread: EnvironmentThreadShell): boolean {
@@ -30,7 +31,10 @@ export function canTurnThreadIntoProject(thread: EnvironmentThreadShell): boolea
 export async function turnThreadIntoProject(thread: EnvironmentThreadShell): Promise<void> {
   const title = "Could not turn thread into a project";
   if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-    Dialog.alert(title, "This connection cannot change threads.");
+    Dialog.alert(
+      title,
+      currentInterfaceTranslator().message("sidebar.thread.actionUnavailableThread"),
+    );
     return;
   }
   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -42,6 +46,11 @@ export async function turnThreadIntoProject(thread: EnvironmentThreadShell): Pro
   );
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
     const error = squashAtomCommandFailure(result);
-    Dialog.alert(title, error instanceof Error ? error.message : "Try again.");
+    Dialog.alert(
+      title,
+      error instanceof Error
+        ? error.message
+        : currentInterfaceTranslator().message("settings.panels.tryAgain"),
+    );
   }
 }

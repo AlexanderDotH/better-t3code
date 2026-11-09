@@ -8,7 +8,7 @@ import * as Stream from "effect/Stream";
 
 import * as KnowledgeGraphScopeCatalog from "../../knowledge-graph/runtime/KnowledgeGraphScopeCatalog.ts";
 import * as KnowledgeGraphWatcherMultiplexer from "../../knowledge-graph/runtime/KnowledgeGraphWatcherMultiplexer.ts";
-import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import {
@@ -46,7 +46,7 @@ const make = Effect.gen(function* () {
   const watcher = yield* KnowledgeGraphWatcherMultiplexer.KnowledgeGraphWatcherMultiplexer;
   const registry = yield* ProviderRegistry;
   const events = yield* EventSinkV2;
-  const projections = yield* OrchestratorV2;
+  const projections = yield* ProjectionStoreV2;
   const generate = yield* makeProjectIndexGenerator;
   const readDiff = yield* makeProjectIndexDiffReader;
 

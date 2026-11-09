@@ -161,11 +161,11 @@ function ProviderSettings(props: {
     setRefreshing(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       Alert.alert(
-        "Could not refresh providers",
-        failureMessage(result, "Provider refresh failed."),
+        translator.message("mobile.ui.couldNotRefreshProviders"),
+        failureMessage(result, translator.message("mobile.ui.providerRefreshFailed")),
       );
     }
-  }, [props.environmentId, refreshProviders, refreshing]);
+  }, [props.environmentId, refreshProviders, refreshing, translator]);
 
   const runUpdate = useCallback(
     async (provider: ServerProvider) => {
@@ -181,10 +181,13 @@ function ProviderSettings(props: {
         return next;
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        Alert.alert("Could not update provider", failureMessage(result, "Provider update failed."));
+        Alert.alert(
+          translator.message("mobile.ui.couldNotUpdateProvider"),
+          failureMessage(result, translator.message("providerUpdate.failureFallback")),
+        );
       }
     },
-    [props.environmentId, updateProvider, updating],
+    [props.environmentId, updateProvider, updating, translator],
   );
 
   return (
@@ -286,7 +289,7 @@ function ProviderSettings(props: {
                   }
                   className="py-2 disabled:opacity-40"
                 >
-                  <Text className="font-t3-medium text-destructive">
+                  <Text className="font-t3-medium text-danger-foreground">
                     {translator.message("mobile.settings.agents.remove")}
                   </Text>
                 </Pressable>
@@ -315,7 +318,7 @@ function ProviderSettings(props: {
               >
                 <Text className="font-t3-medium text-foreground">
                   {updating.has(provider.instanceId)
-                    ? "Updating…"
+                    ? translator.message("settings.theme.search.updating")
                     : `Update to ${provider.versionAdvisory?.latestVersion ?? "latest"}`}
                 </Text>
               </Pressable>
@@ -507,7 +510,7 @@ function MobileProviderAuthentication(props: {
             onPress={() => void saveCredential()}
             className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
           >
-            <Text className="font-t3-medium text-background">
+            <Text className="font-t3-medium text-screen">
               {busy
                 ? translator.message("mobile.settings.agents.saving")
                 : (presentation.credentialActionLabel ?? presentation.actionLabel)}
@@ -557,7 +560,7 @@ function MobileProviderAuthentication(props: {
           onPress={() => void connect()}
           className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
         >
-          <Text className="font-t3-medium text-background">
+          <Text className="font-t3-medium text-screen">
             {busy
               ? translator.message("mobile.settings.agents.connecting")
               : presentation.actionLabel}
@@ -597,7 +600,7 @@ function MobileProviderAuthentication(props: {
               }
               className="self-start rounded-xl bg-foreground px-4 py-3"
             >
-              <Text className="font-t3-medium text-background">
+              <Text className="font-t3-medium text-screen">
                 {translator.message("mobile.settings.agents.openAuthorization")}
               </Text>
             </Pressable>
@@ -619,7 +622,7 @@ function MobileProviderAuthentication(props: {
                 }
                 className="self-start rounded-xl bg-foreground px-4 py-3"
               >
-                <Text className="font-t3-medium text-background">
+                <Text className="font-t3-medium text-screen">
                   {translator.message("mobile.settings.agents.openVerification")}
                 </Text>
               </Pressable>
@@ -631,7 +634,7 @@ function MobileProviderAuthentication(props: {
               onPress={() => void connect()}
               className="self-start rounded-xl bg-foreground px-4 py-3"
             >
-              <Text className="font-t3-medium text-background">
+              <Text className="font-t3-medium text-screen">
                 {translator.message("common.retry")}
               </Text>
             </Pressable>
@@ -665,11 +668,11 @@ function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
     const result = await listSkills({ environmentId: props.environmentId, input: {} });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result))
-        setError(failureMessage(result, "Could not load skills."));
+        setError(failureMessage(result, translator.message("mobile.ui.couldNotLoadSkills")));
       return;
     }
     setSkills(result.value.skills);
-  }, [listSkills, props.environmentId]);
+  }, [listSkills, props.environmentId, translator]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote skill catalog for this environment.
   useEffect(() => {
@@ -718,8 +721,8 @@ function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
                   if (result._tag === "Failure") {
                     if (!isAtomCommandInterrupted(result)) {
                       Alert.alert(
-                        "Could not update skill",
-                        failureMessage(result, "Skill update failed."),
+                        translator.message("mobile.ui.couldNotUpdateSkill"),
+                        failureMessage(result, translator.message("mobile.ui.skillUpdateFailed")),
                       );
                     }
                     return;
@@ -767,11 +770,11 @@ function McpSettings(props: { readonly environmentId: EnvironmentId }) {
     const result = await listMcp({ environmentId: props.environmentId, input: {} });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result))
-        setError(failureMessage(result, "Could not load MCP servers."));
+        setError(failureMessage(result, translator.message("mobile.ui.couldNotLoadMcpServers")));
       return;
     }
     setServers(result.value.servers);
-  }, [listMcp, props.environmentId]);
+  }, [listMcp, props.environmentId, translator]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote MCP server catalog for this environment.
   useEffect(() => {
@@ -817,8 +820,8 @@ function McpSettings(props: { readonly environmentId: EnvironmentId }) {
                   if (result._tag === "Failure") {
                     if (!isAtomCommandInterrupted(result)) {
                       Alert.alert(
-                        "Could not update MCP server",
-                        failureMessage(result, "MCP update failed."),
+                        translator.message("settings.mcp.toast.updateFailed"),
+                        failureMessage(result, translator.message("mobile.ui.mcpUpdateFailed")),
                       );
                     }
                     return;
@@ -901,14 +904,14 @@ function EnvironmentAgentSettings(props: {
         if (!isAtomCommandInterrupted(result)) {
           Alert.alert(
             `Could not update ${label}`,
-            failureMessage(result, "Setting update failed."),
+            failureMessage(result, translator.message("mobile.ui.settingUpdateFailed")),
           );
         }
         return false;
       }
       return true;
     },
-    [props.environmentId, updateServerSettings],
+    [props.environmentId, updateServerSettings, translator],
   );
 
   if (config === null) {
@@ -1077,7 +1080,7 @@ function EnvironmentAgentSettings(props: {
               }}
               className="rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
             >
-              <Text className="font-t3-medium text-background">
+              <Text className="font-t3-medium text-screen">
                 {translator.message("mobile.settings.agents.saveKey")}
               </Text>
             </Pressable>

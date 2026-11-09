@@ -7,21 +7,23 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ComposerQueuedEditBanner(props: {
   readonly saving: boolean;
   readonly onCancel: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="flex-row items-center gap-2 px-4 pb-2">
       <SymbolView name="pencil" size={12} tintColorClassName="accent-foreground-muted" />
       <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-        Editing queued message
+        {translator.message("mobile.ui.editingQueuedMessage")}
       </Text>
       <Button
-        label="Cancel"
+        label={translator.message("mobile.settings.projects.settings.cancel")}
         tone="text"
-        accessibilityLabel="Cancel editing queued message"
+        accessibilityLabel={translator.message("mobile.ui.cancelEditingQueuedMessage")}
         disabled={props.saving}
         onPress={props.onCancel}
       />

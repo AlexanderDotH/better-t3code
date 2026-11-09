@@ -1,5 +1,6 @@
 import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
 import type { MarkdownNode } from "../../lib/markdownDocument";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 function isWebUrl(url: string): boolean {
   try {
@@ -42,7 +43,10 @@ export function pullRequestDescriptionContent(
       const name = new URL(segment.url).pathname.split("/").pop();
       attachments.set(segment.url, {
         uri: segment.url,
-        caption: segment.media === "video" ? "Video" : name || "Image",
+        caption:
+          segment.media === "video"
+            ? currentInterfaceTranslator().message("mobile.ui.video")
+            : name || "Image",
         kind: segment.media,
       });
     }

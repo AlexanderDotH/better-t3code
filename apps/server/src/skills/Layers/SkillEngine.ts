@@ -37,6 +37,8 @@ import {
 const SKILL_FILE_NAME = "SKILL.md";
 const RESERVED_SLASH_COMMANDS = new Set(["model", "plan", "default"]);
 const PROMPT_SKILL_NAME_PATTERN = "[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}";
+const PROMPT_SKILL_TOKEN_SOURCE = `(^|\\s)([$/])(${PROMPT_SKILL_NAME_PATTERN})(?=$|\\s)`;
+const PROMPT_SKILL_TOKEN = new RegExp(PROMPT_SKILL_TOKEN_SOURCE);
 const BUILT_IN_PROVIDERS = new Set(["codex", "cursor", "claudeAgent", "opencode", "gemini"]);
 
 interface SkillRoots {
@@ -476,7 +478,7 @@ function rewritePromptWithSkills(input: {
   }
 
   let changed = false;
-  const pattern = new RegExp(`(^|\\s)([$/])(${PROMPT_SKILL_NAME_PATTERN})(?=$|\\s)`, "g");
+  const pattern = new RegExp(PROMPT_SKILL_TOKEN_SOURCE, "g");
   const rewritten = input.prompt.replace(pattern, (match, prefix: string, _sigil: string, name) => {
     const skill = enabledByName.get(name);
     if (!skill) {
@@ -842,6 +844,7 @@ const makeSkillEngine = Effect.fn("makeSkillEngine")(function* (): Effect.fn.Ret
   const rewritePromptForProvider: SkillEngineShape["rewritePromptForProvider"] = (input) =>
     provideCaptured(
       Effect.gen(function* () {
+        if (!PROMPT_SKILL_TOKEN.test(input.prompt)) return input.prompt;
         const result = yield* list({
           includeBody: true,
           ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),

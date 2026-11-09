@@ -34,6 +34,7 @@ import { connectionTone } from "../connection/connectionTone";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
 const REMOVE_SIZE = 20;
@@ -57,6 +58,7 @@ export function EnvironmentRoutesSection({
   readonly connected: boolean;
   readonly onAddRoute: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const entry = useAtomValue(environmentCatalog.catalogValueAtom).entries.get(environmentId);
   const prepared = useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId));
   const sessionResult = useAtomValue(environmentSession.sessionStateAtom(environmentId));
@@ -115,9 +117,9 @@ export function EnvironmentRoutesSection({
       `Remove ${connectionRouteLabel(route)}?`,
       connectionRouteAddress(route) ?? undefined,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
         {
-          text: "Remove",
+          text: translator.message("mobile.settings.agents.remove"),
           style: "destructive",
           onPress: () =>
             void removeRoute({ environmentId, routeId: connectionRouteId(route.target) }),
@@ -130,11 +132,15 @@ export function EnvironmentRoutesSection({
 
   return (
     <SettingsSection
-      title="Routes"
+      title={translator.message("mobile.ui.routes")}
       trailing={
         routes.length > 1 ? (
           <Button
-            label={editing ? "Done" : "Edit"}
+            label={
+              editing
+                ? translator.message("mobile.agentActivity.done")
+                : translator.message("common.edit")
+            }
             tone="text"
             onPress={() => setEditing((value) => !value)}
           />
@@ -143,7 +149,7 @@ export function EnvironmentRoutesSection({
     >
       <SettingsActionRow
         icon="checkmark.circle"
-        label="Your permissions"
+        label={translator.message("mobile.ui.yourPermissions")}
         onPress={() => setPermissionsOpen((open) => !open)}
       />
       {permissionsOpen ? (
@@ -154,12 +160,14 @@ export function EnvironmentRoutesSection({
           session?.authenticated ? (
             <>
               <Text className="text-sm text-foreground-muted">
-                Applies to the route marked In use. Other routes may have different permissions and
-                have not been checked.
+                {translator.message("mobile.ui.appliesToTheRouteMarkedInUse")}
               </Text>
               {AUTH_SCOPE_OPTIONS.map(({ scope, title }) => (
                 <Text key={scope} className="text-sm text-foreground">
-                  {title}: {sessionGrantsScope(session, scope) ? "Allowed" : "Not granted"}
+                  {title}:{" "}
+                  {sessionGrantsScope(session, scope)
+                    ? translator.message("mobile.ui.allowed")
+                    : translator.message("mobile.ui.notGranted")}
                 </Text>
               ))}
             </>
@@ -218,7 +226,11 @@ export function EnvironmentRoutesSection({
           />
         );
       })}
-      <SettingsActionRow icon="plus" label="Add route" onPress={onAddRoute} />
+      <SettingsActionRow
+        icon="plus"
+        label={translator.message("cloud.environment.addRoute")}
+        onPress={onAddRoute}
+      />
     </SettingsSection>
   );
 }
@@ -238,6 +250,7 @@ function RouteRow(props: {
   readonly onStep: (direction: "up" | "down") => void;
   readonly onRemove: (() => void) | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { route, lifted, offset } = props;
   const label = connectionRouteLabel(route);
   const address = connectionRouteAddress(route);
@@ -280,8 +293,8 @@ function RouteRow(props: {
         accessibilityLabel={[
           label,
           address,
-          isLearned(route) ? "Found automatically" : null,
-          props.inUse ? "In use" : null,
+          isLearned(route) ? translator.message("mobile.ui.foundAutomatically") : null,
+          props.inUse ? translator.message("mobile.ui.inUse") : null,
           `Route ${props.position} of ${props.count}`,
         ]
           .filter((part) => part !== null)
@@ -305,7 +318,11 @@ function RouteRow(props: {
               {label}
             </Text>
             {props.inUse ? (
-              <StatusPill {...connectionTone("connected")} label="In use" size="compact" />
+              <StatusPill
+                {...connectionTone("connected")}
+                label={translator.message("mobile.ui.inUse")}
+                size="compact"
+              />
             ) : null}
           </View>
           {address !== null ? (

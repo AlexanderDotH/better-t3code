@@ -29,6 +29,7 @@ import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import * as ConnectionStorage from "./storage";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
   if (state.isConnected === false) {
@@ -162,7 +163,7 @@ const layerCapabilities = Layer.effectContext(
           if (session === null) {
             return yield* new ConnectionBlockedError({
               reason: "authentication",
-              detail: "Sign in to T3 Connect to connect this environment.",
+              detail: currentInterfaceTranslator().message("mobile.ui.signInToT3ConnectToConnect"),
             });
           }
           const token = yield* session.readClerkToken().pipe(
@@ -177,7 +178,9 @@ const layerCapabilities = Layer.effectContext(
           if (token === null) {
             return yield* new ConnectionBlockedError({
               reason: "authentication",
-              detail: "The T3 Connect session is unavailable.",
+              detail: currentInterfaceTranslator().message(
+                "mobile.ui.theT3ConnectSessionIsUnavailable",
+              ),
             });
           }
           return token;
@@ -222,14 +225,18 @@ const layerCapabilities = Layer.effectContext(
             Effect.fail(
               new ConnectionBlockedError({
                 reason: "unsupported",
-                detail: "SSH environments are only available in the desktop app.",
+                detail: currentInterfaceTranslator().message(
+                  "mobile.ui.sshEnvironmentsAreOnlyAvailableInThe",
+                ),
               }),
             ),
           prepare: () =>
             Effect.fail(
               new ConnectionBlockedError({
                 reason: "unsupported",
-                detail: "SSH environments are only available in the desktop app.",
+                detail: currentInterfaceTranslator().message(
+                  "mobile.ui.sshEnvironmentsAreOnlyAvailableInThe",
+                ),
               }),
             ),
           disconnect: () => Effect.void,

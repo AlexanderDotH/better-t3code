@@ -18,6 +18,7 @@ import type {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 
 import { subagentCardDetail } from "./subagent-card-presentation";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const PROMPT_TITLE_LIMIT = 80;
 
@@ -138,7 +139,10 @@ export function workflowRail(group: SubagentWorkflowGroup): ReadonlyArray<Workfl
   if (group.unphasedMembers.length > 0) {
     items.push({
       key: "unphased",
-      title: items.length === 0 ? "Agents" : "Other",
+      title:
+        items.length === 0
+          ? currentInterfaceTranslator().message("mobile.thread.agents")
+          : currentInterfaceTranslator().message("projectIndexing.reviewCategory.other"),
       members: group.unphasedMembers,
     });
   }

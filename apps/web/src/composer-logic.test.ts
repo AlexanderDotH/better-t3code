@@ -23,6 +23,7 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   parseSideChatCommand,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
@@ -574,5 +575,16 @@ describe("parseSideChatCommand", () => {
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
       "slash:plan",
     ]);
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("switches to Chat or Build even where the provider cannot plan", () => {
+    expect(parseStandaloneComposerSlashCommand(" /chat ", false)).toBe("chat");
+    expect(parseStandaloneComposerSlashCommand("/DEFAULT", false)).toBe("default");
+    expect(parseStandaloneComposerSlashCommand("/plan", false)).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/deep-plan", false)).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/deep-plan", true)).toBe("deep-plan");
+    expect(parseStandaloneComposerSlashCommand("/chat about this", true)).toBeNull();
   });
 });

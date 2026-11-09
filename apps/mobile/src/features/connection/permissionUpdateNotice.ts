@@ -8,6 +8,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironmentPresentation } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const storageKey = "t3code.permission-update.v1";
 
@@ -66,8 +67,8 @@ export function installPermissionUpdateNotice(): () => void {
     };
     Dialog.alert(
       `Permissions have changed for ${environment.label}`,
-      "This connection still uses the old permissions, so some actions may no longer be available. Pair again using a new link with the permissions you need.",
-      [{ text: "Got it", onPress: dismiss }],
+      currentInterfaceTranslator().message("mobile.ui.thisConnectionStillUsesTheOldPermissions"),
+      [{ text: currentInterfaceTranslator().message("mobile.ui.gotIt"), onPress: dismiss }],
       { cancelable: false },
     );
   };

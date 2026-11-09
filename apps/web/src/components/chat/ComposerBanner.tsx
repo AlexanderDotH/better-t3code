@@ -65,24 +65,30 @@ function Surface({
   variant?: ComposerBannerVariant;
   detached?: boolean;
 }) {
+  // A grouped segment sits inside the floating bubble, which already draws the glass card.
+  const grouped = useContext(ComposerBannerPlacementContext) === "grouped" && !detached;
   return (
     <div
-      data-composer-banner-surface={detached ? "detached" : "attached"}
+      data-composer-banner-surface={grouped ? "grouped" : detached ? "detached" : "attached"}
       data-variant={variant}
       className={cn(
         surfaceColors,
         "relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent]",
         variantColors[variant],
-        detached
-          ? "[--chat-composer-attachment-overlap:0px] before:rounded-2xl"
-          : // Bleed the mask 1px past the seam to cover Chromium's fractional-pixel backdrop loss.
-            "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4",
-        "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
-        "before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
-        "before:shadow-composer dark:before:shadow-composer-dark",
-        !detached &&
-          "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
-        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
+        grouped
+          ? "[--chat-composer-attachment-overlap:0px] before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint)"
+          : [
+              detached
+                ? "[--chat-composer-attachment-overlap:0px] before:rounded-2xl"
+                : // Bleed the mask 1px past the seam to cover Chromium's fractional-pixel backdrop loss.
+                  "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4",
+              "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
+              "before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
+              "before:shadow-composer dark:before:shadow-composer-dark",
+              !detached &&
+                "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
+              "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
+            ],
         className,
       )}
       {...props}
@@ -91,13 +97,18 @@ function Surface({
 }
 
 function Attachment({ className, ...props }: ComponentProps<"div">) {
+  const placement = useContext(ComposerBannerPlacementContext);
   return (
     <div
       data-slot="composer-banner-attachment"
       className={cn(
-        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
-        "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
-        "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
+        placement === "grouped"
+          ? "w-full max-w-none"
+          : [
+              "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
+              "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
+              "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
+            ],
         className,
       )}
       {...props}

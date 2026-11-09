@@ -232,15 +232,20 @@ describe("Better T3 tool groups between messages", () => {
     ]);
   });
 
-  it("does not change grouping in Current and Classic modes", () => {
+  it("keeps the same tool group in Current and Classic modes", () => {
     const base = input(
       [message("request", "user", 0), thought("thought", 2)],
       [tool("first", 1), tool("second", 3)],
     );
-    for (const chatVisualMode of ["current", "classic"] as const) {
-      expect(deriveMessagesTimelineRows({ ...base, chatVisualMode })).toEqual(
-        deriveMessagesTimelineRows({ ...base, chatVisualMode: "current" }),
+    const group = (chatVisualMode: "current" | "classic") => {
+      const toggle = deriveMessagesTimelineRows({ ...base, chatVisualMode }).find(
+        (row) => row.kind === "work-toggle",
       );
-    }
+      return toggle?.kind === "work-toggle"
+        ? { groupId: toggle.groupId, entries: toolsIn(toggle).map((entry) => entry.id) }
+        : null;
+    };
+    expect(group("current")).not.toBeNull();
+    expect(group("classic")).toEqual(group("current"));
   });
 });

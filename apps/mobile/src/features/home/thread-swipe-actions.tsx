@@ -43,6 +43,7 @@ import Animated, {
 import { AppText as Text } from "../../components/ui/AppText";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const ACTION_ITEM_WIDTH = 58;
 const ACTION_CIRCLE_SIZE = 36;
@@ -91,7 +92,7 @@ function resolveSecondaryAction(input: {
       accessibilityLabel: `Delete ${input.threadTitle}`,
       tone: "danger",
       icon: "trash",
-      label: "Delete",
+      label: currentInterfaceTranslator().message("mobile.git.delete"),
       onPress: () => {
         input.close();
         input.onDelete();

@@ -23,6 +23,8 @@ import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-pro
 import { serverEnvironment } from "./server";
 import { relayEnvironmentDiscovery } from "./relay";
 import { connectPairingUrl as connectPairingUrlCommand } from "../connection/onboarding";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 const RELAY_REMOVAL_ACCOUNT_NOTE: Record<Discovery.RelayEnvironmentRegistration, string> = {
   registered:
@@ -83,7 +85,10 @@ export async function pairEnvironment(
     "reason" in error &&
     error.reason === "unsupported"
   ) {
-    Dialog.alert("Client not supported", message);
+    Dialog.alert(
+      currentInterfaceTranslator().message("chat.environment.status.unsupported"),
+      message,
+    );
     return { ok: false, error: null };
   }
   return { ok: false, error: message };
@@ -181,6 +186,7 @@ export function useRemoteConnectionStatus() {
 }
 
 export function useRemoteConnections() {
+  const translator = useMobileInterfaceTranslator();
   const controller = useConnectionController();
   const navigation = useNavigation();
   const connectionPairingUrl = useAtomValue(connectionPairingUrlAtom);
@@ -210,7 +216,7 @@ export function useRemoteConnections() {
       return;
     }
     const remove = {
-      text: "Remove",
+      text: translator.message("mobile.settings.agents.remove"),
       style: "destructive",
       onPress: () => {
         void controller.removeEnvironment(environmentId);
@@ -222,22 +228,38 @@ export function useRemoteConnections() {
         environmentId,
       );
       const openAccount = {
-        text: "Open T3 Account",
+        text: translator.message("mobile.ui.openT3Account"),
         onPress: () => navigation.navigate("SettingsAuth"),
       };
       Dialog.alert(
-        "Remove from this device?",
+        translator.message("mobile.ui.removeFromThisDevice"),
         `Forget ${environment.environmentLabel} and its cached threads on this device.\n\n${RELAY_REMOVAL_ACCOUNT_NOTE[registration]}`,
         registration === "unregistered" || !hasCloudPublicConfig()
-          ? [{ text: "Cancel", style: "cancel" }, remove]
-          : [{ text: "Cancel", style: "cancel" }, openAccount, remove],
+          ? [
+              {
+                text: translator.message("mobile.settings.projects.settings.cancel"),
+                style: "cancel",
+              },
+              remove,
+            ]
+          : [
+              {
+                text: translator.message("mobile.settings.projects.settings.cancel"),
+                style: "cancel",
+              },
+              openAccount,
+              remove,
+            ],
       );
       return;
     }
     Dialog.alert(
-      "Remove from this device?",
+      translator.message("mobile.ui.removeFromThisDevice"),
       `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
-      [{ text: "Cancel", style: "cancel" }, remove],
+      [
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
+        remove,
+      ],
     );
   };
 

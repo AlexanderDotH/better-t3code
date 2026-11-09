@@ -1,5 +1,6 @@
 import { readHostedPairingRequest, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type PairingOnboardingStage = "validating" | "checking-host" | "validating-code" | "saving";
 
@@ -9,7 +10,7 @@ export interface PairingDestinationReview {
   readonly destination: string;
   readonly transport: "HTTP" | "HTTPS";
   readonly encrypted: boolean;
-  readonly transportDetail: "Encrypted connection" | "Unencrypted HTTP connection";
+  readonly transportDetail: string;
 }
 
 export interface PairingRouteParams {
@@ -100,7 +101,9 @@ export function describePairingDestination(pairingUrl: string): PairingDestinati
     destination,
     transport: encrypted ? "HTTPS" : "HTTP",
     encrypted,
-    transportDetail: encrypted ? "Encrypted connection" : "Unencrypted HTTP connection",
+    transportDetail: encrypted
+      ? currentInterfaceTranslator().message("mobile.ui.encryptedConnection")
+      : currentInterfaceTranslator().message("mobile.ui.unencryptedHttpConnection"),
   };
 }
 

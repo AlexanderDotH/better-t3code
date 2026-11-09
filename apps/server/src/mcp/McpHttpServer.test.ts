@@ -1067,7 +1067,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
           providerInstanceId: ProviderInstanceId.make("codex"),
         },
         client: undefined,
-        capabilities: new Set(["orchestration"]),
+        capabilities: new Set(["orchestration", "coordination"]),
         issuedAt: 1,
       };
       const LinksToolkit = Toolkit.make(
@@ -1084,14 +1084,38 @@ it.effect("hides tools for links and refuses another environment while the beta 
           failure: OrchestratorMcpFailure,
           failureMode: "return",
         }),
+        Tool.make("general", {
+          description: "General delegation availability.",
+          success: Schema.Void,
+        }).annotate(
+          McpSchema.EnabledWhen,
+          McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+        ),
+        Tool.make("project_agents", {
+          description: "Project coordination availability.",
+          success: Schema.Void,
+        }).annotate(
+          McpSchema.EnabledWhen,
+          McpInvocationContext.hasThreadCapability("coordination", "agent.projectCoordination"),
+        ),
       );
-      const settingsContext = yield* Layer.build(ServerSettings.layerTest());
+      const settingsContext = yield* Layer.build(
+        ServerSettings.layerTest({
+          betterT3Environment: {
+            version: 1,
+            initialization: "clean-install",
+            flags: { "agent.generalSubagents": false, "agent.projectCoordination": false },
+          },
+        }),
+      );
       const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
       const serverLayer = McpHttpServer.toolkitRegistration(
         LinksToolkit,
         McpToolAccess.toLayer(LinksToolkit, {
           links: McpToolAccess.reads(() => Effect.succeed({ links: 0 })),
           where: McpToolAccess.reads(() => Effect.succeed({ ranIn: "here" })),
+          general: McpToolAccess.reads(() => Effect.void),
+          project_agents: McpToolAccess.reads(() => Effect.void),
         }),
       ).pipe(
         Layer.provideMerge(
@@ -1169,6 +1193,21 @@ it.effect("hides tools for links and refuses another environment while the beta 
 
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
       expect(yield* listed()).toEqual(["links", "where"]);
+      for (const flags of [
+        { "agent.generalSubagents": true, "agent.projectCoordination": false },
+        { "agent.generalSubagents": false, "agent.projectCoordination": true },
+        { "agent.generalSubagents": false, "agent.projectCoordination": false },
+      ]) {
+        yield* settings.updateSettings({
+          betterT3Environment: { version: 1, flags },
+        });
+        expect(yield* listed()).toEqual([
+          "links",
+          "where",
+          ...(flags["agent.generalSubagents"] ? ["general"] : []),
+          ...(flags["agent.projectCoordination"] ? ["project_agents"] : []),
+        ]);
+      }
       // On, the call goes on to the forwarding, which this server lacks.
       expect(yield* ranIn(elsewhere)).toMatchObject({
         isError: true,

@@ -39,19 +39,46 @@ import {
   applySnoozePickerTime,
   snoozeDateToPickerDate,
 } from "./customSnoozeDate";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type Props = Parameters<typeof SharedCustomSnoozeSheet>[0];
 
 const roundedCorner = Shape.RoundedCorner;
 
 const modes = [
-  { value: "date", label: "Date and time" },
-  { value: "duration", label: "Duration" },
+  {
+    value: "date",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.dateAndTime");
+    },
+  },
+  {
+    value: "duration",
+    get label() {
+      return currentInterfaceTranslator().message("settings.diagnostics.table.duration");
+    },
+  },
 ] as const;
 const units = [
-  { value: "minutes", label: "Minutes" },
-  { value: "hours", label: "Hours" },
-  { value: "days", label: "Days" },
+  {
+    value: "minutes",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.minutes");
+    },
+  },
+  {
+    value: "hours",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.hours");
+    },
+  },
+  {
+    value: "days",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.days");
+    },
+  },
 ] as const;
 
 function systemUses24HourClock() {
@@ -59,6 +86,7 @@ function systemUses24HourClock() {
 }
 
 export function CustomSnoozeSheet(props: Props) {
+  const translator = useMobileInterfaceTranslator();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to re-read the native 24-hour clock setting when the app resumes
@@ -85,7 +113,9 @@ export function CustomSnoozeSheet(props: Props) {
     const snoozedUntil = resolveCustomSnooze(input, new Date());
     if (!snoozedUntil) {
       setError(
-        mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration.",
+        mode === "date"
+          ? translator.message("mobile.ui.chooseADateAndTimeInThe")
+          : translator.message("mobile.ui.enterAPositiveDuration"),
       );
       return;
     }
@@ -142,7 +172,7 @@ export function CustomSnoozeSheet(props: Props) {
                 verticalArrangement={{ spacedBy: 16 }}
                 modifiers={[fillMaxWidth(), padding(24, 24, 24, 16)]}
               >
-                <Text style={titleTypography}>Custom snooze</Text>
+                <Text style={titleTypography}>{translator.message("mobile.ui.customSnooze")}</Text>
                 <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
                   <SegmentedControl
                     variant="card"
@@ -256,13 +286,15 @@ export function CustomSnoozeSheet(props: Props) {
                     onClick={props.onClose}
                     colors={{ contentColor: colors["--color-foreground"] }}
                   >
-                    <Text style={bodyTypography}>Cancel</Text>
+                    <Text style={bodyTypography}>
+                      {translator.message("mobile.settings.projects.settings.cancel")}
+                    </Text>
                   </TextButton>
                   <TextButton
                     onClick={submit}
                     colors={{ contentColor: colors["--color-foreground"] }}
                   >
-                    <Text style={bodyTypography}>Snooze</Text>
+                    <Text style={bodyTypography}>{translator.message("mobile.thread.snooze")}</Text>
                   </TextButton>
                 </Row>
               </Column>

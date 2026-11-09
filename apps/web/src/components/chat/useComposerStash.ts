@@ -63,6 +63,7 @@ import {
 import { BackgroundThreadContext } from "./backgroundThread";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 /**
  * The prompt stash: saving the draft aside, restoring or deleting an entry, the badge pulse,
@@ -98,6 +99,7 @@ export function useComposerStash(input: {
   ) => ReadonlyMap<string, string>;
   readonly expandMobileComposer: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const {
     environmentId,
     composerDraftTarget,
@@ -126,6 +128,9 @@ export function useComposerStash(input: {
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftVoiceFileReferences = useComposerDraftStore(
+    (store) => store.setVoiceFileReferences,
+  );
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftPreviewAnnotation = useComposerDraftStore(
@@ -160,8 +165,8 @@ export function useComposerStash(input: {
     if (filesToVerify.some((file) => file.environmentId !== environmentId)) {
       toastManager.add({
         type: "error",
-        title: "Stashed files belong to another environment",
-        description: "Restore this prompt in the environment that received its files.",
+        title: translate("chat.stash.otherEnvironmentTitle"),
+        description: translate("chat.stash.otherEnvironmentDescription"),
       });
       return;
     }
@@ -197,7 +202,7 @@ export function useComposerStash(input: {
     if (!durable) {
       toastManager.add({
         type: "warning",
-        title: "Restored prompt may reappear in the stash",
+        title: translate("chat.stash.restoreMayReappearTitle"),
         description:
           "Browser storage rejected the update, so this entry could still be there after a reload.",
         data: { hideCopyButton: true },
@@ -228,6 +233,10 @@ export function useComposerStash(input: {
     if (promptChanged) {
       promptRef.current = nextPrompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      setComposerDraftVoiceFileReferences(composerDraftTarget, [
+        ...(getComposerDraft(composerDraftTarget)?.voiceFileReferences ?? []),
+        ...(entry.voiceFileReferences ?? []),
+      ]);
       setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
       setComposerTrigger(null);
     }
@@ -405,7 +414,7 @@ export function useComposerStash(input: {
     if (missingImageReasons.length > 0) {
       toastManager.add({
         type: "warning",
-        title: "Some attachments were not restored",
+        title: translate("chat.stash.attachmentsNotRestored"),
         description: missingImageReasons.join(" "),
       });
     }
@@ -435,7 +444,7 @@ export function useComposerStash(input: {
     if (!durable) {
       toastManager.add({
         type: "warning",
-        title: "Stash entry may come back",
+        title: translate("chat.stash.deleteMayReappearTitle"),
         description:
           "Browser storage rejected the delete, so this prompt could reappear after a reload.",
         data: { hideCopyButton: true },
@@ -486,7 +495,7 @@ export function useComposerStash(input: {
       if (composerFileNeedsReattach(file)) {
         toastManager.add({
           type: "error",
-          title: "Attach dropped files again or remove them before stashing",
+          title: translate("chat.stash.attachDroppedFiles"),
         });
         return;
       }
@@ -494,7 +503,7 @@ export function useComposerStash(input: {
       if (upload?.status !== "ready" || upload.environmentId !== environmentId) {
         toastManager.add({
           type: "error",
-          title: "Wait for file uploads before stashing this prompt",
+          title: translate("chat.stash.waitForUploads"),
         });
         return;
       }
@@ -529,6 +538,7 @@ export function useComposerStash(input: {
         id: entryId,
         createdAt: new Date().toISOString(),
         prompt,
+        voiceFileReferences: getComposerDraft(stashTarget)?.voiceFileReferences ?? [],
         attachments: [],
         ...(stashedFiles.length > 0 ? { files: stashedFiles } : {}),
         droppedImageNames: [],
@@ -543,7 +553,7 @@ export function useComposerStash(input: {
       if (!written) {
         toastManager.add({
           type: "error",
-          title: "Could not stash this prompt",
+          title: translate("chat.stash.failedTitle"),
           description:
             "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
           data: { hideCopyButton: true },
@@ -553,7 +563,7 @@ export function useComposerStash(input: {
       if (!durable) {
         toastManager.add({
           type: "warning",
-          title: "Stashed prompt will not survive a reload",
+          title: translate("chat.stash.memoryOnlyTitle"),
           description:
             "Browser storage is unavailable, so this stash is kept in memory only for this session.",
           data: { hideCopyButton: true },
@@ -589,7 +599,7 @@ export function useComposerStash(input: {
         }
         toastManager.add({
           type: "warning",
-          title: "Oldest stashed prompt discarded",
+          title: translate("chat.stash.oldestDiscardedTitle"),
           description: `The stash holds ${MAX_STASH_ENTRIES} prompts; the oldest was removed to make room.`,
           data: { hideCopyButton: true },
         });
@@ -631,7 +641,7 @@ export function useComposerStash(input: {
         if (!imagesDurable && durable && images.length > 0) {
           toastManager.add({
             type: "warning",
-            title: "Stashed images were not saved",
+            title: translate("chat.stash.imagesNotSavedTitle"),
             description:
               "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
             data: { hideCopyButton: true },
@@ -640,7 +650,7 @@ export function useComposerStash(input: {
       } else if (kept.length > 0) {
         toastManager.add({
           type: "warning",
-          title: "Stashed images did not attach",
+          title: translate("chat.stash.imagesDidNotAttachTitle"),
           description: `That prompt was restored or deleted before ${kept.length} image${kept.length === 1 ? "" : "s"} finished saving. Re-attach ${kept.length === 1 ? "it" : "them"} if you still need ${kept.length === 1 ? "it" : "them"}.`,
           data: { hideCopyButton: true },
         });

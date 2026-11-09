@@ -5,6 +5,7 @@ import { Pressable, type ColorValue } from "react-native";
 
 import { useDeadlinePassed } from "../../lib/clock";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const COPY_FEEDBACK_DURATION_MS = 1200;
 
@@ -21,6 +22,7 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
   readonly iconSize?: number;
   readonly buttonSize?: number;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [copiedAtMs, setCopiedAtMs] = useState<number | null>(null);
   const feedbackEnded = useDeadlinePassed(
     copiedAtMs === null ? null : copiedAtMs + COPY_FEEDBACK_DURATION_MS,
@@ -30,7 +32,9 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={copied ? "Copied" : props.accessibilityLabel}
+      accessibilityLabel={
+        copied ? translator.message("mobile.thread.copied") : props.accessibilityLabel
+      }
       disabled={props.text.length === 0}
       hitSlop={8}
       onLongPress={props.onLongPress}
@@ -38,11 +42,17 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
         try {
           if (props.onCopy) await props.onCopy();
           else if (!(await tryCopyTextWithHaptic(props.text))) {
-            Dialog.alert("Could not copy", "Try again.");
+            Dialog.alert(
+              translator.message("mobile.ui.couldNotCopy"),
+              translator.message("settings.panels.tryAgain"),
+            );
             return;
           }
         } catch {
-          Dialog.alert("Could not copy", "Try again.");
+          Dialog.alert(
+            translator.message("mobile.ui.couldNotCopy"),
+            translator.message("settings.panels.tryAgain"),
+          );
           return;
         }
         setCopiedAtMs(Date.now());

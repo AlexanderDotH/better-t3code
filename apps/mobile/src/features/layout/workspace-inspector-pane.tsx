@@ -13,6 +13,7 @@ import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 // CSS form of WORKSPACE_PANE_TIMING's Easing.inOut(Easing.cubic).
 const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
@@ -27,6 +28,7 @@ export function WorkspaceInspectorPane(props: {
   readonly renderInspector?: () => ReactNode;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { panes, setAuxiliaryPaneWidth } = props;
   const inspectorWidth = panes.auxiliaryPaneWidth;
   const inspectorSupported = props.renderInspector !== undefined && inspectorWidth !== null;
@@ -98,7 +100,7 @@ export function WorkspaceInspectorPane(props: {
     <>
       {inspectorVisible ? (
         <WorkspacePaneDivider
-          accessibilityLabel="Resize detail pane"
+          accessibilityLabel={translator.message("mobile.layout.resizeDetailPane")}
           currentWidth={inspectorWidth ?? 0}
           resizeDirection={-1}
           onResizeStart={beginResize}
@@ -119,7 +121,10 @@ export function WorkspaceInspectorPane(props: {
             <RenderErrorBoundary
               resetKeys={[props.pathname]}
               renderFallback={(fallback) => (
-                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+                <RenderFailureView
+                  {...fallback}
+                  title={translator.message("mobile.ui.theInspectorCouldntBeDisplayed")}
+                />
               )}
             >
               <InspectorRenderer render={props.renderInspector} />

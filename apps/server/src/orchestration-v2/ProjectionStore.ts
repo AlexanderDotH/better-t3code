@@ -456,6 +456,13 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  readonly hasRetryAssistantOutput: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId | null;
+    readonly createdAt: DateTime.Utc;
+    readonly afterOrdinal: number;
+  }) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
@@ -585,6 +592,7 @@ export interface ProjectionStoreV2Shape {
   readonly getPendingNativeUserInputs: (
     threadId: ThreadId,
     providerTurnId: ProviderTurnId,
+    options?: { readonly includeApprovals?: boolean },
   ) => Effect.Effect<ProjectionPendingUserInputs, ProjectionStoreV2Error>;
   readonly getPlan: (
     threadId: ThreadId,
@@ -4920,14 +4928,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getPendingNativeUserInputs: ProjectionStoreV2Shape["getPendingNativeUserInputs"] = (
       threadId,
       providerTurnId,
+      options,
     ) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
+            const includeApprovals = options?.includeApprovals === true ? 1 : 0;
             const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_runtime_requests
           WHERE thread_id = ${threadId} AND provider_turn_id = ${providerTurnId}
-            AND kind = 'user_input' AND status = 'pending'
+            AND (kind = 'user_input' OR ${includeApprovals} = 1) AND status = 'pending'
         `;
             const runtimeRequests = (yield* decodeRows(
               decodeRuntimeRequestPayload,
@@ -4944,14 +4954,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const itemRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND provider_turn_id = ${providerTurnId}
-            AND type = 'user_input_request'
+            AND (type = 'user_input_request' OR (${includeApprovals} = 1 AND type = 'approval_request'))
         `;
             const requestIds = new Set(runtimeRequests.map((request) => request.id));
             return {
               runtimeRequests,
               nodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
               turnItems: (yield* decodeRows(decodeTurnItemPayload, threadId)(itemRows)).filter(
-                (item) => item.type === "user_input_request" && requestIds.has(item.requestId),
+                (item) =>
+                  (item.type === "user_input_request" || item.type === "approval_request") &&
+                  requestIds.has(item.requestId),
               ),
             };
           }),
@@ -5462,6 +5474,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.flatMap(decodeRows(decodeRunPayload, threadId)),
         Effect.mapError(controlReadError(threadId)),
       );
+
+    const hasRetryAssistantOutput: ProjectionStoreV2Shape["hasRetryAssistantOutput"] = Effect.fn(
+      "ProjectionStore.hasRetryAssistantOutput",
+    )(function* (input) {
+      const createdAt = DateTime.formatIso(input.createdAt);
+      const rows = yield* sql<{ present: number }>`SELECT
+        EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
+          WHERE thread_id = ${input.threadId} AND role = 'assistant'
+            AND ${
+              input.runId === null ? sql`created_at >= ${createdAt}` : sql`run_id = ${input.runId}`
+            })
+        OR EXISTS(SELECT 1 FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${input.threadId} AND type = 'assistant_message'
+            AND ${input.runId === null ? sql`ordinal > ${input.afterOrdinal}` : sql`run_id = ${input.runId}`}) AS present
+      `.pipe(Effect.mapError(controlReadError(input.threadId)));
+      return rows[0]?.present === 1;
+    });
 
     const getMessageCount: ProjectionStoreV2Shape["getMessageCount"] = (threadId) =>
       sql<{
@@ -7405,6 +7434,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
+      hasRetryAssistantOutput: readOnReader(hasRetryAssistantOutput),
       getSubagentCount: readOnReader(getSubagentCount),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       freezeConversationItems: readOnReader(freezeConversationItems),

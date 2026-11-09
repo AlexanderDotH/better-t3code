@@ -84,7 +84,11 @@ export function SettingsScopeSentence() {
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
+          {translate(
+            scope.search.machine || scope.scope.kind === "checkout"
+              ? "settings.application.scope.on"
+              : "settings.application.scope.across",
+          )}
         </span>
         <EnvironmentScopeMenu {...props} />
       </span>
@@ -101,6 +105,7 @@ interface ScopeOption {
 }
 
 function ScopeOptionLabel({ option }: { option: ScopeOption }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <>
       {option.icon}
@@ -111,7 +116,9 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
         ) : null}
       </span>
       {option.offline ? (
-        <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {translate("cloud.connection.offline")}
+        </span>
       ) : null}
     </>
   );
@@ -136,11 +143,15 @@ function ScopeMenu({
   searchLabel: string;
   onChange: (next: string) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [query, setQuery] = useState("");
   const Trigger = options.length > 6 ? ComboboxTrigger : MenuTrigger;
   const trigger = (
     <Trigger
-      aria-label={`${ariaLabel}: ${label}`}
+      aria-label={translate("settings.application.scope.selectionAria", {
+        scope: ariaLabel,
+        label,
+      })}
       render={<Button variant="outline" size="sm" />}
       className="min-w-0 max-w-72"
     >
@@ -183,7 +194,7 @@ function ScopeMenu({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <ComboboxEmpty>No matches found.</ComboboxEmpty>
+          <ComboboxEmpty>{translate("settings.application.scope.noMatches")}</ComboboxEmpty>
           <ComboboxList>
             {(option: ScopeOption) => (
               <ComboboxItem key={option.value} value={option}>
@@ -273,13 +284,13 @@ function EnvironmentScopeMenu({
       }
       value={environmentValue}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}
-      searchLabel="Search environments"
+      searchLabel={translate("settings.application.scope.searchEnvironments")}
       allOption={
         singleEnvironment
           ? null
           : {
               value: ALL_ENVIRONMENTS_VALUE,
-              label: "All environments",
+              label: translate("settings.application.scope.allEnvironments"),
               icon: <LayersIcon aria-hidden className="size-3.5 shrink-0" />,
             }
       }
@@ -317,11 +328,21 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
     <ScopeMenu
       ariaLabel={translate("settings.application.scope.projectAria")}
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
-      label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
+      label={
+        selected?.displayName ??
+        translate(
+          value.project
+            ? "settings.application.scope.unavailableProject"
+            : "settings.application.scope.allProjects",
+        )
+      }
       value={projectAxisValue(value)}
       onChange={(next) => onChange(selectProjectAxis(value, next))}
-      searchLabel="Search projects"
-      allOption={{ value: ALL_PROJECTS_VALUE, label: "All projects" }}
+      searchLabel={translate("settings.application.scope.searchProjects")}
+      allOption={{
+        value: ALL_PROJECTS_VALUE,
+        label: translate("settings.application.scope.allProjects"),
+      }}
       options={projects.map(({ group, machines }) => {
         const sameName = projects.filter(
           (other) =>
@@ -339,7 +360,11 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
         return {
           value: group.projectKey,
           label: group.displayName,
-          secondary: group.archived ? ["Archived", location].filter(Boolean).join(" · ") : location,
+          secondary: group.archived
+            ? [translate("settings.application.scope.archived"), location]
+                .filter(Boolean)
+                .join(" · ")
+            : location,
           icon: <ProjectFavicon project={group} className="size-3.5 shrink-0" />,
         };
       })}

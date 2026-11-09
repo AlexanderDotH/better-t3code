@@ -706,6 +706,20 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "message.retry":
+        return orchestrator.getThreadRecords(command.threadId, ["runs"]).pipe(
+          Effect.flatMap((projection) =>
+            assertProviderInstanceEnabled({
+              projectId: projection.thread.projectId,
+              commandId: command.commandId,
+              instanceId: (
+                command.modelSelection ??
+                projection.runs.find((run) => run.id === command.runId)?.modelSelection ??
+                projection.thread.modelSelection
+              ).instanceId,
+            }),
+          ),
+        );
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>

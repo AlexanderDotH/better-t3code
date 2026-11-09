@@ -101,7 +101,7 @@ export function ContextWindowMeterSettingsPreview(props: {
   });
 
   return (
-    <View className="gap-3">
+    <View className="gap-3 p-4">
       <View className="gap-1">
         <Text className="text-base font-t3-medium text-foreground">{label}</Text>
         <Text className="text-sm leading-normal text-foreground-muted">{description}</Text>

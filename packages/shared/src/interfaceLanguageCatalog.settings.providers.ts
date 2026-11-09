@@ -245,7 +245,27 @@ export const settingsProvidersInterfaceCatalog = defineLocalizedInterfaceCatalog
     "Umgebungsvariablen",
     "Variables d’environnement",
   ],
-  "settings.providers.environment.add": ["Add", "Hinzufügen", "Ajouter"],
+  "settings.providers.environment.add": [
+    "Add variable",
+    "Variable hinzufügen",
+    "Ajouter une variable",
+  ],
+  "settings.providers.environment.sensitiveStored": [
+    "Sensitive, stored separately",
+    "Vertraulich, wird separat gespeichert",
+    "Sensible, stockée séparément",
+  ],
+  "settings.providers.environment.plainText": ["Plain text", "Klartext", "Texte brut"],
+  "settings.providers.environment.storageNote": [
+    "Sensitive values are stored separately and never returned to the app.",
+    "Vertrauliche Werte werden separat gespeichert und nie an die App zurückgegeben.",
+    "Les valeurs sensibles sont stockées séparément et ne sont jamais renvoyées à l’application.",
+  ],
+  "settings.providers.environment.redactedHint": [
+    "Enter a new value to rename a saved one or make it plain text.",
+    "Gib einen neuen Wert ein, um einen gespeicherten umzubenennen oder als Klartext zu speichern.",
+    "Saisissez une nouvelle valeur pour renommer une valeur enregistrée ou la passer en texte brut.",
+  ],
   "settings.providers.environment.description": [
     "Add variables to pass API keys, base URLs, or other per-instance CLI settings.",
     "Variablen für API-Schlüssel, Basis-URLs oder andere CLI-Einstellungen dieser Instanz hinzufügen.",

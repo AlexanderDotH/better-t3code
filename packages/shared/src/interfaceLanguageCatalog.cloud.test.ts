@@ -65,7 +65,7 @@ describe("cloud interface catalog", () => {
       "An unexpected router error occurred.",
     );
     expect(cloudInterfaceCatalog.messages.de["sshPassword.failureFallback"]).toBe(
-      "Die SSH-Passwortabfrage ist fehlgeschlagen.",
+      "Die SSH-Bestätigungsabfrage ist fehlgeschlagen.",
     );
     expect(cloudInterfaceCatalog.messages.fr["serverUpdate.copy.failureTitle"]).toBe(
       "Impossible de copier la commande de mise à jour",

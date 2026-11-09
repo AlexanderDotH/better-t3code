@@ -12,12 +12,14 @@ import {
   resolveSubagentRowPresentation,
   resolveSubagentStopTarget,
 } from "./threadAgentsPresentation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SubagentStopButton(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: OrchestrationV2Subagent;
   readonly className?: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const target = resolveSubagentStopTarget(props.subagent);
   const canStop = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
@@ -39,7 +41,11 @@ export function SubagentStopButton(props: {
         : interruptTurn({ environmentId: props.environmentId, input: target.input })
     ).finally(() => setStopping(false));
     if (result._tag === "Failure") {
-      Dialog.alert(workflow ? "Could not stop workflow" : "Could not stop agent");
+      Dialog.alert(
+        workflow
+          ? translator.message("mobile.ui.couldNotStopWorkflow")
+          : translator.message("mobile.ui.couldNotStopAgent"),
+      );
     }
   };
 
@@ -48,13 +54,24 @@ export function SubagentStopButton(props: {
       <IconButton
         icon="stop.fill"
         variant="danger"
-        accessibilityLabel={`${stopping ? "Stopping" : "Stop"} ${workflow ? "workflow" : "agent"} ${label}`}
+        accessibilityLabel={translator.message(
+          stopping
+            ? workflow
+              ? "mobile.ui.stoppingWorkflowNamed"
+              : "mobile.ui.stoppingAgentNamed"
+            : workflow
+              ? "mobile.ui.stopWorkflowNamed"
+              : "mobile.ui.stopAgentNamed",
+          { label },
+        )}
         disabled={stopping}
         onPress={() =>
           Dialog.confirm({
-            title: workflow ? "Stop workflow?" : "Stop agent?",
+            title: workflow
+              ? translator.message("mobile.ui.stopWorkflow")
+              : translator.message("mobile.ui.stopAgent2"),
             message: workflow ? `Every running agent in ${label} stops.` : `Stop ${label}?`,
-            confirmText: "Stop",
+            confirmText: translator.message("mobile.thread.stop"),
             destructive: true,
             onConfirm: () => void stop(),
           })

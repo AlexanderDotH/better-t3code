@@ -1,4 +1,5 @@
 import type { OrchestrationV2UserMessageInputIntent } from "@t3tools/contracts";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export interface UserMessageIntentBadgePresentation {
   readonly label: string;
@@ -11,13 +12,15 @@ export function resolveUserMessageIntentBadge(
   switch (intent) {
     case "steer":
       return {
-        label: "Steer",
-        accessibilityLabel: "Steered the active turn",
+        label: currentInterfaceTranslator().message("mobile.ui.steer"),
+        accessibilityLabel: currentInterfaceTranslator().message("mobile.ui.steeredTheActiveTurn"),
       };
     case "promoted_queued_to_steer":
       return {
-        label: "Steer",
-        accessibilityLabel: "Originally queued, then promoted to steer the active turn",
+        label: currentInterfaceTranslator().message("mobile.ui.steer"),
+        accessibilityLabel: currentInterfaceTranslator().message(
+          "mobile.ui.originallyQueuedThenPromotedToSteerThe",
+        ),
       };
     case "queued_turn":
     case "turn_start":

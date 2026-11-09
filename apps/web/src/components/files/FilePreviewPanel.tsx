@@ -66,7 +66,7 @@ import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
-
+import { useNotificationSuppression } from "~/components/ui/notificationSuppression";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
@@ -1010,6 +1010,7 @@ export default function FilePreviewPanel({
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
@@ -1338,7 +1339,8 @@ export default function FilePreviewPanel({
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated &&
-      (draft || isMarkdown || isMermaid || isHtml) ? (
+      (draft || isMarkdown || isMermaid || isHtml) &&
+      !suppressErrorsAndWarnings ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
@@ -1444,33 +1446,35 @@ export default function FilePreviewPanel({
               origin="File"
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div
-              role="alert"
-              className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto"
-            >
-              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-xs leading-relaxed">
-                <p className="text-destructive">
-                  {file.readError ? filePreviewReadErrorMessage(file.readError) : file.error}
-                </p>
-                {attemptedPath ? (
-                  <p className="text-muted-foreground">
-                    Attempted path
-                    <code className="block break-all font-mono text-foreground select-all">
-                      {attemptedPath}
-                    </code>
+            suppressErrorsAndWarnings ? null : (
+              <div
+                role="alert"
+                className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto"
+              >
+                <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-xs leading-relaxed">
+                  <p className="text-destructive">
+                    {file.readError ? filePreviewReadErrorMessage(file.readError) : file.error}
                   </p>
-                ) : null}
-                {!isHostFile ? (
-                  <p className="text-muted-foreground">
-                    Workspace folder:{" "}
-                    <code className="break-all font-mono select-all">
-                      {file.readError?.cwd ?? cwd}
-                    </code>
-                    . Check the link's path or locate the file in Files.
-                  </p>
-                ) : null}
+                  {attemptedPath ? (
+                    <p className="text-muted-foreground">
+                      Attempted path
+                      <code className="block break-all font-mono text-foreground select-all">
+                        {attemptedPath}
+                      </code>
+                    </p>
+                  ) : null}
+                  {!isHostFile ? (
+                    <p className="text-muted-foreground">
+                      Workspace folder:{" "}
+                      <code className="break-all font-mono select-all">
+                        {file.readError?.cwd ?? cwd}
+                      </code>
+                      . Check the link's path or locate the file in Files.
+                    </p>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            )
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Spinner size="lg" />

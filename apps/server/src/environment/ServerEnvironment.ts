@@ -283,6 +283,7 @@ export const make = Effect.gen(function* () {
       mcpWorkspaceVersion: 1,
       extensionStoreVersion: 1,
       agentWorkflowVersion: 1,
+      threadRetry: true,
       deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
       environmentSettingsVersion: 6,
       supportsSpeechDictationProcessing: true,

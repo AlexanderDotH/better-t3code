@@ -31,7 +31,6 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
-import { Badge } from "../ui/badge";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
@@ -54,6 +53,9 @@ import {
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
 import { AddProviderInstanceWizardSteps } from "./AddProviderInstanceWizardSteps";
+import { ADDITIONAL_BETTER_T3_PROVIDER_DRIVERS } from "./BetterT3SettingsPanel.logic";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { ProviderDriverBadge } from "./ProviderDriverBadge";
 import { AcpRegistrySearchStep, useAcpRegistrySearch } from "./AcpRegistrySearchStep";
 import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthenticationStep";
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
@@ -85,6 +87,9 @@ const DRIVER_OPTIONS = providerClients.definitions.filter(
   (option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND,
 );
 const FEATURED_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured !== false);
+const BETTER_T3_DRIVER_KINDS: ReadonlySet<ProviderDriverKind> = new Set(
+  ADDITIONAL_BETTER_T3_PROVIDER_DRIVERS,
+);
 const MORE_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured === false);
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
 function validateInstanceId(id: string, existing: ReadonlySet<string>): string | null {
@@ -139,11 +144,7 @@ function ProviderOptionGrid({
           >
             <CheckIcon className="size-3.5 shrink-0" />
           </RadioPrimitive.Indicator>
-          {option.badgeLabel ? (
-            <Badge variant="warning" size="sm">
-              {option.badgeLabel}
-            </Badge>
-          ) : null}
+          {option.badgeLabel ? <ProviderDriverBadge label={option.badgeLabel} /> : null}
         </RadioPrimitive.Root>
       ))}
     </RadioGroup>
@@ -181,6 +182,13 @@ export function AddProviderInstanceDialog({
   const managedPolicy = useManagedPolicy(environmentId);
   const featuredDriverOptions = FEATURED_DRIVER_OPTIONS.filter((option) =>
     isManagedDriverAllowed(managedPolicy, option.driverKind),
+  );
+  const translator = useInterfaceTranslator();
+  const coreDriverOptions = featuredDriverOptions.filter(
+    (option) => !BETTER_T3_DRIVER_KINDS.has(option.driverKind),
+  );
+  const betterT3DriverOptions = featuredDriverOptions.filter((option) =>
+    BETTER_T3_DRIVER_KINDS.has(option.driverKind),
   );
   const moreDriverOptions = MORE_DRIVER_OPTIONS.filter((option) =>
     isManagedDriverAllowed(managedPolicy, option.driverKind),
@@ -493,12 +501,29 @@ export function AddProviderInstanceDialog({
                   Provider
                 </div>
                 <ProviderOptionGrid
-                  options={featuredDriverOptions}
+                  options={coreDriverOptions}
                   value={driver}
                   disabled={isPreparingRegistryAgent}
                   onValueChange={selectDriver}
                   aria-labelledby="add-instance-driver-label"
                 />
+                {betterT3DriverOptions.length > 0 ? (
+                  <>
+                    <div
+                      id="add-instance-better-t3-driver-label"
+                      className="pt-2 text-xs font-medium text-muted-foreground"
+                    >
+                      {translator.message("settings.betterT3.providers.additionalHeading")}
+                    </div>
+                    <ProviderOptionGrid
+                      options={betterT3DriverOptions}
+                      value={driver}
+                      disabled={isPreparingRegistryAgent}
+                      onValueChange={selectDriver}
+                      aria-labelledby="add-instance-better-t3-driver-label"
+                    />
+                  </>
+                ) : null}
                 <MultipleAccountsNote environmentId={environmentId} driver={driver} />
               </div>
 

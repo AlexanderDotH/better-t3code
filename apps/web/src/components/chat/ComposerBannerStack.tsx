@@ -28,6 +28,8 @@ export interface ComposerBannerStackItem {
   readonly actions?: ReactNode;
   readonly dismissLabel?: string;
   readonly onDismiss?: () => void;
+  /** Recolors the card's surface variables for a notice with its own palette. */
+  readonly className?: string;
 }
 
 const GROUPS = ["environment", "attention"] as const;
@@ -184,6 +186,7 @@ function NoticeCard({
       detached={detached}
       density="comfortable"
       data-chat-composer-collapsed-controls="true"
+      {...(item.className ? { className: item.className } : {})}
     >
       <ComposerBanner.Row layout="wrap-actions">
         <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">

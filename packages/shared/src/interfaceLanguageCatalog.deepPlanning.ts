@@ -1,6 +1,11 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.deepPlan.continuing": [
+    "Continuing the Deep Plan",
+    "Deep Plan wird fortgesetzt",
+    "Reprise du Deep Plan",
+  ],
   "chat.deepPlan.label": ["Deep Plan", "Deep Plan", "Deep Plan"],
   "chat.deepPlan.ready": ["Deep Plan ready", "Deep Plan bereit", "Deep Plan prêt"],
   "chat.deepPlan.sources": ["Sources", "Quellen", "Sources"],
@@ -18,6 +23,16 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
     { one: "{{count}} project chat", other: "{{count}} project chats" },
     { one: "{{count}} Projektchat", other: "{{count}} Projektchats" },
     { one: "{{count}} discussion du projet", other: "{{count}} discussions du projet" },
+  ],
+  "chat.deepPlan.noProjectChats": [
+    "No project chats",
+    "Keine Projektchats",
+    "Aucune discussion du projet",
+  ],
+  "chat.deepPlan.includeProjectChats": [
+    "Include all chats from this project",
+    "Alle Chats dieses Projekts einbeziehen",
+    "Inclure toutes les discussions de ce projet",
   ],
   "chat.deepPlan.extraSources": [
     { one: "{{count}} added chat", other: "{{count}} added chats" },
@@ -215,6 +230,11 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Project chats are included automatically. Add chats from other projects or environments.",
     "Projektchats werden automatisch einbezogen. Füge Chats aus anderen Projekten oder Umgebungen hinzu.",
     "Les discussions du projet sont incluses automatiquement. Ajoutez des discussions d’autres projets ou environnements.",
+  ],
+  "chat.deepPlan.manualSelectionHint": [
+    "Only the chats you select are used. Without chats, Deep Plan works from your request and the codebase.",
+    "Nur die ausgewählten Chats werden verwendet. Ohne Chats plant Deep Plan anhand deiner Anfrage und der Codebasis.",
+    "Seules les discussions sélectionnées sont utilisées. Sans discussion, Deep Plan s’appuie sur votre demande et le code.",
   ],
   "chat.deepPlan.analysisPending": [
     "Waiting for source analysis",

@@ -20,6 +20,7 @@ import {
   releaseCheckError,
   releaseCheckValue,
 } from "./environmentUpdateCheck";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function OutdatedServerUpdateSection({
   environmentId,
@@ -28,6 +29,7 @@ export function OutdatedServerUpdateSection({
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const describe = useAtomCommand(describeOutdatedServer, { reportFailure: false });
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
   const state = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
@@ -56,9 +58,9 @@ export function OutdatedServerUpdateSection({
       `Update ${label}?`,
       `Install T3 Code ${targetVersion}. T3 Code restarts on that machine and reconnects. Running threads may be interrupted.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
         {
-          text: "Update",
+          text: translator.message("serverUpdate.action.update"),
           onPress: () => {
             setCheckErrorDismissed(true);
             void update({
@@ -76,20 +78,22 @@ export function OutdatedServerUpdateSection({
     <SettingsSection title="T3 Code">
       <View className="gap-1 p-4">
         <Text className="text-base text-foreground">
-          {release ? `Version ${release.fromVersion}` : "Update required"}
+          {release
+            ? `Version ${release.fromVersion}`
+            : translator.message("mobile.ui.updateRequired")}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {state.status === "running"
             ? state.stage === "resuming"
-              ? "Restarting and reconnecting…"
+              ? translator.message("mobile.ui.restartingAndReconnecting")
               : state.stage === "installing"
-                ? "Installing update…"
-                : "Downloading update…"
+                ? translator.message("mobile.ui.installingUpdate")
+                : translator.message("mobile.ui.downloadingUpdate")
             : release
               ? release.targetVersion
                 ? `Version ${release.targetVersion} is available.`
-                : "No newer version is available yet."
-              : "This app needs a newer version of T3 Code on this machine."}
+                : translator.message("mobile.ui.noNewerVersionIsAvailableYet")
+              : translator.message("mobile.ui.thisAppNeedsANewerVersionOf")}
         </Text>
         {error || state.status === "failed" ? (
           <Text selectable accessibilityRole="alert" className="text-sm text-danger-foreground">
@@ -99,7 +103,7 @@ export function OutdatedServerUpdateSection({
       </View>
       <SettingsActionRow
         icon="arrow.clockwise"
-        label="Check for updates"
+        label={translator.message("sidebar.update.check")}
         disabled={busy}
         loading={checking}
         onPress={check}
@@ -107,7 +111,11 @@ export function OutdatedServerUpdateSection({
       {release?.targetVersion ? (
         <SettingsActionRow
           icon="arrow.up.circle"
-          label={state.status === "failed" ? "Retry update" : `Update to ${release.targetVersion}`}
+          label={
+            state.status === "failed"
+              ? translator.message("mobile.ui.retryUpdate")
+              : `Update to ${release.targetVersion}`
+          }
           disabled={busy}
           loading={state.status === "running"}
           onPress={requestUpdate}

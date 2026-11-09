@@ -5,6 +5,7 @@ import type {
 
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type NativeHeaderMenuItems = NativeStackHeaderItemMenu["menu"]["items"];
 type NativeHeaderIcon = NonNullable<Extract<NativeStackHeaderItem, { type: "button" }>["icon"]>;
@@ -41,7 +42,7 @@ export function createSidebarHeaderItems(input: {
       type: "menu",
       axisBehavior: "horizontalOnly",
       label: "",
-      accessibilityLabel: "Filter threads",
+      accessibilityLabel: currentInterfaceTranslator().message("mobile.ui.filterThreads"),
       icon: sfSymbolIcon(input.filterIcon),
       menu: {
         title: input.filterMenu.title,
@@ -51,8 +52,8 @@ export function createSidebarHeaderItems(input: {
     withNativeGlassHeaderItem({
       type: "button",
       axisBehavior: "horizontalOnly",
-      label: "Settings",
-      accessibilityLabel: "Open settings",
+      label: currentInterfaceTranslator().message("mobile.settings.title"),
+      accessibilityLabel: currentInterfaceTranslator().message("mobile.navigation.openSettings"),
       icon: sfSymbolIcon("gearshape"),
       onPress: input.onOpenSettings,
     }),

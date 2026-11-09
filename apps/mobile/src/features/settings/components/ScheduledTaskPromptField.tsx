@@ -11,6 +11,7 @@ import {
 } from "../../voice-input/ComposerDictationControl";
 import type { useVoiceInputController } from "../../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../../voice-input/voiceInputPresentation";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export function ScheduledTaskPromptField(props: {
   readonly value: string;
@@ -20,6 +21,7 @@ export function ScheduledTaskPromptField(props: {
   readonly disabled: boolean;
   readonly voiceInput: ReturnType<typeof useVoiceInputController>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const voice = props.voiceInput;
   const presentation = resolveVoiceComposerPresentation(voice.state, voice.elapsedSeconds);
   const showsDictation = presentation.statusLabel !== null;
@@ -27,10 +29,12 @@ export function ScheduledTaskPromptField(props: {
 
   return (
     <View className="gap-2 border-t border-border-subtle px-4 py-3">
-      <Text className="text-sm text-foreground-muted">Prompt</Text>
+      <Text className="text-sm text-foreground-muted">
+        {translator.message("mobile.ui.prompt")}
+      </Text>
       <View className="relative">
         <TextInput
-          accessibilityLabel="Prompt"
+          accessibilityLabel={translator.message("mobile.ui.prompt")}
           value={props.value}
           onChangeText={props.onChange}
           selection={props.selection}
@@ -39,7 +43,7 @@ export function ScheduledTaskPromptField(props: {
           multiline
           scrollEnabled
           textAlignVertical="top"
-          placeholder="What should the agent do each time?"
+          placeholder={translator.message("mobile.ui.whatShouldTheAgentDoEachTime")}
           placeholderTextColorClassName="accent-foreground-muted"
           className="max-h-40 min-h-24 font-sans text-base text-foreground"
         />

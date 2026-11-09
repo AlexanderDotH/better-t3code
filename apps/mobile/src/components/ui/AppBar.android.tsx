@@ -13,8 +13,10 @@ import { SearchField } from "./SearchField";
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
 import type { AppBarProps } from "./AppBar.types";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function AppBar(props: AppBarProps) {
+  const translator = useMobileInterfaceTranslator();
   const { search } = props;
   const { paddingTop, paddingBottom } = useToolbarLayout();
   const { scale, buttonSize, iconSize, smallIconSize } = useAndroidControlSizing();
@@ -90,7 +92,7 @@ export function AppBar(props: AppBarProps) {
           <View className="flex-row items-center gap-2" style={{ minHeight: buttonSize }}>
             {props.onBack ? (
               <Pressable
-                accessibilityLabel="Navigate up"
+                accessibilityLabel={translator.message("mobile.accessibility.navigateUp")}
                 accessibilityRole="button"
                 hitSlop={8}
                 onPress={props.onBack}
@@ -160,7 +162,9 @@ export function AppBar(props: AppBarProps) {
               ...(search.refreshInToolbar && search.onRefresh
                 ? [
                     {
-                      accessibilityLabel: search.refreshAccessibilityLabel ?? "Refresh",
+                      accessibilityLabel:
+                        search.refreshAccessibilityLabel ??
+                        translator.message("mobile.files.refreshAction"),
                       icon: "arrow.clockwise" as const,
                       onPress: search.onRefresh,
                     },
@@ -201,14 +205,19 @@ export function AppBar(props: AppBarProps) {
             >
               <View className="flex-1 flex-row items-center gap-1">
                 <ScreenHeaderButton
-                  accessibilityLabel={search.closeAccessibilityLabel ?? "Close search"}
+                  accessibilityLabel={
+                    search.closeAccessibilityLabel ?? translator.message("mobile.ui.closeSearch")
+                  }
                   icon="arrow.left"
                   onPress={closeSearch}
                 />
                 <SearchField
                   inputRef={inputRef}
                   accessibilityLabel={search.placeholder}
-                  clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}
+                  clearAccessibilityLabel={
+                    search.clearAccessibilityLabel ??
+                    translator.message("mobile.navigation.clearSearch")
+                  }
                   placeholder={search.placeholder}
                   value={search.value}
                   onChangeText={search.onChangeText}

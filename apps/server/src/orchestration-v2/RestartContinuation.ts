@@ -47,6 +47,8 @@ function restartContinuationBlocked(
 ): boolean {
   const { thread } = projection;
   if (
+    // DeepPlanValidationReactor continues these turns from the durable plan.
+    source.deepPlanRunId !== undefined ||
     thread.archivedAt !== null ||
     thread.deletedAt !== null ||
     thread.settledOverride === "settled" ||

@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { deepPlanMarkdown } from "../deepPlanning/deepPlanMarkdown.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import * as DateTime from "effect/DateTime";
@@ -55,27 +56,61 @@ export const make = Effect.gen(function* () {
     "PlanParallelismReview.review",
   )(function* (input) {
     const projection = yield* orchestration
-      .getThreadRecords(input.threadId, ["plans", "messages", "turnItems"])
+      .getThreadRecords(input.threadId, input.deepPlan ? [] : ["plans", "messages", "turnItems"])
       .pipe(
         Effect.mapError(() =>
           reviewError("plan-not-found", "The proposed plan could not be loaded."),
         ),
       );
     const thread = projection.thread;
-    const plan = projection.plans.find(
-      (candidate) => candidate.id === input.planId && candidate.kind === "proposed_plan",
-    );
-    const planItem = projection.turnItems.find(
-      (item) => item.type === "proposed_plan" && item.planId === input.planId,
-    );
-    if (!plan || plan.kind !== "proposed_plan" || !planItem) {
-      return yield* reviewError("plan-not-found", "The proposed plan was not found.");
-    }
-    if (DateTime.formatIso(planItem.updatedAt) !== input.expectedPlanUpdatedAt) {
-      return yield* reviewError(
-        "plan-stale",
-        "The proposed plan changed before its parallelism review completed.",
+    let markdown: string;
+    let planUpdatedAt: string;
+    let userRequest: string | undefined;
+    if (input.deepPlan) {
+      const run = thread.deepPlan;
+      if (
+        !run?.plan ||
+        thread.id !== input.threadId ||
+        run.threadId !== input.threadId ||
+        run.id !== input.deepPlan.runId
+      )
+        return yield* reviewError("plan-not-found", "The Deep Plan was not found.");
+      if (
+        run.plan.version !== input.deepPlan.planVersion ||
+        run.updatedAt !== input.expectedPlanUpdatedAt ||
+        run.phase !== "awaitingApproval"
+      )
+        return yield* reviewError(
+          "plan-stale",
+          "The Deep Plan changed before its parallelism review completed.",
+        );
+      markdown = deepPlanMarkdown(run.plan);
+      planUpdatedAt = run.updatedAt;
+      userRequest = undefined;
+    } else {
+      const plan = projection.plans.find(
+        (candidate) => candidate.id === input.planId && candidate.kind === "proposed_plan",
       );
+      const planItem = projection.turnItems.find(
+        (item) => item.type === "proposed_plan" && item.planId === input.planId,
+      );
+      if (!plan || plan.kind !== "proposed_plan" || !planItem) {
+        return yield* reviewError("plan-not-found", "The proposed plan was not found.");
+      }
+      planUpdatedAt = DateTime.formatIso(planItem.updatedAt);
+      if (planUpdatedAt !== input.expectedPlanUpdatedAt) {
+        return yield* reviewError(
+          "plan-stale",
+          "The proposed plan changed before its parallelism review completed.",
+        );
+      }
+      markdown = plan.markdown;
+      userRequest =
+        plan.runId === null
+          ? undefined
+          : projection.messages.find(
+              (message) => message.role === "user" && message.runId === plan.runId,
+            )?.text;
     }
 
     const projectOption = yield* projects
@@ -124,18 +159,12 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    const userRequest =
-      plan.runId === null
-        ? undefined
-        : projection.messages.find(
-            (message) => message.role === "user" && message.runId === plan.runId,
-          )?.text;
     const cwd = thread.worktreePath ?? projectOption.value.workspaceRoot;
     const generation = textGeneration
       .reviewPlanParallelism({
         cwd,
         planMarkdown: truncatePlanParallelismReviewContext(
-          plan.markdown,
+          markdown,
           PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
         ),
         ...(userRequest === undefined
@@ -192,6 +221,30 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+    if (input.deepPlan) {
+      const current = yield* orchestration
+        .getThreadShell(input.threadId)
+        .pipe(
+          Effect.mapError(() =>
+            reviewError("plan-not-found", "The Deep Plan could not be loaded."),
+          ),
+        );
+      const run = current?.deepPlan;
+      if (
+        !run?.plan ||
+        current?.id !== input.threadId ||
+        run.threadId !== input.threadId ||
+        run.id !== input.deepPlan.runId ||
+        run.plan.version !== input.deepPlan.planVersion ||
+        run.updatedAt !== planUpdatedAt ||
+        run.phase !== "awaitingApproval"
+      )
+        return yield* reviewError(
+          "plan-stale",
+          "The Deep Plan changed before its parallelism review completed.",
+        );
+    }
+
     yield* Effect.logInfo("Plan parallelism review completed", {
       reviewerProvider: reviewer.driverKind,
       reviewerModel: modelSelection.model,
@@ -199,8 +252,8 @@ export const make = Effect.gen(function* () {
       recommendedSubagents,
     });
     return {
-      planId: plan.id,
-      planUpdatedAt: DateTime.formatIso(planItem.updatedAt),
+      planId: input.planId,
+      planUpdatedAt,
       implementationProviderInstanceId: input.implementationProviderInstanceId,
       recommendedSubagents,
     } satisfies PlanParallelismReviewResult;

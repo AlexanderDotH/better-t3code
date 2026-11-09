@@ -3,6 +3,7 @@ import {
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestDetail, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export type PullRequestAgentTask = "ask" | "explain" | "feedback" | "conflicts" | "watch";
 
@@ -38,20 +39,20 @@ export function pullRequestAgentActions(pr: PullRequestDetail, canWatch: boolean
   return [
     {
       task: "ask",
-      title: "Ask a question",
+      title: currentInterfaceTranslator().message("pullRequest.detail.askQuestion"),
       icon: "bubble.left.and.text.bubble.right",
       disabled: false,
     },
     { task: "explain", title: `Explain this ${shortLabel}`, icon: "book", disabled: false },
     {
       task: "feedback",
-      title: "Address feedback",
+      title: currentInterfaceTranslator().message("mobile.ui.addressFeedback"),
       icon: "wrench.and.screwdriver",
       disabled: pr.state !== "open",
     },
     {
       task: "conflicts",
-      title: "Resolve conflicts",
+      title: currentInterfaceTranslator().message("git.overview.action.resolveConflicts"),
       icon: "arrow.triangle.branch",
       disabled: pr.state !== "open" || pr.mergeability !== "conflicting",
     },

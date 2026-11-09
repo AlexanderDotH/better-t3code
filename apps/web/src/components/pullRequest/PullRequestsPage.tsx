@@ -20,7 +20,14 @@ import type {
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ArrowDownUpIcon, LayersIcon, Plug2Icon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 
 import {
   collectPullRequestListFacets,
@@ -83,8 +90,10 @@ import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
+import { useNotificationSuppression } from "../ui/notificationSuppression";
 import { SidebarInset } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
+import { useMacRightPanelWindowExpansion } from "~/hooks/useMacRightPanelWindowExpansion";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -132,6 +141,7 @@ function getShortcutContext() {
  */
 const PAGE_SIZE = 99;
 const MAX_PAGE_SIZE = 500;
+const PULL_REQUEST_PANEL_WIDTH_STORAGE_KEY = "t3code:pull-request-panel-width";
 const EMPTY_VIEWERS: PullRequestListResult["viewers"] = {};
 const EMPTY_PARTITIONS: PullRequestPartitionsSnapshot = { authored: [], reviewing: [] };
 const NO_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> = [];
@@ -176,6 +186,31 @@ export function PullRequestsPage() {
   const selectedPullRequestSurface =
     selectedRightPanelSurface?.kind === "pull-request" ? selectedRightPanelSurface : null;
   const activePullRequestSurface = rightPanelState.isOpen ? selectedPullRequestSurface : null;
+  const windowExpansionTargetId = rightPanelRef ? (selectedPullRequestSurface?.id ?? null) : null;
+  const windowExpansionTargetRef = useRef(windowExpansionTargetId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed selection to a ref the async window expansion checks before opening the panel
+  useLayoutEffect(() => {
+    windowExpansionTargetRef.current = windowExpansionTargetId;
+    return () => {
+      windowExpansionTargetRef.current = null;
+    };
+  }, [windowExpansionTargetId]);
+  const defaultPanelWidth = typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2);
+  const rightPanelWindowExpansion = useMacRightPanelWindowExpansion({
+    panelWidthStorageKey: PULL_REQUEST_PANEL_WIDTH_STORAGE_KEY,
+    defaultPanelWidth,
+  });
+  const [windowExpansionReveal, setWindowExpansionReveal] = useState<{
+    surfaceId: string;
+    direction: "left" | "right";
+  } | null>(null);
+  if (
+    windowExpansionReveal !== null &&
+    (!rightPanelState.isOpen || windowExpansionReveal.surfaceId !== windowExpansionTargetId)
+  ) {
+    setWindowExpansionReveal(null);
+  }
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = {
@@ -1069,6 +1104,29 @@ export function PullRequestsPage() {
     useRightPanelStore.getState().show(rightPanelRef);
     selectSurfaceInUrl(selectedPullRequestSurface);
   };
+  const toggleWindowExpansion = () => {
+    if (rightPanelWindowExpansion.expanded) {
+      if (rightPanelState.isOpen) toggleRightPanel();
+      void rightPanelWindowExpansion.toggle();
+      return;
+    }
+    if (rightPanelState.isOpen) {
+      void rightPanelWindowExpansion.toggle();
+      return;
+    }
+    if (rightPanelRef === null || selectedPullRequestSurface === null) return;
+    const surface = selectedPullRequestSurface;
+    const direction = rightPanelWindowExpansion.direction;
+    void rightPanelWindowExpansion.prepareOpen().then((applied) => {
+      if (windowExpansionTargetRef.current !== surface.id) {
+        rightPanelWindowExpansion.cancelPreparedOpen();
+        return;
+      }
+      if (applied) setWindowExpansionReveal({ surfaceId: surface.id, direction });
+      useRightPanelStore.getState().show(rightPanelRef);
+      selectSurfaceInUrl(surface);
+    });
+  };
 
   const unavailableProjects = new Map(
     listErrors.map(
@@ -1102,7 +1160,12 @@ export function PullRequestsPage() {
   );
   const panelToggleControls = (
     <PanelLayoutControls
-      onToggleWindowExpansion={() => undefined}
+      onToggleWindowExpansion={toggleWindowExpansion}
+      windowExpansionAvailable={rightPanelWindowExpansion.available}
+      windowExpanded={rightPanelWindowExpansion.expanded}
+      windowExpansionPreparing={rightPanelWindowExpansion.preparing}
+      windowExpansionDirection={rightPanelWindowExpansion.direction}
+      windowExpansionBlocked={rightPanelMaximized}
       showTerminalControl={false}
       showThreadPanelControl={false}
       terminalAvailable={false}
@@ -1193,10 +1256,16 @@ export function PullRequestsPage() {
         />
       )}
 
-      {listQuery.error && shownCount > 0 ? (
+      {listQuery.error && shownCount > 0 && !suppressErrorsAndWarnings ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{listQuery.error} Showing the last pull requests loaded.</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
+            Retry
+          </Button>
+        </div>
+      ) : listQuery.error && shownCount > 0 ? (
+        <div className="flex justify-end px-3 py-2">
+          <Button size="xs" variant="ghost" onClick={() => listQuery.refresh()}>
             Retry
           </Button>
         </div>
@@ -1462,8 +1531,12 @@ export function PullRequestsPage() {
             maximized={rightPanelMaximized}
             keybindings={keybindings}
             getShortcutContext={getShortcutContext}
-            widthStorageKey="t3code:pull-request-panel-width"
-            defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
+            widthStorageKey={PULL_REQUEST_PANEL_WIDTH_STORAGE_KEY}
+            defaultWidth={defaultPanelWidth}
+            {...(rightPanelState.isOpen &&
+            windowExpansionReveal?.surfaceId === renderedPullRequestSurface.id
+              ? { windowExpansionRevealDirection: windowExpansionReveal.direction }
+              : {})}
             surfaces={renderedRightPanelSurfaces}
             environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}

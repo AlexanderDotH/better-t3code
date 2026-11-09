@@ -4,10 +4,15 @@ import { createBrowserHistory, createHashHistory } from "@tanstack/react-router"
 import * as Schema from "effect/Schema";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
-import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
+import {
+  applyAppearanceFontVariables,
+  resolveSeparateFontPreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "./appearanceFonts";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
+import { resolveChatContentMaxWidth } from "./components/chat/chatContentWidth";
 import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRetention";
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
 import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPromptDialog";
@@ -31,7 +36,11 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
-import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
+import {
+  readLocalStorageValue,
+  subscribeLocalStorageKey,
+  writeLocalStorageValue,
+} from "./hooks/useLocalStorage";
 import {
   getClientSettings,
   startModelPreferencesMigration,
@@ -65,11 +74,12 @@ function startClientAppearance(): void {
     const settings = getClientSettings();
     const previous = applied;
     applied = settings;
-    const separateFonts = readLocalStorageValue(
+    const storedSeparateFonts = readLocalStorageValue(
       TYPOGRAPHY_ADVANCED_STORAGE_KEY,
-      false,
-      Schema.Boolean,
+      null,
+      Schema.NullOr(Schema.Boolean),
     );
+    const separateFonts = resolveSeparateFontPreference(storedSeparateFonts, settings);
     const previousSeparateFonts = appliedSeparateFonts;
     appliedSeparateFonts = separateFonts;
     if (previous?.diffColorScheme !== settings.diffColorScheme) {
@@ -77,6 +87,20 @@ function startClientAppearance(): void {
     }
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
+    }
+    if (
+      previous?.chatWidthCustomizationEnabled !== settings.chatWidthCustomizationEnabled ||
+      previous.chatWidthAdjustmentPercent !== settings.chatWidthAdjustmentPercent
+    ) {
+      const chatContentMaxWidth = resolveChatContentMaxWidth(
+        settings.chatWidthCustomizationEnabled,
+        settings.chatWidthAdjustmentPercent,
+      );
+      if (chatContentMaxWidth === null) {
+        root.style.removeProperty("--chat-content-max-width");
+      } else {
+        root.style.setProperty("--chat-content-max-width", chatContentMaxWidth);
+      }
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
@@ -112,6 +136,9 @@ function startClientAppearance(): void {
         smoothing: settings.fontSmoothing,
         separate: separateFonts,
       });
+    }
+    if (storedSeparateFonts === null && separateFonts) {
+      writeLocalStorageValue(TYPOGRAPHY_ADVANCED_STORAGE_KEY, true, false, Schema.Boolean);
     }
   };
   subscribeClientSettings(apply);

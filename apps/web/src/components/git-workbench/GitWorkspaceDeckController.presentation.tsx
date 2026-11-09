@@ -81,7 +81,7 @@ export interface GitWorkspaceDeckPresentationProps {
   readonly onCardSelectionBlocked: NonNullable<
     ComponentProps<typeof ChatWorkspaceDeck>["onCardSelectionBlocked"]
   >;
-  readonly onExpandedCardChange: (card: ChatWorkspaceCardId | null) => void;
+  readonly onExpandedCardChange: ComponentProps<typeof ChatWorkspaceDeck>["onExpandedCardChange"];
   readonly onRestoreChatFocus: () => void;
   readonly resetKey: string;
 }

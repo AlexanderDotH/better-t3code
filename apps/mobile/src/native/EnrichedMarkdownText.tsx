@@ -31,6 +31,7 @@ import {
   enrichedSkillLinkRegex,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 function enrichedStyle(
   style: SelectableMarkdownTextProps["textStyle"],
@@ -162,6 +163,7 @@ function enrichedStyle(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
+  const translator = useMobileInterfaceTranslator();
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
   const { markdown, fileHrefs } = useMemo(() => {
@@ -222,9 +224,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             const menu = fileContextMenu?.(url) ?? {
               title: url,
               actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
-                { id: "enriched-share-link", title: "Share link" },
+                { id: "enriched-open-link", title: translator.message("mobile.ui.openLink") },
+                { id: "enriched-copy-link", title: translator.message("chat.composer.copyLink") },
+                { id: "enriched-share-link", title: translator.message("mobile.ui.shareLink") },
               ],
             };
             return [
@@ -294,8 +296,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             const menu = props.fileContextMenu?.(url) ?? {
               title: url,
               actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
+                { id: "enriched-open-link", title: translator.message("mobile.ui.openLink") },
+                { id: "enriched-copy-link", title: translator.message("chat.composer.copyLink") },
               ],
             };
             setActiveMenu({ url, menu });

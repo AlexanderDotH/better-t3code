@@ -130,6 +130,7 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const EMPTY_IDS: readonly string[] = [];
 
@@ -142,6 +143,7 @@ function PullRequestTabScrollView(props: ScrollViewProps) {
 }
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const result = useEnvironmentQuery(composerPullRequests.activity(requestTarget(params)));
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(params)));
@@ -164,7 +166,7 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
         date: "",
         content: (
           <Text className="py-6 text-sm text-foreground-muted">
-            No activity matches these filters.
+            {translator.message("mobile.ui.noActivityMatchesTheseFilters")}
           </Text>
         ),
       });
@@ -182,6 +184,7 @@ function PullRequestIdentity(props: {
   readonly pr: PullRequestDetail | PullRequestListEntry;
   readonly params: PullRequestParams;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { pr } = props;
   const status = pullRequestStatus(pr);
   return (
@@ -210,7 +213,7 @@ function PullRequestIdentity(props: {
       <View className="flex-row items-center gap-2">
         <PullRequestAvatar actor={pr.author} size={20} />
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
-          {pr.author?.login ?? "Unknown author"}
+          {pr.author?.login ?? translator.message("mobile.ui.unknownAuthor")}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
           Updated <RelativeTime timestamp={pr.updatedAt} /> ago
@@ -247,6 +250,7 @@ function PullRequestLabels(props: {
   readonly pr: PullRequestDetail;
   readonly params: PullRequestParams;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const connected = usePullRequestConnected(props.params.environmentId);
   const canWrite = useAtomValue(
@@ -280,10 +284,14 @@ function PullRequestLabels(props: {
       })}
       {editable ? (
         <Chip
-          label={props.pr.labels.length ? "Edit" : "Add labels"}
+          label={
+            props.pr.labels.length
+              ? translator.message("common.edit")
+              : translator.message("mobile.ui.addLabels")
+          }
           icon="tag"
           size="small"
-          accessibilityLabel="Edit labels"
+          accessibilityLabel={translator.message("mobile.ui.editLabels")}
           onPress={() => navigation.navigate("PullRequestLabels", props.params)}
         />
       ) : null}
@@ -337,6 +345,7 @@ function usePullRequestToolbarHeight(bottomInset: number) {
 }
 
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
+  const translator = useMobileInterfaceTranslator();
   const returnToList = useAndroidWorkspaceBack("pullRequests");
   const { layout } = useAdaptiveWorkspaceLayout();
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
@@ -488,7 +497,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               ...(permissions.verdicts.length
                 ? [
                     {
-                      accessibilityLabel: "Submit review",
+                      accessibilityLabel: translator.message("mobile.ui.submitReview"),
                       icon: "text.bubble" as const,
                       onPress: () =>
                         navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
@@ -498,7 +507,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               ...(permissions.canComment
                 ? [
                     {
-                      accessibilityLabel: "Add comment",
+                      accessibilityLabel: translator.message("mobile.ui.addComment"),
                       icon: "plus.bubble" as const,
                       onPress: () =>
                         navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
@@ -508,14 +517,14 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               ...(permissions.canEditChangeRequest
                 ? [
                     {
-                      accessibilityLabel: "Edit title",
+                      accessibilityLabel: translator.message("pullRequest.detail.editTitle"),
                       icon: "pencil" as const,
                       overflowOnly: true,
                       onPress: () =>
                         navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
                     },
                     {
-                      accessibilityLabel: "Edit description",
+                      accessibilityLabel: translator.message("pullRequest.description.edit"),
                       icon: "doc.text" as const,
                       overflowOnly: true,
                       onPress: () =>
@@ -526,7 +535,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               ...(maintainerEdits.visible
                 ? [
                     {
-                      accessibilityLabel: "Allow edits from maintainers",
+                      accessibilityLabel: translator.message("mobile.ui.allowEditsFromMaintainers"),
                       icon: "pencil" as const,
                       selected: maintainerEdits.value,
                       disabled: maintainerEdits.saving,
@@ -544,13 +553,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       onPress: () => void Linking.openURL(identity.url),
                     },
                     {
-                      accessibilityLabel: "Copy link",
+                      accessibilityLabel: translator.message("chat.composer.copyLink"),
                       icon: "link" as const,
                       overflowOnly: true,
                       onPress: () => copyPullRequestLink(identity),
                     },
                     {
-                      accessibilityLabel: "Share…",
+                      accessibilityLabel: translator.message("mobile.ui.share"),
                       icon: "square.and.arrow.up" as const,
                       overflowOnly: true,
                       onPress: () => sharePullRequestLink(identity),
@@ -585,7 +594,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   navigation.navigate("PullRequestReview", { ...params, mode: "review" })
                 }
               >
-                <Toolbar.Label>Submit review</Toolbar.Label>
+                <Toolbar.Label>{translator.message("mobile.ui.submitReview")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {permissions.canComment ? (
@@ -595,7 +604,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
                 }
               >
-                <Toolbar.Label>Add comment</Toolbar.Label>
+                <Toolbar.Label>{translator.message("mobile.ui.addComment")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {permissions.canEditChangeRequest ? (
@@ -605,7 +614,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   navigation.navigate("PullRequestEdit", { ...params, field: "title" })
                 }
               >
-                <Toolbar.Label>Edit title</Toolbar.Label>
+                <Toolbar.Label>{translator.message("pullRequest.detail.editTitle")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {permissions.canEditChangeRequest ? (
@@ -613,7 +622,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 icon="doc.text"
                 onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
               >
-                <Toolbar.Label>Edit description</Toolbar.Label>
+                <Toolbar.Label>{translator.message("pullRequest.description.edit")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {maintainerEdits.visible ? (
@@ -624,7 +633,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 subtitle={maintainerEdits.subtitle}
                 onPress={maintainerEdits.toggle}
               >
-                <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
+                <Toolbar.Label>
+                  {translator.message("mobile.ui.allowEditsFromMaintainers")}
+                </Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {identity ? (
@@ -637,7 +648,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             ) : null}
             {identity ? (
               <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(identity)}>
-                <Toolbar.Label>Copy link</Toolbar.Label>
+                <Toolbar.Label>{translator.message("chat.composer.copyLink")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {identity ? (
@@ -645,7 +656,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 icon="square.and.arrow.up"
                 onPress={() => sharePullRequestLink(identity)}
               >
-                <Toolbar.Label>Share…</Toolbar.Label>
+                <Toolbar.Label>{translator.message("mobile.ui.share")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {showsDeleteBranch ? (
@@ -655,10 +666,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 disabled={!action.available("delete-branch")}
                 subtitle={
                   action.busy
-                    ? "Deleting…"
+                    ? translator.message("mobile.ui.deleting")
                     : connected
                       ? pr.headBranch
-                      : "Reconnect to delete this branch."
+                      : translator.message("mobile.ui.reconnectToDeleteThisBranch")
                 }
                 onPress={confirmDeleteBranch}
               >
@@ -878,11 +889,22 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           {Platform.OS !== "ios" || section === tab ? (
                             <SegmentedControl
                               options={[
-                                { value: "overview", label: "Overview" },
+                                {
+                                  value: "overview",
+                                  label: translator.message("mobile.ui.overview"),
+                                },
                                 ...(guidesEnabled
-                                  ? [{ value: "guide" as const, label: "Guide" }]
+                                  ? [
+                                      {
+                                        value: "guide" as const,
+                                        label: translator.message("mobile.ui.guide"),
+                                      },
+                                    ]
                                   : []),
-                                { value: "activity", label: "Activity" },
+                                {
+                                  value: "activity",
+                                  label: translator.message("mobile.ui.activity"),
+                                },
                               ]}
                               selected={section}
                               onSelect={selectSection}
@@ -921,11 +943,14 @@ type PullRequestFileRouteProps = StaticScreenProps<
 >;
 
 export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "PullRequestFile">>();
   const ready = usePullRequestDiffEntry(navigation);
   if (ready) return <PullRequestFileRouteContent {...props} />;
-  const title = props.route.params.commit ? "Commit changes" : "Changes";
+  const title = props.route.params.commit
+    ? translator.message("mobile.git.commitChanges")
+    : translator.message("mobile.git.changes");
   return (
     <View className="flex-1 bg-screen">
       <NativeStackScreenOptions options={{ title, headerTitle: title }} />
@@ -933,13 +958,14 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
         <AndroidScreenHeader title={title} onBack={() => navigation.goBack()} />
       ) : null}
       <View className="flex-1 items-center justify-center">
-        <AppActivityIndicator accessibilityLabel="Loading changes" />
+        <AppActivityIndicator accessibilityLabel={translator.message("mobile.ui.loadingChanges")} />
       </View>
     </View>
   );
 }
 
 function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
+  const translator = useMobileInterfaceTranslator();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -1114,7 +1140,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     setSelectedRowId(null);
     filter.toggle();
   };
-  const title = commit ? "Commit changes" : "Changes";
+  const title = commit
+    ? translator.message("mobile.git.commitChanges")
+    : translator.message("mobile.git.changes");
   const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
   return (
@@ -1135,26 +1163,45 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               actions={[
                 {
                   id: "word-wrap",
-                  title: "Word wrap",
+                  title: translator.message("settings.application.title.wordWrap"),
                   image: "text.alignleft",
                   state: appearance.codeWordBreak ? "on" : "off",
                 },
                 {
                   id: "hide-tests",
-                  title: "Hide test files",
+                  title: translator.message("mobile.ui.hideTestFiles"),
                   image: "line.3.horizontal.decrease",
                   state: filter.hideTestFiles ? "on" : "off",
                 },
                 ...(permissions.verdicts.length
-                  ? [{ id: "submit-review", title: "Submit review", image: "text.bubble" }]
+                  ? [
+                      {
+                        id: "submit-review",
+                        title: translator.message("mobile.ui.submitReview"),
+                        image: "text.bubble",
+                      },
+                    ]
                   : []),
                 ...(permissions.canComment
-                  ? [{ id: "comment-on-pr", title: "Add comment", image: "plus.bubble" }]
+                  ? [
+                      {
+                        id: "comment-on-pr",
+                        title: translator.message("mobile.ui.addComment"),
+                        image: "plus.bubble",
+                      },
+                    ]
                   : []),
                 ...(selectedRow && selectedFile
                   ? [
-                      ...(canCommentOnDiff ? [{ id: "comment", title: "Add review comment" }] : []),
-                      { id: "copy", title: "Copy line" },
+                      ...(canCommentOnDiff
+                        ? [
+                            {
+                              id: "comment",
+                              title: translator.message("mobile.ui.addReviewComment"),
+                            },
+                          ]
+                        : []),
+                      { id: "copy", title: translator.message("mobile.ui.copyLine") },
                     ]
                   : []),
               ]}
@@ -1174,14 +1221,21 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               }}
             >
               <View pointerEvents="none">
-                <IconButton icon="ellipsis" accessibilityLabel="Diff options" />
+                <IconButton
+                  icon="ellipsis"
+                  accessibilityLabel={translator.message("mobile.ui.diffOptions")}
+                />
               </View>
             </Menu>
           }
         />
       ) : null}
       <Toolbar placement="right">
-        <Toolbar.Menu title="Diff options" accessibilityLabel="Diff options" icon="ellipsis">
+        <Toolbar.Menu
+          title={translator.message("mobile.ui.diffOptions")}
+          accessibilityLabel={translator.message("mobile.ui.diffOptions")}
+          icon="ellipsis"
+        >
           {permissions.verdicts.length ? (
             <Toolbar.MenuAction
               icon="text.bubble"
@@ -1189,7 +1243,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 navigation.navigate("PullRequestReview", { ...route.params, mode: "review" })
               }
             >
-              <Toolbar.Label>Submit review</Toolbar.Label>
+              <Toolbar.Label>{translator.message("mobile.ui.submitReview")}</Toolbar.Label>
             </Toolbar.MenuAction>
           ) : null}
           {permissions.canComment ? (
@@ -1199,7 +1253,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 navigation.navigate("PullRequestReview", { ...route.params, mode: "comment" })
               }
             >
-              <Toolbar.Label>Add comment</Toolbar.Label>
+              <Toolbar.Label>{translator.message("mobile.ui.addComment")}</Toolbar.Label>
             </Toolbar.MenuAction>
           ) : null}
           <Toolbar.MenuAction
@@ -1207,19 +1261,23 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
             isOn={appearance.codeWordBreak}
             onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
           >
-            <Toolbar.Label>Word wrap</Toolbar.Label>
+            <Toolbar.Label>
+              {translator.message("settings.application.title.wordWrap")}
+            </Toolbar.Label>
           </Toolbar.MenuAction>
           <Toolbar.MenuAction
             icon="line.3.horizontal.decrease"
             isOn={filter.hideTestFiles}
             onPress={toggleTestFiles}
           >
-            <Toolbar.Label>Hide test files</Toolbar.Label>
+            <Toolbar.Label>{translator.message("mobile.ui.hideTestFiles")}</Toolbar.Label>
           </Toolbar.MenuAction>
           {selectedRow && selectedFile && canCommentOnDiff ? (
             <Toolbar.MenuAction icon="bubble.left" onPress={() => commentOnLine()}>
               <Toolbar.Label>
-                {route.params.replacingDraftId ? "Move draft to this line" : "Add review comment"}
+                {route.params.replacingDraftId
+                  ? translator.message("mobile.ui.moveDraftToThisLine")
+                  : translator.message("mobile.ui.addReviewComment")}
               </Toolbar.Label>
             </Toolbar.MenuAction>
           ) : null}
@@ -1228,14 +1286,14 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               icon="document.on.document"
               onPress={() => void Clipboard.setStringAsync(selectedRow.content ?? "")}
             >
-              <Toolbar.Label>Copy line</Toolbar.Label>
+              <Toolbar.Label>{translator.message("mobile.ui.copyLine")}</Toolbar.Label>
             </Toolbar.MenuAction>
           ) : null}
         </Toolbar.Menu>
       </Toolbar>
       {route.params.replacingDraftId ? (
         <Text className="px-4 py-2 text-xs text-foreground-muted">
-          Select a current line, then choose “Move draft to this line” from its menu.
+          {translator.message("mobile.ui.selectACurrentLineThenChooseMove")}
         </Text>
       ) : null}
       {viewed.error ? (
@@ -1247,10 +1305,10 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
           style={{ paddingTop: Platform.OS === "ios" ? insets.top + 8 : 8 }}
         >
           <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
-            The branch changed. Reload before adding line comments.
+            {translator.message("mobile.ui.theBranchChangedReloadBeforeAddingLine")}
           </Text>
           <Button
-            label="Reload changes"
+            label={translator.message("mobile.ui.reloadChanges")}
             onPress={() => {
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
@@ -1359,15 +1417,21 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
           !seekingFile ? (
           <View style={{ paddingTop: Platform.OS === "ios" ? insets.top : 0 }}>
             <EmptyState
-              title="Only test files changed"
-              detail="Test files are hidden from this review."
-              action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+              title={translator.message("mobile.ui.onlyTestFilesChanged")}
+              detail={translator.message("mobile.ui.testFilesAreHiddenFromThisReview")}
+              action={
+                <Button
+                  label={translator.message("mobile.ui.showTestFiles")}
+                  tone="contrast"
+                  onPress={filter.showAll}
+                />
+              }
               variant="plain"
             />
           </View>
         ) : !result.isPending && !result.error && !seekingFile ? (
           <EmptyState
-            title="Diff unavailable"
+            title={translator.message("mobile.ui.diffUnavailable")}
             detail={`Open this ${terminology.singular} on its provider to view the changes.`}
             variant="plain"
           />
@@ -1375,12 +1439,18 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         {result.nextCursor && result.isPending && data.rows.length && !seekingFile ? (
           <View className="flex-row items-center justify-center gap-2 py-2">
             <AppActivityIndicator size="small" />
-            <Text className="text-xs text-foreground-muted">Loading more files…</Text>
+            <Text className="text-xs text-foreground-muted">
+              {translator.message("mobile.ui.loadingMoreFiles")}
+            </Text>
           </View>
         ) : null}
         {result.error && result.nextCursor ? (
           <View className="self-center">
-            <Button label="Retry loading remaining files" tone="text" onPress={result.refresh} />
+            <Button
+              label={translator.message("mobile.ui.retryLoadingRemainingFiles")}
+              tone="text"
+              onPress={result.refresh}
+            />
           </View>
         ) : null}
         {parsed.kind === "files" && parsed.notice ? (

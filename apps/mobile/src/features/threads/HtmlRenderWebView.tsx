@@ -19,6 +19,7 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
@@ -176,6 +177,7 @@ export function ThreadHtmlRender(props: {
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
   const height = htmlRenderFrameHeight(props.render, props.frameWidth);
@@ -230,7 +232,9 @@ export function ThreadHtmlRender(props: {
               if (uri === null) void refresh().then((next) => next !== null && setUri(next));
             }}
           >
-            <Text className="text-sm text-foreground-muted">Page unavailable</Text>
+            <Text className="text-sm text-foreground-muted">
+              {translator.message("mobile.ui.pageUnavailable")}
+            </Text>
           </Pressable>
         ) : (
           <View className="flex-1 items-center justify-center">

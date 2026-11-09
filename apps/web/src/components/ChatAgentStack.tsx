@@ -10,11 +10,7 @@ import {
   resolveSubagentDisplayName,
   resolveSubagentStatusPresentation,
 } from "./subagents/subagentPresentation";
-import {
-  SubagentStatusDot,
-  subagentIndicatorIconClassName,
-  type SubagentIndicatorTone,
-} from "./subagents/SubagentStatusDot";
+import { SubagentStatusDot, type SubagentIndicatorTone } from "./subagents/SubagentStatusDot";
 import {
   useSubagentLifecycleStack,
   type SubagentPresenceEntry,
@@ -82,7 +78,7 @@ export const ChatAgentStack = memo(function ChatAgentStack({
       data-chat-agent-stack="true"
       data-compact-open={compactOpen && hasSubagents ? "true" : "false"}
       data-has-subagents={hasSubagents ? "true" : "false"}
-      className={cn("pointer-events-none w-52 max-w-[calc(100dvw-1.5rem)]", className)}
+      className={cn("pointer-events-none w-56 max-w-[calc(100dvw-1.5rem)]", className)}
     >
       <button
         type="button"
@@ -90,13 +86,10 @@ export const ChatAgentStack = memo(function ChatAgentStack({
         aria-label={translate("chat.agent.count", { count: subagents.length })}
         aria-expanded={compactOpen}
         aria-controls={compactContentId}
-        className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-1.5 rounded-full border border-border/65 bg-background/92 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-background hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-2 rounded-md border border-border/60 bg-background px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => setCompactOpen((current) => !current)}
       >
-        <BotIcon
-          aria-hidden="true"
-          className="size-3.5 text-info-foreground dark:text-info-foreground/80"
-        />
+        <BotIcon aria-hidden="true" className="size-3.5 shrink-0" />
         <span>{translate("chat.agent.heading")}</span>
         <span className="tabular-nums">{subagents.length}</span>
         <ChevronRightIcon
@@ -104,15 +97,25 @@ export const ChatAgentStack = memo(function ChatAgentStack({
           className={cn("size-3 transition-transform duration-200", compactOpen && "rotate-90")}
         />
       </button>
-      <div id={compactContentId} className="subagent-stack-content">
+      <div
+        id={compactContentId}
+        className="subagent-stack-content pointer-events-auto mt-1.5 overflow-hidden rounded-lg border border-border/60 bg-background [[data-agent-layout=expanded]_&]:mt-0"
+      >
         <ScrollArea
           className="h-auto max-h-[min(20rem,calc(100dvh-6rem))] w-full"
           hideScrollbars
           scrollFade
         >
-          <div className="flex w-full flex-col items-start py-0.5">
+          <div className="flex w-full flex-col items-start">
+            {lifecycle.visible.length > 0 ? (
+              <div className="flex h-8 w-full items-center gap-2 px-2.5 text-xs text-muted-foreground">
+                <BotIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                <span className="flex-1 font-medium">{translate("chat.agent.heading")}</span>
+                <span className="font-mono text-2xs tabular-nums">{lifecycle.visible.length}</span>
+              </div>
+            ) : null}
             <ul
-              className="w-full"
+              className="w-full px-1"
               role="list"
               aria-label={translate("chat.agent.activeRecentAria")}
             >
@@ -128,6 +131,7 @@ export const ChatAgentStack = memo(function ChatAgentStack({
             </ul>
             <ArchivedAgentSection
               agents={lifecycle.archived}
+              separated={lifecycle.visible.length > 0}
               selectedSubagentId={selectedSubagentId}
               onSelectSubagent={selectSubagent}
             />
@@ -156,7 +160,7 @@ function PresenceAgentItem({
     onCompletePhase(entry.agent.id, "collapsing");
   };
 
-  const completePillPhase = (event: ReactAnimationEvent<HTMLButtonElement>) => {
+  const completeRowPhase = (event: ReactAnimationEvent<HTMLButtonElement>) => {
     if (event.currentTarget !== event.target) {
       return;
     }
@@ -171,19 +175,19 @@ function PresenceAgentItem({
       data-subagent-presence={entry.phase}
       onAnimationEnd={completeCollapsingPhase}
     >
-      <ChatAgentPill
+      <ChatAgentRow
         agent={entry.agent}
         tone={indicatorToneForPresence(entry)}
         selected={selected}
         presence={entry.phase}
         onSelectSubagent={onSelectSubagent}
-        onAnimationEnd={completePillPhase}
+        onAnimationEnd={completeRowPhase}
       />
     </li>
   );
 }
 
-function ChatAgentPill({
+function ChatAgentRow({
   agent,
   tone,
   selected,
@@ -199,10 +203,15 @@ function ChatAgentPill({
   readonly onAnimationEnd?: (event: ReactAnimationEvent<HTMLButtonElement>) => void;
 }) {
   const name = resolveSubagentDisplayName(agent);
+  const displayName = name.startsWith("/root/") ? name.slice("/root/".length) : name;
   const status = resolveSubagentStatusPresentation(agent);
-  const tooltip = status.detail
-    ? `${status.label} · ${status.activity} · ${status.detail}`
-    : `${status.label} · ${status.activity}`;
+  const tooltip = [
+    status.label,
+    status.activity !== status.label ? status.activity : null,
+    status.detail,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <Tooltip>
@@ -216,37 +225,44 @@ function ChatAgentPill({
             data-subagent-tone={tone}
             data-subagent-presence={presence}
             className={cn(
-              "subagent-stack-pill group pointer-events-auto flex h-7 w-fit max-w-52 items-center gap-1.5 rounded-full border border-border/65 bg-background/88 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-200",
-              "hover:border-border hover:bg-background/96 hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-              selected && "border-ring/45 bg-accent/90 shadow-md/12",
+              "subagent-stack-row group flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs outline-none transition-colors",
+              "hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              tone === "archived" || tone === "stale" ? "text-muted-foreground" : "text-foreground",
+              selected && "bg-accent text-foreground",
             )}
             onAnimationEnd={onAnimationEnd}
             onClick={() => onSelectSubagent(agent.id)}
           />
         }
       >
-        <SubagentStatusDot presentation={status} tone={tone} className="size-1.5" />
-        <BotIcon
+        <SubagentStatusDot presentation={status} tone={tone} className="size-1.5 shadow-none" />
+        <span className="min-w-0 flex-1 truncate">{displayName}</span>
+        <ChevronRightIcon
           aria-hidden="true"
-          data-subagent-tone-target={tone}
           className={cn(
-            "size-3.5 shrink-0 transition-colors duration-300 ease-out",
-            subagentIndicatorIconClassName(tone),
+            "size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+            selected && "opacity-100",
           )}
         />
-        <span className="min-w-0 truncate">{name}</span>
       </TooltipTrigger>
-      <TooltipPopup side="right">{tooltip}</TooltipPopup>
+      <TooltipPopup side="right">
+        <div className="max-w-72">
+          <p className="break-words font-medium">{name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{tooltip}</p>
+        </div>
+      </TooltipPopup>
     </Tooltip>
   );
 }
 
 function ArchivedAgentSection({
   agents,
+  separated,
   selectedSubagentId,
   onSelectSubagent,
 }: {
   readonly agents: ReadonlyArray<OrchestrationSubagentSummary>;
+  readonly separated: boolean;
   readonly selectedSubagentId: SubagentId | null;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
 }) {
@@ -276,45 +292,51 @@ function ArchivedAgentSection({
 
   const archivedLabel = translate("chat.agent.archivedCount", { count: agents.length });
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      <CollapsibleTrigger
-        type="button"
-        aria-label={archivedLabel}
-        className="pointer-events-auto group flex h-7 w-fit max-w-52 items-center gap-1.5 rounded-full border border-border/55 bg-background/78 px-2.5 text-xs font-medium text-muted-foreground/70 shadow-sm/5 outline-none backdrop-blur-xl transition-[background-color,border-color,color] hover:border-border/80 hover:bg-background/92 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <ArchiveIcon aria-hidden="true" className="size-3.5" />
-        <span>{translate("chat.agent.history")}</span>
-        <span className="tabular-nums">{agents.length}</span>
-        <ChevronRightIcon
-          aria-hidden="true"
-          className="size-3 transition-transform duration-200 group-data-panel-open:rotate-90"
-        />
-      </CollapsibleTrigger>
-      <CollapsiblePanel className="mt-1 w-full">
-        <ul className="w-full" role="list" aria-label={translate("chat.agent.archivedAria")}>
-          {renderedAgents.map((agent) => (
-            <li key={agent.id} className="mb-1 h-7">
-              <ChatAgentPill
-                agent={agent}
-                tone="archived"
-                selected={agent.id === selectedSubagentId}
-                onSelectSubagent={onSelectSubagent}
-              />
-            </li>
-          ))}
-        </ul>
-        {remainingAgentCount > 0 ? (
-          <button
-            type="button"
-            className="pointer-events-auto mt-1 h-7 rounded-full px-2.5 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring"
-            onClick={() => setRenderLimit((current) => current + ARCHIVED_AGENT_RENDER_PAGE_SIZE)}
-          >
-            {translate("chat.agent.showMore", {
-              count: Math.min(ARCHIVED_AGENT_RENDER_PAGE_SIZE, remainingAgentCount),
-            })}
-          </button>
-        ) : null}
-      </CollapsiblePanel>
-    </Collapsible>
+    <div className={cn("w-full", separated && "border-t border-border/50")}>
+      <Collapsible open={open} onOpenChange={setOpen} className="w-full">
+        <CollapsibleTrigger
+          type="button"
+          aria-label={archivedLabel}
+          className="group flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ArchiveIcon aria-hidden="true" className="size-3.5" />
+          <span className="min-w-0 flex-1 font-medium">{translate("chat.agent.history")}</span>
+          <span className="font-mono text-2xs tabular-nums">{agents.length}</span>
+          <ChevronRightIcon
+            aria-hidden="true"
+            className="size-3 transition-transform duration-200 group-data-panel-open:rotate-90"
+          />
+        </CollapsibleTrigger>
+        <CollapsiblePanel className="w-full">
+          <div className="px-1 pb-1">
+            <ul className="w-full" role="list" aria-label={translate("chat.agent.archivedAria")}>
+              {renderedAgents.map((agent) => (
+                <li key={agent.id} className="mb-1 h-7">
+                  <ChatAgentRow
+                    agent={agent}
+                    tone="archived"
+                    selected={agent.id === selectedSubagentId}
+                    onSelectSubagent={onSelectSubagent}
+                  />
+                </li>
+              ))}
+            </ul>
+            {remainingAgentCount > 0 ? (
+              <button
+                type="button"
+                className="mt-1 h-7 w-full rounded-md px-2 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                onClick={() =>
+                  setRenderLimit((current) => current + ARCHIVED_AGENT_RENDER_PAGE_SIZE)
+                }
+              >
+                {translate("chat.agent.showMore", {
+                  count: Math.min(ARCHIVED_AGENT_RENDER_PAGE_SIZE, remainingAgentCount),
+                })}
+              </button>
+            ) : null}
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </div>
   );
 }

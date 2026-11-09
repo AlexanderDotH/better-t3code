@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import { BETTER_T3_FEATURE_REGISTRY } from "@t3tools/contracts";
 
@@ -375,6 +375,28 @@ describe("interface language", () => {
     expect(translateInterfaceMessage("fr", "resourceProtection.waiting.description")).toContain(
       "automatiquement",
     );
+  });
+
+  it("formats plurals and lists on Hermes, which lacks Intl.PluralRules and Intl.ListFormat", () => {
+    vi.stubGlobal(
+      "Intl",
+      Object.create(Intl, {
+        PluralRules: { value: undefined },
+        ListFormat: { value: undefined },
+      }),
+    );
+    try {
+      const german = createInterfaceTranslator({ language: "de", locale: "de-DE" });
+      const french = createInterfaceTranslator({ language: "fr", locale: "fr-FR" });
+
+      expect(german.message("knowledgeGraph.resultCount", { count: 1 })).toBe("1 Ergebnis");
+      expect(german.message("knowledgeGraph.resultCount", { count: 0 })).toBe("0 Ergebnisse");
+      expect(french.message("knowledgeGraph.resultCount", { count: 0 })).toBe("0 résultat");
+      expect(french.message("knowledgeGraph.resultCount", { count: 2 })).toBe("2 résultats");
+      expect(german.list(["Alpha", "Beta"])).toBe("Alpha, Beta");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("formats plural, list, number, and date values with the resolved locale", () => {

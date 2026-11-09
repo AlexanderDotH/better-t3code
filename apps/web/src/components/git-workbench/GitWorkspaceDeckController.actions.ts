@@ -39,6 +39,7 @@ import {
 } from "./GitWorkspaceDeckController.model";
 import { bufferedFileEdits, workspaceFileBufferKey } from "./GitWorkspaceDeckSessionState";
 import { setGitFilesStaged } from "./gitStagingBatch";
+import { useGitFileDraftStore } from "./gitFileDraftStore";
 
 type DiffState = Readonly<Record<string, ReturnType<typeof mapDiff>>>;
 
@@ -416,6 +417,7 @@ export function useGitWorkspaceDeckActions(input: {
     const key = workspaceFileBufferKey(input.environmentId, input.cwd, fileInput.path);
     if (fileInput.resolution === "agent") {
       bufferedFileEdits.delete(key);
+      useGitFileDraftStore.getState().setDraft(key, null);
       input.setCurrentFile((current) => {
         if (!current) return current;
         const { serverContent, ...rest } = current;

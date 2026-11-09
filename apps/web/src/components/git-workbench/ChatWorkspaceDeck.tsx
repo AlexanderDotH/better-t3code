@@ -73,7 +73,9 @@ export interface ChatWorkspaceDeckProps {
   ) => void;
   readonly onBeforeHideChat?: () => void;
   readonly onCardSelectionBlocked?: (reason: ChatWorkspaceCardSelectionBlockedReason) => void;
-  readonly onExpandedCardChange: (card: ChatWorkspaceCardId | null) => void;
+  readonly onExpandedCardChange: (
+    card: ChatWorkspaceCardId | null,
+  ) => boolean | Promise<boolean> | void;
   readonly onRestoreChatFocus?: () => void;
 }
 
@@ -93,17 +95,20 @@ const scheduleFrame = (callback: () => void): (() => void) => {
 };
 
 export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
-  return <ChatWorkspaceDeckSession key={props.resetKey} {...props} />;
-}
-
-function ChatWorkspaceDeckSession(props: ChatWorkspaceDeckProps) {
   const cardMorphingEnabled = useBetterT3DeviceFeature("chat.cardMorphing");
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedChatElementRef = useRef<HTMLElement | null>(null);
-  const previousActiveCardRef = useRef<ChatWorkspaceCardId>(props.activeCard);
+  const previousActiveCardRef = useRef({ resetKey: props.resetKey, card: props.activeCard });
   const didRunBeforeHideRef = useRef(false);
   const [pendingCardRequest, setPendingCardRequest] = useState<PendingCardRequest | null>(null);
   const [selectionMode, setSelectionMode] = useState<WorkspaceDeckSelectionMode>("immediate");
+  // A new scope starts like a fresh deck, but stays mounted so the chat card keeps its composer.
+  const [scopeKey, setScopeKey] = useState(props.resetKey);
+  if (scopeKey !== props.resetKey) {
+    setScopeKey(props.resetKey);
+    setPendingCardRequest(null);
+    setSelectionMode("immediate");
+  }
 
   const cardIds = props.cards.map((card) => card.id);
   const resolvedActiveCard =
@@ -193,12 +198,23 @@ function ChatWorkspaceDeckSession(props: ChatWorkspaceDeckProps) {
       didRunBeforeHideRef.current = true;
     }
     if (result.shouldCollapseExpandedCard) {
-      setPendingCardRequest({
+      const pendingRequest = {
         direction,
         fromCard: policyActiveCard,
         requestedCard: result.nextCard,
-      });
-      props.onExpandedCardChange(null);
+      };
+      setPendingCardRequest(pendingRequest);
+      const collapse = props.onExpandedCardChange(null);
+      const cancelRequest = () =>
+        setPendingCardRequest((current) => (current === pendingRequest ? null : current));
+      if (collapse === false) {
+        cancelRequest();
+        return false;
+      }
+      if (collapse instanceof Promise)
+        void collapse.then((accepted) => {
+          if (!accepted) cancelRequest();
+        }, cancelRequest);
       return true;
     }
     if (result.nextCard !== policyActiveCard) {
@@ -231,11 +247,17 @@ function ChatWorkspaceDeckSession(props: ChatWorkspaceDeckProps) {
     props.onActiveCardChange(result.nextCard, pendingRequest.direction);
   };
 
-  const { onBeforeHideChat } = props;
+  const { onBeforeHideChat, resetKey } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves DOM focus and dismisses the imperative composer UI when its card is hidden
   useEffect(() => {
-    const previousActiveCard = previousActiveCardRef.current;
-    previousActiveCardRef.current = policyActiveCard;
+    const previous = previousActiveCardRef.current;
+    previousActiveCardRef.current = { resetKey, card: policyActiveCard };
+    if (previous.resetKey !== resetKey) {
+      previouslyFocusedChatElementRef.current = null;
+      didRunBeforeHideRef.current = false;
+      return;
+    }
+    const previousActiveCard = previous.card;
 
     if (previousActiveCard === "chat" && policyActiveCard !== "chat") {
       rememberChatFocus();
@@ -248,12 +270,13 @@ function ChatWorkspaceDeckSession(props: ChatWorkspaceDeckProps) {
     if (previousActiveCard === "chat" || policyActiveCard !== "chat") return;
 
     return scheduleFrame(restoreChatFocus);
-  }, [onBeforeHideChat, rememberChatFocus, policyActiveCard, restoreChatFocus]);
+  }, [onBeforeHideChat, rememberChatFocus, policyActiveCard, resetKey, restoreChatFocus]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the first animation-frame boundary so a newly mounted deck starts without a transition
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the first animation-frame boundary so a new deck scope starts without a transition
   useEffect(() => {
+    if (selectionMode === "animate") return;
     return scheduleFrame(() => setSelectionMode("animate"));
-  }, []);
+  }, [selectionMode]);
 
   return (
     <div

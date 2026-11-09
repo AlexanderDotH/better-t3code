@@ -3,6 +3,7 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadSearchMatchExcerpt(props: {
   readonly match: EnvironmentThreadSearchMatch;
@@ -11,6 +12,7 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly compact?: boolean;
   readonly sidebar?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const isUser = props.match.source === "user";
   const parts = splitSearchText(
     props.match.snippet,
@@ -38,7 +40,9 @@ export function ThreadSearchMatchExcerpt(props: {
               : "text-adaptive-emerald-600-400",
         )}
       >
-        {isUser ? "You:" : "Agent:"}{" "}
+        {isUser
+          ? translator.message("ui.commandPalette.youPrefix")
+          : translator.message("ui.commandPalette.agentPrefix")}{" "}
       </Text>
       {parts.map((part) => (
         <Text

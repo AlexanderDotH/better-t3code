@@ -239,10 +239,12 @@ export function DeepPlanChecklist(props: {
                   })
                 : run.phase === "collecting"
                   ? translator.message("chat.deepPlan.collecting")
-                  : translator.message("chat.deepPlan.analysisProgress", {
-                      completed: analyzedCount,
-                      total: run.sources.length,
-                    })}
+                  : run.sources.length === 0
+                    ? translator.message("chat.deepPlan.status.inProgress")
+                    : translator.message("chat.deepPlan.analysisProgress", {
+                        completed: analyzedCount,
+                        total: run.sources.length,
+                      })}
             </Text>
           </View>
           <SymbolView
@@ -297,7 +299,7 @@ export function DeepPlanChecklist(props: {
           contentContainerStyle={{ paddingBottom: 8 }}
         >
           <View className="gap-2 px-3 py-2">
-            {plan ? (
+            {plan && run.sources.length > 0 ? (
               <Text className="text-xs text-foreground-muted">
                 {translator.message("chat.deepPlan.analysisProgress", {
                   completed: analyzedCount,

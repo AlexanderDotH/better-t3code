@@ -7,8 +7,10 @@ import {
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { memo, use, useState } from "react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { Button } from "../ui/button";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import { EnvironmentSubagentAvatar, SubagentElapsed, V2LifecycleRow } from "./V2LifecycleRow";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -57,6 +59,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   row: Extract<TimelineRow, { kind: "event" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const translate = useInterfaceTranslator().message;
   const groupId = `subagent-group:${row.id}`;
   const [expanded, setExpanded] = useState(() =>
     ctx.workGroupViewState.expandedEntries.has(groupId),
@@ -154,6 +157,14 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
                   onOpenThread={ctx.onOpenThread}
                 />
               ))}
+              {ctx.onOpenAgents ? (
+                <div className="mt-1">
+                  <Button size="xs" variant="ghost-muted" onClick={ctx.onOpenAgents}>
+                    {translate("chat.agent.openPanel")}
+                    <ChevronRightIcon />
+                  </Button>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </CollapsiblePanel>

@@ -10,6 +10,7 @@ import * as SecureStore from "expo-secure-store";
 import { p256 } from "@noble/curves/nist";
 import { DpopPublicJwk, normalizeDpopHtu } from "@t3tools/shared/dpopCommon";
 import * as Layer from "effect/Layer";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export class CloudDpopError extends Data.TaggedError("CloudDpopError")<{
   readonly message: string;
@@ -232,7 +233,11 @@ function normalizeHtu(url: string): Effect.Effect<string, CloudDpopError> {
   const normalized = normalizeDpopHtu(url);
   return normalized
     ? Effect.succeed(normalized)
-    : Effect.fail(new CloudDpopError({ message: "DPoP URL is invalid." }));
+    : Effect.fail(
+        new CloudDpopError({
+          message: currentInterfaceTranslator().message("mobile.ui.dpopUrlIsInvalid"),
+        }),
+      );
 }
 
 export const createDpopProof = Effect.fn("dpop.createDpopProof")(function* (input: {

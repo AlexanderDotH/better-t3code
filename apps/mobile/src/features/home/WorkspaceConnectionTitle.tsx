@@ -17,6 +17,7 @@ import {
   workspaceConnectionStatusPresentation,
   type WorkspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const STATUS_SHOW_DELAY_MS = 800;
 const FADE_IN_MS = 250;
@@ -106,6 +107,7 @@ export function WorkspaceConnectionTitle(props: {
   readonly statusOffset?: number;
   readonly maxWidth?: number;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const status = use(ConnectionStatusContext);
   const size = props.size ?? "navbar";
   const { scale } = useAndroidControlSizing();
@@ -123,7 +125,7 @@ export function WorkspaceConnectionTitle(props: {
   return (
     <StatusFadeIn animate={status.fadeIn} grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
-        accessibilityHint="Opens environment settings"
+        accessibilityHint={translator.message("mobile.connection.openSettingsHint")}
         accessibilityLabel={status.label}
         accessibilityRole="button"
         disabled={props.onPress === undefined}

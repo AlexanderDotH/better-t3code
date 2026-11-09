@@ -264,8 +264,10 @@ function ModelPickerList({
   extraData,
   renderItem,
   catalog = false,
+  classic = false,
 }: {
   catalog?: boolean;
+  classic?: boolean;
   listRef: RefObject<LegendListRef | null>;
   itemKeys: ReadonlyArray<string>;
   extraData: unknown;
@@ -320,7 +322,7 @@ function ModelPickerList({
           extraData={extraData}
           keyExtractor={(modelKey) => modelKey}
           renderItem={renderItem}
-          estimatedItemSize={catalog ? 52 : MODEL_LIST_ESTIMATED_ITEM_SIZE}
+          estimatedItemSize={catalog || classic ? 52 : MODEL_LIST_ESTIMATED_ITEM_SIZE}
           drawDistance={480}
           recycleItems
           contentContainerClassName="pl-2 pr-px"
@@ -355,6 +357,7 @@ function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
+  layout?: "current" | "classic";
   environmentId: EnvironmentId | null;
   modelSelectionPurpose?: ModelSelectionPurpose;
   activeInstanceId: ProviderInstanceId;
@@ -665,7 +668,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   })();
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showSidebar =
+    (!isSearching || openRouterCatalog !== null) && sidebarInstanceEntries.length > 0;
   const instanceOrder = instanceEntries.map((entry) => entry.instanceId);
 
   const filteredModels = (() => {
@@ -869,11 +873,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
+          props.docked
+            ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none"
+            : props.layout === "classic"
+              ? "h-screen max-h-86.5"
+              : "max-h-86.5",
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
         style={
-          props.docked
+          props.docked || props.layout === "classic"
             ? undefined
             : isSearching
               ? { height: searchHeight }
@@ -1048,6 +1056,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : null}
             <ModelPickerList
               catalog={openRouterCatalog !== null}
+              classic={props.layout === "classic"}
               listRef={modelListRef}
               itemKeys={filteredItemKeys}
               extraData={modelListExtraData}
@@ -1075,6 +1084,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                 return (
                   <ModelListRow
+                    layout={props.layout ?? "current"}
                     key={modelKey}
                     index={index}
                     slug={model.slug}

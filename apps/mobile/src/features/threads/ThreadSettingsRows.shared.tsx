@@ -4,6 +4,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type ModelRowProps = {
   readonly option: ModelOption;
@@ -40,6 +41,7 @@ export function ModelRowContent(
       readonly selectedClassName?: string;
     },
 ) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View
       style={props.minimumHeight === undefined ? undefined : { minHeight: props.minimumHeight }}
@@ -72,19 +74,27 @@ export function ModelRowContent(
             </Text>
             {props.option.isDefault ? (
               <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
-                <Text className="text-3xs font-t3-bold text-foreground-muted">Default</Text>
+                <Text className="text-3xs font-t3-bold text-foreground-muted">
+                  {translator.message("mobile.thread.settings.default")}
+                </Text>
               </View>
             ) : null}
             {props.option.isLegacy ? (
               <View className="rounded-md bg-subtle px-1.5 py-0.5">
-                <Text className="text-3xs font-t3-bold text-foreground-muted">Legacy</Text>
+                <Text className="text-3xs font-t3-bold text-foreground-muted">
+                  {translator.message("mobile.thread.settings.legacy")}
+                </Text>
               </View>
             ) : null}
             {props.option.isHidden ? (
-              <Text className="text-xs text-foreground-muted">Hidden</Text>
+              <Text className="text-xs text-foreground-muted">
+                {translator.message("mobile.ui.hidden")}
+              </Text>
             ) : null}
             {props.option.isUnavailable ? (
-              <Text className="text-xs text-foreground">Unavailable</Text>
+              <Text className="text-xs text-foreground">
+                {translator.message("mobile.settings.projects.settings.unavailable")}
+              </Text>
             ) : null}
           </View>
           {props.option.subtitle ? (
@@ -100,7 +110,10 @@ export function ModelRowContent(
       </Pressable>
       {props.onToggleHidden ? (
         <Pressable
-          accessibilityLabel={`${props.option.isHidden ? "Show" : "Hide"} model: ${props.option.providerLabel}, ${props.option.label}`}
+          accessibilityLabel={translator.message(
+            props.option.isHidden ? "mobile.ui.showModelNamed" : "mobile.ui.hideModelNamed",
+            { provider: props.option.providerLabel, model: props.option.label },
+          )}
           accessibilityRole="button"
           accessibilityState={{ disabled: props.hiddenUpdatePending === true }}
           className="min-h-11 min-w-11 items-center justify-center"

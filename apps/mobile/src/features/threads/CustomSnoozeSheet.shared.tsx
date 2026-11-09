@@ -18,11 +18,13 @@ import {
 } from "react-native";
 import { AppText } from "../../components/ui/AppText";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(() => new Date(Date.now() + 3_600_000));
   const [picker, setPicker] = useState<"date" | "time" | null>(null);
@@ -42,16 +44,19 @@ export function CustomSnoozeSheet(props: {
           contentContainerStyle={{ padding: 24, paddingBottom: 24, gap: 20 }}
         >
           <AppText accessibilityRole="header" className="text-xl font-t3-semibold">
-            Custom snooze
+            {translator.message("mobile.ui.customSnooze")}
           </AppText>
           <AppText className="text-base text-foreground-secondary">
-            Choose when snoozed threads return to your inbox.
+            {translator.message("mobile.ui.chooseWhenSnoozedThreadsReturnToYour")}
           </AppText>
           <SegmentedControl
             options={
               [
-                { value: "date", label: "Date and time" },
-                { value: "duration", label: "Duration" },
+                { value: "date", label: translator.message("mobile.ui.dateAndTime") },
+                {
+                  value: "duration",
+                  label: translator.message("settings.diagnostics.table.duration"),
+                },
               ] as const
             }
             selected={mode}
@@ -68,11 +73,19 @@ export function CustomSnoozeSheet(props: {
                 <Pressable
                   key={value}
                   accessibilityRole="button"
-                  accessibilityLabel={value === "date" ? "Choose date" : "Choose time"}
+                  accessibilityLabel={
+                    value === "date"
+                      ? translator.message("mobile.ui.chooseDate")
+                      : translator.message("mobile.ui.chooseTime")
+                  }
                   className="min-h-12 flex-row items-center justify-between rounded-xl bg-subtle px-3"
                   onPress={() => setPicker(value)}
                 >
-                  <AppText>{value === "date" ? "Date" : "Time"}</AppText>
+                  <AppText>
+                    {value === "date"
+                      ? translator.message("mobile.ui.date")
+                      : translator.message("settings.diagnostics.table.time")}
+                  </AppText>
                   <AppText>
                     {value === "date"
                       ? date.toLocaleDateString()
@@ -103,9 +116,9 @@ export function CustomSnoozeSheet(props: {
             </View>
           ) : (
             <View className="gap-3">
-              <AppText>Snooze for</AppText>
+              <AppText>{translator.message("mobile.ui.snoozeFor")}</AppText>
               <TextInput
-                accessibilityLabel="Duration"
+                accessibilityLabel={translator.message("settings.diagnostics.table.duration")}
                 className="min-h-12 rounded-xl bg-subtle px-3 text-base text-foreground"
                 keyboardType="decimal-pad"
                 value={amount}
@@ -131,7 +144,11 @@ export function CustomSnoozeSheet(props: {
                     }}
                   >
                     <AppText>
-                      {value === "minutes" ? "Minutes" : value === "hours" ? "Hours" : "Days"}
+                      {value === "minutes"
+                        ? translator.message("mobile.ui.minutes")
+                        : value === "hours"
+                          ? translator.message("mobile.ui.hours")
+                          : translator.message("mobile.ui.days")}
                     </AppText>
                   </Pressable>
                 ))}
@@ -144,9 +161,13 @@ export function CustomSnoozeSheet(props: {
             </AppText>
           )}
           <View className="flex-row justify-end gap-3">
-            <Button label="Cancel" tone="text" onPress={props.onClose} />
             <Button
-              label="Snooze"
+              label={translator.message("mobile.settings.projects.settings.cancel")}
+              tone="text"
+              onPress={props.onClose}
+            />
+            <Button
+              label={translator.message("mobile.thread.snooze")}
               tone="secondary"
               onPress={() => {
                 const input: CustomSnoozeInput =
@@ -157,8 +178,8 @@ export function CustomSnoozeSheet(props: {
                 if (!snoozedUntil) {
                   setError(
                     mode === "date"
-                      ? "Choose a date and time in the future."
-                      : "Enter a positive duration.",
+                      ? translator.message("mobile.ui.chooseADateAndTimeInThe")
+                      : translator.message("mobile.ui.enterAPositiveDuration"),
                   );
                   return;
                 }

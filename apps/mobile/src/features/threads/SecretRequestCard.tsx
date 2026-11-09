@@ -20,6 +20,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -62,6 +63,7 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
   readonly iconColor: ColorValue;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { item } = props;
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
     label: "answer secret request",
@@ -132,7 +134,7 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label="Save securely"
+        label={translator.message("mobile.ui.saveSecurely")}
         tone="primary"
         fullWidth
         disabled={submitting || secret.trim().length === 0}
@@ -151,7 +153,7 @@ function PendingSecretRequestForm(props: {
           </Text>
         </View>
         <Button
-          label="Decline"
+          label={translator.message("mobile.thread.decline")}
           tone="text"
           disabled={submitting}
           onPress={() => void send({ type: "decline" })}

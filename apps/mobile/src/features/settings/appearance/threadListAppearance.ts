@@ -1,3 +1,4 @@
+import { currentInterfaceTranslator } from "../../../localization/currentInterfaceTranslator";
 export type MobileThreadListLayout = "current" | "classic";
 
 export const THREAD_LIST_LAYOUT_OPTIONS: ReadonlyArray<{
@@ -7,13 +8,21 @@ export const THREAD_LIST_LAYOUT_OPTIONS: ReadonlyArray<{
 }> = [
   {
     layout: "current",
-    label: "Current",
-    description: "Active work appears as cards while settled threads stay compact.",
+    get label() {
+      return currentInterfaceTranslator().message("settings.betterT3.value.current");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.activeWorkAppearsAsCardsWhileSettled");
+    },
   },
   {
     layout: "classic",
-    label: "Classic",
-    description: "Use the original thread list grouped by project.",
+    get label() {
+      return currentInterfaceTranslator().message("settings.betterT3.value.classic");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.useTheOriginalThreadListGroupedBy");
+    },
   },
 ];
 

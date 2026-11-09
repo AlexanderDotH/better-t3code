@@ -1199,6 +1199,7 @@ interface ActiveAcpTurn {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
+  firstTokenAt?: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
   readonly itemOrdinals: Map<string, number>;
   readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
@@ -2691,6 +2692,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageId?: string | null,
         ) {
           if (text.length === 0) return;
+          if (kind !== "user") context.firstTokenAt ??= yield* DateTime.now;
           for (const other of ["user", "reasoning", "assistant"] as const) {
             if (other !== kind) yield* closeTextStream(context, other);
           }
@@ -2732,6 +2734,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           text: string,
           messageId: string,
         ) {
+          if (kind !== "user" && text.length > 0) context.firstTokenAt ??= yield* DateTime.now;
           for (const other of ["user", "reasoning", "assistant"] as const) {
             if (other !== kind) yield* closeTextStream(context, other);
           }
@@ -7210,6 +7213,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status,
           startedAt: context.startedAt,
           completedAt,
+          ...(context.firstTokenAt === undefined
+            ? {}
+            : {
+                responseMetrics: {
+                  timeToFirstTokenMs: Math.max(
+                    0,
+                    DateTime.toEpochMillis(context.firstTokenAt) -
+                      DateTime.toEpochMillis(context.startedAt),
+                  ),
+                },
+              }),
           ...(status === "running" || status === "pending"
             ? {}
             : {

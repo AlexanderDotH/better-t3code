@@ -165,6 +165,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "message.reply.start":
     case "thread.deep-plan.start":
     case "thread.deep-plan.update":
+    case "message.retry":
     case "message.dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":

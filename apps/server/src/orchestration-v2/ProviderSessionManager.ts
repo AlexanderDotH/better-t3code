@@ -7,11 +7,13 @@ import {
   DeepPlanExecutionContext,
   isOrchestrationV2WorkActive,
   ModelSelection,
+  type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
+  type ProviderInteractionMode,
   ProviderSessionId,
   ThreadId,
   type ProviderThreadId,
@@ -47,6 +49,7 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
+import { makeUsageHardBudgetCheck, UsageHardBudgetError } from "../provider/usageHardBudget.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -141,6 +144,20 @@ export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSes
 ) {
   override get message(): string {
     return `Failed to update provider session activity for ${this.providerSessionId}.`;
+  }
+}
+
+class DeepPlanProviderBindingError extends Schema.TaggedError<DeepPlanProviderBindingError>()(
+  "DeepPlanProviderBindingError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals(["unsupported-provider", "implementation-provider-mismatch"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "unsupported-provider"
+      ? "This provider does not support read-only Deep Planning and its run-bound tools."
+      : "The approved Deep Plan must continue with its implementing provider.";
   }
 }
 
@@ -342,6 +359,17 @@ export const layerWithOptions = (
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      const checkUsageBudget = Option.isSome(serverSettings)
+        ? yield* makeUsageHardBudgetCheck.pipe(
+            Effect.provideService(ServerSettings.ServerSettingsService, serverSettings.value),
+          )
+        : () => Effect.succeed(null);
+      const requireUsageBudget = Effect.fn("ProviderSessionManagerV2.requireUsageBudget")(
+        function* (instanceId: ProviderInstanceId) {
+          const detail = yield* checkUsageBudget(instanceId);
+          if (detail !== null) return yield* new UsageHardBudgetError({ detail });
+        },
+      );
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
@@ -440,6 +468,36 @@ export const layerWithOptions = (
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
+      // Deep Plan approval picks the implementation thread inside the planning thread's project.
+      const resolveDeepPlanBinding = Effect.fn("ProviderSessionManagerV2.resolveDeepPlanBinding")(
+        function* (input: {
+          readonly thread: OrchestrationV2AppThread;
+          readonly modelSelection: ModelSelection;
+          readonly interactionMode: ProviderInteractionMode;
+        }) {
+          if (input.thread.deepPlanExecution !== undefined) return input.thread.deepPlanExecution;
+          if (input.interactionMode === "chat") return undefined;
+          if (
+            input.thread.deepPlan == null &&
+            input.thread.lineage.relationshipToParent === "subagent"
+          )
+            return undefined;
+          const owner =
+            input.thread.deepPlan ??
+            (yield* projectionStore.getShellSnapshot({
+              projectId: input.thread.projectId,
+            })).threads.find(
+              (candidate) =>
+                candidate.deepPlan?.approval?.implementationThreadId === input.thread.id,
+            )?.deepPlan;
+          return deepPlanProviderContext(
+            owner,
+            input.thread.id,
+            input.modelSelection,
+            input.interactionMode,
+          );
+        },
+      );
       const clearMcpProviderConfiguration = Effect.fn(
         "ProviderSessionManagerV2.clearMcpProviderConfiguration",
       )((threadId: ThreadId) =>
@@ -447,10 +505,22 @@ export const layerWithOptions = (
           .clear(threadId)
           .pipe(Effect.tap(() => Effect.sync(() => clearMcpProviderSession(threadId)))),
       );
+      const mcpWorkspaceWriteEnabled = (
+        policy: Pick<
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          "runtimeMode" | "interactionMode"
+        >,
+        deepPlan: DeepPlanExecutionContext | undefined,
+      ) =>
+        policy.runtimeMode !== "approval-required" &&
+        policy.interactionMode === "default" &&
+        deepPlan?.phase !== "planning" &&
+        deepPlan?.readOnly !== true;
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        projectMemoryMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["projectMemoryMode"],
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? clearMcpProviderConfiguration(threadId).pipe(
@@ -471,27 +541,21 @@ export const layerWithOptions = (
                   .getThread(threadId)
                   .pipe(Effect.orElseSucceed(() => null));
                 const subagent = thread?.lineage.relationshipToParent === "subagent";
-                const owner =
-                  thread?.deepPlan ??
-                  (thread === null
-                    ? undefined
-                    : (yield* projectionStore.getShellSnapshot().pipe(Effect.orDie)).threads.find(
-                        (candidate) =>
-                          candidate.deepPlan?.approval?.implementationThreadId === threadId,
-                      )?.deepPlan);
                 const deepPlan =
                   thread === null
                     ? undefined
-                    : (thread.deepPlanExecution ??
-                      deepPlanProviderContext(
-                        owner,
-                        threadId,
-                        thread.modelSelection,
-                        thread.interactionMode,
-                      ));
+                    : yield* resolveDeepPlanBinding({
+                        thread,
+                        modelSelection: thread.modelSelection,
+                        interactionMode: thread.interactionMode,
+                      }).pipe(Effect.orDie);
                 if (deepPlan !== undefined) capabilities.add("deep-plan");
                 capabilities.add("workspace");
-                capabilities.add("coordination");
+                // Children work under their root chat's claims; reply topics coordinate as their source.
+                const coordination =
+                  thread !== null &&
+                  thread.fetchWorker === undefined &&
+                  (!subagent || thread.messageReply !== undefined);
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -513,6 +577,7 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("coordination") === coordination &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent &&
                     Schema.toEquivalence(Schema.NullOr(DeepPlanExecutionContext))(
@@ -530,6 +595,7 @@ export const layerWithOptions = (
                   providerInstanceId,
                   browserToolsAvailable,
                   capabilities,
+                  coordinationEnabled: coordination,
                   subagent,
                   ...(deepPlan === undefined
                     ? {}
@@ -539,11 +605,10 @@ export const layerWithOptions = (
                           deepPlan.phase === "planning" ? deepPlan.runThreadId : threadId,
                       }),
                   workspaceWriteEnabled:
-                    thread !== null &&
-                    thread.runtimeMode !== "approval-required" &&
-                    thread.interactionMode === "default" &&
-                    deepPlan?.phase !== "planning" &&
-                    deepPlan?.readOnly !== true,
+                    thread !== null && mcpWorkspaceWriteEnabled(thread, deepPlan),
+                  ...(projectMemoryMode === undefined
+                    ? {}
+                    : { projectMemoryEnabled: projectMemoryMode === "project" }),
                 });
                 yield* mcpSessions.set(credential.config);
                 setMcpProviderSession({
@@ -1385,6 +1450,7 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        readonly projectMemoryMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["projectMemoryMode"];
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
@@ -1404,7 +1470,11 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.projectMemoryMode,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -1760,8 +1830,95 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        const requireTurnBudget = Effect.fn("ProviderSessionManagerV2.requireTurnBudget")(
+          (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            requireUsageBudget(runtime.instanceId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: runtime.driver,
+                    threadId: input.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.runId,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+        // Deep Plan phases and thread modes change between turns; a live credential follows them.
+        const refreshDeepPlanBinding = Effect.fn("ProviderSessionManagerV2.refreshDeepPlanBinding")(
+          function* (input: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            const binding = yield* resolveDeepPlanBinding({
+              thread: input.appThread,
+              modelSelection: input.modelSelection,
+              interactionMode: input.runtimePolicy.interactionMode,
+            });
+            // The orchestrator already validated delegated grants against their parent's plan.
+            if (binding !== undefined && input.appThread.deepPlanExecution === undefined) {
+              const adapter = yield* registry.get(runtime.instanceId);
+              if ((yield* adapter.getCapabilities()).deepPlan?.supported !== true)
+                return yield* new DeepPlanProviderBindingError({
+                  threadId: input.threadId,
+                  reason: "unsupported-provider",
+                });
+              if (binding.modelSelection.instanceId !== runtime.instanceId)
+                return yield* new DeepPlanProviderBindingError({
+                  threadId: input.threadId,
+                  reason: "implementation-provider-mismatch",
+                });
+            }
+            const workspaceWriteEnabled = mcpWorkspaceWriteEnabled(input.runtimePolicy, binding);
+            const projectMemoryMode = input.runtimePolicy.projectMemoryMode;
+            yield* mcpPrepareLock.withLock(
+              input.threadId,
+              Effect.gen(function* () {
+                yield* mcpSessionRegistry.bindDeepPlan(input.threadId, binding, {
+                  workspaceWriteEnabled,
+                  ...(projectMemoryMode === undefined
+                    ? {}
+                    : { projectMemoryEnabled: projectMemoryMode === "project" }),
+                });
+                const config = yield* mcpSessions.read(input.threadId);
+                if (config === undefined) return;
+                const { deepPlan: _previous, ...rest } = config;
+                const capabilities = new Set(config.capabilities);
+                if (binding === undefined) capabilities.delete("deep-plan");
+                else capabilities.add("deep-plan");
+                if (workspaceWriteEnabled) capabilities.add("workspace-write");
+                else capabilities.delete("workspace-write");
+                const next = {
+                  ...rest,
+                  capabilities,
+                  ...(binding === undefined ? {} : { deepPlan: binding }),
+                };
+                yield* mcpSessions.set(next);
+                setMcpProviderSession(next);
+              }),
+            );
+          },
+          (effect, input) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: runtime.driver,
+                    threadId: input.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.runId,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+        const compactThread = runtime.compactThread;
         return {
           ...runtime,
+          ...(compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  requireTurnBudget(input).pipe(Effect.andThen(compactThread(input))),
+              }),
           subscribeEvents,
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
@@ -1865,14 +2022,18 @@ export const layerWithOptions = (
               ),
             ),
           startTurn: (input) =>
-            observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
+            requireTurnBudget(input).pipe(
+              Effect.andThen(
+                observeActivity(
+                  providerSessionId,
+                  ensureThreadAttached({
+                    providerSessionId,
+                    threadId: input.threadId,
+                    providerInstanceId: runtime.instanceId,
+                  }),
+                ),
+              ),
+              Effect.andThen(refreshDeepPlanBinding(input)),
               // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
               Effect.andThen(
                 holdThreadLoaded({
@@ -1923,7 +2084,17 @@ export const layerWithOptions = (
               ),
             ),
           steerTurn: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+            requireUsageBudget(runtime.instanceId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterSteerRunError({
+                    driver: runtime.driver,
+                    providerThreadId: input.providerThread.id,
+                    providerTurnId: input.providerTurnId,
+                    cause,
+                  }),
+              ),
+              Effect.andThen(observeActivity(providerSessionId, touchActivity(providerSessionId))),
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
@@ -1948,7 +2119,16 @@ export const layerWithOptions = (
               ),
             ),
           respondToRuntimeRequest: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+            requireUsageBudget(runtime.instanceId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+                    driver: runtime.driver,
+                    requestId: input.requestId,
+                    cause,
+                  }),
+              ),
+              Effect.andThen(observeActivity(providerSessionId, touchActivity(providerSessionId))),
               Effect.andThen(
                 runtime
                   .respondToRuntimeRequest(input)
@@ -2202,6 +2382,7 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
+                  projectMemoryMode: input.runtimePolicy.projectMemoryMode,
                 });
                 yield* touchActivity(input.providerSessionId);
                 return existing.exposedRuntime;
@@ -2220,6 +2401,7 @@ export const layerWithOptions = (
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
+                input.runtimePolicy.projectMemoryMode,
               );
               const mcpCredentialId = prepared.mcpCredentialId;
               let reservationDropped = mcpCredentialId === undefined;

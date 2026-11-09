@@ -17,9 +17,9 @@ import {
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
-import { type PreviewAnnotationPayload } from "@t3tools/contracts";
+import { type PreviewAnnotationPayload, type VoiceFileReference } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
-import { composerTargetKey } from "../../composerDraftStore";
+import { composerTargetKey, useComposerDraftStore } from "../../composerDraftStore";
 import {
   type ComposerListEdit,
   listContinuationForEnter,
@@ -41,7 +41,6 @@ export function composerCommandKeyHandler(input: {
   readonly isCompacting: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
   readonly isSoftwareKeyboardOpen: boolean;
-  readonly planModeUiEnabled: boolean;
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly promptHistoryEntries: ChatComposerProps["promptHistoryEntries"];
@@ -93,7 +92,6 @@ export function composerCommandKeyHandler(input: {
     isCompacting,
     followUpBehavior,
     isSoftwareKeyboardOpen,
-    planModeUiEnabled,
     isLiteralPendingAnswer,
     pendingUserInputs,
     promptHistoryEntries,
@@ -128,9 +126,13 @@ export function composerCommandKeyHandler(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePromptFromHistory = (nextPrompt: string) => {
+  const replacePromptFromHistory = (
+    nextPrompt: string,
+    references: ReadonlyArray<VoiceFileReference>,
+  ) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+    useComposerDraftStore.getState().setVoiceFileReferences(composerDraftTarget, references);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
     setComposerTrigger(null);
     setComposerHighlightedItemId(null);
@@ -175,7 +177,7 @@ export function composerCommandKeyHandler(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePromptFromHistory(step.prompt);
+    replacePromptFromHistory(step.prompt, step.voiceFileReferences ?? []);
     return true;
   };
 
@@ -210,7 +212,6 @@ export function composerCommandKeyHandler(input: {
     });
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
       if (applyListEdit(event, listOutdentForTab)) return true;
-      if (!planModeUiEnabled) return false;
       toggleInteractionMode();
       return true;
     }

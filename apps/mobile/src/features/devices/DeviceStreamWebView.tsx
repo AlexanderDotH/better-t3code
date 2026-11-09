@@ -21,6 +21,7 @@ import {
   deviceStreamMessage,
   type DeviceStreamConfiguration,
 } from "./device-stream-document";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export interface DeviceStreamRef {
   home: () => void;
@@ -94,6 +95,7 @@ function DeviceStreamDocumentView({
   readonly onStreaming: () => void;
   readonly onRecoverProcess: () => boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const webView = useRef<WebView<object>>(null);
   const active = useRef(false);
   const failed = useRef(false);
@@ -199,11 +201,15 @@ function DeviceStreamDocumentView({
             accessibilityLiveRegion="polite"
             className="text-center text-sm text-foreground-muted"
           >
-            {status === "error" ? error : "Connecting to device..."}
+            {status === "error" ? error : translator.message("mobile.ui.connectingToDevice")}
           </AppText>
           {status === "error" ? (
             <View className="items-center">
-              <Button label="Reconnect" tone="secondary" onPress={onRetry} />
+              <Button
+                label={translator.message("chat.environment.reconnect")}
+                tone="secondary"
+                onPress={onRetry}
+              />
             </View>
           ) : null}
         </View>

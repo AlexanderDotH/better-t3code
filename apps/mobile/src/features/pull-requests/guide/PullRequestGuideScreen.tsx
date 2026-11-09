@@ -33,6 +33,7 @@ import { composerPullRequests } from "../../../state/pull-requests";
 import { usePullRequestPermissions } from "../usePullRequestPermissions";
 import { pullRequestTarget } from "../usePullRequestDiff";
 import { useReviewGuide } from "./useReviewGuide";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export type GuideStopParams = PullRequestParams & {
   readonly position: number;
@@ -55,13 +56,14 @@ export function PullRequestGuideContent({
   readonly params: PullRequestParams;
   readonly visible?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const state = useReviewGuide(params, visible);
   const { guide, stale } = reviewGuideState(state.data);
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
-        <Text>Review guides are disabled for this server.</Text>
+        <Text>{translator.message("mobile.ui.reviewGuidesAreDisabledForThisServer")}</Text>
       ) : (
         <>
           <GuideNotice state={state} />
@@ -99,6 +101,7 @@ export function PullRequestGuideContent({
 }
 
 export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideStopParams>) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const state = useReviewGuide(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(route.params)));
@@ -147,7 +150,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               actions={[
                 {
                   id: "word-wrap",
-                  title: "Word wrap",
+                  title: translator.message("settings.application.title.wordWrap"),
                   image: "text.alignleft",
                   state: appearance.codeWordBreak ? "on" : "off",
                 },
@@ -155,20 +158,29 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               onPressAction={() => setCodeWordBreak(!appearance.codeWordBreak)}
             >
               <View pointerEvents="none">
-                <IconButton icon="ellipsis" accessibilityLabel="Guide options" />
+                <IconButton
+                  icon="ellipsis"
+                  accessibilityLabel={translator.message("mobile.ui.guideOptions")}
+                />
               </View>
             </Menu>
           }
         />
       ) : null}
       <Toolbar placement="right">
-        <Toolbar.Menu title="Guide options" accessibilityLabel="Guide options" icon="ellipsis">
+        <Toolbar.Menu
+          title={translator.message("mobile.ui.guideOptions")}
+          accessibilityLabel={translator.message("mobile.ui.guideOptions")}
+          icon="ellipsis"
+        >
           <Toolbar.MenuAction
             icon="text.alignleft"
             isOn={appearance.codeWordBreak}
             onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
           >
-            <Toolbar.Label>Word wrap</Toolbar.Label>
+            <Toolbar.Label>
+              {translator.message("settings.application.title.wordWrap")}
+            </Toolbar.Label>
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
@@ -179,11 +191,11 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         >
           <View className="w-full max-w-[760px] self-center gap-5">
             {!state.enabled ? (
-              <Text>Review guides are disabled for this server.</Text>
+              <Text>{translator.message("mobile.ui.reviewGuidesAreDisabledForThisServer")}</Text>
             ) : changedGuide ? (
-              <Text>This guide was rewritten. Go back to start the new tour.</Text>
+              <Text>{translator.message("mobile.ui.thisGuideWasRewrittenGoBackTo")}</Text>
             ) : !stop ? (
-              <Text>{state.error ?? "Loading stop…"}</Text>
+              <Text>{state.error ?? translator.message("mobile.ui.loadingStop")}</Text>
             ) : (
               <>
                 <GuideNotice state={state} />
@@ -202,7 +214,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 ) : null}
                 {stale ? (
                   <Text className="text-sm text-foreground-muted">
-                    Excerpts are hidden until the guide is rewritten for the current head.
+                    {translator.message("mobile.ui.excerptsAreHiddenUntilTheGuideIs")}
                   </Text>
                 ) : (
                   stop.excerpts.map((excerpt) => (
@@ -226,7 +238,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 {diff.error ? <Text className="text-danger-foreground">{diff.error}</Text> : null}
                 {notes.length ? (
                   <View className="gap-4">
-                    <Text className="font-t3-semibold">Notes on this stop</Text>
+                    <Text className="font-t3-semibold">
+                      {translator.message("mobile.ui.notesOnThisStop")}
+                    </Text>
                     {notes.map(({ marker, note }) => (
                       <View key={marker} className="flex-row gap-3">
                         <View className="h-7 w-7 items-center justify-center rounded-lg bg-grouped-card">
@@ -264,7 +278,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 ) : null}
                 {stop.questions.length ? (
                   <View className="gap-3">
-                    <Text className="font-t3-semibold">Questions to consider</Text>
+                    <Text className="font-t3-semibold">
+                      {translator.message("mobile.ui.questionsToConsider")}
+                    </Text>
                     {stop.questions.map((question) => (
                       <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
                     ))}
@@ -274,10 +290,10 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   accessibilityRole="button"
                   accessibilityLabel={
                     guide && position < guide.stops.length - 1
-                      ? "Next stop"
+                      ? translator.message("mobile.ui.nextStop")
                       : canReview
-                        ? "Finish review"
-                        : "Finish tour"
+                        ? translator.message("mobile.ui.finishReview")
+                        : translator.message("mobile.ui.finishTour")
                   }
                   className="mt-2 flex-row items-center gap-4 border-t border-border-subtle pt-5 pb-2 active:opacity-60"
                   onPress={() =>
@@ -300,14 +316,14 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                     <Text className="text-xs text-foreground-muted">
                       {guide && position < guide.stops.length - 1
                         ? `Next · ${position + 2} of ${guide.stops.length}`
-                        : "End of guide"}
+                        : translator.message("mobile.ui.endOfGuide")}
                     </Text>
                     <Text className="text-base font-t3-semibold">
                       {guide && position < guide.stops.length - 1
                         ? guide.stops[position + 1]?.title
                         : canReview
-                          ? "Finish review"
-                          : "Finish tour"}
+                          ? translator.message("mobile.ui.finishReview")
+                          : translator.message("mobile.ui.finishTour")}
                     </Text>
                   </View>
                   <View className="h-11 w-11 items-center justify-center rounded-full bg-foreground">

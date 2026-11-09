@@ -23,6 +23,7 @@ import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -31,6 +32,7 @@ export function usePullRequestListActions(
     patch: Partial<EnvironmentPullRequestListEntry>,
   ) => void,
 ) {
+  const translator = useMobileInterfaceTranslator();
   const registry = use(RegistryContext);
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
@@ -109,7 +111,7 @@ export function usePullRequestListActions(
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         `Couldn't update this ${terminology.singular}`,
-        cause instanceof Error ? cause.message : "Try again.",
+        cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
       );
     }
   };
@@ -143,7 +145,7 @@ export function usePullRequestListActions(
       sourceControlClients.get(entry.provider).changeRequest,
     );
     Dialog.alert(`${label}?`, `#${entry.number} · ${entry.title}`, [
-      { text: "Cancel", style: "cancel" },
+      { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
       {
         text: label,
         style: supported === "close" ? "destructive" : "default",
@@ -163,12 +165,14 @@ export function usePullRequestListActions(
         ? [
             {
               id: "request-review",
-              title: "Request review",
+              title: translator.message("mobile.ui.requestReview"),
               image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
             },
             {
               id: entry.isDraft ? "ready" : "draft",
-              title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
+              title: entry.isDraft
+                ? translator.message("mobile.ui.markReadyForReview")
+                : translator.message("pullRequest.detail.convertDraft"),
               image: Platform.OS === "ios" ? "pencil" : "edit",
             },
             {
@@ -189,10 +193,14 @@ export function usePullRequestListActions(
           : []),
       {
         id: "share",
-        title: "Share…",
+        title: translator.message("mobile.ui.share"),
         image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
       },
-      { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
+      {
+        id: "copy",
+        title: translator.message("chat.composer.copyLink"),
+        image: Platform.OS === "ios" ? "link" : "link",
+      },
       {
         id: "provider",
         title: openOnProviderLabel(entry.provider),

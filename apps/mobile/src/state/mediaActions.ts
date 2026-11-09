@@ -23,6 +23,7 @@ import { environmentSession } from "./session";
 import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
@@ -35,6 +36,7 @@ function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
 }
 
 export function useMediaActions(source: MediaActionsSource | undefined, onOpenFile?: () => void) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const hostEnvironmentId =
     source &&
@@ -87,8 +89,8 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
           Dialog.alert(
-            "Could not share file",
-            error instanceof Error ? error.message : "Try again.",
+            translator.message("mobile.ui.couldNotShareFile"),
+            error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
           );
         }
       })
@@ -110,7 +112,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-full-path" as const,
-                  title: "Copy full path",
+                  title: translator.message("chat.markdown.copyFullPath"),
                   run: () => copyTextWithHaptic(formatFilePathForClipboard(reference.path)),
                 },
               ]
@@ -119,7 +121,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-relative-path" as const,
-                  title: "Copy relative path",
+                  title: translator.message("chat.markdown.copyRelativePath"),
                   run: () =>
                     copyTextWithHaptic(formatFilePathForClipboard(relativePath, reference.path)),
                 },
@@ -129,7 +131,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-url" as const,
-                  title: "Copy URL",
+                  title: translator.message("mobile.ui.copyUrl"),
                   run: () => copyTextWithHaptic(reference.url),
                 },
               ]
@@ -138,7 +140,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "open-file" as const,
-                  title: "Open in file viewer",
+                  title: translator.message("mobile.ui.openInFileViewer"),
                   disabled: !canReadMedia,
                   run: () => {
                     if (!canReadHostMedia(hostEnvironmentId)) return;
@@ -154,7 +156,9 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             : []),
           {
             id: "save" as const,
-            title: sharing ? "Opening share sheet…" : "Save or share",
+            title: sharing
+              ? translator.message("mobile.ui.openingShareSheet2")
+              : translator.message("mobile.ui.saveOrShare"),
             run: share,
             disabled: sharing || !canReadMedia,
           },

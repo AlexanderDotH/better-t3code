@@ -11,6 +11,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
 import { NativeChildWorkSheet } from "./NativeChildWorkSheet";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ProviderSubagentBar(props: {
   readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
@@ -21,6 +22,7 @@ export function ProviderSubagentBar(props: {
   /** Set for providers whose children T3 reads on demand instead of streaming. */
   readonly inspect: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [inspecting, setInspecting] = useState(false);
   const live = props.status !== null && isOrchestrationV2WorkActive(props.status.status);
   const nowMs = useVisibleSecondClock(live);
@@ -65,10 +67,18 @@ export function ProviderSubagentBar(props: {
         </Text>
       </View>
       {props.inspect ? (
-        <Button label="Work" tone="secondary" onPress={() => setInspecting(true)} />
+        <Button
+          label={translator.message("mobile.ui.work")}
+          tone="secondary"
+          onPress={() => setInspecting(true)}
+        />
       ) : null}
       {props.onOpenParent ? (
-        <Button label="Open parent" tone="secondary" onPress={props.onOpenParent} />
+        <Button
+          label={translator.message("mobile.ui.openParent")}
+          tone="secondary"
+          onPress={props.onOpenParent}
+        />
       ) : null}
       {props.inspect && inspecting ? (
         <NativeChildWorkSheet {...props.inspect} onClose={() => setInspecting(false)} />

@@ -1,3 +1,4 @@
+import { activeMobileHarnessSession } from "./active-harness-session";
 import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import {
   getProviderInteractionMode,
@@ -41,6 +42,7 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { resolveComposerSendWorkflow } from "@t3tools/client-runtime/composer-send-workflow";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
@@ -114,6 +116,8 @@ import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
@@ -135,7 +139,10 @@ export function appendReviewCommentToDraft(input: {
       reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4),
     )
   ) {
-    Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+    Dialog.alert(
+      currentInterfaceTranslator().message("mobile.ui.tooManyContextItems"),
+      currentInterfaceTranslator().message("mobile.ui.removeSomeContextFromTheDraftAnd"),
+    );
     return;
   }
   if (input.attachments && input.attachments.length > 0) {
@@ -193,6 +200,7 @@ export function updateThreadDraftModelSelection(
 }
 
 export function useThreadComposerState() {
+  const translator = useMobileInterfaceTranslator();
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
@@ -421,7 +429,10 @@ export function useThreadComposerState() {
       edit.existingAttachments.length === 0 &&
       draft.attachments.length === 0
     ) {
-      Dialog.alert("Add a message", "A queued message cannot be left empty.");
+      Dialog.alert(
+        translator.message("mobile.ui.addAMessage"),
+        translator.message("mobile.ui.aQueuedMessageCannotBeLeftEmpty"),
+      );
       return;
     }
     if (
@@ -429,7 +440,7 @@ export function useThreadComposerState() {
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
       Dialog.alert(
-        "Too many attachments",
+        translator.message("mobile.ui.tooManyAttachments"),
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return;
@@ -452,8 +463,10 @@ export function useThreadComposerState() {
       finishSave(false);
       const error = squashAtomCommandFailure(prepared);
       Dialog.alert(
-        "Could not save the queued message",
-        error instanceof Error ? error.message : "Your edit is still in the composer.",
+        translator.message("mobile.ui.couldNotSaveTheQueuedMessage"),
+        error instanceof Error
+          ? error.message
+          : translator.message("mobile.ui.yourEditIsStillInTheComposer"),
       );
       return;
     }
@@ -488,8 +501,8 @@ export function useThreadComposerState() {
       // The run left the queue during the save; its exit already told the composer what happened.
       if (!finishSave(false)) return;
       Dialog.alert(
-        "Could not save the queued message",
-        "It may have already started. Your edit is still in the composer.",
+        translator.message("mobile.ui.couldNotSaveTheQueuedMessage"),
+        translator.message("mobile.ui.itMayHaveAlreadyStartedYourEdit"),
       );
       return;
     }
@@ -533,6 +546,15 @@ export function useThreadComposerState() {
     const draft = getComposerDraftSnapshot(threadKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
     const thread = selectedThreadShell;
+    if (
+      activeMobileHarnessSession(thread.id, selectedThreadProjection?.projection.thread, thread)
+    ) {
+      setThreadComposerError(
+        threadKey,
+        translator.message("mobile.ui.sendingIsPausedWhileTheOriginalProvider"),
+      );
+      return null;
+    }
     const command = parseDeepPlanComposerCommand(draft.text.trim());
     if (command) {
       updateComposerDraftSettings(threadKey, {
@@ -562,7 +584,7 @@ export function useThreadComposerState() {
     // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
     if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
-        "Too many attachments",
+        translator.message("mobile.ui.tooManyAttachments"),
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return null;
@@ -570,7 +592,7 @@ export function useThreadComposerState() {
 
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
-      Dialog.alert("Too much context", contextBlockReason);
+      Dialog.alert(translator.message("mobile.ui.tooMuchContext"), contextBlockReason);
       return null;
     }
 
@@ -599,7 +621,10 @@ export function useThreadComposerState() {
       if (!readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope))
         return null;
       if (thread.activeProviderThreadId === null) {
-        Dialog.alert("Start a Codex thread first", "Send a message before you submit feedback.");
+        Dialog.alert(
+          translator.message("chat.feedback.startCodexFirst"),
+          translator.message("chat.feedback.sendMessageFirst"),
+        );
         return null;
       }
       const metadata = makeQueuedMessageMetadata();
@@ -679,6 +704,12 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    const sendComposerMode = command
+      ? "deep-plan"
+      : resolveComposerMode(draft.composerMode, draft.interactionMode ?? thread.interactionMode);
+    const devicePreferences = AsyncResult.isSuccess(preferencesResult)
+      ? preferencesResult.value
+      : null;
     clearThreadComposerError(threadKey);
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
@@ -690,19 +721,17 @@ export function useThreadComposerState() {
       context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      composerMode: command
-        ? "deep-plan"
-        : resolveComposerMode(draft.composerMode, draft.interactionMode ?? thread.interactionMode),
+      composerMode: sendComposerMode,
       deepPlanSourceRefs: draft.deepPlanSourceRefs,
-      fetchMode:
-        AsyncResult.isSuccess(preferencesResult) &&
-        preferencesResult.value.experimentalFetch === true &&
-        serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined
-          ? "repository-exploration"
-          : undefined,
-      improvePromptBeforeSend:
-        AsyncResult.isSuccess(preferencesResult) &&
-        preferencesResult.value.improvePromptBeforeSend === true,
+      deepPlanIncludeProjectChats: draft.deepPlanIncludeProjectChats,
+      ...resolveComposerSendWorkflow({
+        prompt: command?.prompt ?? draft.text,
+        composerMode: sendComposerMode,
+        supportsAgentWorkflow:
+          serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined,
+        experimentalFetch: devicePreferences?.experimentalFetch === true,
+        improvePromptBeforeSend: devicePreferences?.improvePromptBeforeSend === true,
+      }),
       interactionMode: resolveProviderInteractionMode(
         provider,
         getProviderInteractionMode(
@@ -717,12 +746,7 @@ export function useThreadComposerState() {
       {
         modelSelection,
         runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-        composerMode: command
-          ? "deep-plan"
-          : resolveComposerMode(
-              draft.composerMode,
-              draft.interactionMode ?? thread.interactionMode,
-            ),
+        composerMode: sendComposerMode,
       },
     );
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
@@ -738,7 +762,9 @@ export function useThreadComposerState() {
         appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
         setThreadComposerError(
           threadKey,
-          error instanceof Error ? error.message : "Failed to save the queued message.",
+          error instanceof Error
+            ? error.message
+            : translator.message("mobile.ui.failedToSaveTheQueuedMessage"),
         );
       },
     );

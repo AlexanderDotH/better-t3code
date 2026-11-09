@@ -47,6 +47,7 @@ export interface RuntimeSubagent {
   readonly id: string;
   readonly kind: "subagent" | "subagent_batch" | "workflow" | "workflow_agent";
   readonly title: string;
+  readonly prompt?: string | undefined;
   readonly role: string | null;
   readonly model: string | null;
   readonly effort: string | null;
@@ -148,6 +149,7 @@ function workflowMembersToRuntime(
       id: `${coordinator.id}:agent:${agent.index}`,
       kind: "workflow_agent" as const,
       title: agent.label,
+      prompt: agent.prompt,
       model: agent.model ?? null,
       effort: agent.effort ?? null,
       ...(agent.speed === undefined ? {} : { speed: agent.speed }),
@@ -204,6 +206,7 @@ export function projectedSubagentsToRuntime(
       title:
         subagent.title ??
         (subagent.prompt.length > 80 ? `${subagent.prompt.slice(0, 77)}...` : subagent.prompt),
+      prompt: subagent.prompt,
       role: null,
       model: subagent.model,
       effort: null,

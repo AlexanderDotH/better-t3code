@@ -94,6 +94,7 @@ vi.mock("react-native-safe-area-context", () => ({
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "symbol" }));
+vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "switch" }));
 vi.mock("../../components/ComposerToolbar", () => ({
   ComposerInlineControl: (props: { label: string; onPress: () => void; disabled: boolean }) =>
     createElement("pressable", { onPress: props.onPress, disabled: props.disabled }, props.label),
@@ -125,6 +126,7 @@ type NativeProps = {
   accessibilityState?: { checked?: boolean; expanded?: boolean; disabled?: boolean };
   onPress?: () => void;
   onChangeText?: (text: string) => void;
+  onValueChange?: (value: boolean) => void;
   disabled?: boolean;
 };
 function expand(node: ReactNode): ReactNode {
@@ -327,6 +329,7 @@ describe("native Deep Planning", () => {
         archived: true,
       });
       let selected: ReadonlyArray<DeepPlanSourceRef> = [];
+      let includeProjectChats = true;
       const sheet = () =>
         render(() =>
           DeepPlanSourceSheet({
@@ -334,10 +337,12 @@ describe("native Deep Planning", () => {
             projectId,
             sources: [source(0), additional],
             selected,
+            includeProjectChats,
             loading: false,
             error: null,
-            onChange: (next) => {
+            onChange: (next, include) => {
               selected = next;
+              includeProjectChats = include;
             },
             onRetry: vi.fn(),
             onClose: vi.fn(),
@@ -356,6 +361,17 @@ describe("native Deep Planning", () => {
       expect(text(filtered)).not.toContain("Chat 0");
       expect(text(filtered)).toContain("Archived design decisions");
       press(filtered, "Archived design decisions");
+      expect(selected).toEqual([]);
+
+      hosts(sheet(), "input")[0]?.props.onChangeText?.("");
+      hosts(sheet(), "switch")[0]?.props.onValueChange?.(false);
+      const manual = sheet();
+      expect(includeProjectChats).toBe(false);
+      expect(text(manual)).toContain("Only the chats you select are used");
+      press(manual, "Chat 0");
+      expect(selected).toEqual([source(0).origin]);
+      hosts(sheet(), "switch")[0]?.props.onValueChange?.(true);
+      expect(includeProjectChats).toBe(true);
       expect(selected).toEqual([]);
     },
   );

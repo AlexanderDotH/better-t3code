@@ -7,7 +7,9 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { DeepPlanRun } from "@t3tools/contracts";
 import { useChatVisualMode } from "../../chatVisualModeSync";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
-import { memo, useState, useId } from "react";
+import { memo, useState, useId, type CSSProperties, type ReactNode } from "react";
+import { ChatSizeMotion } from "./ChatSizeMotion";
+import { useBetterT3DeviceFeature } from "../../hooks/useBetterT3Feature";
 import { findRevealRef } from "./markdownFindContext";
 import {
   isAtomCommandInterrupted,
@@ -54,6 +56,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot,
   findActive = false,
   deepPlan,
+  actions,
+  variant = "plan",
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -62,9 +66,16 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot: string | undefined;
   findActive?: boolean;
   deepPlan?: DeepPlanRun;
+  /** Icon actions shown before the plan menu, such as forking from this plan. */
+  actions?: ReactNode;
+  variant?: "plan" | "deep-plan";
 }) {
   const translator = useInterfaceTranslator();
-  const chatVisualMode = useChatVisualMode();
+  const translate = translator.message;
+  const better = useChatVisualMode() === "better-t3";
+  const isDeepPlan = variant === "deep-plan" || Boolean(deepPlan);
+  const classicBubbleOnly = useBetterT3DeviceFeature("chat.classicBubbleOnly");
+  const accentedPlanBubble = better || isDeepPlan || classicBubbleOnly;
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -79,13 +90,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy plan",
-          description: error instanceof Error ? error.message : "An error occurred while copying.",
+          title: translate("chat.plan.copyFailed"),
+          description: error instanceof Error ? error.message : translate("chat.plan.copyError"),
         }),
       );
     },
   });
-  const title = deepPlan?.plan?.goal ?? proposedPlanTitle(planMarkdown) ?? "Proposed plan";
+  const title =
+    deepPlan?.plan?.goal ?? proposedPlanTitle(planMarkdown) ?? translate("chat.agent.proposedPlan");
   const bodyMarkdown = deepPlan?.plan
     ? formatDeepPlanForDisplay(deepPlan, translator, { includeImplementation: false })
     : planMarkdown;
@@ -116,8 +128,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Workspace path is unavailable",
-          description: "This thread does not have a workspace path to save into.",
+          title: translate("chat.plan.workspaceUnavailable"),
+          description: translate("chat.plan.workspaceUnavailableDescription"),
         }),
       );
       return;
@@ -133,7 +145,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     if (!relativePath) {
       toastManager.add({
         type: "warning",
-        title: "Enter a workspace path",
+        title: translate("chat.plan.enterWorkspacePath"),
       });
       return;
     }
@@ -154,7 +166,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         setIsSaveDialogOpen(false);
         toastManager.add({
           type: "success",
-          title: "Plan saved to workspace",
+          title: translate("chat.plan.saved"),
           description: result.value.relativePath,
         });
         return;
@@ -164,8 +176,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not save plan",
-            description: error instanceof Error ? error.message : "An error occurred while saving.",
+            title: translate("chat.plan.saveFailed"),
+            description: error instanceof Error ? error.message : translate("chat.plan.saveError"),
           }),
         );
       }
@@ -174,137 +186,177 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
 
   return (
     <div
-      data-plan-kind={deepPlan ? "deep-plan" : "plan"}
+      data-plan-kind={isDeepPlan ? "deep-plan" : "plan"}
+      data-chat-tone={better ? (isDeepPlan ? "warning" : "info") : undefined}
       className={cn(
-        "rounded-2xl border border-border/80 bg-card/70 p-4 sm:p-5",
-        chatVisualMode === "better-t3" && "better-chat-bubble better-chat-plan",
+        "rounded-2xl border p-4 sm:p-5",
+        accentedPlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
+        better && "better-chat-bubble better-chat-status better-chat-plan",
       )}
+      style={isDeepPlan ? DEEP_PLAN_ACCENT : undefined}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary">{deepPlan ? "DeepPlan" : "Plan"}</Badge>
-          {}
-          <h3 data-thread-find-text="true" className="truncate text-sm font-medium text-foreground">
-            {title}
-          </h3>
-        </div>
-        <Menu>
-          <MenuTrigger
-            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
-          >
-            <EllipsisIcon aria-hidden="true" className="size-4" />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuItem onClick={handleCopyPlan}>
-              {isCopied ? "Copied!" : "Copy to clipboard"}
-            </MenuItem>
-            <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
-            <MenuItem
-              onClick={openSaveDialog}
-              disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
+      <ChatSizeMotion>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Badge
+              variant={accentedPlanBubble ? "label" : "secondary"}
+              style={accentedPlanBubble ? PLAN_BADGE_ACCENT : undefined}
             >
-              Save to workspace
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
-      </div>
-      {deepPlan ? (
-        <details className="mt-3 rounded-lg border border-border/70 px-3 text-xs">
-          <summary className="min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-            {translator.message("chat.deepPlan.sources")} ·{" "}
-            {translator.message("chat.deepPlan.sourceCount", { count: deepPlan.sources.length })}
-          </summary>
-          <ul className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pb-3">
-            {deepPlan.sources.map((source) => (
-              <li key={source.sourceId} className="break-words">
-                <span className="font-medium">{deepPlanSourceTitle(source)}</span>
-                {source.archived ? (
-                  <span className="block text-muted-foreground">
-                    {translator.message("chat.deepPlan.archived")}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-      <div className="mt-4">
-        <div
-          ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
-          data-thread-find-text="true"
-          data-thread-find-fold={isCollapsed ? "" : undefined}
-        >
-          {showPreview ? (
-            <ChatMarkdown
-              text={collapsedPreview ?? ""}
-              cwd={cwd}
-              environmentId={environmentId}
-              threadRef={threadRef}
-              isStreaming={false}
-              headingLevelOffset={3}
-            />
-          ) : (
-            <ChatMarkdown
-              text={displayedPlanMarkdown}
-              cwd={cwd}
-              environmentId={environmentId}
-              threadRef={threadRef}
-              isStreaming={false}
-              headingLevelOffset={3}
-            />
-          )}
-          {isCollapsed ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
+              {translate(isDeepPlan ? "chat.deepPlan.label" : "chat.plan.label")}
+            </Badge>
+            <h3
+              data-thread-find-text="true"
+              className={cn(
+                "truncate text-sm font-medium",
+                accentedPlanBubble ? "text-primary" : "text-foreground",
+              )}
+            >
+              {title}
+            </h3>
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {actions}
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    aria-label={translate("chat.plan.actions")}
+                    size="icon-xs"
+                    variant="outline"
+                  />
+                }
+              >
+                <EllipsisIcon aria-hidden="true" className="size-4" />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                <MenuItem onClick={handleCopyPlan}>
+                  {isCopied
+                    ? translate("chat.plan.copied")
+                    : translate("chat.composer.copyClipboard")}
+                </MenuItem>
+                <MenuItem onClick={handleDownload}>
+                  {translate("chat.plan.downloadMarkdown")}
+                </MenuItem>
+                <MenuItem
+                  onClick={openSaveDialog}
+                  disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
+                >
+                  {translate("chat.plan.saveWorkspace")}
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          </div>
+        </div>
+        {deepPlan ? (
+          <details className="mt-3 rounded-lg border border-border/70 px-3 text-xs">
+            <summary className="min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+              {translator.message("chat.deepPlan.sources")} ·{" "}
+              {translator.message("chat.deepPlan.sourceCount", { count: deepPlan.sources.length })}
+            </summary>
+            <ul className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pb-3">
+              {deepPlan.sources.map((source) => (
+                <li key={source.sourceId} className="break-words">
+                  <span className="font-medium">{deepPlanSourceTitle(source)}</span>
+                  {source.archived ? (
+                    <span className="block text-muted-foreground">
+                      {translator.message("chat.deepPlan.archived")}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+        <div className="mt-4">
+          <div
+            ref={revealRef}
+            className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+            // A mask fades into any card tint, including the accented and Better T3 bubbles.
+            style={isCollapsed ? COLLAPSED_PLAN_FADE : undefined}
+            data-thread-find-text="true"
+            data-thread-find-fold={isCollapsed ? "" : undefined}
+          >
+            {showPreview ? (
+              <ChatMarkdown
+                text={collapsedPreview ?? ""}
+                cwd={cwd}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                isStreaming={false}
+                headingLevelOffset={3}
+              />
+            ) : (
+              <ChatMarkdown
+                text={displayedPlanMarkdown}
+                cwd={cwd}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                isStreaming={false}
+                headingLevelOffset={3}
+              />
+            )}
+          </div>
+          {canCollapse ? (
+            <div className="mt-4 flex justify-center">
+              <Button
+                size="sm"
+                variant="outline"
+                data-scroll-anchor-ignore
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? translate("chat.plan.collapse") : translate("chat.plan.expand")}
+              </Button>
+            </div>
           ) : null}
         </div>
-        {canCollapse ? (
-          <div className="mt-4 flex justify-center">
-            <Button
-              size="sm"
-              variant="outline"
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? "Collapse plan" : "Expand plan"}
-            </Button>
+
+        {deepPlan?.plan ? (
+          <div className="mt-4 border-t border-primary/20 pt-3">
+            <DeepPlanChecklist
+              run={deepPlan}
+              environmentId={environmentId}
+              threadId={threadRef?.threadId ?? deepPlan.threadId}
+              placement="plan"
+            />
           </div>
         ) : null}
-      </div>
-
-      {deepPlan?.plan ? (
-        <div className="mt-4 border-t border-primary/20 pt-3">
-          <DeepPlanChecklist
-            run={deepPlan}
-            environmentId={environmentId}
-            threadId={threadRef?.threadId ?? deepPlan.threadId}
-            placement="plan"
-          />
-        </div>
-      ) : null}
-      <Dialog
-        open={isSaveDialogOpen}
-        onOpenChange={(open) => {
-          if (!isSavingToWorkspace) {
-            setIsSaveDialogOpen(open);
-          }
-        }}
-      >
-        <DialogPopup className="max-w-xl">
-          <SavePlanToWorkspaceForm
-            initialPath={lastSavePath || downloadFilename}
-            placeholder={downloadFilename}
-            workspaceRoot={workspaceRoot}
-            canWriteFiles={canWriteFiles}
-            saving={isSavingToWorkspace}
-            onCancel={() => setIsSaveDialogOpen(false)}
-            onSave={handleSaveToWorkspace}
-          />
-        </DialogPopup>
-      </Dialog>
+        <Dialog
+          open={isSaveDialogOpen}
+          onOpenChange={(open) => {
+            if (!isSavingToWorkspace) {
+              setIsSaveDialogOpen(open);
+            }
+          }}
+        >
+          <DialogPopup className="max-w-xl">
+            <SavePlanToWorkspaceForm
+              initialPath={lastSavePath || downloadFilename}
+              placeholder={downloadFilename}
+              workspaceRoot={workspaceRoot}
+              canWriteFiles={canWriteFiles}
+              saving={isSavingToWorkspace}
+              onCancel={() => setIsSaveDialogOpen(false)}
+              onSave={handleSaveToWorkspace}
+            />
+          </DialogPopup>
+        </Dialog>
+      </ChatSizeMotion>
     </div>
   );
 });
+
+// A deep plan recolors the card's primary accent, so its badge, title and buttons follow.
+const DEEP_PLAN_ACCENT = {
+  "--primary": "var(--deep-plan)",
+  "--primary-foreground": "var(--deep-plan-foreground)",
+  "--ring": "var(--deep-plan)",
+} as CSSProperties;
+
+const PLAN_BADGE_ACCENT = { "--label": "var(--primary)" } as CSSProperties;
+
+const COLLAPSED_PLAN_FADE = {
+  maskImage: "linear-gradient(to bottom, black calc(100% - 6rem), transparent)",
+} satisfies CSSProperties;
 
 function SavePlanToWorkspaceForm({
   initialPath,
@@ -323,19 +375,24 @@ function SavePlanToWorkspaceForm({
   onCancel: () => void;
   onSave: (path: string) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [savePath, setSavePath] = useState(initialPath);
   const savePathInputId = useId();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Save plan to workspace</DialogTitle>
+        <DialogTitle>{translate("chat.plan.saveTitle")}</DialogTitle>
         <DialogDescription>
-          Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+          {translate("chat.plan.relativePath", {
+            workspace: workspaceRoot ?? translate("chat.plan.workspace"),
+          })}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <label htmlFor={savePathInputId} className="grid gap-1.5">
-          <span className="text-xs font-medium text-foreground">Workspace path</span>
+          <span className="text-xs font-medium text-foreground">
+            {translate("chat.plan.workspacePath")}
+          </span>
           <Input
             id={savePathInputId}
             value={savePath}
@@ -348,10 +405,10 @@ function SavePlanToWorkspaceForm({
       </DialogPanel>
       <DialogFooter>
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
-          Cancel
+          {translate("common.cancel")}
         </Button>
         <Button size="sm" onClick={() => onSave(savePath)} disabled={!canWriteFiles || saving}>
-          {saving ? "Saving..." : "Save"}
+          {saving ? translate("chat.plan.saving") : translate("chat.plan.save")}
         </Button>
       </DialogFooter>
     </>

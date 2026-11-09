@@ -41,8 +41,8 @@ import {
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
+  workEntryIsProviderReasoning,
   workLogEntryIsToolLike,
   type TimelineEntry,
   type WorkLogEntry,
@@ -497,6 +497,7 @@ export type TimelineLatestRun = Pick<
 >;
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+const BETTER_THINKING_ROW_ID = "thinking-indicator-row";
 
 export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly continuesWorkLog?: boolean;
@@ -1025,6 +1026,7 @@ function deriveTurnFolds(input: {
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
   completeSupersededReplyEntryIds: ReadonlySet<string>;
+  showReasoning: boolean;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1141,6 +1143,13 @@ function deriveTurnFolds(input: {
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
+        continue;
+      }
+      if (
+        input.showReasoning &&
+        entry.kind === "work" &&
+        workEntryIsProviderReasoning(entry.entry)
+      ) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);
@@ -1387,7 +1396,13 @@ function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
 function deriveTimelineTurnFolds(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
+    | "showReasoning"
+    | "showWorkingReasoning"
   >,
 ) {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
@@ -1406,6 +1421,7 @@ function deriveTimelineTurnFolds(
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
+    showReasoning: input.showReasoning === true && !input.showWorkingReasoning,
   });
 }
 
@@ -1483,6 +1499,7 @@ export function deriveMessagesTimelineRows(
     runlessWorkActive,
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
+    showReasoning: input.showReasoning === true && !input.showWorkingReasoning,
   });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
@@ -1563,11 +1580,7 @@ export function deriveMessagesTimelineRows(
   const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
     workEntryIsActiveTurnActivity(entry.entry),
   );
-  const latestToolKeepsActivityLive =
-    latestRunningToolEntry !== undefined ||
-    (latestVisibleToolEntry !== undefined &&
-      workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry) &&
-      !input.pendingApprovalRequestIds?.size);
+  const latestToolKeepsActivityLive = latestRunningToolEntry !== undefined;
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
@@ -1871,6 +1884,42 @@ export function deriveMessagesTimelineRows(
       const visibleGroupedEntries = groupedEntries.filter((entry) =>
         workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
       );
+      // Classic keeps the latest log entry in view, with the earlier ones behind a toggle below it.
+      if (
+        input.chatVisualMode === "classic" &&
+        visibleGroupedEntries.length > 1 &&
+        !visibleGroupedEntries.some(workEntryIsInActiveRun)
+      ) {
+        const groupId = workGroupId(timelineEntry.id);
+        const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+        for (const entry of expanded ? visibleGroupedEntries : visibleGroupedEntries.slice(-1)) {
+          nextRows.push({
+            kind: "work",
+            id: entry.id,
+            createdAt: entry.createdAt,
+            groupedEntries: [entry],
+            isExpandedToolGroup: false,
+            ...(workLogEntryIsToolLike(entry) ? { displayLabel: singleToolCallLabel(entry) } : {}),
+          });
+        }
+        const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
+        nextRows.push({
+          kind: "work-toggle",
+          id: `work-toggle:${timelineEntry.id}`,
+          createdAt: timelineEntry.createdAt,
+          runId: timelineEntry.entry.runId ?? null,
+          groupId,
+          detailEntries: visibleGroupedEntries,
+          hiddenCount: visibleGroupedEntries.length - 1,
+          expanded,
+          summary: summarizeToolGroup(visibleGroupedEntries).summary,
+          summaryKind: toolGroupSummaryKind(visibleGroupedEntries),
+          hasFailure:
+            latestToolEntry !== undefined && workEntryDisplayIndicatesToolFailure(latestToolEntry),
+        });
+        index = cursor - 1;
+        continue;
+      }
       if (visibleGroupedEntries.length > 0) {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
@@ -2129,13 +2178,25 @@ export function deriveMessagesTimelineRows(
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
   }
+  const better = input.chatVisualMode === "better-t3";
+  const tail = timelineEntries.at(-1);
+  // Better T3 keeps its pill beside tool rows until the reply itself starts streaming.
+  const hasLiveText =
+    timelineEntries.length - 1 >= activeTurnHeaderIndex &&
+    tail?.kind === "message" &&
+    tail.message.role === "assistant" &&
+    tail.message.streaming &&
+    tail.message.text.trim().length > 0;
+  const thinkingRowId = better ? BETTER_THINKING_ROW_ID : LIVE_ACTIVITY_ROW_ID;
   if (
+    input.chatVisualMode !== "classic" &&
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
-    (latestToolFailed || (!hasActivityRow && !input.pendingApprovalRequestIds?.size))
+    (latestToolFailed ||
+      (!(better ? hasLiveText : hasActivityRow) && !input.pendingApprovalRequestIds?.size))
   ) {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
@@ -2143,7 +2204,7 @@ export function deriveMessagesTimelineRows(
       const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
       nextRows.push({
         kind: "thinking",
-        id: LIVE_ACTIVITY_ROW_ID,
+        id: thinkingRowId,
         createdAt: input.activeTurnStartedAt ?? null,
         groupId,
         expanded,
@@ -2160,21 +2221,27 @@ export function deriveMessagesTimelineRows(
     } else {
       nextRows.push({
         kind: "thinking",
-        id: LIVE_ACTIVITY_ROW_ID,
+        id: thinkingRowId,
         createdAt: input.activeTurnStartedAt ?? null,
       });
     }
   }
 
+  const summarizedRows = attachCreatedThreadSummaries(
+    nextRows,
+    timelineEntries,
+    collapsedFoldMemberIds,
+  );
   const result = presentBetterTimelineRows(
-    attachTrailingToolGroupsToAssistant(
-      attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
-    ),
+    input.chatVisualMode === "classic"
+      ? summarizedRows
+      : attachTrailingToolGroupsToAssistant(summarizedRows),
     allTimelineEntries,
     input,
     unsettledRunId,
     input.isWorking,
     input.expandedWorkGroupIds,
+    collapsedFoldMemberIds,
   );
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
@@ -2281,7 +2348,13 @@ interface MessagesTimelineRowsProjection {
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
+    | "showReasoning"
+    | "showWorkingReasoning"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();
@@ -2372,7 +2445,7 @@ function replaceStreamingMessageRows(
       continue;
     if (!isStreamingMessageTextUpdate(previousEntry.message, entry.message)) return null;
     if (
-      input.chatVisualMode === "better-t3" &&
+      (input.chatVisualMode === "better-t3" || input.showMessageReasoning) &&
       entry.message.role === "assistant" &&
       previousEntry.message.text.trim().length === 0 &&
       entry.message.text.trim().length > 0
@@ -2623,4 +2696,137 @@ export function sameRowsInput(
     return false;
   }
   return Object.keys(left).length === Object.keys(right).length;
+}
+
+function timelineRowIsInherited(row: MessagesTimelineRow): boolean {
+  switch (row.kind) {
+    case "message":
+    case "assistant-meta":
+      return row.projectedItem?.visibility === "inherited";
+    case "event":
+      return row.projectedItem.visibility === "inherited";
+    case "work":
+    case "work-live":
+      return row.groupedEntries.some((entry) => entry.projectedItem?.visibility === "inherited");
+    case "work-toggle":
+      return (
+        row.detailEntries?.some((entry) => entry.projectedItem?.visibility === "inherited") ?? false
+      );
+    default:
+      return false;
+  }
+}
+
+/** A fork's history starts after the last row it inherited from its source thread. */
+export function resolveForkDividerAfterRowId(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+): string | null {
+  return rows.findLast(timelineRowIsInherited)?.id ?? null;
+}
+
+export type TimelineReplyTopicStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "interrupted"
+  | "failed";
+
+export interface TimelineReplyTopicSummary {
+  readonly messageId: MessageId;
+  readonly threadId: ThreadId;
+  readonly count: number;
+  readonly status: TimelineReplyTopicStatus | null;
+  readonly statusMessage: string | null;
+  /** The prompt of a side chat that ended without output; the server still validates it. */
+  readonly retry: { readonly messageId: MessageId; readonly runId: RunId } | null;
+}
+
+interface TimelineReplyTopicThread {
+  readonly id: ThreadId;
+  readonly createdAt: string;
+  readonly messageReply?: { readonly sourceThreadId: ThreadId; readonly messageId: MessageId };
+  readonly latestRun: {
+    readonly status: string;
+    readonly runId?: RunId;
+    readonly assistantMessageId?: MessageId | null;
+  } | null;
+  readonly hasPendingApprovals?: boolean;
+  readonly hasPendingUserInput?: boolean;
+  readonly source?: {
+    readonly latestVisibleMessage: { readonly id: MessageId; readonly role: string } | null;
+    readonly lastError?: string | null | undefined;
+  };
+}
+
+function replyTopicStatus(thread: TimelineReplyTopicThread): TimelineReplyTopicStatus | null {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return "waiting";
+  switch (thread.latestRun?.status) {
+    case "preparing":
+    case "queued":
+    case "starting":
+      return "pending";
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting";
+    case "completed":
+      return "completed";
+    case "interrupted":
+    case "cancelled":
+      return "interrupted";
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+function replyTopicRetry(
+  thread: TimelineReplyTopicThread,
+  status: TimelineReplyTopicStatus | null,
+): TimelineReplyTopicSummary["retry"] {
+  const runId = thread.latestRun?.runId;
+  const prompt = thread.source?.latestVisibleMessage;
+  return (status === "failed" || status === "interrupted") &&
+    runId !== undefined &&
+    !thread.latestRun?.assistantMessageId &&
+    prompt?.role === "user"
+    ? { messageId: prompt.id, runId }
+    : null;
+}
+
+/**
+ * Side chats that reply to this thread's messages, one summary per source message. The newest
+ * side chat is the one a summary opens and reports on.
+ */
+export function deriveTimelineReplyTopics(
+  threads: ReadonlyArray<TimelineReplyTopicThread>,
+  sourceThreadId: ThreadId | undefined,
+): ReadonlyArray<TimelineReplyTopicSummary> {
+  if (sourceThreadId === undefined) return [];
+  const byMessageId = new Map<MessageId, TimelineReplyTopicSummary & { createdAt: string }>();
+  for (const thread of threads) {
+    const reply = thread.messageReply;
+    if (reply?.sourceThreadId !== sourceThreadId) continue;
+    const previous = byMessageId.get(reply.messageId);
+    const count = (previous?.count ?? 0) + 1;
+    if (previous !== undefined && thread.createdAt < previous.createdAt) {
+      byMessageId.set(reply.messageId, { ...previous, count });
+      continue;
+    }
+    const status = replyTopicStatus(thread);
+    byMessageId.set(reply.messageId, {
+      messageId: reply.messageId,
+      threadId: thread.id,
+      createdAt: thread.createdAt,
+      count,
+      status,
+      statusMessage: status === "failed" ? (thread.source?.lastError ?? null) : null,
+      retry: replyTopicRetry(thread, status),
+    });
+  }
+  return [...byMessageId.values()]
+    .map(({ createdAt: _createdAt, ...topic }) => topic)
+    .toSorted((left, right) => left.messageId.localeCompare(right.messageId));
 }

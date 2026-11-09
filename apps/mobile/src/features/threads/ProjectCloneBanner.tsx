@@ -9,6 +9,7 @@ import { View } from "react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { cn } from "../../lib/cn";
 import { AppText as Text } from "../../components/ui/AppText";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ProjectCloneBanner(props: {
   readonly clone: ProjectCloneSnapshot;
@@ -16,6 +17,7 @@ export function ProjectCloneBanner(props: {
   readonly onRetry: () => void;
   readonly onRemove: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { clone } = props;
   const name = projectCloneDisplayName(clone);
   if (clone.phase === "running") {
@@ -30,7 +32,10 @@ export function ProjectCloneBanner(props: {
             {projectCloneProgressSummary(clone)}
           </Text>
         </View>
-        <BannerAction label="Cancel" onPress={props.onCancel} />
+        <BannerAction
+          label={translator.message("mobile.settings.projects.settings.cancel")}
+          onPress={props.onCancel}
+        />
       </View>
     );
   }
@@ -57,8 +62,11 @@ export function ProjectCloneBanner(props: {
         </Text>
       ) : null}
       <View className="mt-2 flex-row justify-end gap-2">
-        <BannerAction label="Remove project" onPress={props.onRemove} />
-        <BannerAction label="Retry" onPress={props.onRetry} />
+        <BannerAction
+          label={translator.message("settings.projects.detail.removeProject")}
+          onPress={props.onRemove}
+        />
+        <BannerAction label={translator.message("common.retry")} onPress={props.onRetry} />
       </View>
     </View>
   );

@@ -27,6 +27,7 @@ import * as DateTime from "effect/DateTime";
 import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -93,6 +94,7 @@ export function QueuedRunsControl({
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
@@ -281,7 +283,7 @@ export function QueuedRunsControl({
                           }}
                         >
                           <ArrowUpIcon />
-                          Send now
+                          {translate("chat.queue.sendNow")}
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>

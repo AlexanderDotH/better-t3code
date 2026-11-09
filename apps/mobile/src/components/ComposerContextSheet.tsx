@@ -30,6 +30,7 @@ import { AppText as Text } from "./ui/AppText";
 import { Sheet } from "./ui/Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 function ContextField(props: { label: string; value: string | null | undefined; code?: boolean }) {
   if (!props.value) return null;
@@ -61,6 +62,7 @@ function ContextField(props: { label: string; value: string | null | undefined; 
 }
 
 function ContextSource(props: { source: ElementContextSource | null }) {
+  const translator = useMobileInterfaceTranslator();
   const source = props.source;
   if (!source) return null;
   const location = source.fileName
@@ -68,7 +70,7 @@ function ContextSource(props: { source: ElementContextSource | null }) {
     : null;
   return (
     <ContextField
-      label="Source"
+      label={translator.message("mobile.files.source")}
       value={[source.functionName, location].filter(Boolean).join("\n")}
       code
     />
@@ -90,6 +92,7 @@ export function ComposerContextSheet(props: {
   readonly records?: ReadonlyArray<ComposerContextRecord>;
   readonly attachments?: ReadonlyArray<DraftComposerAttachment>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const openPullRequest = useOpenPullRequest({
     context:
       props.environmentId && props.projectId
@@ -208,13 +211,11 @@ export function ComposerContextSheet(props: {
         ) : null}
         {!record ? (
           <Text className="text-foreground">
-            Context unavailable. The reference was copied without its payload. Copy it again from
-            the original message or remove it.
+            {translator.message("mobile.ui.contextUnavailableTheReferenceWasCopiedWithout")}
           </Text>
         ) : "payload" in record ? (
           <Text className="text-foreground">
-            This context type is not supported by this version of the app. Its payload will be
-            preserved when sent.
+            {translator.message("mobile.ui.thisContextTypeIsNotSupportedBy")}
           </Text>
         ) : (
           <>
@@ -263,11 +264,23 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "preview-annotation" ? (
               <>
-                <ContextField label="Page" value={record.pageTitle ?? record.pageUrl} />
+                <ContextField
+                  label={translator.message("mobile.ui.page")}
+                  value={record.pageTitle ?? record.pageUrl}
+                />
                 <ContextField label="URL" value={record.pageUrl} />
-                <ContextField label="Comment" value={record.comment} />
-                <ContextField label="Selection" value={record.targetSummary} />
-                <ContextField label="Requested changes" value={record.styleChanges.join("\n")} />
+                <ContextField
+                  label={translator.message("mobile.review.comment")}
+                  value={record.comment}
+                />
+                <ContextField
+                  label={translator.message("git.common.selection")}
+                  value={record.targetSummary}
+                />
+                <ContextField
+                  label={translator.message("mobile.ui.requestedChanges")}
+                  value={record.styleChanges.join("\n")}
+                />
                 {record.elements?.map(
                   (element, index) => (
                     /* oxlint-disable react/no-array-index-key -- Captured DOM elements are a fixed snapshot without persistent element IDs. */ <View
@@ -275,13 +288,21 @@ export function ComposerContextSheet(props: {
                       className="gap-3"
                     >
                       <ContextField
-                        label="Element"
+                        label={translator.message("mobile.ui.element")}
                         value={element.componentName ?? element.tagName}
                       />
-                      <ContextField label="Selector" value={element.selector} code />
+                      <ContextField
+                        label={translator.message("mobile.ui.selector")}
+                        value={element.selector}
+                        code
+                      />
                       <ContextSource source={element.source} />
                       <ContextField label="HTML" value={element.htmlPreview} code />
-                      <ContextField label="Styles" value={element.styles} code />
+                      <ContextField
+                        label={translator.message("mobile.ui.styles")}
+                        value={element.styles}
+                        code
+                      />
                     </View>
                   ) /* oxlint-enable react/no-array-index-key */,
                 )}
@@ -289,29 +310,47 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "element" ? (
               <>
-                <ContextField label="Page" value={record.pageUrl} />
-                <ContextField label="Element" value={record.componentName ?? record.tagName} />
-                <ContextField label="Selector" value={record.selector} code />
+                <ContextField label={translator.message("mobile.ui.page")} value={record.pageUrl} />
+                <ContextField
+                  label={translator.message("mobile.ui.element")}
+                  value={record.componentName ?? record.tagName}
+                />
+                <ContextField
+                  label={translator.message("mobile.ui.selector")}
+                  value={record.selector}
+                  code
+                />
                 <ContextSource source={record.source} />
                 <ContextField label="HTML" value={record.htmlPreview} code />
-                <ContextField label="Styles" value={record.styles} code />
+                <ContextField
+                  label={translator.message("mobile.ui.styles")}
+                  value={record.styles}
+                  code
+                />
               </>
             ) : null}
             {record.kind === "image" ? (
               <ContextField
-                label="File"
+                label={translator.message("desktop.menu.file")}
                 value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
               />
             ) : null}
             {record.kind === "mention" ? (
-              <ContextField label="Path" value={record.path} code />
+              <ContextField
+                label={translator.message("sidebar.thread.menu.path")}
+                value={record.path}
+                code
+              />
             ) : null}
             {record.kind === "thread" ? (
               <View className="gap-3">
-                <ContextField label="Thread" value={record.title} />
+                <ContextField
+                  label={translator.message("mobile.thread.settings.thread")}
+                  value={record.title}
+                />
                 {props.onOpenThread ? (
                   <Button
-                    label="Open thread"
+                    label={translator.message("mobile.ui.openThread")}
                     tone="secondary"
                     onPress={() =>
                       props.onOpenThread?.({
@@ -325,18 +364,18 @@ export function ComposerContextSheet(props: {
               </View>
             ) : null}
             {record.kind === "environment" ? (
-              <ContextField label="Machine" value={record.label} />
+              <ContextField label={translator.message("mobile.ui.machine")} value={record.label} />
             ) : null}
             {record.kind === "skill" ? (
               <View className="gap-3">
-                <ContextField label="Skill" value={record.name} />
+                <ContextField label={translator.message("mobile.ui.skill")} value={record.name} />
                 <ContextField
-                  label="Description"
+                  label={translator.message("pullRequest.description")}
                   value={props.skillDescription ?? "No description is available for this skill."}
                 />
                 {props.onOpenSkill ? (
                   <Button
-                    label="View instructions"
+                    label={translator.message("mobile.ui.viewInstructions")}
                     tone="secondary"
                     onPress={props.onOpenSkill}
                     fullWidth
@@ -367,7 +406,10 @@ export function ComposerContextSheet(props: {
             onPress={() => {
               props.onClose();
               void openPullRequest(pullRequestUrl).catch(() =>
-                Dialog.alert(`Could not open ${changeRequestTerm}`, "Try again when connected."),
+                Dialog.alert(
+                  `Could not open ${changeRequestTerm}`,
+                  translator.message("mobile.ui.tryAgainWhenConnected"),
+                ),
               );
             }}
             className="rounded-xl bg-subtle p-4"
@@ -377,7 +419,7 @@ export function ComposerContextSheet(props: {
         ) : null}
         {props.onOpenAttachment ? (
           <Button
-            label="Open attachment"
+            label={translator.message("mobile.ui.openAttachment")}
             tone="secondary"
             onPress={props.onOpenAttachment}
             fullWidth
@@ -392,7 +434,12 @@ export function ComposerContextSheet(props: {
           />
         ) : null}
         {props.onRemove ? (
-          <Button label="Remove from draft" tone="secondary" onPress={props.onRemove} fullWidth />
+          <Button
+            label={translator.message("mobile.ui.removeFromDraft")}
+            tone="secondary"
+            onPress={props.onRemove}
+            fullWidth
+          />
         ) : null}
       </ScrollView>
     </Sheet>

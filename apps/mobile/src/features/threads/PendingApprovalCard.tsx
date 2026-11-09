@@ -72,8 +72,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       ) : null}
       {!canRespond ? (
         <Text className="font-sans text-sm leading-5 text-foreground-muted">
-          The provider process for this request is no longer available. Interrupt or restart the run
-          to continue.
+          {translator.message("mobile.ui.theProviderProcessForThisRequestIs")}
         </Text>
       ) : null}
       {warning ? (
@@ -98,7 +97,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       </View>
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-muted">
-          This connection cannot respond to approvals.
+          {translator.message("mobile.ui.thisConnectionCannotRespondToApprovals")}
         </Text>
       ) : null}
     </View>

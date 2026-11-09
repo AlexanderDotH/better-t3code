@@ -21,6 +21,7 @@ import { useControlTheme } from "./useControlTheme";
 import { IconButton } from "./IconButton";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import { SymbolView } from "./AppSymbol";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type ToastProps = {
   readonly message: string;
@@ -43,6 +44,7 @@ export function Toast(props: ToastProps) {
 }
 
 function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
+  const translator = useMobileInterfaceTranslator();
   const { fontScale } = useWindowDimensions();
   const { colorScheme } = useControlTheme();
   const borderRadius = Platform.OS === "ios" ? 31 : MOBILE_SHAPE.toast;
@@ -96,7 +98,11 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
         </View>
         {inlineAction && action ? <View className="self-center">{action}</View> : null}
         {props.onDismiss && props.dismissMode !== "swipe" ? (
-          <IconButton accessibilityLabel="Dismiss message" icon="xmark" onPress={props.onDismiss} />
+          <IconButton
+            accessibilityLabel={translator.message("mobile.ui.dismissMessage")}
+            icon="xmark"
+            onPress={props.onDismiss}
+          />
         ) : null}
       </View>
       {action && !inlineAction ? <View className="mt-2 self-end">{action}</View> : null}
@@ -131,6 +137,7 @@ const ENTER_TIMING = {
 };
 const TOAST_EXITING = FadeOut.duration(MOBILE_MOTION.exit).reduceMotion(ReduceMotion.System);
 function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) {
+  const translator = useMobileInterfaceTranslator();
   const [glassReady, setGlassReady] = useState(Platform.OS !== "ios");
   const finishEntering = useCallback(() => setGlassReady(true), []);
   // UIKit can skip glass on a moving host; remount the surface after entry so its blur installs.
@@ -199,7 +206,9 @@ function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) 
               accessibilityRole="alert"
               accessibilityLiveRegion="assertive"
               accessibilityLabel={props.message}
-              accessibilityActions={[{ name: "dismiss", label: "Dismiss message" }]}
+              accessibilityActions={[
+                { name: "dismiss", label: translator.message("mobile.ui.dismissMessage") },
+              ]}
               onAccessibilityAction={({ nativeEvent }) => {
                 if (nativeEvent.actionName === "dismiss") onDismiss();
               }}

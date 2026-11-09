@@ -8,13 +8,14 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 
 const testState = vi.hoisted(() => ({
   status: null as VcsStatusResult | null,
   snapshot: null as GitWorkbenchSnapshot | null,
-  serverThread: null as { id: ThreadId; branch: string } | null,
+  serverThread: null as { id: ThreadId; branch: string; latestRun: object | null } | null,
   busy: false,
   refreshWorkbench: vi.fn(),
   runStackedAction: vi.fn(),
@@ -79,7 +80,7 @@ vi.mock("~/state/use-atom-command", () => ({
         : testState.refreshStatus,
 }));
 vi.mock("~/state/entities", () => ({
-  useThreadShell: () => testState.serverThread,
+  useQuietThreadShell: () => testState.serverThread,
 }));
 vi.mock("~/composerDraftStore", async () => {
   const Schema = await import("effect/Schema");
@@ -119,6 +120,7 @@ vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: (toast: unknown) => toast,
 }));
 
+import { DraftId } from "~/composerDraftStore";
 import { setInterfaceLocaleRuntime } from "../interfaceLanguageRuntime";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -146,6 +148,7 @@ const activeThreadRef = { environmentId, threadId: ThreadId.make("git-control-th
 
 type CommitEntryPoint =
   | "toolbar"
+  | "panel"
   | "commit menu"
   | "menu quick"
   | "quick"
@@ -155,7 +158,7 @@ type CommitEntryPoint =
 async function createActionsFixture() {
   vi.clearAllMocks();
   testState.busy = false;
-  testState.serverThread = { id: activeThreadRef.threadId, branch: "feature/test" };
+  testState.serverThread = { id: activeThreadRef.threadId, branch: "feature/test", latestRun: {} };
   testState.snapshot = workbenchSnapshot();
   testState.refreshWorkbench.mockImplementation(async () =>
     AsyncResult.success(testState.snapshot),
@@ -225,7 +228,7 @@ async function createActionsFixture() {
   }
 
   async function activateCommit(entryPoint: CommitEntryPoint) {
-    if (entryPoint === "toolbar") {
+    if (entryPoint === "toolbar" || entryPoint === "panel") {
       await click(elementWithText("button", "Commit, push & PR"));
       return;
     }
@@ -283,6 +286,7 @@ function expectNoGitMutation() {
 describe("GitActionsControl commit entry", () => {
   it.each([
     "toolbar",
+    "panel",
     "commit menu",
     "menu quick",
     "quick",
@@ -294,7 +298,13 @@ describe("GitActionsControl commit entry", () => {
       await using fixture = await createActionsFixture();
       const enterWorkbench = vi.fn(() => true);
       fixture.listenForEntry(enterWorkbench);
-      await fixture.renderControl(entryPoint === "menu quick" ? { presentation: "menu" } : {});
+      await fixture.renderControl(
+        entryPoint === "menu quick"
+          ? { presentation: "menu" }
+          : entryPoint === "panel"
+            ? { presentation: "panel" }
+            : {},
+      );
 
       await fixture.activateCommit(entryPoint);
 
@@ -389,6 +399,40 @@ describe("GitActionsControl commit entry", () => {
   });
 });
 
+describe("GitActionsControl panel rows", () => {
+  it("follows the card's density and item choices and stays quiet on an empty draft", async () => {
+    await using fixture = await createActionsFixture();
+    const onOpenChanges = vi.fn();
+    const actions = fixture.getByRole("group", { name: "Git actions", exact: true });
+    const changes = fixture.getByRole("button", { name: /^Changes/ });
+
+    await fixture.renderControl({ presentation: "panel", onOpenChanges });
+    await expect.element(actions).toBeVisible();
+    await expect.element(changes).toHaveTextContent("Changes+2-1");
+    await changes.click();
+    expect(onOpenChanges).toHaveBeenCalledOnce();
+
+    await fixture.renderControl({ presentation: "panel", onOpenChanges, compact: true });
+    await expect.element(actions).not.toBeInTheDocument();
+    await expect.element(changes).toBeVisible();
+
+    await fixture.renderControl({ presentation: "panel", showActions: false, showChanges: false });
+    await expect.element(actions).not.toBeInTheDocument();
+    await expect.element(changes).not.toBeInTheDocument();
+
+    testState.serverThread = null;
+    testState.status = {
+      ...testState.status!,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    await fixture.renderControl({ presentation: "panel", draftId: DraftId.make("empty-draft") });
+    await expect.element(actions).not.toBeInTheDocument();
+    await expect.element(changes).not.toBeInTheDocument();
+    expectNoGitMutation();
+  });
+});
+
 function commitRequest(overrides: Partial<GitCommitRequestInput> = {}): GitCommitRequestInput {
   return {
     ...scope,
@@ -407,41 +451,58 @@ async function executeTypedCommit(overrides: Partial<GitCommitRequestInput> = {}
 }
 
 describe("GitActionsControl typed commit execution", () => {
-  it("refreshes before committing and retains manual text, staged selection, branch and thread metadata", async () => {
-    await using fixture = await createActionsFixture();
-    const result = commitResult({ branch: { status: "created", name: "feature/created" } });
-    testState.runStackedAction.mockResolvedValue(AsyncResult.success(result));
-    await fixture.renderControl();
-    const text = "  Subject\n\nBody remains verbatim.  ";
+  it.each(["inline", "hidden", "detached"] as const)(
+    "commits with %s panel controls and retains staged selection and thread metadata",
+    async (placement) => {
+      const outlet = document.createElement("div");
+      document.body.append(outlet);
+      using _outlet = { [Symbol.dispose]: () => outlet.remove() };
+      await using fixture = await createActionsFixture();
+      const result = commitResult({ branch: { status: "created", name: "feature/created" } });
+      testState.runStackedAction.mockResolvedValue(AsyncResult.success(result));
+      await fixture.renderControl({
+        presentation: "panel",
+        ...(placement === "inline" ? {} : { controlsHost: placement === "hidden" ? null : outlet }),
+      });
+      const controls = page.getByRole("group", { name: "Git actions", exact: true });
+      if (placement === "hidden") await expect.element(controls).not.toBeInTheDocument();
+      else await expect.element(controls).toBeVisible();
+      if (placement === "detached") {
+        expect(outlet.querySelector('[aria-label="Git actions"]')).not.toBeNull();
+        await fixture.renderControl({ presentation: "panel", controlsHost: null });
+        await expect.element(controls).not.toBeInTheDocument();
+      }
+      const text = "  Subject\n\nBody remains verbatim.  ";
 
-    const outcome = await executeTypedCommit({ commitMessage: text, featureBranch: true });
+      const outcome = await executeTypedCommit({ commitMessage: text, featureBranch: true });
 
-    expect(testState.refreshWorkbench).toHaveBeenCalledExactlyOnceWith({
-      environmentId,
-      input: { cwd: scope.cwd },
-    });
-    expect(testState.refreshWorkbench.mock.invocationCallOrder[0]).toBeLessThan(
-      testState.runStackedAction.mock.invocationCallOrder[0]!,
-    );
-    expect(testState.runStackedAction).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        action: "commit",
-        commitMessage: text,
-        commitSelection: { mode: "staged" },
-        featureBranch: true,
-        threadId: activeThreadRef.threadId,
-      }),
-    );
-    expect(testState.runStackedAction.mock.calls[0]![0]).not.toHaveProperty("filePaths");
-    expect(testState.updateMetadata).toHaveBeenCalledExactlyOnceWith({
-      environmentId,
-      input: expect.objectContaining({
-        threadId: activeThreadRef.threadId,
-        branch: "feature/created",
-      }),
-    });
-    expect(outcome).toEqual({ status: "success", result });
-  });
+      expect(testState.refreshWorkbench).toHaveBeenCalledExactlyOnceWith({
+        environmentId,
+        input: { cwd: scope.cwd },
+      });
+      expect(testState.refreshWorkbench.mock.invocationCallOrder[0]).toBeLessThan(
+        testState.runStackedAction.mock.invocationCallOrder[0]!,
+      );
+      expect(testState.runStackedAction).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          action: "commit",
+          commitMessage: text,
+          commitSelection: { mode: "staged" },
+          featureBranch: true,
+          threadId: activeThreadRef.threadId,
+        }),
+      );
+      expect(testState.runStackedAction.mock.calls[0]![0]).not.toHaveProperty("filePaths");
+      expect(testState.updateMetadata).toHaveBeenCalledExactlyOnceWith({
+        environmentId,
+        input: expect.objectContaining({
+          threadId: activeThreadRef.threadId,
+          branch: "feature/created",
+        }),
+      });
+      expect(outcome).toEqual({ status: "success", result });
+    },
+  );
 
   it.each([
     {

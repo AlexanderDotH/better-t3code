@@ -27,6 +27,7 @@ export function composerShortcutCommands(
     "composer.host": openControl(composerRef, "composer.host"),
     "composer.effort": openControl(composerRef, "composer.effort"),
     "composer.mode": openControl(composerRef, "composer.mode"),
+    "composer.voiceInput": openControl(composerRef, "composer.voiceInput"),
     "composer.workspace": openControl(composerRef, "composer.workspace"),
     "composer.branch": ({ event }) => {
       if (!event.repeat) branchToolbarRef.current?.openBranchPicker();

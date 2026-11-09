@@ -861,47 +861,49 @@ export const makeDeepPlanSources = Effect.gen(function* () {
           "run-not-found",
           "The source collection requires a retained owner thread.",
         );
-      const localEnvironmentId = yield* environment.getEnvironmentId;
-      const localSnapshots = input.snapshots.filter(
-        (snapshot) =>
-          snapshot.origin.environmentId === localEnvironmentId &&
-          snapshot.origin.projectId === owner[0]!.projectId,
-      );
-      let localExportId = input.localExportId;
-      if (localExportId === undefined && localSnapshots[0] !== undefined) {
-        const stored = yield* sql<{ readonly exportId: DeepPlanExportId | null }>`
-          SELECT export_id AS "exportId" FROM deep_plan_sources WHERE source_id = ${localSnapshots[0].sourceId}
+      if (input.includeProjectChats !== false) {
+        const localEnvironmentId = yield* environment.getEnvironmentId;
+        const localSnapshots = input.snapshots.filter(
+          (snapshot) =>
+            snapshot.origin.environmentId === localEnvironmentId &&
+            snapshot.origin.projectId === owner[0]!.projectId,
+        );
+        let localExportId = input.localExportId;
+        if (localExportId === undefined && localSnapshots[0] !== undefined) {
+          const stored = yield* sql<{ readonly exportId: DeepPlanExportId | null }>`
+            SELECT export_id AS "exportId" FROM deep_plan_sources WHERE source_id = ${localSnapshots[0].sourceId}
+          `;
+          localExportId = stored[0]?.exportId ?? undefined;
+        }
+        const localExport = yield* sql<{
+          readonly projectId: ProjectId;
+          readonly completeProject: number;
+        }>`
+          SELECT project_id AS "projectId", complete_project AS "completeProject" FROM deep_plan_source_exports
+          WHERE export_id = ${localExportId ?? null}
         `;
-        localExportId = stored[0]?.exportId ?? undefined;
-      }
-      const localExport = yield* sql<{
-        readonly projectId: ProjectId;
-        readonly completeProject: number;
-      }>`
-        SELECT project_id AS "projectId", complete_project AS "completeProject" FROM deep_plan_source_exports
-        WHERE export_id = ${localExportId ?? null}
-      `;
-      if (
-        localExport[0]?.projectId !== owner[0].projectId ||
-        localExport[0].completeProject !== 1
-      ) {
-        return yield* sourceError(
-          "incomplete-source",
-          "Freeze every retained chat in the current project, including archived chats, before starting the plan.",
-        );
-      }
-      const mandatorySources = yield* sql<{ readonly sourceId: DeepPlanSourceId }>`
-        SELECT source_id AS "sourceId" FROM deep_plan_sources WHERE export_id = ${localExportId!} ORDER BY source_ordinal
-      `;
-      const mandatoryIds = new Set(mandatorySources.map((source) => source.sourceId));
-      if (
-        mandatorySources.length !== localSnapshots.length ||
-        localSnapshots.some((snapshot) => !mandatoryIds.has(snapshot.sourceId))
-      ) {
-        return yield* sourceError(
-          "incomplete-source",
-          "Every chat from the frozen current-project export must be included in the plan.",
-        );
+        if (
+          localExport[0]?.projectId !== owner[0].projectId ||
+          localExport[0].completeProject !== 1
+        ) {
+          return yield* sourceError(
+            "incomplete-source",
+            "Freeze every retained chat in the current project, including archived chats, before starting the plan.",
+          );
+        }
+        const mandatorySources = yield* sql<{ readonly sourceId: DeepPlanSourceId }>`
+          SELECT source_id AS "sourceId" FROM deep_plan_sources WHERE export_id = ${localExportId!} ORDER BY source_ordinal
+        `;
+        const mandatoryIds = new Set(mandatorySources.map((source) => source.sourceId));
+        if (
+          mandatorySources.length !== localSnapshots.length ||
+          localSnapshots.some((snapshot) => !mandatoryIds.has(snapshot.sourceId))
+        ) {
+          return yield* sourceError(
+            "incomplete-source",
+            "Every chat from the frozen current-project export must be included in the plan.",
+          );
+        }
       }
       const now = yield* nowIso;
       yield* sql`INSERT INTO deep_plan_source_runs (run_id, thread_id, initialized_at) VALUES (${input.runId}, ${input.threadId}, ${now})`;

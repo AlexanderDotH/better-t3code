@@ -1021,13 +1021,23 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
-  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
+    launchArgs: string,
+    cwd: string,
+    gateway?: {
+      readonly resolveGatewayProfile: NonNullable<
+        ClaudeAdapterV2.ClaudeAdapterV2Options["resolveGatewayProfile"]
+      >;
+      readonly modelSelection: ModelSelection;
+    },
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
       environment: {},
+      ...(gateway ? { resolveGatewayProfile: gateway.resolveGatewayProfile } : {}),
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
       fileSystem,
       path: yield* Path.Path,
@@ -1073,8 +1083,8 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       runtimePolicy,
     });
     const exit = yield* runtime
-      .startTurn(
-        makeClaudeTestTurnInput({
+      .startTurn({
+        ...makeClaudeTestTurnInput({
           threadId,
           providerThread,
           now: yield* DateTime.now,
@@ -1083,13 +1093,51 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
           attachments: [],
           runtimePolicy,
         }),
-      )
+        ...(gateway ? { modelSelection: gateway.modelSelection } : {}),
+      })
       .pipe(Effect.exit);
     return { exit, opened };
   });
 
   const appendSystemPrompt = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined) =>
     (options?.systemPrompt as { readonly append?: string } | undefined)?.append;
+
+  it.effect("opens a gateway model through its Fast Mode id when the toggle is on", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-gateway-" });
+        const { exit, opened } = yield* startTurnWithLaunchArgs("", cwd, {
+          modelSelection: {
+            ...CLAUDE_TEST_MODEL_SELECTION,
+            model: "Gateway Model",
+            options: [{ id: "fastMode", value: true }],
+          },
+          resolveGatewayProfile: (model) =>
+            model === "Gateway Model"
+              ? {
+                  canonicalModelId: "gateway",
+                  baseModelId: "claude-codex-gateway",
+                  fastModelId: "claude-codex-gateway-fast",
+                  aliases: [model],
+                  defaultEffort: "high",
+                  capabilities: {
+                    optionDescriptors: [
+                      { id: "fastMode", label: "Fast", type: "boolean", currentValue: false },
+                    ],
+                  },
+                }
+              : undefined,
+        });
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.equal(opened[0]?.model, "claude-codex-gateway-fast");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect("sends append launch arguments to Claude after the T3 instructions", () =>
     Effect.scoped(

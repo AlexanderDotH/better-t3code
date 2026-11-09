@@ -89,6 +89,7 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -105,26 +106,27 @@ function TerminalHeader(props: {
   readonly onOpenNewTerminal: () => void;
   readonly onSelectTerminal: (terminalId: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <AppBar
       title="Terminal"
       subtitle={props.subtitle}
       onBack={props.onCloseTerminal}
       backInSplitView={{
-        accessibilityLabel: "Back to chat",
+        accessibilityLabel: translator.message("mobile.review.backToChat"),
         icon: "chevron.left",
       }}
       menus={
         props.isEnvironmentReady
           ? [
               {
-                title: "Terminal options",
+                title: translator.message("mobile.terminal.options"),
                 icon: "terminal",
                 status: getTerminalStatusLabel(props.status),
                 items: [
                   {
                     id: "text-size",
-                    title: "Text size",
+                    title: translator.message("mobile.appearance.textSize"),
                     icon: "textformat.size",
                     inline: true,
                     items: [
@@ -161,7 +163,7 @@ function TerminalHeader(props: {
                   {
                     id: "terminal-new",
                     disabled: !props.canOperateTerminal,
-                    title: "Open new terminal",
+                    title: translator.message("mobile.git.openNewTerminal"),
                     icon: "plus",
                     subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
                     onPress: props.onOpenNewTerminal,
@@ -270,6 +272,7 @@ function useTerminalAccess(environmentId: EnvironmentId | null) {
 }
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const connectionsReady = useConnectionsReady();
   const params = props.route.params;
   const selection = useThreadSelection();
@@ -305,14 +308,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   if (!selectedThread) {
     if (!connectionsReady) {
-      return <LoadingScreen message="Opening terminal…" />;
+      return <LoadingScreen message={translator.message("mobile.terminal.opening")} />;
     }
 
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
+          title={translator.message("mobile.terminal.threadUnavailable")}
+          detail={translator.message("mobile.terminal.threadUnavailableDetail")}
         />
       </View>
     );
@@ -382,6 +385,7 @@ function ThreadTerminal(props: {
   readonly access: ReturnType<typeof useTerminalAccess>;
   readonly knownSessions: ReturnType<typeof useKnownTerminalSessions>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { params, routeEnvironmentId, thread: selectedThread, terminalId } = props;
   const { selectedThreadProject, selectedEnvironmentConnection } = props.selection;
   const {
@@ -803,15 +807,15 @@ function ThreadTerminal(props: {
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Terminal unavailable"
-          detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
+          title={translator.message("mobile.terminal.unavailable")}
+          detail={translator.message("mobile.terminal.unavailableDetail")}
         />
       </View>
     );
   }
 
   if (!environment.isReady && environment.presentation === null) {
-    return <LoadingScreen message="Opening terminal…" />;
+    return <LoadingScreen message={translator.message("mobile.terminal.opening")} />;
   }
 
   return (
@@ -883,38 +887,53 @@ function ThreadTerminal(props: {
             />
           ) : terminalSession.data === null && terminalSession.error === null ? (
             <EmptyState
-              title="Checking terminal access"
-              detail="Waiting for this connection's permissions."
+              title={translator.message("mobile.ui.checkingTerminalAccess")}
+              detail={translator.message("mobile.ui.waitingForThisConnectionsPermissions")}
             />
           ) : !canReadTerminal && !canOperateTerminal ? (
             <EmptyState
               title={
                 terminalSession.error
-                  ? "Could not check terminal access"
-                  : "Terminal access unavailable"
+                  ? translator.message("mobile.ui.couldNotCheckTerminalAccess")
+                  : translator.message("mobile.ui.terminalAccessUnavailable")
               }
               detail={
                 terminalSession.error ??
-                "This connection does not have permission to view terminals."
+                translator.message("mobile.ui.thisConnectionDoesNotHavePermissionTo2")
               }
             />
           ) : canOperateTerminal && launchLocation === null ? (
             sessionsError !== null ? (
-              <EmptyState title="Could not load terminals" detail={sessionsError} />
+              <EmptyState
+                title={translator.message("mobile.ui.couldNotLoadTerminals")}
+                detail={sessionsError}
+              />
             ) : (
-              <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+              <EmptyState
+                title={translator.message("mobile.ui.loadingTerminals")}
+                detail={translator.message("mobile.ui.readingExistingTerminalSessions")}
+              />
             )
           ) : !canOperateTerminal && !hasTerminalTarget && sessionsPending ? (
-            <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+            <EmptyState
+              title={translator.message("mobile.ui.loadingTerminals")}
+              detail={translator.message("mobile.ui.readingExistingTerminalSessions")}
+            />
           ) : !canOperateTerminal && !hasTerminalTarget && sessionsError !== null ? (
-            <EmptyState title="Could not load terminals" detail={sessionsError} />
+            <EmptyState
+              title={translator.message("mobile.ui.couldNotLoadTerminals")}
+              detail={sessionsError}
+            />
           ) : !canOperateTerminal && !hasTerminalTarget ? (
             <EmptyState
-              title="No terminal sessions"
-              detail="Existing terminals will appear here when another client opens one."
+              title={translator.message("mobile.ui.noTerminalSessions")}
+              detail={translator.message("mobile.ui.existingTerminalsWillAppearHereWhenAnother")}
             />
           ) : !canOperateTerminal && terminal.error !== null ? (
-            <EmptyState title="Terminal unavailable" detail={terminal.error} />
+            <EmptyState
+              title={translator.message("mobile.terminal.unavailable")}
+              detail={terminal.error}
+            />
           ) : (
             <>
               <View
@@ -946,7 +965,10 @@ function ThreadTerminal(props: {
                     setCaptureRequest(0);
                     if (text.trim()) setCapturedOutput(text);
                     else
-                      Dialog.alert("No terminal output", "There is no visible output to attach.");
+                      Dialog.alert(
+                        translator.message("mobile.ui.noTerminalOutput"),
+                        translator.message("mobile.ui.thereIsNoVisibleOutputToAttach"),
+                      );
                   }}
                   onInput={handleInput}
                   onResize={handleResize}
@@ -959,11 +981,15 @@ function ThreadTerminal(props: {
               {Platform.OS === "android" && !keyboardState.isVisible ? (
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
                   {hasNativeTerminalSurface() ? (
-                    <Button label="Attach output" tone="text" onPress={requestCapture} />
+                    <Button
+                      label={translator.message("mobile.ui.attachOutput")}
+                      tone="text"
+                      onPress={requestCapture}
+                    />
                   ) : null}
                   <View className="flex-1" />
                   <IconButton
-                    accessibilityLabel="Show keyboard"
+                    accessibilityLabel={translator.message("mobile.terminal.showKeyboard")}
                     disabled={!canOperateTerminal}
                     icon="keyboard"
                     onPress={handleShowKeyboard}
@@ -985,7 +1011,9 @@ function ThreadTerminal(props: {
                         : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
                   }}
                 >
-                  <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+                  <Text style={{ color: terminalTheme.foreground }}>
+                    {translator.message("mobile.ui.attachVisibleOutput")}
+                  </Text>
                 </Pressable>
               ) : null}
               {isAccessoryVisible ? (
@@ -1030,7 +1058,7 @@ function ThreadTerminal(props: {
                         })}
                       </ComposerToolbarScroller>
                       <ComposerToolbarButton
-                        accessibilityLabel="Dismiss keyboard"
+                        accessibilityLabel={translator.message("mobile.terminal.dismissKeyboard")}
                         icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
                         onPress={handleDismissKeyboard}
                         showChevron={false}
@@ -1040,7 +1068,7 @@ function ThreadTerminal(props: {
                 </KeyboardStickyView>
               ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
                 <Pressable
-                  accessibilityLabel="Show keyboard"
+                  accessibilityLabel={translator.message("mobile.terminal.showKeyboard")}
                   accessibilityRole="button"
                   onPress={handleShowKeyboard}
                   style={({ pressed }) => ({

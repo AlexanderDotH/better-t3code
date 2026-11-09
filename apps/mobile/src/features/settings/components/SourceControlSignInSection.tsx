@@ -17,6 +17,7 @@ import { useAtomCommand } from "../../../state/use-atom-command";
 import type { SettingsTarget } from "../settings-environment-filter";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
@@ -98,6 +99,7 @@ function AppSignInRow(props: {
   readonly appSignIn: SourceControlAppSignIn;
   readonly disabled: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { environment, definition, appSignIn } = props;
   const environmentId = environment.environmentId;
   const host = appSignIn.hosts[0] ?? "";
@@ -124,7 +126,7 @@ function AppSignInRow(props: {
       `Enter this code on GitHub, then approve ${appSignIn.appName}. It is copied. The server finishes signing in even if you leave the app.`,
       [
         {
-          text: "Cancel",
+          text: translator.message("mobile.settings.projects.settings.cancel"),
           style: "cancel",
           onPress: () => {
             attempt.current = null;
@@ -132,7 +134,10 @@ function AppSignInRow(props: {
             void cancel({ environmentId, input });
           },
         },
-        { text: "Open GitHub", onPress: () => openUrl(prompt.verificationUri) },
+        {
+          text: translator.message("mobile.ui.openGithub"),
+          onPress: () => openUrl(prompt.verificationUri),
+        },
       ],
     );
   };
@@ -142,7 +147,10 @@ function AppSignInRow(props: {
     const started = await start({ environmentId, input });
     if (started._tag !== "Success") {
       setPending(null);
-      Alert.alert("Could not start the sign-in", failureMessage(started.cause));
+      Alert.alert(
+        translator.message("mobile.ui.couldNotStartTheSignIn"),
+        failureMessage(started.cause),
+      );
       return;
     }
     const prompt = started.value;
@@ -154,7 +162,10 @@ function AppSignInRow(props: {
     attempt.current = null;
     setPending(null);
     if (finished._tag !== "Success") {
-      Alert.alert("Sign-in did not finish", failureMessage(finished.cause));
+      Alert.alert(
+        translator.message("mobile.ui.signInDidNotFinish"),
+        failureMessage(finished.cause),
+      );
     }
   };
 
@@ -173,11 +184,14 @@ function AppSignInRow(props: {
     if (signedIn) {
       Alert.alert(
         appSignIn.appName,
-        "Signed in. GitHub requests use the app's higher rate limit, in repositories where the app is installed.",
+        translator.message("mobile.ui.signedInGithubRequestsUseTheApps"),
         [
-          { text: "Install on an organization", onPress: () => openUrl(appSignIn.installUrl) },
-          { text: "Sign out", style: "destructive", onPress: signOut },
-          { text: "Cancel", style: "cancel" },
+          {
+            text: translator.message("mobile.ui.installOnAnOrganization"),
+            onPress: () => openUrl(appSignIn.installUrl),
+          },
+          { text: translator.message("mobile.ui.signOut"), style: "destructive", onPress: signOut },
+          { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
         ],
       );
     } else if (pending !== null && pending !== "starting") {

@@ -25,6 +25,7 @@ import {
   shouldDeactivateNativeAssemblyAiDictation,
 } from "./native-assembly-ai-dictation-policy";
 import { createNativeDictationDraft, processNativeDictation } from "./native-dictation-draft";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type { NativeVoiceDictationState } from "./native-assembly-ai-dictation-policy";
 
@@ -53,6 +54,7 @@ export function useNativeAssemblyAiDictation(input: {
   ) => void;
   readonly onNotice: (title: string, error: Error) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { readDraftText } = input;
   const startStreamingSession = useAtomCommand(serverEnvironment.startSpeechStreamingSession, {
     reportFailure: false,
@@ -213,7 +215,10 @@ export function useNativeAssemblyAiDictation(input: {
             },
           });
           if (result._tag === "Failure") {
-            throw commandFailureMessage(result, "Could not start server voice streaming.");
+            throw commandFailureMessage(
+              result,
+              translator.message("mobile.ui.couldNotStartServerVoiceStreaming"),
+            );
           }
           return result.value;
         },
@@ -223,7 +228,10 @@ export function useNativeAssemblyAiDictation(input: {
             input: streamingInput,
           });
           if (result._tag === "Failure") {
-            throw commandFailureMessage(result, "Could not stream microphone audio.");
+            throw commandFailureMessage(
+              result,
+              translator.message("mobile.ui.couldNotStreamMicrophoneAudio"),
+            );
           }
           return result.value;
         },
@@ -233,7 +241,10 @@ export function useNativeAssemblyAiDictation(input: {
             input: streamingInput,
           });
           if (result._tag === "Failure") {
-            throw commandFailureMessage(result, "Could not finish server voice streaming.");
+            throw commandFailureMessage(
+              result,
+              translator.message("mobile.ui.couldNotFinishServerVoiceStreaming"),
+            );
           }
           return result.value;
         },
@@ -243,7 +254,10 @@ export function useNativeAssemblyAiDictation(input: {
             input: streamingInput,
           });
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            throw commandFailureMessage(result, "Could not cancel server voice streaming.");
+            throw commandFailureMessage(
+              result,
+              translator.message("mobile.ui.couldNotCancelServerVoiceStreaming"),
+            );
           }
         },
         onTranscript: (text) => {
@@ -306,6 +320,7 @@ export function useNativeAssemblyAiDictation(input: {
     reset,
     startStreamingSession,
     transition,
+    translator,
   ]);
 
   const stop = useCallback(async () => {
@@ -344,7 +359,10 @@ export function useNativeAssemblyAiDictation(input: {
                   },
                 });
                 if (result._tag === "Failure")
-                  throw commandFailureMessage(result, "Voice processing failed.");
+                  throw commandFailureMessage(
+                    result,
+                    translator.message("mobile.ui.voiceProcessingFailed"),
+                  );
                 return result.value;
               },
             }
@@ -357,7 +375,10 @@ export function useNativeAssemblyAiDictation(input: {
                   input: { projectId: input.projectId, text },
                 });
                 if (result._tag === "Failure")
-                  throw commandFailureMessage(result, "Voice translation failed.");
+                  throw commandFailureMessage(
+                    result,
+                    translator.message("mobile.ui.voiceTranslationFailed"),
+                  );
                 return result.value.text;
               },
             }
@@ -392,6 +413,7 @@ export function useNativeAssemblyAiDictation(input: {
     reset,
     transition,
     translateTranscript,
+    translator,
   ]);
 
   const restoreOriginal = useCallback(() => {

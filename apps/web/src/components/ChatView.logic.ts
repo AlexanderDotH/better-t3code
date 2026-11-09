@@ -549,7 +549,9 @@ export function resolveComposerInteractionMode(input: {
     input.provider.showInteractionModeToggle !== false;
   return {
     enabled,
-    interactionMode: enabled ? input.interactionMode : "default",
+    // Chat needs no planning support, so it survives a provider or setting without Plan.
+    interactionMode:
+      input.interactionMode === "chat" ? "chat" : enabled ? input.interactionMode : "default",
   };
 }
 

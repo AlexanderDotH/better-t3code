@@ -21,6 +21,7 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
+  layout?: "current" | "classic";
   model?: ModelEsque;
   presentation?: "compact" | "catalog";
   slug: string;
@@ -45,16 +46,34 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
 }) {
+  const classic = props.layout === "classic";
   const model = props.model ?? {
     slug: props.slug,
     name: props.name,
     subProvider: props.subProvider,
   };
+  const providerLabel = props.subProvider
+    ? `${props.providerDisplayName} · ${props.subProvider}`
+    : props.providerDisplayName;
+  const providerIcon = (
+    <ProviderInstanceIcon
+      driverKind={props.driverKind}
+      displayName={props.providerDisplayName}
+      accentColor={props.providerAccentColor}
+      acpRegistryAgentId={props.acpRegistryAgentId}
+      acpRegistryIconUrl={props.acpRegistryIconUrl}
+      showBadge={props.showInstanceBadge}
+      className={classic ? "size-3 shrink-0" : "size-4"}
+      iconClassName={classic ? "size-3" : "size-4"}
+      indicatorBackground="var(--popover)"
+      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+    />
+  );
 
   const row = (
     <ComboboxItem
       hideIndicator
-      selectedFill={false}
+      selectedFill={classic}
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.slug)}
       disabled={Boolean(props.disabledReason)}
@@ -64,23 +83,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
     >
-      {/* One row shape in every tab: the logo names the provider, so Favorites needs no second line. */}
-      <ProviderInstanceIcon
-        driverKind={props.driverKind}
-        displayName={props.providerDisplayName}
-        accentColor={props.providerAccentColor}
-        acpRegistryAgentId={props.acpRegistryAgentId}
-        acpRegistryIconUrl={props.acpRegistryIconUrl}
-        showBadge={props.showInstanceBadge}
-        className="size-4"
-        iconClassName="size-4"
-        indicatorBackground="var(--popover)"
-        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
-      />
+      {classic ? null : providerIcon}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2 text-left">
           <div
-            className="min-w-0 truncate text-sm font-normal leading-snug"
+            className={cn(
+              "min-w-0 truncate leading-snug",
+              classic ? "text-xs font-medium" : "text-sm font-normal",
+            )}
             // Names the row in full on hover only when it is cut off.
             onPointerEnter={(event) => {
               const name = event.currentTarget;
@@ -89,9 +99,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
           >
             {getDisplayModelName(model)}
             {/* The logo is decorative, so name the provider for screen readers. */}
-            <span className="sr-only">, {props.providerDisplayName}</span>
+            {classic ? null : <span className="sr-only">, {props.providerDisplayName}</span>}
           </div>
-          {props.subProvider ? (
+          {props.subProvider && !classic ? (
             <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
               {props.subProvider}
             </span>
@@ -118,6 +128,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
 
         {props.presentation === "catalog" ? (
           <ModelCatalogMetadata model={model} providerLabel={props.providerDisplayName} />
+        ) : classic ? (
+          <div className="mt-1 flex items-center gap-1.5">
+            {providerIcon}
+            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
+              {providerLabel}
+            </span>
+          </div>
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
@@ -143,7 +160,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   className={cn(
                     "size-3.5 sm:size-3",
                     props.isFavorite && "fill-current text-warning",
-                    (!props.isFavorite || props.favoriteStarOnHover) &&
+                    !classic &&
+                      (!props.isFavorite || props.favoriteStarOnHover) &&
                       "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
                   )}
                 />

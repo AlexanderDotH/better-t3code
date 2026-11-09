@@ -28,6 +28,8 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
   codex: "Codex",
@@ -35,7 +37,17 @@ const DRIVER_LABEL: Partial<Record<string, string>> = {
   grok: "Grok",
   antigravity: "Antigravity",
 };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
+const PACE_LABEL = {
+  get ahead() {
+    return currentInterfaceTranslator().message("mobile.ui.aheadOfPace");
+  },
+  get on() {
+    return currentInterfaceTranslator().message("mobile.ui.onPace");
+  },
+  get under() {
+    return currentInterfaceTranslator().message("mobile.ui.underPace");
+  },
+} as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -180,6 +192,7 @@ function PoolWindowCard({
   readonly description?: string;
   readonly wide: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const [barWidth, setBarWidth] = useState(0);
   // Each segment needs room for its account, percent and reset to label itself.
@@ -245,7 +258,7 @@ function PoolWindowCard({
             key={account.key}
             accessibilityRole="button"
             accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
-            accessibilityHint="Show account details"
+            accessibilityHint={translator.message("mobile.ui.showAccountDetails")}
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
           >
@@ -333,7 +346,7 @@ function PoolWindowCard({
             key={account.key}
             accessibilityRole="button"
             accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
-            accessibilityHint="Show account details"
+            accessibilityHint={translator.message("mobile.ui.showAccountDetails")}
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
           >
@@ -417,6 +430,7 @@ export function UsageLimitsSection({
   readonly cursorPrompt?: ReactNode;
   readonly wide?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const selected =
     selectedEnvironmentIds === null
@@ -440,8 +454,8 @@ export function UsageLimitsSection({
       externalLinks.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
-            ? "Select an environment to see limits."
-            : "No provider on the selected environments reports subscription limits."}
+            ? translator.message("mobile.ui.selectAnEnvironmentToSeeLimits")
+            : translator.message("mobile.ui.noProviderOnTheSelectedEnvironmentsReports")}
         </Text>
       ) : null}
       {pools.map((pool, index) => {
@@ -491,7 +505,9 @@ export function UsageLimitsSection({
             className="min-h-11 justify-center"
             onPress={() => void Linking.openURL(link.url).catch(() => undefined)}
           >
-            <Text className="text-sm font-t3-medium text-primary">Manage usage</Text>
+            <Text className="text-sm font-t3-medium text-primary">
+              {translator.message("mobile.ui.manageUsage")}
+            </Text>
           </Pressable>
         </View>
       ))}
@@ -534,6 +550,7 @@ type AccountScreenProps = StaticScreenProps<{
 }>;
 
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
@@ -553,7 +570,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   return (
-    <SettingsScreen title="Account">
+    <SettingsScreen title={translator.message("mobile.settings.section.account")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
@@ -561,7 +578,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
       >
         {!account || !window ? (
           <Text className="text-base text-foreground-muted">
-            This account is no longer reporting limits on the selected environments.
+            {translator.message("mobile.ui.thisAccountIsNoLongerReportingLimits")}
           </Text>
         ) : (
           <>
@@ -575,7 +592,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               {account.email ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+                  accessibilityLabel={
+                    revealed
+                      ? translator.message("mobile.ui.hideAccountEmail")
+                      : translator.message("mobile.ui.revealAccountEmail")
+                  }
                   onPress={() => setRevealed((value) => !value)}
                   className="min-h-[44px] justify-center"
                 >
@@ -617,7 +638,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             </View>
             <View className="gap-2 rounded-[24px] border-continuous bg-grouped-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">
-                {account.environments.length ? "Signed in" : "Source"}
+                {account.environments.length
+                  ? translator.message("mobile.settings.signedIn")
+                  : translator.message("mobile.files.source")}
               </Text>
               {account.environments.length ? (
                 account.environments.map((environment) => (
@@ -631,7 +654,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             </View>
             {account.redeem && account.limits.resetCredits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
-                <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
+                <Text className="text-sm font-t3-medium text-foreground">
+                  {translator.message("mobile.ui.resetCredits")}
+                </Text>
                 <ResetCredits
                   key={account.key}
                   environmentId={account.redeem.environmentId}

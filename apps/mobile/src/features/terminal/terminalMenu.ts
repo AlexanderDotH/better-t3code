@@ -3,6 +3,7 @@ import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 
@@ -42,7 +43,9 @@ export function getTerminalStatusLabel(input: {
   readonly hasRunningSubprocess?: boolean;
 }): string {
   if (input.status === "running") {
-    return input.hasRunningSubprocess ? "Task running" : "Ready";
+    return input.hasRunningSubprocess
+      ? currentInterfaceTranslator().message("mobile.ui.taskRunning")
+      : currentInterfaceTranslator().message("settings.projects.memory.status.ready");
   }
   if (input.status === "starting") {
     return "Starting";

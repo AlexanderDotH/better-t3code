@@ -331,18 +331,20 @@ export function parseSideChatCommand(text: string): { prompt: string } | null {
   return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }
 
+/** A mode command sent alone. Plan modes need planning support; Chat and Build never do. */
 export function parseStandaloneComposerSlashCommand(
   text: string,
+  planningEnabled: boolean,
 ): Exclude<ComposerSlashCommand, "model" | "side" | "btw"> | null {
   const match = /^\/(plan|deep-plan|default|chat)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
   const command = match[1]?.toLowerCase();
-  if (command === "plan") return "plan";
-  if (command === "deep-plan") return "deep-plan";
   if (command === "chat") return "chat";
-  return "default";
+  if (command === "default") return "default";
+  if (!planningEnabled) return null;
+  return command === "deep-plan" ? "deep-plan" : "plan";
 }
 
 /**

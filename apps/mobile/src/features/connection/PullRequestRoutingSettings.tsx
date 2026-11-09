@@ -15,27 +15,51 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentCatalog } from "../../connection/catalog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const options: ReadonlyArray<{
   value: PullRequestRoutingPermission;
   label: string;
   description: string;
 }> = [
-  { value: "off", label: "Off", description: "Keep source control requests on this environment." },
+  {
+    value: "off",
+    get label() {
+      return currentInterfaceTranslator().message("settings.common.off");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.ui.keepSourceControlRequestsOnThisEnvironment",
+      );
+    },
+  },
   {
     value: "read",
-    label: "Read PRs",
-    description: "Share PR data with other enabled environments.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.readPrs");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.ui.sharePrDataWithOtherEnabledEnvironments",
+      );
+    },
   },
   {
     value: "read-write",
-    label: "Read and act",
-    description:
-      "Actions may use broader source control permissions than the original environment.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.readAndAct");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.ui.actionsMayUseBroaderSourceControlPermissions",
+      );
+    },
   },
 ];
 
 export function PullRequestRoutingSettings() {
+  const translator = useMobileInterfaceTranslator();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const permissions = useAtomValue(environmentCatalog.pullRequestRoutingPermissionsValueAtom);
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
@@ -45,7 +69,7 @@ export function PullRequestRoutingSettings() {
 
   return (
     <View className="mt-5 gap-3">
-      <SettingsSection title="Pull request routing">
+      <SettingsSection title={translator.message("mobile.ui.pullRequestRouting")}>
         {[...catalog.entries.values()].map((entry) => {
           const environmentId = entry.target.environmentId;
           const selected = pullRequestRoutingPermissionFor(entry, permissions);
@@ -91,8 +115,10 @@ export function PullRequestRoutingSettings() {
                           setSaving(false);
                           if (result._tag === "Failure")
                             Dialog.alert(
-                              "Could not save pull request routing permission",
-                              "Try again before leaving this screen.",
+                              translator.message(
+                                "mobile.ui.couldNotSavePullRequestRoutingPermission",
+                              ),
+                              translator.message("mobile.ui.tryAgainBeforeLeavingThisScreen"),
                             );
                         });
                       }}
@@ -104,8 +130,7 @@ export function PullRequestRoutingSettings() {
         })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Choose environments you trust to share PR data and use each other's source control access.
-        Enable both environments. This applies only to this client.
+        {translator.message("mobile.ui.chooseEnvironmentsYouTrustToSharePr")}
       </Text>
     </View>
   );

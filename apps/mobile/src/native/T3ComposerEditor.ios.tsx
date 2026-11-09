@@ -37,6 +37,7 @@ import {
 } from "./composerEditorRevision";
 import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../lib/composerEnterBehavior";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
@@ -140,6 +141,7 @@ export function ComposerEditor({
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
+  const translator = useMobileInterfaceTranslator();
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
@@ -308,8 +310,12 @@ export function ComposerEditor({
       editable={props.editable ?? true}
       readOnly={props.readOnly ?? false}
       enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
-      submitTitle={props.submitTitle ?? "Send Message"}
-      alternateSubmitTitle={props.alternateSubmitTitle ?? props.submitTitle ?? "Send Message"}
+      submitTitle={props.submitTitle ?? translator.message("mobile.ui.sendMessage")}
+      alternateSubmitTitle={
+        props.alternateSubmitTitle ??
+        props.submitTitle ??
+        translator.message("mobile.ui.sendMessage")
+      }
       scrollEnabled={props.scrollEnabled ?? true}
       autoFocus={props.autoFocus ?? false}
       autoCorrect={props.autoCorrect ?? true}

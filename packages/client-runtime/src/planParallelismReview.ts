@@ -1,4 +1,5 @@
 import type {
+  DeepPlanRunReference,
   EnvironmentId,
   ModelSelection,
   PlanParallelismReviewInput,
@@ -44,6 +45,7 @@ export interface PlanParallelismReviewDescriptor {
   readonly threadId: ThreadId;
   readonly planId: PlanParallelismReviewInput["planId"];
   readonly planUpdatedAt: PlanParallelismReviewInput["expectedPlanUpdatedAt"];
+  readonly deepPlan?: DeepPlanRunReference | undefined;
   readonly implementationProviderInstanceId: ProviderInstanceId;
   readonly maxRecommendedSubagents: number;
   readonly reviewerSelection: ModelSelection;
@@ -56,6 +58,7 @@ export interface PlanParallelismReviewHookInput {
   readonly plan: {
     readonly id: PlanParallelismReviewInput["planId"];
     readonly updatedAt: PlanParallelismReviewInput["expectedPlanUpdatedAt"];
+    readonly deepPlan?: DeepPlanRunReference | undefined;
   } | null;
   readonly implementationProvider: ServerProvider | null | undefined;
   readonly reviewerProvider: ServerProvider | null | undefined;
@@ -100,6 +103,8 @@ export function buildPlanParallelismReviewCacheKey(
     descriptor.implementationProviderInstanceId,
     descriptor.maxRecommendedSubagents,
     serializeReviewerSelection(descriptor.reviewerSelection),
+    descriptor.deepPlan?.runId,
+    descriptor.deepPlan?.planVersion,
   ]);
 }
 
@@ -108,6 +113,7 @@ export function createPlanParallelismReviewRequest(
 ): PlanParallelismReviewInput {
   return {
     threadId: descriptor.threadId,
+    ...(descriptor.deepPlan ? { deepPlan: descriptor.deepPlan } : {}),
     planId: descriptor.planId,
     expectedPlanUpdatedAt: descriptor.planUpdatedAt,
     implementationProviderInstanceId: descriptor.implementationProviderInstanceId,
@@ -216,6 +222,7 @@ export function resolvePlanParallelismReviewSetup(
       threadId: input.threadId,
       planId: input.plan.id,
       planUpdatedAt: input.plan.updatedAt,
+      ...(input.plan.deepPlan ? { deepPlan: input.plan.deepPlan } : {}),
       implementationProviderInstanceId: provider.instanceId,
       maxRecommendedSubagents,
       reviewerSelection: input.reviewerSelection,

@@ -1,4 +1,5 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { OrchestrationV2RuntimeRequest, ProviderRuntimeEvent } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 import {
@@ -6,7 +7,9 @@ import {
   type GeneralSubagentDetailedResult as GeneralSubagentDetailedResultType,
 } from "./GeneralSubagentProtocol.ts";
 
-export type GeneralSubagentApprovalAction = "accept" | "decline" | "fail-agent";
+export const GENERAL_SUBAGENT_TIMEOUT = Duration.minutes(30);
+
+export type DelegatedWorkerRequestAction = "accept" | "decline" | "fail-agent" | "ignore";
 const decodeGeneralSubagentDetailedResult = Schema.decodeUnknownSync(GeneralSubagentDetailedResult);
 
 function finalResultContract(agentId: string): string {
@@ -84,10 +87,24 @@ export function parseGeneralSubagentFinalResult(
   };
 }
 
-export function generalSubagentApprovalAction(requestType: string): GeneralSubagentApprovalAction {
-  if (requestType === "tool_user_input") return "fail-agent";
-  if (requestType === "file_read_approval") return "accept";
-  return "decline";
+/** Nobody watches a worker's thread, so the server answers for it and never widens its access. */
+export function delegatedWorkerRequestAction(
+  kind: OrchestrationV2RuntimeRequest["kind"],
+): DelegatedWorkerRequestAction {
+  switch (kind) {
+    case "user_input":
+      return "fail-agent";
+    case "file-read":
+      return "accept";
+    case "dynamic_tool_call":
+    case "auth_refresh":
+      return "ignore";
+    case "command":
+    case "file-change":
+    case "mcp-elicitation":
+    case "permission":
+      return "decline";
+  }
 }
 
 export function assistantTextFromCompletedItem(event: ProviderRuntimeEvent): string | undefined {

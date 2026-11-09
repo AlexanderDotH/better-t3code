@@ -4,12 +4,23 @@ import {
   CHAT_STATUS_COMPACT_VERTICAL_SPACE,
 } from "./ChatBubble";
 import { ThreadThinkingIndicator } from "./ThreadThinkingIndicator";
+import { ChatPresentationMotion, ChatPresentationMotionContext } from "./ChatPresentationMotion";
+import { useNativeChatPresentationMotion } from "./use-chat-presentation-motion";
+import { ChangedFilesSummary } from "./ChangedFilesSummary";
+import { changedFileMotionId, COLLAPSED_CHANGED_FILE_COUNT } from "./changed-files-summary";
+import { ThreadForkButton } from "./ThreadForkButton";
+import { useThreadForkAction, type ThreadForkAction } from "./use-thread-fork-action";
+import { useThreadRetryAction, type ThreadRetryAction } from "./use-thread-retry-action";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 import { MessageImageCard } from "./MessageImageCard";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { selectV2ResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { useMobileGitWorkbenchAvailability } from "../../state/use-git-workbench-availability";
+import { mobileGitWorkbenchCanActivate } from "../../state/git-workbench-availability";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
 import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { VisualizationMarkdownText } from "../visualizations/VisualizationMarkdownText";
@@ -302,6 +313,7 @@ import {
 } from "./ThreadMarkdownImage";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -407,7 +419,13 @@ async function waitForThreadShell(
 }
 
 const USER_MESSAGE_COPY_MENU_ACTIONS = [
-  { id: "copy-prompt-link", title: "Copy prompt link", image: "link" },
+  {
+    id: "copy-prompt-link",
+    get title() {
+      return currentInterfaceTranslator().message("mobile.ui.copyPromptLink");
+    },
+    image: "link",
+  },
 ];
 
 function UserMessageCopyButton(props: {
@@ -415,9 +433,10 @@ function UserMessageCopyButton(props: {
   readonly onCopy: (() => Promise<void>) | undefined;
   readonly tintColor: ColorValue;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const button = (
     <CopyTextButton
-      accessibilityLabel="Copy message"
+      accessibilityLabel={translator.message("mobile.thread.copyMessage")}
       text={props.text}
       onCopy={props.onCopy}
       tintColor={props.tintColor}
@@ -448,6 +467,7 @@ function AssistantForkButton(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -467,7 +487,7 @@ function AssistantForkButton(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Fork from this response"
+      accessibilityLabel={translator.message("mobile.ui.forkFromThisResponse")}
       disabled={busy}
       onPress={() => {
         const targetThreadId = ThreadId.make(uuidv4());
@@ -488,8 +508,8 @@ function AssistantForkButton(props: {
             const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
             if (!targetThreadReady) {
               Dialog.alert(
-                "Fork created",
-                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+                translator.message("mobile.thread.forkCreated"),
+                translator.message("mobile.thread.forkNotSynced"),
               );
               return;
             }
@@ -669,6 +689,7 @@ function MessageAttachmentFile(props: {
   readonly standaloneFile?: boolean;
   readonly available?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const sourceIdentifier = useId();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
@@ -708,7 +729,7 @@ function MessageAttachmentFile(props: {
     setOpening(true);
     const finish = (message: string | null) => {
       if (message !== null && !controller.signal.aborted) {
-        Dialog.alert("Could not open attachment", message);
+        Dialog.alert(translator.message("mobile.ui.couldNotOpenAttachment"), message);
       }
       if (openingRef.current === controller) {
         openingRef.current = null;
@@ -1126,12 +1147,93 @@ function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.Scrol
   );
 }
 
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
+function ThreadMediaVisibility(props: {
+  readonly children: ReactNode;
+  readonly motionId?: string;
+}) {
   const [visible, setVisible] = useState(false);
   useViewabilityAmount<ThreadFeedEntry>(
     useCallback((token) => setVisible(token.sizeVisible > 0), []),
   );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
+  return (
+    <ThreadMediaVisibleContext value={visible}>
+      {props.motionId === undefined ? (
+        props.children
+      ) : (
+        <ChatPresentationMotion motionId={props.motionId}>{props.children}</ChatPresentationMotion>
+      )}
+    </ThreadMediaVisibleContext>
+  );
+}
+
+function RetryMessageButton(props: {
+  readonly action: ThreadRetryAction;
+  readonly tintColor: ColorValue;
+}) {
+  const translator = useMobileInterfaceTranslator();
+  const label = translator.message(
+    props.action.pending ? "chat.timeline.retrying" : "chat.timeline.retry",
+  );
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ busy: props.action.pending, disabled: !props.action.available }}
+      disabled={!props.action.available}
+      hitSlop={8}
+      onPress={props.action.onRetry}
+      className="size-7 items-center justify-center disabled:opacity-40"
+    >
+      {props.action.pending ? (
+        <AppActivityIndicator size="small" />
+      ) : (
+        <SymbolView name="arrow.clockwise" size={14} tintColor={props.tintColor} />
+      )}
+    </Pressable>
+  );
+}
+
+function ForkSourceHeader(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly iconColor: ColorValue;
+}) {
+  const translator = useMobileInterfaceTranslator();
+  const openLinkedThread = useOpenLinkedThread();
+  const thread = useQuietThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const forkedFrom =
+    thread?.forkedFrom?.type === "run" && thread.lineage.sideChat !== true
+      ? thread.forkedFrom
+      : null;
+  const source = useQuietThreadShell(
+    forkedFrom ? scopeThreadRef(props.environmentId, forkedFrom.threadId) : null,
+  );
+  if (forkedFrom === null) return null;
+  const label = translator.message("mobile.thread.forkedFrom");
+  const title = source?.title ?? translator.message("mobile.thread.forkSourceFallback");
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label} ${title}`}
+      accessibilityHint={translator.message("mobile.thread.forkSourceOpen")}
+      disabled={source === null}
+      onPress={() =>
+        openLinkedThread({
+          environmentId: String(props.environmentId),
+          threadId: String(forkedFrom.threadId),
+        })
+      }
+      className="mb-3 min-h-11 flex-row items-center gap-2 px-1 active:opacity-70 disabled:opacity-60"
+    >
+      <SymbolView name="arrow.triangle.branch" size={13} tintColor={props.iconColor} />
+      <Text
+        className="min-w-0 shrink font-t3-medium text-xs text-foreground-muted"
+        numberOfLines={1}
+      >
+        {label} {title}
+      </Text>
+    </Pressable>
+  );
 }
 
 interface MarkdownLinkHandlers {
@@ -1173,6 +1275,7 @@ function ArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
       <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
@@ -1201,7 +1304,7 @@ function ArtifactTemplateCard(props: {
       </View>
       {props.onUse ? (
         <Button
-          label="Use template"
+          label={translator.message("chat.templates.use")}
           tone="secondary"
           accessibilityLabel={`Use ${props.template.displayName} template`}
           onPress={() => props.onUse?.(props.template)}
@@ -1463,6 +1566,7 @@ function OpenSenderThreadButton(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId: ThreadId;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const openLinkedThread = useOpenLinkedThread();
   return (
     <Pressable
@@ -1475,7 +1579,9 @@ function OpenSenderThreadButton(props: {
         })
       }
     >
-      <Text className="font-t3-medium text-xs text-foreground-secondary">Open thread</Text>
+      <Text className="font-t3-medium text-xs text-foreground-secondary">
+        {translator.message("mobile.ui.openThread")}
+      </Text>
     </Pressable>
   );
 }
@@ -1499,6 +1605,7 @@ function ThreadAutomationMessageRow(props: {
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly renderImage: MarkdownImageRenderer;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const tasks = useEnvironmentQuery(
     props.scheduledTaskId
@@ -1538,7 +1645,7 @@ function ThreadAutomationMessageRow(props: {
             type="monochrome"
           />
           <Text className="font-t3-medium text-sm text-user-bubble-foreground-muted">
-            Automation
+            {translator.message("mobile.ui.automation")}
           </Text>
           <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
             {summary}
@@ -1576,7 +1683,7 @@ function ThreadAutomationMessageRow(props: {
               onPress={() => openSettings(navigation, "SettingsScheduledTasks")}
             >
               <Text className="font-t3-medium text-xs text-foreground-secondary">
-                Open automation
+                {translator.message("mobile.ui.openAutomation")}
               </Text>
             </Pressable>
           ) : null}
@@ -1616,6 +1723,7 @@ function RunFoldButton({
   rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   iconColor: ColorValue;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
   const anchorsKey = entry.deferredWorkItemIds?.join("\n") ?? "";
   const [failed, setFailed] = useState(false);
@@ -1659,7 +1767,15 @@ function RunFoldButton({
           numberOfLines={1}
           className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
         >
-          {entry.label}
+          {entry.foldKind === "earlier"
+            ? translator.message("mobile.thread.earlierWork")
+            : entry.foldKind === "stopped"
+              ? entry.duration
+                ? translator.message("mobile.thread.stoppedAfter", { duration: entry.duration })
+                : translator.message("mobile.thread.stoppedResponse")
+              : entry.duration
+                ? translator.message("mobile.thread.workedFor", { duration: entry.duration })
+                : translator.message("mobile.thread.worked")}
           {error ? ` · ${error}` : ""}
         </Text>
         <ThreadDisclosureChevron
@@ -1711,7 +1827,14 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
+    readonly onOpenTurnDiff: ((checkpoint: ThreadCheckpointSummary) => void) | null;
+    /** Better T3 chat lists a turn's changed files in its last answer instead of the work row. */
+    readonly changedFilesByMessage: ReadonlyMap<string, ThreadCheckpointSummary>;
+    readonly changedFilesRunIds: ReadonlySet<RunId>;
+    readonly expandedCheckpointRefs: ReadonlySet<string>;
+    readonly onToggleCheckpoint: (entryId: string, checkpoint: ThreadCheckpointSummary) => void;
+    readonly forkAction: ThreadForkAction | null;
+    readonly retryAction: ThreadRetryAction | null;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -1772,7 +1895,9 @@ function renderFeedEntry(
           rowSizing={props.workRowSizing}
           iconColor={iconSubtleColor}
         />
-        {entry.checkpointSummary ? (
+        {entry.checkpointSummary &&
+        props.onOpenTurnDiff &&
+        !props.changedFilesRunIds.has(entry.checkpointSummary.runId) ? (
           <TurnDiffStat
             checkpoint={entry.checkpointSummary}
             onOpenTurnDiff={props.onOpenTurnDiff}
@@ -1845,7 +1970,9 @@ function renderFeedEntry(
           shimmer={entry.shimmer && !props.betterChat}
           thought={entry.thought}
           trailing={
-            entry.checkpointSummary ? (
+            entry.checkpointSummary &&
+            props.onOpenTurnDiff &&
+            !props.changedFilesRunIds.has(entry.checkpointSummary.runId) ? (
               <TurnDiffStat
                 checkpoint={entry.checkpointSummary}
                 onOpenTurnDiff={props.onOpenTurnDiff}
@@ -1921,7 +2048,9 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const presentation = resolveUserMessagePresentation(message);
+    const presentation = resolveUserMessagePresentation(message, {
+      deepPlanContinuation: currentInterfaceTranslator().message("chat.deepPlan.continuing"),
+    });
     const renderedText = renderAssistantCitationsAsText(presentation.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
@@ -1956,9 +2085,11 @@ function renderFeedEntry(
         <ThreadContextDivider
           label={
             !active
-              ? "Context compaction"
+              ? currentInterfaceTranslator().message(
+                  "settings.betterT3.subgroup.context-compaction",
+                )
               : reason === undefined
-                ? "Compacting context"
+                ? currentInterfaceTranslator().message("mobile.ui.compactingContext")
                 : IDLE_COMPACTING_LABELS[reason]
           }
           icon="arrow.down.right.and.arrow.up.left"
@@ -2048,7 +2179,7 @@ function renderFeedEntry(
           >
             {presentation.attribution === "t3code" ? (
               <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-                Sent by T3 Code
+                {currentInterfaceTranslator().message("mobile.ui.sentByT3Code")}
               </Text>
             ) : null}
             {presentation.guestName !== undefined ? (
@@ -2258,7 +2389,9 @@ function renderFeedEntry(
                   </Text>
                 ) : null}
                 <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-                  {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+                  {entry.pendingMessage && !entry.acknowledged
+                    ? currentInterfaceTranslator().message("mobile.thread.pending")
+                    : timestampLabel}
                 </Text>
                 {props.onEditPendingMessage !== null &&
                 entry.pendingMessage &&
@@ -2267,7 +2400,9 @@ function renderFeedEntry(
                 entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Edit pending message"
+                    accessibilityLabel={currentInterfaceTranslator().message(
+                      "mobile.ui.editPendingMessage",
+                    )}
                     hitSlop={8}
                     className="size-7 items-center justify-center"
                     onPress={() => {
@@ -2285,6 +2420,17 @@ function renderFeedEntry(
                     threadId={props.threadId}
                     message={message}
                     tintColor={iconSubtleColor}
+                  />
+                ) : null}
+                {!entry.pendingMessage && props.retryAction?.messageId === message.id ? (
+                  <RetryMessageButton action={props.retryAction} tintColor={iconSubtleColor} />
+                ) : null}
+                {!entry.pendingMessage && props.forkAction && message.visibility !== "local" ? (
+                  <ThreadForkButton
+                    boundary={{ kind: "message", messageId: message.id }}
+                    action={props.forkAction}
+                    buttonSize={props.replyActionSize.button}
+                    iconSize={props.replyActionSize.icon}
                   />
                 ) : null}
                 {presentation.text.trim().length > 0 ? (
@@ -2315,6 +2461,7 @@ function renderFeedEntry(
     }
 
     const enterAnimated = isFreshTimestamp(message.createdAt);
+    const changedFiles = props.changedFilesByMessage.get(entry.id);
     return (
       <ThreadMessageReplyGesture
         environmentId={props.environmentId}
@@ -2331,7 +2478,6 @@ function renderFeedEntry(
           style={
             props.betterChat
               ? {
-                  backgroundColor: props.assistantBubbleColor,
                   borderRadius: 25,
                   borderTopLeftRadius: 12,
                   padding: 12,
@@ -2340,7 +2486,19 @@ function renderFeedEntry(
           }
           {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
         >
-          {props.betterChat ? <ChatBubbleSurface color={props.assistantBubbleColor} /> : null}
+          {props.betterChat ? (
+            // The surface alone paints the bubble so its entrance can fade separately from the text.
+            <ChatPresentationMotion
+              motionId={`surface:${entry.id}`}
+              pointerEvents="none"
+              accessible={false}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={StyleSheet.absoluteFill}
+            >
+              <ChatBubbleSurface color={props.assistantBubbleColor} />
+            </ChatPresentationMotion>
+          ) : null}
           {message.replyTo ? <MessageReplyPreview reference={message.replyTo} /> : null}
           {renderedText.trim().length > 0 ? (
             <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
@@ -2361,7 +2519,14 @@ function renderFeedEntry(
             onPressPreview={props.onPressPreview}
             onPlaybackStart={props.onPlaybackStart}
           />
-          {showAssistantMeta && message.checkpointSummary ? (
+          {changedFiles && props.onOpenTurnDiff ? (
+            <ChangedFilesSummary
+              checkpoint={changedFiles}
+              expanded={props.expandedCheckpointRefs.has(changedFiles.checkpointRef)}
+              onToggle={() => props.onToggleCheckpoint(entry.id, changedFiles)}
+              onOpenReview={() => props.onOpenTurnDiff?.(changedFiles)}
+            />
+          ) : showAssistantMeta && message.checkpointSummary && props.onOpenTurnDiff ? (
             <TurnDiffStat
               checkpoint={message.checkpointSummary}
               onOpenTurnDiff={props.onOpenTurnDiff}
@@ -2376,13 +2541,22 @@ function renderFeedEntry(
                 tintColor={iconSubtleColor}
               />
               <CopyTextButton
-                accessibilityLabel="Copy message"
+                accessibilityLabel={currentInterfaceTranslator().message(
+                  "mobile.thread.copyMessage",
+                )}
                 text={renderedText}
                 tintColor={iconSubtleColor}
                 buttonSize={props.replyActionSize.button}
                 iconSize={props.replyActionSize.icon}
               />
-              {message.projectedItem ? (
+              {props.forkAction ? (
+                <ThreadForkButton
+                  boundary={{ kind: "message", messageId: message.id }}
+                  action={props.forkAction}
+                  buttonSize={props.replyActionSize.button}
+                  iconSize={props.replyActionSize.icon}
+                />
+              ) : message.projectedItem ? (
                 <AssistantForkButton
                   environmentId={props.environmentId}
                   iconColor={iconSubtleColor}
@@ -2467,6 +2641,7 @@ type UserMessageContentProps = {
 };
 
 function UserMessageContent(props: UserMessageContentProps) {
+  const translator = useMobileInterfaceTranslator();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
@@ -2506,7 +2681,10 @@ function UserMessageContent(props: UserMessageContentProps) {
       });
       return;
     }
-    setSelected({ contextId: reference.contextId, label: record?.label ?? "Context unavailable" });
+    setSelected({
+      contextId: reference.contextId,
+      label: record?.label ?? translator.message("mobile.ui.contextUnavailable"),
+    });
   };
   return (
     <>
@@ -2523,10 +2701,14 @@ function UserMessageContent(props: UserMessageContentProps) {
               (item) => item.contextId === reference.contextId,
             );
             return {
-              title: record?.label ?? "Context unavailable",
+              title: record?.label ?? translator.message("mobile.ui.contextUnavailable"),
               actions: [
-                { id: "open-context", title: "Open context" },
-                { id: "copy-context", title: "Copy context", disabled: !record },
+                { id: "open-context", title: translator.message("mobile.ui.openContext") },
+                {
+                  id: "copy-context",
+                  title: translator.message("mobile.ui.copyContext"),
+                  disabled: !record,
+                },
               ],
             };
           },
@@ -2551,7 +2733,10 @@ function UserMessageContent(props: UserMessageContentProps) {
               )
                 .then(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))
                 .catch(() => {
-                  Dialog.alert("Could not copy context", "Try copying this context again.");
+                  Dialog.alert(
+                    translator.message("mobile.ui.couldNotCopyContext"),
+                    translator.message("mobile.ui.tryCopyingThisContextAgain"),
+                  );
                 });
             }
           },
@@ -2696,6 +2881,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   ref,
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
+  const translator = useMobileInterfaceTranslator();
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
@@ -2704,8 +2890,15 @@ export const ThreadFeed = memo(function ThreadFeed({
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
+  const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(
+    useMobileGitWorkbenchAvailability({
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+    }),
+  );
   const onOpenTurnDiff = useCallback(
     (checkpoint: ThreadCheckpointSummary) => {
+      if (!gitWorkbenchEnabled) return;
       setReviewSelectedSectionId(
         scopedThreadKey(props.environmentId, props.threadId),
         getReviewSectionIdForCheckpoint(checkpoint),
@@ -2715,7 +2908,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         threadId: props.threadId,
       });
     },
-    [navigation, props.environmentId, props.threadId],
+    [navigation, props.environmentId, props.threadId, gitWorkbenchEnabled],
   );
   const { themeAppearance, chatPresentation } = useAppearancePreferences();
   const selectedProjection = useSelectedThreadProjection();
@@ -3073,10 +3266,10 @@ export const ThreadFeed = memo(function ThreadFeed({
           actions: [
             {
               id: "open-skill",
-              title: "View instructions",
+              title: translator.message("mobile.ui.viewInstructions"),
               disabled: !enrichedSkillInstructionsPath(skill),
             },
-            { id: "copy-skill", title: "Copy skill" },
+            { id: "copy-skill", title: translator.message("mobile.ui.copySkill") },
           ],
         };
       }
@@ -3084,10 +3277,11 @@ export const ThreadFeed = memo(function ThreadFeed({
       if (thread) {
         return {
           title:
-            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
+            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ??
+            translator.message("mobile.thread.settings.thread"),
           actions: [
-            { id: "open-thread", title: "Open thread" },
-            { id: "copy-thread-link", title: "Copy link" },
+            { id: "open-thread", title: translator.message("mobile.ui.openThread") },
+            { id: "copy-thread-link", title: translator.message("chat.composer.copyLink") },
           ],
         };
       }
@@ -3156,7 +3350,9 @@ export const ThreadFeed = memo(function ThreadFeed({
       (media && (media.kind === "pdf" || media.kind === "document" || media.kind === "file")) ||
       (fileLink.kind === "file" && fileLink.line !== undefined)
     ) {
-      const name = media?.source.name ?? (fileLink.kind === "file" ? fileLink.label : "Open file");
+      const name =
+        media?.source.name ??
+        (fileLink.kind === "file" ? fileLink.label : translator.message("browser.files.openFile"));
       return (
         <Text
           accessibilityRole="link"
@@ -3255,30 +3451,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     () => threadFeedCompactionLabels(props.feed),
     [props.feed],
   );
-  // LegendList does not invalidate visible rows when only the renderItem closure changes.
-  // Include turn completion so unchanged message rows reveal their footer and spacing
-  // even when the final message update arrives before the turn settles.
-  const listAppearanceData = {
-    worktreeSetup: props.worktreeSetup,
-    setupWorkingStartedAt: props.setupWorkingStartedAt,
-    dispatchingMessageId: props.dispatchingMessageId,
-    unsettledTurnId,
-    copiedRowId,
-    expandedWorkGroups,
-    expandedWorkRows,
-    workRowSizing,
-    iconSubtleColor,
-    markdownStyles,
-    reviewCommentColors,
-    themeAppearance,
-    userBubbleColor,
-    betterChat,
-    responseMetrics,
-    viewportWidth,
-    contentWidth,
-    skills: props.skills,
-    workflowOpening,
-  };
   const reportHeaderMaterialVisibility = (visible: boolean) => {
     if (headerMaterialVisibleRef.current === visible) {
       return;
@@ -3303,14 +3475,6 @@ export const ThreadFeed = memo(function ThreadFeed({
       clearTimeout(userScrollSettleTimerRef.current);
       userScrollSettleTimerRef.current = null;
     }
-  };
-  const handleScrollBeginDrag = () => {
-    clearUserScrollSettle();
-    userScrollSessionRef.current = true;
-    cancelReflow();
-    // Pause before the first scroll event. Otherwise a stream update can run
-    // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
-    transitionEndFollow({ type: "user-scroll-begin" });
   };
   const finishUserScroll = (releaseIsAtEnd?: boolean) => {
     clearUserScrollSettle();
@@ -3356,10 +3520,63 @@ export const ThreadFeed = memo(function ThreadFeed({
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
   const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
-  const presentedFeed = appendGuestPendingMessages(
-    useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups),
-    guestShare,
+  const ownPresentedFeed = useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups);
+  const presentedFeed = appendGuestPendingMessages(ownPresentedFeed, guestShare);
+  const changedFilesByMessage = new Map<string, ThreadCheckpointSummary>();
+  if (betterChat) {
+    for (const entry of props.feed) {
+      if (
+        entry.type === "message" &&
+        entry.message.role === "assistant" &&
+        entry.message.checkpointSummary
+      )
+        changedFilesByMessage.set(entry.id, entry.message.checkpointSummary);
+    }
+  }
+  const changedFilesRunIds = new Set<RunId>();
+  for (const entry of presentedFeed) {
+    const checkpoint = entry.type === "message" ? changedFilesByMessage.get(entry.id) : undefined;
+    if (
+      checkpoint &&
+      entry.type === "message" &&
+      (entry.message.text.trim().length > 0 || entry.message.attachments.length > 0)
+    )
+      changedFilesRunIds.add(checkpoint.runId);
+  }
+  const [expandedCheckpointRefs, setExpandedCheckpointRefs] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
+  const environmentConnected =
+    useRemoteEnvironmentRuntime(props.environmentId)?.connectionState === "connected";
+  const { motion, disclose, discardPending } = useNativeChatPresentationMotion({
+    threadKey: feedThreadKey,
+    environmentId: props.environmentId,
+    connected: environmentConnected,
+    ready: props.contentPresentation.kind === "ready",
+    feed: betterChat
+      ? appendPendingThreadMessages(props.feed, props.feed, props.queuedMessages)
+      : props.feed,
+    presentedFeed: ownPresentedFeed,
+    checkpointsByMessage: changedFilesByMessage,
+  });
+  const handleScrollBeginDrag = () => {
+    discardPending();
+    clearUserScrollSettle();
+    userScrollSessionRef.current = true;
+    cancelReflow();
+    // Pause before the first scroll event. Otherwise a stream update can run
+    // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
+    transitionEndFollow({ type: "user-scroll-begin" });
+  };
+  const forkAction = useThreadForkAction({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+  });
+  const retryAction = useThreadRetryAction({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    projection: selectedProjection?.projection ?? null,
+  });
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
@@ -3635,6 +3852,23 @@ export const ThreadFeed = memo(function ThreadFeed({
     });
   };
 
+  const onToggleCheckpoint = (entryId: string, checkpoint: ThreadCheckpointSummary) => {
+    const expanded = expandedCheckpointRefs.has(checkpoint.checkpointRef);
+    if (!expanded) {
+      for (const file of checkpoint.files.slice(COLLAPSED_CHANGED_FILE_COUNT)) {
+        // oxlint-disable-next-line react/purity -- Runs when the user taps the toggle, not during render.
+        disclose(changedFileMotionId(checkpoint, file.path), Date.now());
+      }
+    }
+    suspendEndScrollMaintenanceForDisclosure(entryId);
+    setExpandedCheckpointRefs((current) => {
+      const next = new Set(current);
+      if (next.has(checkpoint.checkpointRef)) next.delete(checkpoint.checkpointRef);
+      else next.add(checkpoint.checkpointRef);
+      return next;
+    });
+  };
+
   const onPressPreview = (source: FilePreviewSource) => {
     markdownLinkRequest.current?.abort();
     openPreview(markdownLinkScope, { file: source });
@@ -3701,6 +3935,34 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
   }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
 
+  // LegendList does not invalidate visible rows when only the renderItem closure changes.
+  // Include turn completion so unchanged message rows reveal their footer and spacing
+  // even when the final message update arrives before the turn settles.
+  const listAppearanceData = {
+    worktreeSetup: props.worktreeSetup,
+    setupWorkingStartedAt: props.setupWorkingStartedAt,
+    dispatchingMessageId: props.dispatchingMessageId,
+    unsettledTurnId,
+    copiedRowId,
+    expandedWorkGroups,
+    expandedWorkRows,
+    workRowSizing,
+    iconSubtleColor,
+    markdownStyles,
+    reviewCommentColors,
+    themeAppearance,
+    userBubbleColor,
+    betterChat,
+    responseMetrics,
+    viewportWidth,
+    contentWidth,
+    skills: props.skills,
+    workflowOpening,
+    changedFilesByMessage,
+    expandedCheckpointRefs,
+    forkAction,
+    retryAction,
+  };
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <Animated.View
       key={info.item.id}
@@ -3712,7 +3974,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         threadId={props.threadId}
         workspaceRoot={props.workspaceRoot}
       >
-        <ThreadMediaVisibility>
+        <ThreadMediaVisibility motionId={betterChat ? info.item.id : undefined}>
           {info.item.type === "message" &&
           !isCompactionCommandFeedEntry(info.item) &&
           info.item.message.projectedItem?.item.type === "user_message" &&
@@ -3742,7 +4004,13 @@ export const ThreadFeed = memo(function ThreadFeed({
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
-            onOpenTurnDiff,
+            onOpenTurnDiff: gitWorkbenchEnabled ? onOpenTurnDiff : null,
+            changedFilesByMessage,
+            changedFilesRunIds,
+            expandedCheckpointRefs,
+            onToggleCheckpoint,
+            forkAction,
+            retryAction,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
             markdownLinkHandlers,
@@ -3792,162 +4060,173 @@ export const ThreadFeed = memo(function ThreadFeed({
   }
 
   return (
-    <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      <View className="flex-1" onLayout={handleViewportLayout}>
-        <View className="flex-1">
-          {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
-          <KeyboardAwareLegendList
-            ref={attachList}
-            // LegendList cannot see adjustedContentInset; remount so initial positioning waits for UIKit attachment.
-            key={listMountKey}
-            style={{ flex: 1 }}
-            // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
-            applyWorkaroundForContentInsetHitTestBug
-            {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
-            // Horizontal Duo reservations are already included in the row padding.
-            contentInsetAdjustmentBehavior={
-              usesNativeAutomaticInsets
-                ? duoColumns && props.layoutVariant === "split"
-                  ? "scrollableAxes"
-                  : "automatic"
-                : "never"
-            }
-            automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
-            {...(usesNativeAutomaticInsets
-              ? {
-                  // Manual contentInset zeroes UIKit's automatic header inset and scroll-edge region; derive it from the transparent header.
-                  scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
-                }
-              : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            // Patched LegendList math must allow -headerInset so short-content end scrolls rest below the header.
-            contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
-            contentInsetEndAdjustment={props.contentInsetEndAdjustment}
-            keyboardOffset={props.keyboardOffset}
-            // UIKit adds the safe-area bottom to raw contentInset; ThreadDetailScreen under-reports it.
-            // Include that extra inset in LegendList's scroll math so end scrolls reach the resting offset.
-            contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
-            // Seed composer height until keyboard integration reports it, or Android's initial end scroll runs too early.
-            {...(initialContentInset ? { contentInset: initialContentInset } : {})}
-            adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
-            freeze={props.freeze}
-            // Follow the measured end immediately; animating estimates races row measurement on acknowledgement.
-            maintainScrollAtEnd={
-              disclosureToggleSettling || !followsEnd
-                ? false
-                : {
-                    animated: false,
-                    on: {
-                      dataChange: true,
-                      itemLayout: true,
-                      layout: true,
-                    },
+    <ChatPresentationMotionContext value={motion}>
+      <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
+        <View className="flex-1" onLayout={handleViewportLayout}>
+          <View className="flex-1">
+            {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
+            <KeyboardAwareLegendList
+              ref={attachList}
+              // LegendList cannot see adjustedContentInset; remount so initial positioning waits for UIKit attachment.
+              key={listMountKey}
+              style={{ flex: 1 }}
+              // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
+              applyWorkaroundForContentInsetHitTestBug
+              {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
+              // Horizontal Duo reservations are already included in the row padding.
+              contentInsetAdjustmentBehavior={
+                usesNativeAutomaticInsets
+                  ? duoColumns && props.layoutVariant === "split"
+                    ? "scrollableAxes"
+                    : "automatic"
+                  : "never"
+              }
+              automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
+              {...(usesNativeAutomaticInsets
+                ? {
+                    // Manual contentInset zeroes UIKit's automatic header inset and scroll-edge region; derive it from the transparent header.
+                    scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
                   }
-            }
-            // A reflow grows every visible row at once, well past the near-end threshold
-            // that otherwise lets a status-bar tap leave the end.
-            maintainScrollAtEndThreshold={reflowFollowsEnd ? Number.POSITIVE_INFINITY : undefined}
-            sizeChangeAnchor={reflowAnchorsSizeChanges ? holdReflowAnchor : undefined}
-            maintainVisibleContentPosition={
-              followsEnd && !disclosureToggleSettling ? false : maintainVisibleContentPosition
-            }
-            data={groupedFeed}
-            extraData={listAppearanceData}
-            renderItem={renderItem}
-            viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
-            keyExtractor={(entry) => entry.id}
-            getItemType={(entry) => {
-              if (entry.type !== "message") return entry.type;
-              if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
-              const { attribution } = resolveUserMessagePresentation(entry.message);
-              return attribution === "automation" || attribution === "agent"
-                ? `message:${attribution}`
-                : `message:${entry.message.role}`;
-            }}
-            getFixedItemSize={getFixedItemSize}
-            // Native layout transitions retain stale row positions during sync, even at duration zero.
-            onItemSizeChanged={handleItemSizeChanged}
-            drawDistance={500}
-            keyboardShouldPersistTaps="always"
-            keyboardDismissMode="none"
-            keyboardLiftBehavior="whenAtEnd"
-            // Seed viewport size to skip programmatic attach-time positioning, which races UIKit's adjustedContentInset.
-            {...(viewportHeight > 0 && viewportWidth > 0
-              ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
-              : {})}
-            // Enable overflow: RN scrollTo clamps against raw insets and ignores the automatic header inset.
-            scrollToOverflowEnabled
-            estimatedItemSize={180}
-            alignItemsAtEnd
-            initialScrollAtEnd
-            onLoad={() => {
-              loadedListKeyRef.current = listMountKey;
-              setLoadedListKey(listMountKey);
-            }}
-            // Row positions start below the header; the reflow anchor converts between them.
-            onMetricsChange={(metrics) => {
-              listHeaderSizeRef.current = metrics.headerSize;
-            }}
-            onScroll={handleScroll}
-            onScrollBeginDrag={handleScrollBeginDrag}
-            onScrollEndDrag={handleScrollEndDrag}
-            onMomentumScrollBegin={handleMomentumScrollBegin}
-            onMomentumScrollEnd={handleMomentumScrollEnd}
-            scrollEventThrottle={16}
-            ListHeaderComponent={
-              <>
-                {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
-                {setupAnchorIndex < 0 && props.worktreeSetup ? (
-                  <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-                ) : null}
-                {props.historyControls ? (
-                  <ThreadFeedLoadEarlierControl {...props.historyControls} />
-                ) : null}
-              </>
-            }
-            ListFooterComponent={
-              props.pendingHandoff ? (
-                <ThreadHandoffDivider
-                  environmentId={props.environmentId}
-                  endpoints={props.pendingHandoff}
-                  iconColor={iconSubtleColor}
-                  surfaceColor={screenColor}
-                  label="Context handoff pending"
-                />
-              ) : null
-            }
-            contentContainerStyle={{
-              paddingTop: FEED_PADDING_TOP,
-              paddingLeft: contentHorizontalPadding + contentLeftInset,
-              paddingRight: contentHorizontalPadding + contentRightInset,
-            }}
-          />
-        </View>
-        {presentedFeed.length === 0 &&
-        !props.worktreeSetup &&
-        props.activeWorkStartedAt === null &&
-        props.contentPresentation.kind === "ready" ? (
-          <View
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFill, { left: contentLeftInset, right: contentRightInset }]}
-          >
-            <ThreadFeedPlaceholder
-              title="No conversation yet"
-              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
-              topInset={topContentInset}
-              bottomInset={bottomContentInset}
-              horizontalPadding={horizontalPadding}
+                : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
+              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+              // Patched LegendList math must allow -headerInset so short-content end scrolls rest below the header.
+              contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
+              contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+              keyboardOffset={props.keyboardOffset}
+              // UIKit adds the safe-area bottom to raw contentInset; ThreadDetailScreen under-reports it.
+              // Include that extra inset in LegendList's scroll math so end scrolls reach the resting offset.
+              contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
+              // Seed composer height until keyboard integration reports it, or Android's initial end scroll runs too early.
+              {...(initialContentInset ? { contentInset: initialContentInset } : {})}
+              adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
+              freeze={props.freeze}
+              // Follow the measured end immediately; animating estimates races row measurement on acknowledgement.
+              maintainScrollAtEnd={
+                disclosureToggleSettling || !followsEnd
+                  ? false
+                  : {
+                      animated: false,
+                      on: {
+                        dataChange: true,
+                        itemLayout: true,
+                        layout: true,
+                      },
+                    }
+              }
+              // A reflow grows every visible row at once, well past the near-end threshold
+              // that otherwise lets a status-bar tap leave the end.
+              maintainScrollAtEndThreshold={reflowFollowsEnd ? Number.POSITIVE_INFINITY : undefined}
+              sizeChangeAnchor={reflowAnchorsSizeChanges ? holdReflowAnchor : undefined}
+              maintainVisibleContentPosition={
+                followsEnd && !disclosureToggleSettling ? false : maintainVisibleContentPosition
+              }
+              data={groupedFeed}
+              extraData={listAppearanceData}
+              renderItem={renderItem}
+              viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
+              keyExtractor={(entry) => entry.id}
+              getItemType={(entry) => {
+                if (entry.type !== "message") return entry.type;
+                if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
+                const { attribution } = resolveUserMessagePresentation(entry.message);
+                return attribution === "automation" || attribution === "agent"
+                  ? `message:${attribution}`
+                  : `message:${entry.message.role}`;
+              }}
+              getFixedItemSize={getFixedItemSize}
+              // Native layout transitions retain stale row positions during sync, even at duration zero.
+              onItemSizeChanged={handleItemSizeChanged}
+              drawDistance={500}
+              keyboardShouldPersistTaps="always"
+              keyboardDismissMode="none"
+              keyboardLiftBehavior="whenAtEnd"
+              // Seed viewport size to skip programmatic attach-time positioning, which races UIKit's adjustedContentInset.
+              {...(viewportHeight > 0 && viewportWidth > 0
+                ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
+                : {})}
+              // Enable overflow: RN scrollTo clamps against raw insets and ignores the automatic header inset.
+              scrollToOverflowEnabled
+              estimatedItemSize={180}
+              alignItemsAtEnd
+              initialScrollAtEnd
+              onLoad={() => {
+                loadedListKeyRef.current = listMountKey;
+                setLoadedListKey(listMountKey);
+              }}
+              // Row positions start below the header; the reflow anchor converts between them.
+              onMetricsChange={(metrics) => {
+                listHeaderSizeRef.current = metrics.headerSize;
+              }}
+              onScroll={handleScroll}
+              onScrollBeginDrag={handleScrollBeginDrag}
+              onScrollEndDrag={handleScrollEndDrag}
+              onMomentumScrollBegin={handleMomentumScrollBegin}
+              onMomentumScrollEnd={handleMomentumScrollEnd}
+              scrollEventThrottle={16}
+              ListHeaderComponent={
+                <>
+                  {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                  {setupAnchorIndex < 0 && props.worktreeSetup ? (
+                    <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+                  ) : null}
+                  {props.historyControls ? (
+                    <ThreadFeedLoadEarlierControl {...props.historyControls} />
+                  ) : null}
+                  <ForkSourceHeader
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    iconColor={iconSubtleColor}
+                  />
+                </>
+              }
+              ListFooterComponent={
+                props.pendingHandoff ? (
+                  <ThreadHandoffDivider
+                    environmentId={props.environmentId}
+                    endpoints={props.pendingHandoff}
+                    iconColor={iconSubtleColor}
+                    surfaceColor={screenColor}
+                    label={translator.message("mobile.ui.contextHandoffPending")}
+                  />
+                ) : null
+              }
+              contentContainerStyle={{
+                paddingTop: FEED_PADDING_TOP,
+                paddingLeft: contentHorizontalPadding + contentLeftInset,
+                paddingRight: contentHorizontalPadding + contentRightInset,
+              }}
             />
           </View>
-        ) : null}
-        <VideoPreviewModal source={expandedVideo} onRequestClose={closeVideoPreview} />
-        <FilePreviewModal source={expandedFile} onRequestClose={closeFilePreview} />
-      </View>
-    </PresentationSource>
+          {presentedFeed.length === 0 &&
+          !props.worktreeSetup &&
+          props.activeWorkStartedAt === null &&
+          props.contentPresentation.kind === "ready" ? (
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFill,
+                { left: contentLeftInset, right: contentRightInset },
+              ]}
+            >
+              <ThreadFeedPlaceholder
+                title={translator.message("mobile.thread.noConversation")}
+                detail={translator.message("mobile.thread.noConversationDescription")}
+                topInset={topContentInset}
+                bottomInset={bottomContentInset}
+                horizontalPadding={horizontalPadding}
+              />
+            </View>
+          ) : null}
+          <VideoPreviewModal source={expandedVideo} onRequestClose={closeVideoPreview} />
+          <FilePreviewModal source={expandedFile} onRequestClose={closeFilePreview} />
+        </View>
+      </PresentationSource>
+    </ChatPresentationMotionContext>
   );
 });
 
 function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
+  const translator = useMobileInterfaceTranslator();
   const theme = useUniwindTheme();
   const mutedColor = theme["--color-icon-subtle"];
   if (!props.hasMoreHistory && props.error === null) {
@@ -3958,9 +4237,13 @@ function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
       {props.hasMoreHistory ? (
         <View className="self-center">
           <Button
-            label={props.loading ? "Loading earlier activity…" : "Load earlier activity"}
+            label={
+              props.loading
+                ? translator.message("mobile.subagent.loadingEarlier")
+                : translator.message("mobile.subagent.loadEarlier")
+            }
             tone="secondary"
-            accessibilityLabel="Load earlier activity"
+            accessibilityLabel={translator.message("mobile.subagent.loadEarlier")}
             disabled={props.loading}
             onPress={props.onLoadEarlier}
             icon="chevron.up"

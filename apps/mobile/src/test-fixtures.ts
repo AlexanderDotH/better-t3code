@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { currentInterfaceTranslator } from "./localization/currentInterfaceTranslator";
 
 const DEFAULT_TIMESTAMP = "2026-01-01T00:00:00.000Z";
 
@@ -22,7 +23,7 @@ export function makeRawThreadShell(
   return {
     id,
     projectId: ProjectId.make("project-test"),
-    title: "Thread",
+    title: currentInterfaceTranslator().message("mobile.thread.settings.thread"),
     providerInstanceId,
     modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
     runtimeMode: "full-access",

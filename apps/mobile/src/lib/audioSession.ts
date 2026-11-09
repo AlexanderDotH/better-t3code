@@ -1,4 +1,8 @@
 import { AudioModule, setAudioModeAsync, setIsAudioActiveAsync } from "expo-audio";
+import {
+  clearVoiceRecordingInput,
+  configureMusicFriendlyVoiceRecording,
+} from "../native/voiceRecordingAudio";
 
 type AudioSessionToken = {
   readonly kind: "playback" | "recording";
@@ -68,13 +72,19 @@ export function activateAudioSession(
     if (!isAudioSessionOwner(token)) return false;
     // Video configures and activates its own native session, including moviePlayback on iOS.
     if (nativePlayback) return true;
+    const recording = token.kind === "recording";
+    // Dictation keeps Bluetooth music playing and records from the built-in mic instead of the headset.
     await setAudioModeAsync({
-      allowsRecording: token.kind === "recording",
-      interruptionMode: "doNotMix",
+      allowsRecording: recording,
+      interruptionMode: recording ? "mixWithOthers" : "doNotMix",
       playsInSilentMode: true,
       shouldPlayInBackground: false,
     });
     if (!isAudioSessionOwner(token)) return false;
+    if (recording) {
+      await configureMusicFriendlyVoiceRecording();
+      if (!isAudioSessionOwner(token)) return false;
+    }
     await setIsAudioActiveAsync(true);
     return isAudioSessionOwner(token);
   });
@@ -85,7 +95,13 @@ export function releaseAudioSession(token: AudioSessionToken): Promise<void> {
   return enqueue(async () => {
     if (owner !== token) return;
     try {
-      if (token.kind === "recording") await setAudioModeAsync({ allowsRecording: false });
+      if (token.kind === "recording") {
+        try {
+          await clearVoiceRecordingInput();
+        } finally {
+          await setAudioModeAsync({ allowsRecording: false });
+        }
+      }
     } finally {
       if (owner === token) {
         if (token.kind === "recording") await setIsAudioActiveAsync(false);

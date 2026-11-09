@@ -32,13 +32,19 @@ import {
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { pullRequestFileJumpScope, requestPullRequestFileJump } from "./pullRequestFileJump";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const BREAKDOWN_LABELS = {
   code: "Code",
   tests: "Tests",
   mocks: "Mocks",
-  generated: "Generated",
-  docs: "Docs",
+  get generated() {
+    return currentInterfaceTranslator().message("mobile.ui.generated");
+  },
+  get docs() {
+    return currentInterfaceTranslator().message("mobile.ui.docs");
+  },
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
 
 function fileDirectory(path: string) {
@@ -86,7 +92,7 @@ function describeFiles(
       : null,
     filter.hideTestFiles
       ? `${filter.hiddenCount} test ${noun(filter.hiddenCount)} hidden`
-      : "Test files included",
+      : currentInterfaceTranslator().message("mobile.ui.testFilesIncluded"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -157,13 +163,14 @@ function FileRowSkeleton(props: { readonly index: number }) {
 }
 
 function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Menu
-      title="Review files"
+      title={translator.message("mobile.ui.reviewFiles")}
       actions={[
         {
           id: "hide-tests",
-          title: "Hide test files",
+          title: translator.message("mobile.ui.hideTestFiles"),
           image: "line.3.horizontal.decrease",
           state: filter.hideTestFiles ? "on" : "off",
         },
@@ -173,7 +180,7 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
       <View pointerEvents="none">
         <IconButton
           icon="line.3.horizontal.decrease"
-          accessibilityLabel="Filter review files"
+          accessibilityLabel={translator.message("mobile.ui.filterReviewFiles")}
           selected={filter.hideTestFiles}
         />
       </View>
@@ -182,31 +189,47 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
 }
 
 function NoVisibleFiles({ files }: { readonly files: ChangedFiles }) {
+  const translator = useMobileInterfaceTranslator();
   const { diff, filter, parsed } = files;
   if (parsed.kind === "files") {
     return parsed.files.length === 0 && filter.hiddenCount > 0 ? (
       <EmptyState
-        title={diff.nextCursor ? "No non-test files loaded yet" : "Only test files changed"}
-        detail="Test files are hidden from this review."
-        action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+        title={
+          diff.nextCursor
+            ? translator.message("mobile.ui.noNonTestFilesLoadedYet")
+            : translator.message("mobile.ui.onlyTestFilesChanged")
+        }
+        detail={translator.message("mobile.ui.testFilesAreHiddenFromThisReview")}
+        action={
+          <Button
+            label={translator.message("mobile.ui.showTestFiles")}
+            tone="contrast"
+            onPress={filter.showAll}
+          />
+        }
         variant="plain"
       />
     ) : null;
   }
   return !diff.isPending && !diff.error ? (
     <Text textRole="footnote" className="py-6 text-foreground-muted">
-      No text changes available.
+      {translator.message("mobile.ui.noTextChangesAvailable")}
     </Text>
   ) : null;
 }
 
 function FilesFooter({ files }: { readonly files: ChangedFiles }) {
+  const translator = useMobileInterfaceTranslator();
   const { diff, viewed, parsed } = files;
   return (
     <>
       {diff.nextCursor ? (
         <Button
-          label={diff.error ? "Retry loading files" : "Load more files"}
+          label={
+            diff.error
+              ? translator.message("mobile.ui.retryLoadingFiles")
+              : translator.message("mobile.ui.loadMoreFiles")
+          }
           tone="secondary"
           onPress={diff.error ? diff.refresh : diff.loadMore}
           loading={diff.isPending}
@@ -252,6 +275,7 @@ function ChangeBreakdownLine(props: {
  * so the section supplies its header, rows, and footer instead of rendering a list of its own.
  */
 export function usePullRequestFilesSection(params: PullRequestParams) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const files = useChangedFiles(params);
   const { diff, filter, viewed, pr, parsed, loading } = files;
@@ -266,12 +290,14 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
         <PullRequestReadStatus pending={false} error={diff.error} terminology={files.terminology} />
         {loading ? (
           <View
-            accessibilityLabel="Loading changed files"
+            accessibilityLabel={translator.message("mobile.ui.loadingChangedFiles")}
             accessibilityState={{ busy: true }}
             className="min-h-17 flex-row items-center gap-2 py-3"
           >
             <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              <PullRequestSectionHeading>
+                {translator.message("mobile.review.changedFiles")}
+              </PullRequestSectionHeading>
               {pr ? (
                 <Text textRole="caption" className="text-foreground-muted">
                   {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
@@ -298,7 +324,9 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
         ) : parsed.kind === "files" ? (
           <View className="min-h-17 flex-row items-center gap-2 py-3">
             <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              <PullRequestSectionHeading>
+                {translator.message("mobile.review.changedFiles")}
+              </PullRequestSectionHeading>
               <Text textRole="caption" className="text-foreground-muted">
                 {describeFiles(parsed, files)}
               </Text>
@@ -397,6 +425,7 @@ function DirectoryRow(props: {
 
 /** The `PullRequestFiles` sheet: a changed-file picker presented over a file diff. */
 export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDiffParams>) {
+  const translator = useMobileInterfaceTranslator();
   const params = route.params;
   const navigation = useNavigation();
   const jumpScope = pullRequestFileJumpScope(params);
@@ -414,7 +443,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Changed files"
+        title={translator.message("mobile.review.changedFiles")}
         subtitle={`#${params.number} · ${params.commit?.slice(0, 7) ?? params.repository}`}
         onClose={() => navigation.goBack()}
         // iOS gets the native menu below; SheetHeader would render this as a custom bar item.
@@ -422,8 +451,8 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
       />
       <Toolbar placement="right">
         <Toolbar.Menu
-          title="Review files"
-          accessibilityLabel="Filter review files"
+          title={translator.message("mobile.ui.reviewFiles")}
+          accessibilityLabel={translator.message("mobile.ui.filterReviewFiles")}
           icon="line.3.horizontal.decrease"
         >
           <Toolbar.MenuAction
@@ -431,7 +460,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
             isOn={filter.hideTestFiles}
             onPress={filter.toggle}
           >
-            <Toolbar.Label>Hide test files</Toolbar.Label>
+            <Toolbar.Label>{translator.message("mobile.ui.hideTestFiles")}</Toolbar.Label>
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
@@ -502,7 +531,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
             loading ? (
               <View
                 accessible
-                accessibilityLabel="Loading changed files"
+                accessibilityLabel={translator.message("mobile.ui.loadingChangedFiles")}
                 accessibilityState={{ busy: true }}
               >
                 {Array.from({ length: loadingRowCount(files) }, (_, index) => (

@@ -14,6 +14,7 @@ import {
   fallbackTextGenerationModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
+import { usageHardBudgetBlockReason } from "../provider/usageHardBudget.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
@@ -134,6 +135,24 @@ export const make = Effect.gen(function* () {
           },
           { includeConfiguredInstances: true },
         ) ?? selection;
+    }
+    const budgetEnabled = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.usageHardBudgetEnabled),
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail: "Could not read usage budget settings.",
+            cause,
+          }),
+      ),
+    );
+    if (budgetEnabled) {
+      const detail = usageHardBudgetBlockReason(
+        snapshots.find((provider) => provider.instanceId === selection.instanceId)?.usageLimits,
+        now,
+      );
+      if (detail !== null) return yield* new TextGenerationError({ operation, detail });
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
       Effect.flatMap((service) => invoke(service, selection)),

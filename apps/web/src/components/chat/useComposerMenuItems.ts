@@ -21,6 +21,7 @@ import {
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 import type { ComposerTrigger } from "../../composer-logic";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
@@ -64,6 +65,7 @@ export function useComposerMenuItems({
   pullRequestRepository,
   threadPullRequests,
   planModeUiEnabled,
+  deepPlanningDisabledReason,
   sideChatAvailable,
   sideChatDisabledReason,
   compactSlashCommandAvailable,
@@ -83,6 +85,7 @@ export function useComposerMenuItems({
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly planModeUiEnabled: boolean;
+  readonly deepPlanningDisabledReason: string | null;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
   readonly compactSlashCommandAvailable: boolean;
@@ -93,6 +96,7 @@ export function useComposerMenuItems({
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
 }) {
+  const translate = useInterfaceTranslator().message;
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
   const composerTriggerKind = composerTrigger?.kind ?? null;
@@ -221,8 +225,23 @@ export function useComposerMenuItems({
           id: "slash:model",
           type: "slash-command",
           command: "model",
-          label: "/model",
-          description: "Switch response model for this thread",
+          label: translate("chat.composer.command.modelLabel"),
+          description: translate("chat.composer.command.modelDescription"),
+        },
+        // Chat and Build need no planning support, so every provider offers them.
+        {
+          id: "slash:chat",
+          type: "slash-command",
+          command: "chat",
+          label: "/chat",
+          description: translate("chat.composer.interaction.chatDescription"),
+        },
+        {
+          id: "slash:default",
+          type: "slash-command",
+          command: "default",
+          label: translate("chat.composer.command.defaultLabel"),
+          description: translate("chat.composer.command.defaultDescription"),
         },
         ...(planModeUiEnabled
           ? ([
@@ -230,15 +249,17 @@ export function useComposerMenuItems({
                 id: "slash:plan",
                 type: "slash-command",
                 command: "plan",
-                label: "/plan",
-                description: "Switch this thread into plan mode",
+                label: translate("chat.composer.command.planLabel"),
+                description: translate("chat.composer.command.planDescription"),
               },
               {
-                id: "slash:default",
+                id: "slash:deep-plan",
                 type: "slash-command",
-                command: "default",
-                label: "/default",
-                description: "Switch this thread back to normal build mode",
+                command: "deep-plan",
+                label: "/deep-plan",
+                description:
+                  deepPlanningDisabledReason ?? translate("chat.deepPlan.slashDescription"),
+                disabled: deepPlanningDisabledReason !== null,
               },
             ] as const)
           : []),
@@ -274,7 +295,10 @@ export function useComposerMenuItems({
         provider: selectedProvider,
         command,
         label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
+        description:
+          command.description ??
+          command.input?.hint ??
+          translate("chat.composer.command.runProviderCommand"),
       }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
@@ -286,7 +310,9 @@ export function useComposerMenuItems({
         description:
           skill.shortDescription ??
           skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
+          (skill.scope
+            ? translate("chat.composer.command.providerSkillScope", { scope: skill.scope })
+            : ""),
       }));
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
@@ -307,7 +333,9 @@ export function useComposerMenuItems({
         description:
           skill.shortDescription ??
           skill.description ??
-          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+          (skill.scope
+            ? translate("chat.composer.command.providerSkillScope", { scope: skill.scope })
+            : translate("chat.composer.command.runProviderSkill")),
       }));
     }
     if (
@@ -386,7 +414,7 @@ export function useComposerMenuItems({
         exactPullRequestLookup.isPending));
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
-      return "No skills found. Try / to browse provider commands.";
+      return translate("chat.composer.command.noSkills");
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
@@ -403,8 +431,8 @@ export function useComposerMenuItems({
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
-      : "No matching command.";
+      ? translate("chat.composer.command.noFiles")
+      : translate("chat.composer.command.noCommand");
   })();
 
   return { items, isLoading, emptyState };

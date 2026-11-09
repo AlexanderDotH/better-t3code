@@ -3,6 +3,7 @@ import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId } from "react";
 
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 const NativeControls = requireNativeModule<{
   presentFile(
@@ -31,7 +32,11 @@ function NativeFilePreview(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    else
+      Dialog.alert(
+        currentInterfaceTranslator().message("mobile.ui.couldNotOpenPreview"),
+        currentInterfaceTranslator().message("mobile.ui.theFileCouldNotBeLoadedPlease"),
+      );
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup

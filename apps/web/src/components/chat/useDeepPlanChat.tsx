@@ -2,7 +2,17 @@ import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { waitForStartedServerThread } from "../ChatView.logic";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { getSupportedPlanSubagentCounts } from "@t3tools/client-runtime/plan-implementation";
+import {
+  getSupportedPlanSubagentCounts,
+  resolvePlanImplementationDispatch,
+  resolvePlanImplementationSuggestion,
+} from "@t3tools/client-runtime/plan-implementation";
+import { PlanId } from "@t3tools/contracts";
+import { usePlanParallelismReview } from "../../hooks/usePlanParallelismReview";
+import { ComposerBanner } from "./ComposerBanner";
+import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { estimatePlanExecution } from "./planExecutionEstimate";
+import { readPromptUltrathink } from "./TraitsPicker";
 import { Menu, MenuTrigger, MenuPopup, MenuRadioGroup, MenuRadioItem } from "../ui/menu";
 import { useState } from "react";
 import type {
@@ -21,6 +31,7 @@ import {
   buildDeepPlanImplementationPrompt,
   continueDeepPlanForTurn,
   getDeepPlanApprovalBlockReason,
+  formatDeepPlanMarkdown,
 } from "@t3tools/client-runtime/deep-planning";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
@@ -60,6 +71,7 @@ export function useDeepPlanChat(input: {
   runtimeMode: RuntimeMode;
   providers: ReadonlyArray<ServerProvider>;
   modelSelection: ModelSelection | null;
+  reviewerSelection: ModelSelection;
   getModelSelection: () => ModelSelection | undefined;
 }) {
   const translate = useInterfaceTranslator().message;
@@ -69,11 +81,23 @@ export function useDeepPlanChat(input: {
   const sources = useComposerDraftStore(
     (store) => store.getComposerDraft(input.draftTarget)?.deepPlanSourceRefs ?? NO_SOURCES,
   );
+  const draftIncludesProjectChats = useComposerDraftStore(
+    (store) => store.getComposerDraft(input.draftTarget)?.deepPlanIncludeProjectChats !== false,
+  );
   const currentProject = input.projectId
     ? { environmentId: input.environmentId, projectId: input.projectId }
     : null;
   const frozen = input.run !== null && input.run.phase !== "completed";
-  const capturedSources = frozen && input.run?.sources.length ? input.run.sources : null;
+  const capturedRun =
+    input.run !== null &&
+    input.run.phase !== "completed" &&
+    (input.run.sources.length > 0 || input.run.includeProjectChats !== undefined)
+      ? input.run
+      : null;
+  const capturedSources = capturedRun?.sources ?? null;
+  const includeProjectChats = capturedRun
+    ? capturedRun.includeProjectChats !== false
+    : draftIncludesProjectChats;
   const sourceOptions = capturedSources?.map((source) => ({
     ref: source.origin,
     environmentLabel:
@@ -99,12 +123,72 @@ export function useDeepPlanChat(input: {
   const startTurn = useOrchestrationCommand(threadEnvironment.startTurn, { reportFailure: false });
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
-  const [parallelism, setParallelism] = useState(1);
+  const draftPrompt = useComposerDraftStore(
+    (store) => store.getComposerDraft(input.draftTarget)?.prompt ?? "",
+  );
+  const parallelismScope = JSON.stringify([
+    input.environmentId,
+    input.run?.id,
+    input.run?.plan?.version,
+    input.modelSelection?.instanceId,
+  ]);
+  const [parallelismSelection, setParallelismSelection] = useState<{
+    scope: string;
+    count: number;
+  } | null>(null);
   const provider = input.providers.find(
     (candidate) => candidate.instanceId === input.modelSelection?.instanceId,
   );
   const supportedCounts = input.parallelEnabled ? getSupportedPlanSubagentCounts(provider) : [];
-  const requestedParallelism = supportedCounts.includes(parallelism) ? parallelism : 1;
+  const proposal = input.run?.plan
+    ? {
+        id: PlanId.make(`deep-plan:${input.run.id}:${input.run.plan.version}`),
+        updatedAt: input.run.updatedAt,
+        deepPlan: { runId: input.run.id, planVersion: input.run.plan.version },
+      }
+    : null;
+  const planMarkdown = input.run?.plan ? formatDeepPlanMarkdown(input.run.plan) : "";
+  const approvalReady = input.run !== null && getDeepPlanApprovalBlockReason(input.run) === null;
+  const review = usePlanParallelismReview({
+    enabled:
+      input.parallelEnabled &&
+      input.connected &&
+      input.canOperate &&
+      !input.working &&
+      approvalReady,
+    environmentId: input.environmentId,
+    threadId: input.run?.threadId ?? null,
+    plan: proposal,
+    implementationProvider: provider,
+    reviewerProvider: input.providers.find(
+      (candidate) => candidate.instanceId === input.reviewerSelection.instanceId,
+    ),
+    reviewerSelection: input.reviewerSelection,
+  });
+  const suggestion = resolvePlanImplementationSuggestion({
+    featureEnabled: input.parallelEnabled,
+    planMarkdown,
+    provider,
+    reviewedSubagentCount: review.reviewedSubagentCount,
+  });
+  const selectedParallelism =
+    parallelismSelection?.scope === parallelismScope ? parallelismSelection.count : null;
+  const requestedParallelism =
+    selectedParallelism === 1 ||
+    (selectedParallelism !== null && supportedCounts.includes(selectedParallelism))
+      ? selectedParallelism
+      : (suggestion?.strategy.count ?? 1);
+  const estimate =
+    input.run?.plan && provider && input.modelSelection
+      ? estimatePlanExecution({
+          planMarkdown,
+          modelSelection: input.modelSelection,
+          models: provider.models,
+          provider: provider.driver,
+          ultrathink:
+            provider.driver === "claudeAgent" && readPromptUltrathink(draftPrompt) !== "none",
+        })
+      : undefined;
   const [pending, setPending] = useState(false);
   const errorScope = JSON.stringify([input.environmentId, input.threadRef.threadId, input.run?.id]);
   const [errorState, setErrorState] = useState<{ scope: string; message: string } | null>(null);
@@ -138,7 +222,25 @@ export function useDeepPlanChat(input: {
   const approve = async (inNewThread = false) => {
     const run = input.run;
     const modelSelection = input.getModelSelection();
-    if (!run || !modelSelection || disabled) return;
+    if (!run || !modelSelection || disabled || !approvalReady || review.status === "reviewing")
+      return;
+    const strategy =
+      requestedParallelism > 1
+        ? ({ kind: "subagents", count: requestedParallelism } as const)
+        : ({ kind: "standard" } as const);
+    const dispatch = resolvePlanImplementationDispatch({
+      planMarkdown,
+      strategy,
+      selectedProviderInstanceId: modelSelection.instanceId,
+      providerStatuses: input.providers,
+    });
+    if (dispatch._tag === "Blocked") {
+      setError(dispatch.error);
+      return;
+    }
+    const implementationProvider = input.providers.find(
+      (candidate) => candidate.instanceId === modelSelection.instanceId,
+    );
     const targetThreadId = inNewThread ? newThreadId() : input.threadRef.threadId;
     let created = false;
     let approved: DeepPlanRun | null = null;
@@ -179,11 +281,8 @@ export function useDeepPlanChat(input: {
             role: "user",
             attachments: [],
             text: buildDeepPlanImplementationPrompt(approved, {
-              strategy:
-                requestedParallelism > 1
-                  ? { kind: "subagents", count: requestedParallelism }
-                  : { kind: "standard" },
-              ...(provider ? { provider } : {}),
+              strategy,
+              ...(implementationProvider ? { provider: implementationProvider } : {}),
             }),
           },
           modelSelection,
@@ -214,6 +313,8 @@ export function useDeepPlanChat(input: {
     setPending(false);
   };
   return {
+    sourceRefs: selectedSources,
+    includeProjectChats,
     reference: input.run?.plan
       ? { runId: input.run.id, planVersion: input.run.plan.version }
       : null,
@@ -234,15 +335,29 @@ export function useDeepPlanChat(input: {
               }
               options={sourceOptions ?? catalog.options}
               selected={selectedSources}
+              includeProjectChats={includeProjectChats}
               loading={catalog.loading}
               error={catalog.error}
               disabled={disabled || !input.supported || frozen}
               frozen={frozen}
               onOpen={catalog.onOpen}
-              onChange={(selected) =>
-                useComposerDraftStore.getState().setDeepPlanSourceRefs(input.draftTarget, selected)
+              onChange={(selected, include) =>
+                useComposerDraftStore
+                  .getState()
+                  .setDeepPlanSourceRefs(input.draftTarget, selected, include)
               }
             />
+          ) : null}
+          {input.run?.phase === "awaitingApproval" && !input.working ? (
+            <ComposerBanner.Attachment>
+              <ComposerBanner.Root variant="default">
+                <ComposerPlanFollowUpBanner
+                  deepPlan
+                  planTitle={input.run.plan?.goal ?? null}
+                  estimate={estimate}
+                />
+              </ComposerBanner.Root>
+            </ComposerBanner.Attachment>
           ) : null}
           {input.run ? (
             <>
@@ -289,7 +404,9 @@ export function useDeepPlanChat(input: {
                 <MenuPopup align="end">
                   <MenuRadioGroup
                     value={String(requestedParallelism)}
-                    onValueChange={(value) => setParallelism(Number(value))}
+                    onValueChange={(value) =>
+                      setParallelismSelection({ scope: parallelismScope, count: Number(value) })
+                    }
                   >
                     {[1, ...supportedCounts].map((count) => (
                       <MenuRadioItem key={count} value={String(count)}>
@@ -303,14 +420,18 @@ export function useDeepPlanChat(input: {
               </Menu>
             ) : null}
             <Button
-              disabled={disabled || getDeepPlanApprovalBlockReason(input.run) !== null}
+              disabled={disabled || !approvalReady || review.status === "reviewing"}
               onClick={() => void approve()}
             >
-              {translate("chat.deepPlan.implement")}
+              {translate(
+                review.status === "reviewing"
+                  ? "chat.composer.analyzingPlan"
+                  : "chat.deepPlan.implement",
+              )}
             </Button>
             <Button
               variant="outline"
-              disabled={disabled || getDeepPlanApprovalBlockReason(input.run) !== null}
+              disabled={disabled || !approvalReady || review.status === "reviewing"}
               onClick={() => void approve(true)}
             >
               {translate("chat.deepPlan.implementNewThread")}

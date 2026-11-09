@@ -117,6 +117,7 @@ import {
 } from "./new-task-flow-state";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -234,6 +235,7 @@ export function NewTaskFlowProvider(
     routeDraftId?: string;
   }>,
 ) {
+  const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -652,10 +654,10 @@ export function NewTaskFlowProvider(
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch machine",
+        translator.message("mobile.ui.couldNotSwitchMachine"),
         error instanceof Error
           ? error.message
-          : "The folder for threads without a project could not be created.",
+          : translator.message("mobile.ui.theFolderForThreadsWithoutAProject"),
       );
     }
     return false;
@@ -791,6 +793,7 @@ export function NewTaskFlowProvider(
             draft.interactionMode,
           ),
       deepPlanSourceRefs: draft.deepPlanSourceRefs,
+      deepPlanIncludeProjectChats: draft.deepPlanIncludeProjectChats,
       context: draft.context,
       modelSelection: draftModelSelection,
       runtimeMode: resolveNewThreadRuntimeMode(

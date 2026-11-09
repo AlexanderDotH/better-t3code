@@ -1,5 +1,13 @@
 import * as DateTime from "effect/DateTime";
-import { type OrchestrationV2ThreadProjection, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ContextTransfer,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2ProviderTurnTokenUsage,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import { Option, Schema } from "effect";
 
 export interface UsageActivity {
@@ -42,26 +50,110 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-export function deriveLatestContextWindowSnapshot(
-  input:
-    | ReadonlyArray<UsageActivity>
-    | {
-        readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "activeProviderThreadId">;
-        readonly providerThreads: OrchestrationV2ThreadProjection["providerThreads"];
-      },
+type ContextWindowTurnItem =
+  | Pick<
+      Extract<OrchestrationV2TurnItem, { readonly type: "compaction" }>,
+      "type" | "beforeTokenCount" | "afterTokenCount" | "startedAt" | "updatedAt"
+    >
+  | { readonly type: Exclude<OrchestrationV2TurnItem["type"], "compaction"> };
+
+export interface ContextWindowProjection {
+  readonly thread: Pick<
+    OrchestrationV2ThreadProjection["thread"],
+    "id" | "activeProviderThreadId" | "forkedFrom" | "modelSelection"
+  >;
+  readonly providerThreads: ReadonlyArray<
+    Pick<OrchestrationV2ProviderThread, "id" | "contextUsage" | "updatedAt">
+  >;
+  readonly providerTurns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>;
+  readonly visibleTurnItems: ReadonlyArray<{ readonly item: ContextWindowTurnItem }>;
+  readonly contextTransfers: ReadonlyArray<
+    Pick<
+      OrchestrationV2ContextTransfer,
+      | "type"
+      | "targetThreadId"
+      | "sourceThreadId"
+      | "sourcePoint"
+      | "sourceProviderInstanceId"
+      | "status"
+      | "resolution"
+      | "sourceTokenUsage"
+    >
+  >;
+}
+
+// A provider thread's snapshot is written when a turn starts; running turns report newer usage.
+function latestProviderTurnTokenUsage(
+  projection: ContextWindowProjection,
+  hasProviderSnapshot: boolean,
+): OrchestrationV2ProviderTurnTokenUsage | null {
+  let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
+  for (const { tokenUsage } of projection.providerTurns) {
+    if (tokenUsage === undefined) continue;
+    if (latest === null || Date.parse(tokenUsage.updatedAt) >= Date.parse(latest.updatedAt)) {
+      latest = tokenUsage;
+    }
+  }
+  if (latest !== null || hasProviderSnapshot) return latest;
+  const { thread } = projection;
+  const forkedFrom = thread.forkedFrom;
+  if (forkedFrom?.type !== "run") return null;
+  return (
+    projection.contextTransfers.find(
+      (transfer) =>
+        transfer.type === "fork" &&
+        transfer.targetThreadId === thread.id &&
+        transfer.sourceThreadId === forkedFrom.threadId &&
+        transfer.sourcePoint.runId === forkedFrom.runId &&
+        transfer.sourceProviderInstanceId === thread.modelSelection.instanceId &&
+        (transfer.status === "pending" || transfer.resolution?.strategy === "native_fork"),
+    )?.sourceTokenUsage ?? null
+  );
+}
+
+function projectionContextWindowSnapshot(
+  projection: ContextWindowProjection,
 ): ContextWindowSnapshot | null {
-  if ("providerThreads" in input) {
-    const active = input.providerThreads.find(
-      (thread) => thread.id === input.thread.activeProviderThreadId,
-    );
-    const providerThread =
-      active ?? input.providerThreads.findLast((thread) => thread.contextUsage != null);
-    if (providerThread?.contextUsage == null) return null;
+  const providerThread =
+    projection.providerThreads.find(
+      (thread) => thread.id === projection.thread.activeProviderThreadId,
+    ) ?? projection.providerThreads.findLast((thread) => thread.contextUsage != null);
+  const providerUsage = providerThread?.contextUsage ?? null;
+  const liveUsage = latestProviderTurnTokenUsage(projection, providerUsage !== null);
+  if (liveUsage !== null) {
     return contextWindowSnapshot(
-      providerThread.contextUsage,
-      DateTime.formatIso(providerThread.updatedAt),
+      {
+        ...liveUsage,
+        maxTokens: liveUsage.maxTokens ?? providerUsage?.maxTokens,
+        cumulativeUsage: providerUsage?.cumulativeUsage,
+        compactsAutomatically: providerUsage?.compactsAutomatically ?? true,
+      },
+      liveUsage.updatedAt,
     );
   }
+  if (providerThread && providerUsage !== null) {
+    return contextWindowSnapshot(providerUsage, DateTime.formatIso(providerThread.updatedAt));
+  }
+  for (let index = projection.visibleTurnItems.length - 1; index >= 0; index -= 1) {
+    const item = projection.visibleTurnItems[index]?.item;
+    if (item?.type !== "compaction") continue;
+    const snapshot = contextWindowSnapshot(
+      {
+        usedTokens: item.afterTokenCount,
+        totalProcessedTokens: item.beforeTokenCount,
+        compactsAutomatically: true,
+      },
+      DateTime.formatIso(item.startedAt ?? item.updatedAt),
+    );
+    if (snapshot !== null) return snapshot;
+  }
+  return null;
+}
+
+export function deriveLatestContextWindowSnapshot(
+  input: ReadonlyArray<UsageActivity> | ContextWindowProjection,
+): ContextWindowSnapshot | null {
+  if ("providerThreads" in input) return projectionContextWindowSnapshot(input);
   const activities = input;
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];

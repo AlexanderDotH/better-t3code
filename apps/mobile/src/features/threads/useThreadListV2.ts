@@ -1,3 +1,7 @@
+import {
+  resolveOlderProjectMemberKeys,
+  type ProjectActivityGroup,
+} from "@t3tools/client-runtime/state/project-activity";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
@@ -64,6 +68,9 @@ export function useThreadListV2(input: {
   readonly workingShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
+  /** Groups whose idle projects fold under the Older projects shelf; null leaves it off. */
+  readonly olderProjectGroups: ReadonlyArray<ProjectActivityGroup> | null;
+  readonly olderProjectsExpanded: boolean;
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
@@ -114,6 +121,34 @@ export function useThreadListV2(input: {
     input.queuedThreadKeys,
     workingShelfEnabled,
   ]);
+  // Serialized so the minute clock rebuilds the layout only when a project changes shelves.
+  const olderProjectEntries = useMemo(() => {
+    if (input.olderProjectGroups === null) return "";
+    const olderMembers = resolveOlderProjectMemberKeys({
+      groups: input.olderProjectGroups,
+      threads,
+      nowMs: Date.parse(input.now),
+      isThreadSettled: (thread) =>
+        input.settlementEnvironmentIds.has(thread.environmentId) &&
+        thread.settledOverride === "settled",
+    });
+    return [...olderMembers]
+      .map(([memberKey, groupKey]) => `${memberKey}\t${groupKey}`)
+      .sort()
+      .join("\n");
+  }, [input.olderProjectGroups, threads, input.now, input.settlementEnvironmentIds]);
+  const olderProjectGroupByMemberKey = useMemo(
+    () =>
+      new Map(
+        olderProjectEntries.length === 0
+          ? []
+          : olderProjectEntries.split("\n").map((entry) => {
+              const [memberKey = "", groupKey = ""] = entry.split("\t");
+              return [memberKey, groupKey] as const;
+            }),
+      ),
+    [olderProjectEntries],
+  );
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const scopes = useMemo(
     () =>
@@ -151,6 +186,8 @@ export function useThreadListV2(input: {
         isWorking: inbox.isWorking,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
+        olderProjectGroupByMemberKey,
+        olderProjectsExpanded: input.olderProjectsExpanded,
         selectedThreadKey: input.selectedThreadKey,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
@@ -183,6 +220,8 @@ export function useThreadListV2(input: {
       inbox.isWorking,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
+      olderProjectGroupByMemberKey,
+      input.olderProjectsExpanded,
       input.selectedThreadKey,
       isListed,
       unloadedCount,
@@ -214,6 +253,9 @@ export function useThreadListV2(input: {
       buildThreadListV2ListItems({
         items: layout.items,
         pendingTasks,
+        olderProjectCount: layout.olderProjectCount,
+        olderProjectsExpanded: input.olderProjectsExpanded,
+        olderProjectsShelfHeaderIndex: layout.olderProjectsShelfHeaderIndex,
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
         workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
@@ -232,6 +274,7 @@ export function useThreadListV2(input: {
     [
       layout,
       pendingTasks,
+      input.olderProjectsExpanded,
       input.workingShelfExpanded,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,

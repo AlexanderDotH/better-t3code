@@ -92,6 +92,8 @@ import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
@@ -101,13 +103,48 @@ type ScheduledTaskRoutes = {
 };
 
 const DAYS = [
-  { index: 1, label: "Mon" },
-  { index: 2, label: "Tue" },
-  { index: 3, label: "Wed" },
-  { index: 4, label: "Thu" },
-  { index: 5, label: "Fri" },
-  { index: 6, label: "Sat" },
-  { index: 0, label: "Sun" },
+  {
+    index: 1,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.mon");
+    },
+  },
+  {
+    index: 2,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.tue");
+    },
+  },
+  {
+    index: 3,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.wed");
+    },
+  },
+  {
+    index: 4,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.thu");
+    },
+  },
+  {
+    index: 5,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.fri");
+    },
+  },
+  {
+    index: 6,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.sat");
+    },
+  },
+  {
+    index: 0,
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.sun");
+    },
+  },
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
@@ -117,7 +154,9 @@ function describeSchedule(task: ScheduledTask): string {
     return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
   }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
-  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
+  const days = task.schedule.weekdays?.length
+    ? repeatLabel(task.schedule.weekdays)
+    : currentInterfaceTranslator().message("mobile.ui.everyDay");
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
 }
 
@@ -261,6 +300,7 @@ function WebhookFilterRows(props: {
   readonly disabled: boolean;
   readonly onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
     props.onChange(
       props.filters.map((filter, at) => (at === index ? { ...filter, ...patch } : filter)),
@@ -283,14 +323,14 @@ function WebhookFilterRows(props: {
             </Pressable>
           </View>
           <FormField
-            label="Path"
+            label={translator.message("sidebar.thread.menu.path")}
             value={filter.path}
             placeholder="body.action"
             disabled={props.disabled}
             onChange={(path) => update(index, { path })}
           />
           <SelectRow
-            label="Test"
+            label={translator.message("browser.script.exampleName")}
             value={WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label ?? ""}
             actions={WEBHOOK_FILTER_OPS.map((option) => ({
               id: option.op,
@@ -304,7 +344,11 @@ function WebhookFilterRows(props: {
           />
           {filter.op === "exists" ? null : (
             <FormField
-              label={filter.op === "in" ? "Values, comma-separated" : "Value"}
+              label={
+                filter.op === "in"
+                  ? translator.message("mobile.ui.valuesCommaSeparated")
+                  : translator.message("settings.mcp.editor.value")
+              }
               value={filter.value}
               placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
               disabled={props.disabled}
@@ -321,15 +365,14 @@ function WebhookFilterRows(props: {
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
         >
           <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-            Add filter
+            {translator.message("mobile.ui.addFilter")}
           </Text>
           <SymbolView name="plus" size={16} tintColorClassName="accent-icon" />
         </Pressable>
       ) : null}
       {props.filters.length > 0 ? (
         <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          Runs only when every filter matches. Other requests are logged as filtered. Separate “is
-          one of” values with commas; a value can't contain a comma.
+          {translator.message("mobile.ui.runsOnlyWhenEveryFilterMatchesOther")}
         </Text>
       ) : null}
     </>
@@ -377,6 +420,7 @@ function PickerRow(props: {
 }
 
 export function SettingsScheduledTasksRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const [now, setNow] = useState(Date.now);
   useFocusEffect(() => {
     const updateNow = () => setNow(Date.now());
@@ -413,7 +457,7 @@ export function SettingsScheduledTasksRouteScreen() {
           withNativeGlassHeaderItem({
             type: "button",
             label: "",
-            accessibilityLabel: "New task",
+            accessibilityLabel: translator.message("mobile.navigation.newTask"),
             icon: { type: "sfSymbol", name: "plus" } as const,
             disabled: visibleEnvironments.length === 0,
             onPress: newTask,
@@ -421,13 +465,13 @@ export function SettingsScheduledTasksRouteScreen() {
         ]}
       />
       <SettingsScreen
-        title="Scheduled tasks"
+        title={translator.message("mobile.settings.scheduledTasks")}
         trailing={
           <View className="flex-row items-center">
             <AndroidSettingsEnvironmentFilter />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="New task"
+              accessibilityLabel={translator.message("mobile.navigation.newTask")}
               accessibilityState={{ disabled: visibleEnvironments.length === 0 }}
               disabled={visibleEnvironments.length === 0}
               onPress={newTask}
@@ -475,8 +519,8 @@ export function SettingsScheduledTasksRouteScreen() {
           ) : (
             <Text className="px-2 text-base text-foreground-muted">
               {availableTargets.length === 0
-                ? "Connect an environment to view and create scheduled tasks."
-                : "No environments match these filters. Change the filter above."}
+                ? translator.message("mobile.ui.connectAnEnvironmentToViewAndCreate")
+                : translator.message("mobile.ui.noEnvironmentsMatchTheseFiltersChangeThe")}
             </Text>
           )}
         </ScrollView>
@@ -488,14 +532,21 @@ export function SettingsScheduledTasksRouteScreen() {
 // The "New task" action and takeScheduledTaskNewLink clear the editor before
 // this screen opens, so it starts from the default target.
 export function SettingsScheduledTaskNewRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="New scheduled task" />;
+  const translator = useMobileInterfaceTranslator();
+  return (
+    <SettingsScheduledTaskEditorScreen title={translator.message("mobile.ui.newScheduledTask")} />
+  );
 }
 
 export function SettingsScheduledTaskEditRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
+  const translator = useMobileInterfaceTranslator();
+  return (
+    <SettingsScheduledTaskEditorScreen title={translator.message("mobile.ui.editScheduledTask")} />
+  );
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
+  const translator = useMobileInterfaceTranslator();
   const { editor, voiceOwnerKey, readEditor, setEditor, hasChanges, draftForEnvironment } =
     useScheduledTaskEditor();
   const { availableTargets } = useSettingsEnvironmentFilter();
@@ -549,21 +600,28 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
       return;
     }
     if (saving) {
-      Dialog.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      Dialog.alert(
+        translator.message("mobile.ui.savingTask"),
+        translator.message("mobile.ui.waitForTheTaskToFinishSaving"),
+      );
       return;
     }
-    Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
-      { text: "Keep editing", style: "cancel" },
-      {
-        text: "Discard changes",
-        style: "destructive",
-        onPress: () => {
-          if (voiceInput.isBusy) voiceInput.cancel();
-          discardScheduledTaskEditor();
-          navigation.dispatch(data.action);
+    Dialog.alert(
+      translator.message("mobile.git.discardTitle"),
+      translator.message("mobile.ui.yourUnsavedChangesWillBeLost"),
+      [
+        { text: translator.message("mobile.ui.keepEditing"), style: "cancel" },
+        {
+          text: translator.message("settings.voice.options.cancel"),
+          style: "destructive",
+          onPress: () => {
+            if (voiceInput.isBusy) voiceInput.cancel();
+            discardScheduledTaskEditor();
+            navigation.dispatch(data.action);
+          },
         },
-      },
-    ]);
+      ],
+    );
   });
   return (
     <SettingsScreen title={title}>
@@ -577,7 +635,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
               withNativeGlassHeaderItem({
                 type: "button",
                 label: "",
-                accessibilityLabel: "Back",
+                accessibilityLabel: translator.message("browser.files.back"),
                 icon: { type: "sfSymbol", name: "chevron.backward" },
                 onPress: () => navigation.goBack(),
               }),
@@ -643,8 +701,8 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
-              : "No environments match the current filters. Change the filters to create a task."}
+              ? translator.message("mobile.ui.connectAnEnvironmentToCreateAScheduled")
+              : translator.message("mobile.ui.noEnvironmentsMatchTheCurrentFiltersChange")}
           </Text>
         )}
       </ScrollView>
@@ -677,6 +735,7 @@ function TaskForm({
   readonly onSaved: () => void;
   readonly onChangeEnvironment: (target: SettingsTarget) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
@@ -744,27 +803,27 @@ function TaskForm({
       parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
     ) {
       Dialog.alert(
-        "Invalid age limit",
+        translator.message("mobile.ui.invalidAgeLimit"),
         `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
       );
       return;
     }
     if (draft.schedule.mode === "once" && !offersOnce) {
       Dialog.alert(
-        "Once is not available here",
-        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+        translator.message("mobile.ui.onceIsNotAvailableHere"),
+        translator.message("mobile.ui.thisEnvironmentRunsAnOlderT3Code"),
       );
       return;
     }
     const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters);
     if (draft.schedule.mode === "webhook" && "error" in parsedFilters) {
-      Dialog.alert("Invalid filter", parsedFilters.error);
+      Dialog.alert(translator.message("mobile.ui.invalidFilter"), parsedFilters.error);
       return;
     }
     if (draft.schedule.mode === "webhook" && schedule === null) {
       Dialog.alert(
-        "Invalid webhook settings",
-        "Each dedupe key must contain a valid request placeholder. The coalesce window must be whole seconds from 10 to 3600, or blank.",
+        translator.message("mobile.ui.invalidWebhookSettings"),
+        translator.message("mobile.ui.eachDedupeKeyMustContainAValid"),
       );
       return;
     }
@@ -777,13 +836,16 @@ function TaskForm({
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
       Dialog.alert(
-        "Incomplete task",
-        "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
+        translator.message("mobile.ui.incompleteTask"),
+        translator.message("mobile.ui.addANamePromptProjectModelValid"),
       );
       return;
     }
     if (!projects.some((project) => project.id === draft.projectId)) {
-      Dialog.alert("Project unavailable", "Choose a project in this environment.");
+      Dialog.alert(
+        translator.message("mobile.ui.projectUnavailable"),
+        translator.message("mobile.ui.chooseAProjectInThisEnvironment"),
+      );
       return;
     }
     const input: ScheduledTaskUpsertInput = {
@@ -832,17 +894,19 @@ function TaskForm({
         importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
       >
         {taskMissing ? (
-          <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
+          <Text className="px-1 text-base text-danger-foreground">
+            {translator.message("mobile.ui.thisTaskNoLongerExists")}
+          </Text>
         ) : null}
 
         {environmentUnavailable ? (
           <Text className="px-1 text-base text-danger-foreground">
-            This environment is disconnected. Reconnect before saving.
+            {translator.message("mobile.ui.thisEnvironmentIsDisconnectedReconnectBeforeSaving")}
           </Text>
         ) : null}
         <SettingsSection>
           <SelectRow
-            label="Runs on"
+            label={translator.message("mobile.ui.runsOn")}
             value={environmentLabel}
             valueIcon={
               <EnvironmentMachineSymbol
@@ -870,23 +934,25 @@ function TaskForm({
             }}
           />
         </SettingsSection>
-        <SettingsSection title="Task">
+        <SettingsSection title={translator.message("mobile.ui.task")}>
           <FormField
-            label="Name"
+            label={translator.message("settings.skills.name")}
             disabled={saving}
             value={draft.title}
-            placeholder="Check for issues"
+            placeholder={translator.message("mobile.ui.checkForIssues")}
             onChange={(title) => setDraft({ ...draft, title })}
           />
           {promptField}
         </SettingsSection>
 
-        <SettingsSection title="Context">
+        <SettingsSection title={translator.message("settings.theme.editor.group.context")}>
           <SelectRow
-            label="Project"
+            label={translator.message("mobile.navigation.project")}
             value={
               projects.find((project) => project.id === draft.projectId)?.title ??
-              (projects.length ? "Choose project" : "No projects available")
+              (projects.length
+                ? translator.message("mobile.settings.harness.chooseProject")
+                : translator.message("mobile.ui.noProjectsAvailable"))
             }
             actions={projects.map((project) => ({
               id: project.id,
@@ -916,7 +982,7 @@ function TaskForm({
             }}
           />
           <PickerRow
-            label="Model"
+            label={translator.message("chat.planEstimate.model")}
             borderTop
             value={
               modelOptions.find(
@@ -925,16 +991,20 @@ function TaskForm({
                   option.selection.model === draft.modelSelection?.model,
               )?.label ??
               draft.modelSelection?.model ??
-              (modelOptions.length ? "Choose model" : "No models available")
+              (modelOptions.length
+                ? translator.message("mobile.settings.agents.chooseModel")
+                : translator.message("mobile.ui.noModelsAvailable"))
             }
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
             disabled={saving || dictationPending || environmentUnavailable}
           />
         </SettingsSection>
 
-        <SettingsSection title="Workspace">
+        <SettingsSection
+          title={translator.message("mobile.settings.projects.settings.workspaceTitle")}
+        >
           <SelectRow
-            label="Run in"
+            label={translator.message("mobile.ui.runIn")}
             value={
               draft.workspace === "worktree"
                 ? "New worktree"
@@ -945,17 +1015,17 @@ function TaskForm({
             actions={[
               {
                 id: "worktree",
-                title: "New worktree",
+                title: translator.message("mobile.settings.projects.settings.newWorktree"),
                 state: draft.workspace === "worktree" ? "on" : undefined,
               },
               {
                 id: "root",
-                title: "Project checkout",
+                title: translator.message("mobile.ui.projectCheckout"),
                 state: draft.workspace === "root" ? "on" : undefined,
               },
               {
                 id: "existing_worktree",
-                title: "Specific checkout",
+                title: translator.message("mobile.ui.specificCheckout"),
                 state: draft.workspace === "existing_worktree" ? "on" : undefined,
               },
             ]}
@@ -966,7 +1036,7 @@ function TaskForm({
           />
           {draft.workspace === "worktree" ? (
             <PickerRow
-              label="Base branch"
+              label={translator.message("mobile.thread.baseBranch")}
               value={resolveNewTaskBranchLabel({
                 branchName: draft.baseRef,
                 startFromOrigin: draft.startFromOrigin,
@@ -979,7 +1049,7 @@ function TaskForm({
           ) : null}
           {draft.workspace === "existing_worktree" ? (
             <FormField
-              label="Checkout path"
+              label={translator.message("mobile.ui.checkoutPath")}
               disabled={saving}
               value={draft.checkoutPath}
               borderTop
@@ -993,19 +1063,27 @@ function TaskForm({
           ) : null}
         </SettingsSection>
 
-        <SettingsSection title="Schedule">
+        <SettingsSection title={translator.message("mobile.ui.schedule")}>
           <View className="px-4 py-3">
             <SegmentedControl
               variant="card"
               options={[
-                { value: "fixed_time", label: "At a time" },
+                { value: "fixed_time", label: translator.message("mobile.ui.atATime") },
                 // Older servers reject one-time schedules on save.
                 ...(offersOnce || draft.schedule.mode === "once"
-                  ? [{ value: "once" as const, label: "Once" }]
+                  ? [{ value: "once" as const, label: translator.message("mobile.ui.once") }]
                   : []),
-                { value: "interval", label: "Interval" },
+                {
+                  value: "interval",
+                  label: translator.message("settings.diagnostics.history.interval"),
+                },
                 ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
-                  ? [{ value: "webhook" as const, label: "On webhook" }]
+                  ? [
+                      {
+                        value: "webhook" as const,
+                        label: translator.message("mobile.ui.onWebhook"),
+                      },
+                    ]
                   : []),
               ]}
               selected={draft.schedule.mode}
@@ -1039,7 +1117,7 @@ function TaskForm({
                 className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
               >
                 <Text textRole="body" className="text-foreground">
-                  Time
+                  {translator.message("settings.diagnostics.table.time")}
                 </Text>
                 <Text
                   textRole="footnote"
@@ -1067,18 +1145,18 @@ function TaskForm({
                 />
               ) : null}
               <SelectRow
-                label="Repeat"
+                label={translator.message("mobile.ui.repeat")}
                 value={repeatLabel(draft.schedule.weekdays)}
                 borderTop
                 actions={[
                   {
                     id: "every_day",
-                    title: "Every day",
+                    title: translator.message("mobile.ui.everyDay"),
                     state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
                   },
                   {
                     id: "weekdays",
-                    title: "Weekdays",
+                    title: translator.message("mobile.ui.weekdays"),
                     state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
                   },
                   ...DAYS.map((day) => ({
@@ -1119,12 +1197,14 @@ function TaskForm({
                 <View key={field}>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`${field === "date" ? "Date" : "Time"}, ${label}`}
+                    accessibilityLabel={`${field === "date" ? translator.message("mobile.ui.date") : translator.message("mobile.ui.time")}, ${label}`}
                     onPress={() => setRunAtPicker((open) => (open === field ? null : field))}
                     className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
                   >
                     <Text textRole="body" className="text-foreground">
-                      {field === "date" ? "Date" : "Time"}
+                      {field === "date"
+                        ? translator.message("mobile.ui.date")
+                        : translator.message("settings.diagnostics.table.time")}
                     </Text>
                     <Text
                       textRole="footnote"
@@ -1172,9 +1252,9 @@ function TaskForm({
                 disabled={!canOperate || saving || environmentUnavailable}
               />
               <FormField
-                label="Skip requests older than (minutes)"
+                label={translator.message("mobile.ui.skipRequestsOlderThanMinutes")}
                 value={draft.schedule.maxDeliveryAgeMinutes}
-                placeholder="Run every request"
+                placeholder={translator.message("mobile.ui.runEveryRequest")}
                 keyboardType="number-pad"
                 disabled={saving}
                 borderTop
@@ -1190,7 +1270,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Duplicate request key"
+                label={translator.message("mobile.ui.duplicateRequestKey")}
                 value={draft.schedule.replayKey}
                 placeholder="{{headers.delivery-id}}"
                 disabled={saving}
@@ -1200,10 +1280,10 @@ function TaskForm({
                 }
               />
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Requests with the same key run only once within 7 days.
+                {translator.message("mobile.ui.requestsWithTheSameKeyRunOnly")}
               </Text>
               <FormField
-                label="Coalesce key template"
+                label={translator.message("mobile.ui.coalesceKeyTemplate")}
                 value={draft.schedule.coalesceKey}
                 placeholder="{{body.id}}"
                 disabled={saving}
@@ -1213,7 +1293,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Coalesce window (seconds, 10–3600)"
+                label={translator.message("mobile.ui.coalesceWindowSeconds103600")}
                 value={draft.schedule.coalesceWindowSeconds}
                 placeholder="120"
                 keyboardType="number-pad"
@@ -1224,14 +1304,13 @@ function TaskForm({
                 }
               />
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Coalescing runs the latest payload when the window from the first delivery closes.
-                Empty keys run normally.
+                {translator.message("mobile.ui.coalescingRunsTheLatestPayloadWhenThe")}
               </Text>
             </>
           ) : (
             <>
               <FormField
-                label="Minutes between runs"
+                label={translator.message("mobile.ui.minutesBetweenRuns")}
                 value={draft.schedule.intervalMinutes}
                 keyboardType="decimal-pad"
                 disabled={saving}
@@ -1242,23 +1321,22 @@ function TaskForm({
               />
               {!(parseIntervalMinutes(draft.schedule.intervalMinutes) >= 1) ? (
                 <Text className="px-4 pb-3 text-sm text-danger-foreground">
-                  Intervals must be at least 1 minute. Update this interval before saving.
+                  {translator.message("mobile.ui.intervalsMustBeAtLeast1Minute")}
                 </Text>
               ) : draft.task?.schedule.type === "interval" &&
                 draft.task.schedule.everyMs < 60_000 ? (
                 <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                  This task previously ran more than once per minute. Saving requires an interval of
-                  at least 1 minute.
+                  {translator.message("mobile.ui.thisTaskPreviouslyRanMoreThanOnce")}
                 </Text>
               ) : null}
             </>
           )}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
             <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-              Enabled
+              {translator.message("common.enabled")}
             </Text>
             <ThemedSwitch
-              accessibilityLabel="Task enabled"
+              accessibilityLabel={translator.message("mobile.ui.taskEnabled")}
               value={draft.enabled}
               onValueChange={(enabled) => setDraft({ ...draft, enabled })}
             />
@@ -1266,7 +1344,7 @@ function TaskForm({
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
-            Time uses the environment's time zone, which may differ from your phone's.
+            {translator.message("mobile.ui.timeUsesTheEnvironmentsTimeZoneWhich")}
           </Text>
         ) : null}
       </View>
@@ -1283,7 +1361,13 @@ function TaskForm({
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }
         onPress={() => void save()}
-        label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
+        label={
+          saving
+            ? translator.message("mobile.settings.agents.saving")
+            : draft.task
+              ? translator.message("settings.theme.editor.saveChanges")
+              : translator.message("mobile.ui.createTask")
+        }
       />
     </View>
   );
@@ -1300,6 +1384,7 @@ function WebhookScheduleDetails({
   readonly signatureConfigured: boolean;
   readonly disabled: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [rotating, setRotating] = useState(false);
   const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
     label: "scheduled task rotate webhook token",
@@ -1318,19 +1403,23 @@ function WebhookScheduleDetails({
         }
       </Text>
       {task === null || resolved === null ? (
-        <Text className="text-sm text-foreground-muted">Save the task to get its webhook URL.</Text>
+        <Text className="text-sm text-foreground-muted">
+          {translator.message("mobile.ui.saveTheTaskToGetItsWebhook")}
+        </Text>
       ) : (
         <>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Copy webhook URL"
-            accessibilityHint="Copies the URL to the clipboard"
+            accessibilityLabel={translator.message("mobile.ui.copyWebhookUrl")}
+            accessibilityHint={translator.message("mobile.ui.copiesTheUrlToTheClipboard")}
             disabled={!resolved.copyable}
             onPress={() => void tryCopyTextWithHaptic(resolved.address)}
             className="gap-1 active:opacity-70"
           >
             <Text textRole="body" className="text-foreground">
-              {resolved.copyable ? "Webhook URL" : "Webhook path"}
+              {resolved.copyable
+                ? translator.message("mobile.ui.webhookUrl")
+                : translator.message("mobile.ui.webhookPath")}
             </Text>
             <Text className="text-sm text-foreground-muted" numberOfLines={2} selectable>
               {resolved.address}
@@ -1340,29 +1429,40 @@ function WebhookScheduleDetails({
             <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
           ) : null}
           <Button
-            label={rotating ? "Rotating…" : "Rotate URL"}
+            label={
+              rotating
+                ? translator.message("mobile.ui.rotating")
+                : translator.message("mobile.ui.rotateUrl")
+            }
             tone="danger"
             disabled={disabled || rotating}
             onPress={() =>
-              Dialog.alert("Rotate URL?", "The current URL stops working immediately.", [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Rotate",
-                  style: "destructive",
-                  onPress: () => {
-                    setRotating(true);
-                    void rotate({ environmentId, input: { id: task.id } }).then((result) => {
-                      setRotating(false);
-                      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                        Dialog.alert(
-                          "Could not rotate URL",
-                          String(squashAtomCommandFailure(result)),
-                        );
-                      }
-                    });
+              Dialog.alert(
+                translator.message("mobile.ui.rotateUrl2"),
+                translator.message("mobile.ui.theCurrentUrlStopsWorkingImmediately"),
+                [
+                  {
+                    text: translator.message("mobile.settings.projects.settings.cancel"),
+                    style: "cancel",
                   },
-                },
-              ])
+                  {
+                    text: translator.message("settings.integrations.rotate"),
+                    style: "destructive",
+                    onPress: () => {
+                      setRotating(true);
+                      void rotate({ environmentId, input: { id: task.id } }).then((result) => {
+                        setRotating(false);
+                        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                          Dialog.alert(
+                            translator.message("mobile.ui.couldNotRotateUrl"),
+                            String(squashAtomCommandFailure(result)),
+                          );
+                        }
+                      });
+                    },
+                  },
+                ],
+              )
             }
             loading={rotating}
           />
@@ -1370,7 +1470,7 @@ function WebhookScheduleDetails({
       )}
       {signatureConfigured ? (
         <Text className="text-sm text-foreground-muted">
-          Signature check configured on desktop/web.
+          {translator.message("mobile.ui.signatureCheckConfiguredOnDesktopWeb")}
         </Text>
       ) : null}
     </View>
@@ -1388,6 +1488,7 @@ function EnvironmentTasks({
   readonly projectIds: readonly ProjectId[] | null;
   readonly onEdit: (task: ScheduledTask) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const environmentId = environment.environmentId;
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
@@ -1443,10 +1544,14 @@ function EnvironmentTasks({
       {tasks.error ? (
         <Text className="p-4 text-base text-danger-foreground">{tasks.error}</Text>
       ) : !tasks.data ? (
-        <Text className="p-4 text-base text-foreground-muted">Loading tasks…</Text>
+        <Text className="p-4 text-base text-foreground-muted">
+          {translator.message("mobile.ui.loadingTasks")}
+        </Text>
       ) : visibleTasks?.length === 0 ? (
         <Text className="p-4 text-base text-foreground-muted">
-          {projectIds === null ? "No scheduled tasks yet." : "No tasks in this project."}
+          {projectIds === null
+            ? translator.message("mobile.ui.noScheduledTasksYet")
+            : translator.message("mobile.ui.noTasksInThisProject")}
         </Text>
       ) : (
         visibleTasks?.map((task, index) => (
@@ -1490,18 +1595,26 @@ function EnvironmentTasks({
             </Pressable>
             <Menu
               actions={[
-                { id: "edit", title: "Edit" },
+                { id: "edit", title: translator.message("common.edit") },
                 {
                   id: "toggle",
-                  title: task.enabled ? "Pause" : "Resume",
+                  title: task.enabled
+                    ? translator.message("common.pause")
+                    : translator.message("common.resume"),
                   attributes: { disabled: !canOperate },
                 },
                 ...(task.schedule.type === "webhook"
                   ? []
-                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
+                  : [
+                      {
+                        id: "run",
+                        title: translator.message("mobile.ui.runNow"),
+                        attributes: { disabled: !canOperate },
+                      },
+                    ]),
                 {
                   id: "delete",
-                  title: "Delete",
+                  title: translator.message("mobile.git.delete"),
                   attributes: { destructive: true, disabled: !canOperate },
                 },
               ]}
@@ -1510,10 +1623,13 @@ function EnvironmentTasks({
                 if (action === "edit") {
                   onEdit(task);
                 } else if (action === "delete") {
-                  Dialog.alert("Delete task?", task.title, [
-                    { text: "Cancel", style: "cancel" },
+                  Dialog.alert(translator.message("mobile.ui.deleteTask"), task.title, [
                     {
-                      text: "Delete",
+                      text: translator.message("mobile.settings.projects.settings.cancel"),
+                      style: "cancel",
+                    },
+                    {
+                      text: translator.message("mobile.git.delete"),
                       style: "destructive",
                       onPress: () => void act(task, "delete"),
                     },

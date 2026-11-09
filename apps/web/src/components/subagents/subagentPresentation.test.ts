@@ -10,11 +10,14 @@ import {
   type OrchestrationSubagentStatus,
   type OrchestrationSubagentSummary,
 } from "@t3tools/contracts/legacy";
+import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   ASTERIX_AGENT_NAMES,
   deriveSubagentTranscriptEntries,
+  runtimeSubagentTranscript,
   groupSubagents,
   resolveSubagentDisplayName,
   resolveSubagentStatusPresentation,
@@ -224,6 +227,45 @@ describe("deriveSubagentTranscriptEntries", () => {
       expect(liveEntry).toMatchObject({ kind: "message", message: { streaming: true } });
     },
   );
+
+  it("retains the prompt, progress and result of a native agent without a child thread", () => {
+    const [agent] = projectedSubagentsToRuntime([
+      {
+        id: "native-agent",
+        title: "Review",
+        prompt: "Review all changes, including their error handling.",
+        progress: "Checked error paths",
+        result: "Found one missing guard.",
+        model: "test-model",
+        status: "completed",
+        childThreadId: null,
+        startedAt: DateTime.makeUnsafe(STARTED_AT),
+        completedAt: DateTime.makeUnsafe("2026-07-30T09:01:00.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-07-30T09:01:00.000Z"),
+      },
+    ]);
+    expect(agent).toBeDefined();
+    const detail = runtimeSubagentTranscript(agent!);
+    expect(detail.task).toBe("Review all changes, including their error handling.");
+    expect(
+      deriveSubagentTranscriptEntries(detail).map((entry) =>
+        entry.kind === "message"
+          ? entry.message.text
+          : entry.kind === "activity"
+            ? entry.activity.summary
+            : "plan",
+      ),
+    ).toEqual(["Found one missing guard.", "Checked error paths"]);
+    expect(detail.messages[0]?.streaming).toBe(false);
+    expect(
+      runtimeSubagentTranscript({
+        ...agent!,
+        result: null,
+        error: "Provider disconnected",
+        status: "failed",
+      }).statusMessage,
+    ).toBe("Provider disconnected");
+  });
 
   it("keeps every message, plan, and activity in chronological order", () => {
     const detail: OrchestrationSubagentDetail = {

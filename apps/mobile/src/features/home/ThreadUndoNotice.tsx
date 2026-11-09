@@ -17,8 +17,10 @@ import {
   readThreadUndoNotice,
   useThreadUndoNotice,
 } from "./thread-undo-notice";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadUndoNotice(props: { readonly visible: boolean }) {
+  const translator = useMobileInterfaceTranslator();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const notice = useThreadUndoNotice();
   const insets = useSafeAreaInsets();
@@ -80,7 +82,7 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
       <Toast
         message={`${notice.action} thread`}
         action={{
-          label: "Undo",
+          label: translator.message("sidebar.thread.undo"),
           onPress: () => {
             void notice.undo();
           },

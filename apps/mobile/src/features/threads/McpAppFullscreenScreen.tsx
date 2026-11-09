@@ -14,6 +14,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell, useThreadShells } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { ThreadMcpApp } from "./McpAppWebView";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type McpAppFullscreenScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -56,6 +57,7 @@ function descendsFrom(
 
 /** Resolve apps from stored tool calls so links cannot supply apps the call never produced. */
 export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   // Wait for focus before goBack; an exit under another screen must not pop that screen.
@@ -111,11 +113,11 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
     <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
       <View className="h-11 flex-row items-center justify-between px-3">
         <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-          {app?.server ?? "App"}
+          {app?.server ?? translator.message("mobile.settings.section.app")}
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Exit full screen"
+          accessibilityLabel={translator.message("mobile.ui.exitFullScreen")}
           hitSlop={8}
           onPress={onClose}
         >
@@ -134,7 +136,9 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
       >
         {app === undefined ? (
           detail.data === undefined ? null : (
-            <Text className="m-6 text-sm text-foreground-muted">This app cannot be shown.</Text>
+            <Text className="m-6 text-sm text-foreground-muted">
+              {translator.message("mobile.ui.thisAppCannotBeShown")}
+            </Text>
           )
         ) : size.width > 0 ? (
           <ThreadMcpApp

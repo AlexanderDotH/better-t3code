@@ -8,9 +8,10 @@ import {
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { linkedThreadDraftAction } from "./prompt-link-model";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function showPromptLinkNotice(notice: string): void {
-  Dialog.alert("Prompt from a link", notice);
+  Dialog.alert(currentInterfaceTranslator().message("mobile.ui.promptFromALink"), notice);
 }
 
 export async function applyLinkedPromptToThreadDraft(
@@ -21,7 +22,10 @@ export async function applyLinkedPromptToThreadDraft(
   try {
     await waitForComposerDraftsLoaded();
   } catch {
-    Dialog.alert("Could not open link", "Drafts could not be loaded, so the prompt was not added.");
+    Dialog.alert(
+      currentInterfaceTranslator().message("mobile.ui.couldNotOpenLink"),
+      currentInterfaceTranslator().message("mobile.ui.draftsCouldNotBeLoadedSoThe"),
+    );
     return;
   }
   const action = linkedThreadDraftAction(getComposerDraftSnapshot(draftKey).text, prompt.text);
@@ -30,14 +34,24 @@ export async function applyLinkedPromptToThreadDraft(
     showPromptLinkNotice(notice);
     return;
   }
-  Dialog.alert("Linked prompt ready. Replace draft?", notice, [
-    { text: "Keep mine", style: "cancel" },
-    { text: "Replace", onPress: () => setComposerDraftText(draftKey, prompt.text) },
-  ]);
+  Dialog.alert(
+    currentInterfaceTranslator().message("mobile.ui.linkedPromptReadyReplaceDraft"),
+    notice,
+    [
+      { text: currentInterfaceTranslator().message("mobile.ui.keepMine"), style: "cancel" },
+      {
+        text: currentInterfaceTranslator().message("mobile.ui.replace"),
+        onPress: () => setComposerDraftText(draftKey, prompt.text),
+      },
+    ],
+  );
 }
 
 export async function copyPromptLink(prompt: string): Promise<void> {
   if (!(await tryCopyTextWithHaptic(buildNewThreadLink({ prompt }), { target: "prompt link" }))) {
-    Dialog.alert("Could not copy", "Try again.");
+    Dialog.alert(
+      currentInterfaceTranslator().message("mobile.ui.couldNotCopy"),
+      currentInterfaceTranslator().message("settings.panels.tryAgain"),
+    );
   }
 }

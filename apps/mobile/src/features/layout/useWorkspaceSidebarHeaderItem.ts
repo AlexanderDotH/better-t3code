@@ -1,15 +1,16 @@
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "./native-glass-header-items";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function useWorkspaceSidebarHeaderItem() {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const label = panes.primarySidebarVisible
     ? layout.primarySidebarOverlaysContent
-      ? "Hide thread sidebar"
-      : "Maximize content"
-    : "Show thread sidebar";
+      ? currentInterfaceTranslator().message("mobile.ui.hideThreadSidebar")
+      : currentInterfaceTranslator().message("mobile.thread.maximizeContent")
+    : currentInterfaceTranslator().message("mobile.ui.showThreadSidebar");
   return withNativeGlassHeaderItem({
     axisBehavior: usesNativeWorkspaceColumns ? "horizontalOnly" : undefined,
     accessibilityLabel: label,

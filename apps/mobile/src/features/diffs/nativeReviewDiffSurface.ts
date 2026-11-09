@@ -13,6 +13,7 @@ import { requireNativeView } from "expo";
 
 import { EmptyState } from "../../components/ui/EmptyState";
 import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const NATIVE_REVIEW_DIFF_MODULE_NAME = "T3ReviewDiffSurface";
 const NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES = 60;
@@ -293,10 +294,10 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
         ],
       },
       createElement(EmptyState, {
-        title: "Could not display diff",
-        detail: "Try loading the diff view again.",
+        title: currentInterfaceTranslator().message("mobile.ui.couldNotDisplayDiff"),
+        detail: currentInterfaceTranslator().message("mobile.ui.tryLoadingTheDiffViewAgain"),
         variant: "plain",
-        actionLabel: "Retry diff",
+        actionLabel: currentInterfaceTranslator().message("mobile.ui.retryDiff"),
         onAction: () => {
           props.onDebug?.({
             nativeEvent: { message: "surface-retry" },

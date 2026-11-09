@@ -1,10 +1,11 @@
-import { MicIcon, SquareIcon, Undo2Icon, XIcon } from "lucide-react";
+import { HourglassIcon, MicIcon, SquareIcon, Undo2Icon, XIcon } from "lucide-react";
 import { memo } from "react";
 
 import type { AssemblyAiDictationState } from "../../hooks/useAssemblyAiDictation";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 
 const WAVEFORM_BAR_KEYS = [
   "wave-01",
@@ -36,6 +37,8 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   onStop,
   onCancel,
   onRestoreOriginal,
+  size = "sm",
+  shortcutLabel,
 }: {
   readonly state: AssemblyAiDictationState;
   readonly audioWaveform: ReadonlyArray<number>;
@@ -44,18 +47,20 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   readonly onStop: () => void | Promise<void>;
   readonly onCancel: () => void;
   readonly onRestoreOriginal?: (() => void) | undefined;
+  readonly size?: ComposerControlSize;
+  readonly shortcutLabel?: string | null | undefined;
 }) {
   const translate = useInterfaceTranslator().message;
   if (state === "idle") {
     return (
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-0.5" data-voice-dictation-state={state}>
         {onRestoreOriginal ? (
           <Tooltip>
             <TooltipTrigger
               render={
-                <button
-                  type="button"
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                <ComposerControl
+                  size={size}
+                  disabled={disabled}
                   onClick={onRestoreOriginal}
                   aria-label={translate("chat.composer.voiceRestoreOriginal")}
                 />
@@ -69,18 +74,21 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
         <Tooltip>
           <TooltipTrigger
             render={
-              <button
-                type="button"
-                className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground transition-all duration-150 hover:scale-105 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
+              <ComposerControl
+                size={size}
                 disabled={disabled}
                 onClick={() => void onStart()}
+                data-composer-shortcut="composer.voiceInput"
                 aria-label={translate("chat.composer.voiceStart")}
               />
             }
           >
             <MicIcon className="size-4" />
           </TooltipTrigger>
-          <TooltipPopup side="top">{translate("chat.composer.voiceStart")}</TooltipPopup>
+          <TooltipPopup side="top">
+            {translate("chat.composer.voiceStart")}
+            {shortcutLabel ? ` (${shortcutLabel})` : null}
+          </TooltipPopup>
         </Tooltip>
       </div>
     );
@@ -96,14 +104,27 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   const buttonTooltip =
     state === "starting"
       ? translate("chat.composer.voiceConnectingTooltip")
-      : translate("chat.composer.voiceStopTooltip");
-  const peakLevel = audioWaveform.reduce((peak, level) => Math.max(peak, level), 0);
+      : state === "stopping"
+        ? translate("chat.composer.voiceProcessing")
+        : translate("chat.composer.voiceStopTooltip");
+  const peakLevel = audioWaveform.reduce(
+    (peak, level) => (Number.isFinite(level) ? Math.max(peak, level) : peak),
+    0,
+  );
   return (
     <div
-      className="flex h-9 items-center gap-3 sm:h-8"
+      className="flex shrink-0 items-center gap-1"
       data-voice-dictation-active="true"
+      data-voice-dictation-state={state}
       data-voice-dictation-tone={canSpeak ? "ready" : "waiting"}
     >
+      <span className="sr-only" role="status">
+        {state === "starting"
+          ? translate("chat.composer.voiceConnectingTooltip")
+          : state === "stopping"
+            ? translate("chat.composer.voiceProcessing")
+            : null}
+      </span>
       <div
         role="meter"
         aria-label={translate("chat.composer.voiceWaveform")}
@@ -111,16 +132,17 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
         aria-valuemax={100}
         aria-valuenow={Math.round(Math.max(0, Math.min(1, peakLevel)) * 100)}
         className={cn(
-          "flex h-8 w-20 items-center justify-center gap-0.5 overflow-hidden rounded-full px-2",
+          "flex items-center justify-center gap-px overflow-hidden rounded-(--control-radius) px-1",
+          size === "xs" ? "h-6 w-14" : "h-7 w-16",
           canSpeak ? "bg-voice-recording/8" : "bg-muted",
         )}
       >
-        {WAVEFORM_BAR_KEYS.slice(0, audioWaveform.length).map((key, index) => (
+        {WAVEFORM_BAR_KEYS.map((key, index) => (
           <span
             key={key}
             data-voice-wave-bar="true"
             className={cn(
-              "w-0.5 shrink-0 rounded-full transition-[height] duration-75 ease-out",
+              "w-0.5 shrink-0 rounded-full motion-safe:transition-[height] motion-safe:duration-75 motion-safe:ease-out",
               canSpeak ? "bg-voice-recording" : "bg-muted-foreground/35",
             )}
             style={{ height: waveformBarHeight(audioWaveform[index] ?? 0) }}
@@ -130,33 +152,49 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              type="button"
+            <ComposerControl
+              size={size}
               className={cn(
-                "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-60 sm:h-8 sm:w-8",
-                canSpeak
-                  ? "bg-voice-recording text-white shadow-voice-recording hover:bg-voice-recording-hover"
-                  : "border border-border/70 bg-muted text-muted-foreground hover:bg-muted/80",
+                canSpeak &&
+                  "bg-voice-recording text-white shadow-voice-recording hover:bg-voice-recording-hover hover:text-white dark:text-white",
               )}
               disabled={state === "stopping"}
-              onClick={() => void onStop()}
+              data-composer-shortcut="composer.voiceInput"
+              onClick={() => (state === "starting" ? onCancel() : void onStop())}
               aria-busy={state === "stopping" || undefined}
               aria-label={buttonLabel}
             />
           }
         >
-          <SquareIcon className="size-2.5 fill-current" />
+          {state === "starting" ? (
+            <XIcon className="size-3.5" />
+          ) : state === "stopping" ? (
+            <HourglassIcon className="size-3.5" />
+          ) : (
+            <SquareIcon className="size-2.5 fill-current text-current" />
+          )}
         </TooltipTrigger>
-        <TooltipPopup side="top">{buttonTooltip}</TooltipPopup>
+        <TooltipPopup side="top">
+          {buttonTooltip}
+          {shortcutLabel && state !== "stopping" ? ` (${shortcutLabel})` : null}
+        </TooltipPopup>
       </Tooltip>
-      <button
-        type="button"
-        className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={onCancel}
-        aria-label={translate("chat.composer.voiceCancel")}
-      >
-        <XIcon className="size-3.5" />
-      </button>
+      {state !== "starting" ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ComposerControl
+                size={size}
+                onClick={onCancel}
+                aria-label={translate("chat.composer.voiceCancel")}
+              />
+            }
+          >
+            <XIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{translate("chat.composer.voiceCancel")}</TooltipPopup>
+        </Tooltip>
+      ) : null}
     </div>
   );
 });

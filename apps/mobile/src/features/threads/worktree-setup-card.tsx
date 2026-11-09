@@ -16,6 +16,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { WorktreeSetupSheet } from "./worktree-setup-sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -41,6 +42,7 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
 };
 
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
+  const translator = useMobileInterfaceTranslator();
   const { snapshot, turnStarted, turnStartedAt, working } = props;
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
@@ -55,15 +57,15 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
       ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
       : running
         ? handedOff
-          ? "Setup continues…"
-          : "Setting up worktree…"
+          ? translator.message("mobile.ui.setupContinues")
+          : translator.message("mobile.ui.settingUpWorktree")
         : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
+          ? translator.message("mobile.ui.worktreeSetupCancelled")
           : snapshot.phase === "failed"
-            ? "Worktree setup failed"
+            ? translator.message("mobile.ui.worktreeSetupFailed")
             : failed
-              ? "Setup script failed"
-              : "Worktree ready";
+              ? translator.message("mobile.ui.setupScriptFailed")
+              : translator.message("mobile.ui.worktreeReady");
 
   return (
     <ChatStatusBubble
@@ -71,7 +73,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
         failed ? "error" : running ? "info" : snapshot.phase === "cancelled" ? "warning" : "success"
       }
     >
-      <View accessibilityLabel="Worktree setup" className="py-1">
+      <View accessibilityLabel={translator.message("mobile.ui.worktreeSetup")} className="py-1">
         <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
           <HeaderLabel
             label={label}
@@ -91,7 +93,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
             accessibilityLabel={
               backgroundSetup
                 ? `Background setup is still running: ${scriptName}. Show setup progress.`
-                : "Worktree setup details"
+                : translator.message("mobile.ui.worktreeSetupDetails")
             }
             accessibilityState={{ expanded: detailsOpen }}
             onPress={() => setDetailsOpen(true)}
@@ -122,7 +124,9 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
                 />
               ) : null}
               <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-                {backgroundSetup ? "Background setup" : "Details"}
+                {backgroundSetup
+                  ? translator.message("mobile.ui.backgroundSetup")
+                  : translator.message("browser.preview.details")}
               </Text>
               {!backgroundSetup ? (
                 <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
@@ -204,6 +208,7 @@ function SetupDetailsSheet({
   onClose,
   now,
 }: WorktreeSetupCardProps & { onClose: () => void; now: number }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const [bodyHeight, setBodyHeight] = useState(0);
   const canCancel = snapshot.phase === "running" && !turnStarted;
@@ -238,9 +243,9 @@ function SetupDetailsSheet({
         {canCancel ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
             <Button
-              label="Cancel setup"
+              label={translator.message("mobile.ui.cancelSetup")}
               tone="danger"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel={translator.message("mobile.ui.cancelWorktreeSetup")}
               onPress={() => {
                 onClose();
                 onCancel();
@@ -248,7 +253,7 @@ function SetupDetailsSheet({
             />
             {onWorkLocally ? (
               <Button
-                label="Work locally"
+                label={translator.message("mobile.ui.workLocally")}
                 tone="secondary"
                 onPress={() => {
                   onClose();
@@ -354,9 +359,10 @@ function StageRow({
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View
-      accessibilityLabel="Setup script output"
+      accessibilityLabel={translator.message("mobile.ui.setupScriptOutput")}
       className={
         failed
           ? "mb-2 ml-8 rounded-md border border-danger-border bg-danger px-3 py-2"

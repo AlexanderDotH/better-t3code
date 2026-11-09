@@ -35,6 +35,8 @@ import {
   previewStreamMessage,
   type PreviewStreamConfiguration,
 } from "./preview-stream-document";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export interface PreviewStreamRef {
   readonly command: (input: PreviewStreamInput) => void;
@@ -91,9 +93,9 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
 
 function offerDownload(download: PreviewStreamDownload) {
   Dialog.alert(`Downloaded ${download.fileName}`, undefined, [
-    { text: "Not now", style: "cancel" },
+    { text: currentInterfaceTranslator().message("chat.speechIndex.notNow"), style: "cancel" },
     {
-      text: "Save or share",
+      text: currentInterfaceTranslator().message("mobile.ui.saveOrShare"),
       onPress: () =>
         void downloadAndShareAttachment({
           url: download.url,
@@ -101,7 +103,7 @@ function offerDownload(download: PreviewStreamDownload) {
           signal: new AbortController().signal,
         }).catch((cause: unknown) =>
           Dialog.alert(
-            "Could not save the download",
+            currentInterfaceTranslator().message("mobile.ui.couldNotSaveTheDownload"),
             cause instanceof Error ? cause.message : undefined,
           ),
         ),
@@ -118,6 +120,7 @@ export function PreviewStreamWebView(
       readonly paused?: boolean;
     },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const { access, error, refresh, retryAfter } = usePreviewStreamAccess(props.environmentId);
   if (access && !props.paused) {
     return (
@@ -146,11 +149,15 @@ export function PreviewStreamWebView(
               error ? "text-center text-sm text-foreground-muted" : "text-sm text-foreground-muted"
             }
           >
-            {error || "Connecting to browser..."}
+            {error || translator.message("mobile.ui.connectingToBrowser")}
           </AppText>
           {error && (
             <View className="items-center">
-              <Button label="Retry" tone="secondary" onPress={refresh} />
+              <Button
+                label={translator.message("common.retry")}
+                tone="secondary"
+                onPress={refresh}
+              />
             </View>
           )}
         </>
@@ -233,6 +240,7 @@ function PreviewStreamDocumentView({
   readonly onStreaming: () => void;
   readonly onRecoverProcess: () => boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const webView = useRef<WebView<object>>(null);
   const active = useRef(false);
   const failed = useRef(false);
@@ -251,7 +259,7 @@ function PreviewStreamDocumentView({
     setFileChooser(null);
     void sendFilesToPage(chooser, pick).catch((cause: unknown) =>
       Dialog.alert(
-        "Could not send the files to the page",
+        translator.message("mobile.ui.couldNotSendTheFilesToThe"),
         cause instanceof Error ? cause.message : undefined,
       ),
     );
@@ -267,7 +275,7 @@ function PreviewStreamDocumentView({
       (text) => {
         if (text) command({ type: "text", text });
       },
-      () => Dialog.alert("Could not read the clipboard"),
+      () => Dialog.alert(translator.message("mobile.ui.couldNotReadTheClipboard")),
     );
   const clearBootstrapTimer = () => {
     if (bootstrapTimer.current === null) return;
@@ -330,7 +338,11 @@ function PreviewStreamDocumentView({
           </AppText>
           {control?.canOperate ? (
             <Button
-              label={control.controller === "you" ? "Release control" : "Take control"}
+              label={
+                control.controller === "you"
+                  ? translator.message("mobile.ui.releaseControl")
+                  : translator.message("mobile.ui.takeControl")
+              }
               tone="secondary"
               disabled={control.controller === "another-viewer"}
               onPress={() =>
@@ -434,7 +446,11 @@ function PreviewStreamDocumentView({
             The page asks for {fileChooser.multiple ? "files" : "a file"}.
           </AppText>
           <View className="flex-row justify-end gap-3">
-            <Button label="Cancel" tone="text" onPress={() => answerFileChooser(false)} />
+            <Button
+              label={translator.message("mobile.settings.projects.settings.cancel")}
+              tone="text"
+              onPress={() => answerFileChooser(false)}
+            />
             <Button
               label={`Choose ${fileChooser.multiple ? "files" : "file"}`}
               tone="secondary"
@@ -450,7 +466,7 @@ function PreviewStreamDocumentView({
             <>
               {control.dialog.type === "prompt" ? (
                 <TextInput
-                  accessibilityLabel="Dialog response"
+                  accessibilityLabel={translator.message("mobile.ui.dialogResponse")}
                   className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
                   placeholderTextColorClassName="accent-placeholder"
                   selectionColorClassName="accent-focus/32"
@@ -460,12 +476,12 @@ function PreviewStreamDocumentView({
               ) : null}
               <View className="flex-row justify-end gap-3">
                 <Button
-                  label="Dismiss"
+                  label={translator.message("mobile.thread.dismiss")}
                   tone="text"
                   onPress={() => command({ type: "dialog", accept: false })}
                 />
                 <Button
-                  label="Accept"
+                  label={translator.message("mobile.ui.accept")}
                   tone="secondary"
                   onPress={() =>
                     command({
@@ -478,7 +494,9 @@ function PreviewStreamDocumentView({
               </View>
             </>
           ) : (
-            <AppText className="text-xs text-foreground-muted">Take control to respond.</AppText>
+            <AppText className="text-xs text-foreground-muted">
+              {translator.message("mobile.ui.takeControlToRespond")}
+            </AppText>
           )}
         </View>
       ) : null}
@@ -493,7 +511,7 @@ function PreviewStreamDocumentView({
               accessibilityLiveRegion="polite"
               className="text-center text-sm text-foreground-muted"
             >
-              {status === "error" ? error : "Connecting to browser..."}
+              {status === "error" ? error : translator.message("mobile.ui.connectingToBrowser")}
             </AppText>
           )}
           {status === "error" && hostSetup && !compact ? (
@@ -508,13 +526,19 @@ function PreviewStreamDocumentView({
               <AppText selectable className="flex-1 font-mono text-sm text-secondary-foreground">
                 {hostSetup.command}
               </AppText>
-              <AppText className="text-xs text-foreground-muted">Copy</AppText>
+              <AppText className="text-xs text-foreground-muted">
+                {translator.message("settings.common.copy")}
+              </AppText>
             </Pressable>
           ) : null}
           {status === "error" && !gone && !compact ? (
             <View className="items-center">
               <Button
-                label={hostSetup ? "Try again" : "Reconnect"}
+                label={
+                  hostSetup
+                    ? translator.message("cloud.action.tryAgain")
+                    : translator.message("chat.environment.reconnect")
+                }
                 tone="secondary"
                 onPress={onRetry}
               />

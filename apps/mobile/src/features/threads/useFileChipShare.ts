@@ -9,12 +9,14 @@ import { assetEnvironment } from "../../state/assets";
 import { usePreparedConnection } from "../../state/session";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { fileChipShareSource, type FileChipTarget } from "./fileChipMenu";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function useFileChipShare(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   sourceIdentifier: string,
 ) {
+  const translator = useMobileInterfaceTranslator();
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -47,8 +49,8 @@ export function useFileChipShare(
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
           Dialog.alert(
-            "Could not share file",
-            error instanceof Error ? error.message : "Try again.",
+            translator.message("mobile.ui.couldNotShareFile"),
+            error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
           );
         }
       })

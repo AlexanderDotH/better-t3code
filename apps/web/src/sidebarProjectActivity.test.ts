@@ -9,6 +9,7 @@ import {
   partitionSidebarProjectsByActivity,
   resolveSidebarOlderProjectsExpanded,
   SIDEBAR_PROJECT_INACTIVITY_MS,
+  splitSidebarActiveThreadsByProjectActivity,
 } from "./sidebarProjectActivity";
 import { type SidebarThreadSummary } from "./types";
 
@@ -127,6 +128,22 @@ describe("partitionSidebarProjectsByActivity", () => {
       expect(classify([settled, active]).recentProjects).toEqual([project]);
     }
     expect(classify([]).recentProjects).toEqual([project]);
+    const split = splitSidebarActiveThreadsByProjectActivity({
+      projects: [project],
+      threads: [{ ...settled, projectId: project.id }],
+      activeThreads: [{ ...settled, projectId: project.id }],
+      nowMs: NOW_MS,
+      isThreadSettled: (thread) =>
+        resolveThreadSidebarLifecycle(thread, {
+          now: new Date(NOW_MS).toISOString(),
+          autoSettleAfterDays: 3,
+          supportsSettlement: true,
+          supportsSnooze: true,
+        }) === "settled",
+    });
+    expect(split.recentThreads).toEqual([]);
+    expect(split.olderThreads.map((thread) => thread.id)).toEqual([settled.id]);
+    expect(split.olderProjectCount).toBe(1);
   });
 
   it("keeps exactly seven days recent and moves one millisecond older", () => {
@@ -438,6 +455,38 @@ describe("partitionSidebarProjectsByActivity", () => {
 
     expect(result.recentThreads).toEqual([recentThread]);
     expect(result.olderThreads).toEqual([olderThread]);
+  });
+
+  it("shelves active rows of idle projects while any listed thread keeps a project recent", () => {
+    const old = timestampAtAge(SIDEBAR_PROJECT_INACTIVITY_MS + 1);
+    const idleMember = (id: string) => makeMember(id, { createdAt: old, updatedAt: old });
+    const recentProject = makeProject("recent");
+    const idleProject = makeProject("idle", [idleMember("idle")]);
+    const settledKeepsRecent = makeProject("settled-recent", [idleMember("settled-recent")]);
+    const activeThread = (id: string, projectId: ProjectId, at: string) =>
+      makeThread({ id: ThreadId.make(id), projectId, createdAt: at, updatedAt: at });
+    const recentThread = activeThread("recent-thread", recentProject.id, timestampAtAge(0));
+    const idleThread = activeThread("idle-thread", idleProject.id, old);
+    const keptThread = activeThread("kept-thread", settledKeepsRecent.id, old);
+    const recentlySettled = makeThread({
+      id: ThreadId.make("recently-settled"),
+      projectId: settledKeepsRecent.id,
+      createdAt: old,
+      updatedAt: old,
+      settledOverride: "settled",
+      settledAt: timestampAtAge(0),
+    });
+
+    const result = splitSidebarActiveThreadsByProjectActivity({
+      projects: [recentProject, idleProject, settledKeepsRecent],
+      threads: [recentThread, idleThread, keptThread, recentlySettled],
+      activeThreads: [idleThread, recentThread, keptThread],
+      nowMs: NOW_MS,
+    });
+
+    expect(result.recentThreads).toEqual([recentThread, keptThread]);
+    expect(result.olderThreads).toEqual([idleThread]);
+    expect(result.olderProjectCount).toBe(1);
   });
 
   it("returns the earliest upcoming transition and excludes attention-held projects", () => {

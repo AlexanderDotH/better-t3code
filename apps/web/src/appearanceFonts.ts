@@ -1,5 +1,6 @@
 import {
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_INTERFACE_FONT_SIZE,
   DEFAULT_PROMPT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
@@ -8,6 +9,7 @@ import {
   MIN_CODE_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
+  type ClientSettings,
 } from "@t3tools/contracts";
 
 export const DEFAULT_SANS_FONT_STACK =
@@ -18,6 +20,22 @@ export const DEFAULT_CODE_FONT_STACK =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
 
 export const TYPOGRAPHY_ADVANCED_STORAGE_KEY = "t3code:typography-advanced";
+
+export function resolveSeparateFontPreference(
+  stored: boolean | null,
+  settings: Pick<
+    ClientSettings,
+    "fontFamilyComposer" | "fontFamilyTerminal" | "fontSizePrompt" | "fontSizeTerminal"
+  >,
+): boolean {
+  return (
+    stored ??
+    (settings.fontFamilyComposer.trim().length > 0 ||
+      settings.fontFamilyTerminal.trim().length > 0 ||
+      settings.fontSizePrompt !== DEFAULT_CLIENT_SETTINGS.fontSizePrompt ||
+      settings.fontSizeTerminal !== DEFAULT_CLIENT_SETTINGS.fontSizeTerminal)
+  );
+}
 
 export function resolveTerminalFontPreference(input: {
   readonly advanced: boolean;

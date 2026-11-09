@@ -18,7 +18,6 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { makeThreadErrorSetter } from "../ChatView.logic";
 import { draftSendState } from "./chatViewSend";
 import type { useTimelineFollow } from "./useTimelineFollow";
-import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 
 interface ComposerResumeInput {
   readonly harnessSendDisabledReason?: string | null | undefined;
@@ -43,7 +42,6 @@ interface ComposerResumeInput {
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
   }) => Promise<AtomCommandResult<void, unknown>>;
-  readonly clearUsageLimitsFor: ReturnType<typeof useUsageLimitsPanel>["clearFor"];
   readonly scrollToEnd: ReturnType<typeof useTimelineFollow>["scrollToEnd"];
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
 }
@@ -70,7 +68,6 @@ export function useComposerResume(input: ComposerResumeInput) {
     localCheckoutBranchMismatch,
     composerRef,
     persistThreadSettingsForNextTurn,
-    clearUsageLimitsFor,
     scrollToEnd,
     setThreadError,
   } = input;
@@ -144,7 +141,6 @@ export function useComposerResume(input: ComposerResumeInput) {
         },
       });
       if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
-      clearUsageLimitsFor(routeThreadKey);
       return resumeThreadQueue({ environmentId, input: { threadId } });
     };
     const result = await resume();
@@ -156,9 +152,8 @@ export function useComposerResume(input: ComposerResumeInput) {
           error instanceof Error ? error.message : "Could not resume thread.",
         );
       }
-    } else {
-      clearUsageLimitsFor(routeThreadKey);
-      if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
+    } else if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      scrollToEnd();
     }
     sendInFlightRef.current = false;
     setResumingThreadKeys((current) => {

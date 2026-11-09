@@ -153,6 +153,7 @@ function MobileVoiceSettingsForm({
   readonly disabled: boolean;
   readonly onSave: (settings: AssemblyAiVoiceSettings) => Promise<boolean>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const translate = useMobileInterfaceTranslator().message;
   const [draft, setDraft] = useState(value);
   const [languages, setLanguages] = useState(value.languageCodes.join(", "));
@@ -281,9 +282,15 @@ function MobileVoiceSettingsForm({
         disabled={controlsDisabled}
         onChange={(next) => update("speechModel", next)}
         choices={[
-          { value: "universal-3-5-pro", label: "Universal 3.5 Pro" },
-          { value: "universal-streaming-multilingual", label: "Universal Streaming Multilingual" },
-          { value: "universal-streaming-english", label: "Universal Streaming English" },
+          { value: "universal-3-5-pro", label: translator.message("mobile.ui.universal35Pro") },
+          {
+            value: "universal-streaming-multilingual",
+            label: translator.message("mobile.ui.universalStreamingMultilingual"),
+          },
+          {
+            value: "universal-streaming-english",
+            label: translator.message("mobile.ui.universalStreamingEnglish"),
+          },
         ]}
       />
       {pro ? (
@@ -464,7 +471,7 @@ function MobileVoiceSettingsForm({
           onPress={() => void save()}
           className="rounded-xl bg-foreground px-4 py-3 disabled:opacity-40"
         >
-          <Text className="text-center font-t3-medium text-background">
+          <Text className="text-center font-t3-medium text-screen">
             {translate(busy ? "settings.voice.options.saving" : "settings.voice.options.save")}
           </Text>
         </Pressable>

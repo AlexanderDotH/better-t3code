@@ -44,7 +44,10 @@ export const GeneralSubagentModelsTool = Tool.make("subagent_models", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentSpawnTool = Tool.make("subagent_spawn", {
   description:
@@ -59,7 +62,10 @@ export const GeneralSubagentSpawnTool = Tool.make("subagent_spawn", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentWaitTool = Tool.make("subagent_wait", {
   description:
@@ -74,7 +80,10 @@ export const GeneralSubagentWaitTool = Tool.make("subagent_wait", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentCancelTool = Tool.make("subagent_cancel", {
   description:
@@ -89,7 +98,10 @@ export const GeneralSubagentCancelTool = Tool.make("subagent_cancel", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentListTool = Tool.make("list_agents", {
   description:
@@ -104,7 +116,10 @@ export const GeneralSubagentListTool = Tool.make("list_agents", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentSpawnAgentTool = Tool.make("spawn_agent", {
   description:
@@ -119,7 +134,10 @@ export const GeneralSubagentSpawnAgentTool = Tool.make("spawn_agent", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentSendMessageTool = Tool.make("send_message", {
   description:
@@ -134,7 +152,10 @@ export const GeneralSubagentSendMessageTool = Tool.make("send_message", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentFollowUpTool = Tool.make("followup_task", {
   description:
@@ -149,7 +170,10 @@ export const GeneralSubagentFollowUpTool = Tool.make("followup_task", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentWaitAgentTool = Tool.make("wait_agent", {
   description:
@@ -164,7 +188,10 @@ export const GeneralSubagentWaitAgentTool = Tool.make("wait_agent", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentInterruptTool = Tool.make("interrupt_agent", {
   description:
@@ -179,7 +206,10 @@ export const GeneralSubagentInterruptTool = Tool.make("interrupt_agent", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.generalSubagents"),
+  );
 
 export const GeneralSubagentToolkit = Toolkit.make(
   GeneralSubagentModelsTool,

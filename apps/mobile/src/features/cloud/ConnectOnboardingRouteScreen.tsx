@@ -18,6 +18,7 @@ import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useConnectionController } from "../connection/useConnectionController";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
 import { hasCloudPublicConfig } from "./publicConfig";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 // Only reachable with cloud config: onboarding is requested after a T3 Connect
 // sign-in, and appLinking drops the deep link otherwise.
@@ -26,6 +27,7 @@ export function ConnectOnboardingRouteScreen() {
 }
 
 function ConfiguredConnectOnboardingRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -62,7 +64,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Set up T3 Connect"
+        title={translator.message("mobile.connection.setupConnect")}
         onClose={handleClose}
         trailing={
           Platform.OS === "android" ? (
@@ -70,14 +72,14 @@ function ConfiguredConnectOnboardingRouteScreen() {
               <View
                 className="size-12 items-center justify-center"
                 accessible
-                accessibilityLabel="Refreshing environments"
+                accessibilityLabel={translator.message("mobile.ui.refreshingEnvironments")}
                 accessibilityState={{ busy: true }}
               >
                 <AppActivityIndicator />
               </View>
             ) : (
               <IconButton
-                accessibilityLabel="Refresh environments"
+                accessibilityLabel={translator.message("mobile.ui.refreshEnvironments")}
                 icon="arrow.clockwise"
                 onPress={handleRefresh}
               />
@@ -113,13 +115,17 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
+              {translator.message("mobile.connection.signInConnect")}
             </Text>
           </View>
         )}
 
         {userId ? (
-          <Button label={"Don't show this again"} tone="text" onPress={handleDontShowAgain} />
+          <Button
+            label={translator.message("mobile.ui.dontShowThisAgain")}
+            tone="text"
+            onPress={handleDontShowAgain}
+          />
         ) : null}
       </ScrollView>
     </View>

@@ -1,3 +1,4 @@
+import * as TestClock from "effect/testing/TestClock";
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProviderDriverKind,
@@ -479,8 +480,15 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+it.effect.each([
+  { exhausted: false, hardBudget: false },
+  { exhausted: true, hardBudget: false },
+  { exhausted: false, hardBudget: true },
+  { exhausted: true, hardBudget: true },
+])("text generation preflight: %j", ({ exhausted, hardBudget }) =>
   Effect.gen(function* () {
+    // Midday keeps the last reading inside the local calendar day in every CI timezone.
+    yield* TestClock.setTime(Date.UTC(1970, 0, 1, 12));
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
     const selection = {
@@ -503,14 +511,26 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         models: [],
         slashCommands: [],
         skills: [],
-        ...(exhausted && instanceId === primary
-          ? {
-              usageLimits: {
-                checkedAt: "1970-01-01T00:00:00Z",
-                windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
-              },
-            }
-          : {}),
+        usageLimits: {
+          checkedAt: "1970-01-01T00:00:00Z",
+          windows: [
+            ...(exhausted && instanceId === primary
+              ? [{ id: "session", kind: "session" as const, label: "Session", usedPercent: 100 }]
+              : []),
+            {
+              id: "weekly",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent: 20,
+              windowDurationMins: 10080,
+              resetsAt: "1970-01-08T00:00:00Z",
+              usageHistory: [
+                { at: "1969-12-31T00:00:00Z", usedPercent: 0 },
+                { at: "1970-01-01T11:59:00Z", usedPercent: 20 },
+              ],
+            },
+          ],
+        },
       };
       return {
         instanceId,
@@ -542,6 +562,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
               Effect.succeed(instances.find((instance) => instance.instanceId === id)),
           }),
           ServerSettings.layerTest({
+            usageHardBudgetEnabled: hardBudget,
             providerInstances: {
               [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
             },
@@ -552,14 +573,19 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         ),
       ),
     );
-    expect(
-      yield* service.generateThreadTitle({
-        cwd: "/tmp",
-        message: "hello",
-        linkedContext: "",
-        modelSelection: selection,
-      }),
-    ).toEqual({ title: "Generated title" });
+    const generateTitle = service.generateThreadTitle({
+      cwd: "/tmp",
+      message: "hello",
+      linkedContext: "",
+      modelSelection: selection,
+    });
+    if (hardBudget) {
+      const error = yield* generateTitle.pipe(Effect.flip);
+      expect(error.detail).toContain("Hard daily budget reached");
+      expect(calls).toEqual([]);
+      return;
+    }
+    expect(yield* generateTitle).toEqual({ title: "Generated title" });
     expect(calls).toEqual([
       exhausted
         ? {

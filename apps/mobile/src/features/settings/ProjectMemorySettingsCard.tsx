@@ -50,11 +50,13 @@ function ActionButton(props: {
       accessibilityRole="button"
       disabled={props.disabled}
       className={`rounded-full px-4 py-2 ${
-        props.destructive ? "bg-destructive/12" : "bg-subtle"
+        props.destructive ? "bg-danger" : "bg-subtle"
       } disabled:opacity-45`}
       onPress={props.onPress}
     >
-      <Text className={props.destructive ? "text-danger" : "text-foreground"}>{props.label}</Text>
+      <Text className={props.destructive ? "text-danger-foreground" : "text-foreground"}>
+        {props.label}
+      </Text>
     </Pressable>
   );
 }
@@ -88,7 +90,7 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
                 }}
                 disabled={props.busy || unavailable}
                 className={`rounded-full px-4 py-2 ${
-                  viewModel.mode === mode.value ? "bg-accent" : "bg-subtle"
+                  viewModel.mode === mode.value ? "bg-subtle-strong" : "bg-subtle"
                 } disabled:opacity-45`}
                 onPress={() =>
                   void props.onSavePreferences(

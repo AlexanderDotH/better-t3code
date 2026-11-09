@@ -1,3 +1,4 @@
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as AutoReasoningPreparation from "./AutoReasoningPreparation.ts";
 import * as ReplyThreadLifecycle from "./ReplyThreadLifecycle.ts";
 import * as ContextCompactionRuntime from "../contextCompaction/ContextCompactionRuntime.ts";
@@ -16,10 +17,10 @@ import {
   DeepPlanValidationReactor,
   DeepPlanValidationReactorLive,
 } from "../deepPlanning/DeepPlanValidationReactor.ts";
+import * as DelegatedWorkerGuards from "../subagents/DelegatedWorkerGuards.ts";
 import { GeneralSubagentCoordinatorLive } from "../subagents/GeneralSubagentCoordinator.ts";
 import * as FetchPreparation from "../fetch/FetchPreparation.ts";
 import { FetchWorkerCoordinatorLive } from "../fetch/FetchWorkerCoordinator.ts";
-import { MessageReplyCoordinatorLive } from "../messageReplies/MessageReplyCoordinator.ts";
 import { layer as planParallelismReviewLayer } from "../plan/PlanParallelismReview.ts";
 import { ProjectAgentCoordinatorLive } from "../projectAgent/ProjectAgentCoordinator.ts";
 import { ProjectionProjectAgentCoordinationRepositoryLive } from "../persistence/Layers/ProjectionProjectAgentCoordination.ts";
@@ -35,18 +36,28 @@ const continuation = Layer.effectDiscard(
   }),
 ).pipe(Layer.provideMerge(reactor));
 
+const workerGuards = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* (yield* DelegatedWorkerGuards.DelegatedWorkerGuards).start();
+  }),
+).pipe(Layer.provide(DelegatedWorkerGuards.layer));
+
 export const layer = Layer.mergeAll(
   application,
+  workerGuards,
   Layer.merge(ContextCompactionRuntime.layer, AutoReasoningPreparation.layer).pipe(
     Layer.provideMerge(DecisionGeneration.layer),
   ),
   continuation,
   GeneralSubagentCoordinatorLive.pipe(Layer.provide(workflow)),
   FetchPreparation.layer.pipe(Layer.provideMerge(FetchWorkerCoordinatorLive)),
-  MessageReplyCoordinatorLive,
   ReplyThreadLifecycle.layer,
   planParallelismReviewLayer,
-  ProjectAgentCoordinatorLive.pipe(Layer.provide(ProjectionProjectAgentCoordinationRepositoryLive)),
+  ProjectAgentCoordinatorLive.pipe(
+    Layer.provide(
+      Layer.merge(ProjectionProjectAgentCoordinationRepositoryLive, EffectOutbox.layer),
+    ),
+  ),
 );
 
 export const compactThread = Effect.fn("BetterT3Runtime.compactThread")(function* (
@@ -67,18 +78,13 @@ export const compactThread = Effect.fn("BetterT3Runtime.compactThread")(function
       reason: "unavailable",
       detail: "The thread was not found.",
     });
-  const adapter = yield* registry
+  yield* registry
     .get(thread.providerInstanceId)
     .pipe(
       Effect.mapError(
         (cause) => new ProviderCompactionError({ reason: "unavailable", detail: cause.message }),
       ),
     );
-  if (adapter.driver !== "codex" && adapter.driver !== "claudeAgent")
-    return yield* new ProviderCompactionError({
-      reason: "unavailable",
-      detail: "This provider does not support context compaction.",
-    });
   const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   yield* threads
     .sendToThread({

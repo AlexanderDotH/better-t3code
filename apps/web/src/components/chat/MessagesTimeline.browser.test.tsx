@@ -15,6 +15,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   type OrchestrationV2Subagent,
+  type ThreadForkBoundary,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -35,6 +36,8 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { WorkingReasoningDialogProvider } from "./WorkingReasoningDialog";
+import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
@@ -84,6 +87,10 @@ vi.mock(import("../../chatVisualModeSync"), async () => {
 });
 
 const audioAsset = vi.hoisted(() => ({ url: "" }));
+const visualizationFeature = vi.hoisted(() => ({ enabled: false }));
+vi.mock(import("../../hooks/useVisualizationsEnabled"), () => ({
+  useVisualizationsEnabled: () => visualizationFeature.enabled,
+}));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
@@ -137,7 +144,7 @@ function message(
   text: string,
   overrides: Partial<Extract<Entry, { kind: "message" }>["message"]> = {},
   id = "message-1",
-): Entry {
+): Extract<Entry, { kind: "message" }> {
   return {
     id: `entry-${id}`,
     kind: "message",
@@ -231,6 +238,66 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline work rows", () => {
+  it("opens working reasoning for read-only viewers and falls back without a dialog host", async () => {
+    setup();
+    const previousSettings = getClientSettings();
+    using _settings = {
+      [Symbol.dispose]: () => __setClientSettingsForTests(previousSettings),
+    };
+    __setClientSettingsForTests({
+      ...previousSettings,
+      showReasoning: true,
+      betterT3Device: {
+        ...previousSettings.betterT3Device,
+        flags: {
+          ...previousSettings.betterT3Device.flags,
+          "agent.reasoningWorkingOverlay": true,
+        },
+      },
+    });
+    const runId = RunId.make("reasoning-run");
+    const reasoning = work("reasoning-entry", {
+      itemType: "reasoning",
+      tone: "thinking",
+      label: "Thinking",
+      detail: "**Checking the inputs**\n\nThe inputs need validation before saving.",
+      runId,
+      toolLifecycleStatus: "inProgress",
+    });
+    const props = baseProps();
+    const timeline = () => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[reasoning]}
+        isWorking
+        runningRunId={runId}
+        canOperateThread={false}
+      />
+    );
+    await using screen = await renderElement(
+      <WorkingReasoningDialogProvider
+        entries={reasoning.kind === "work" ? [reasoning.entry] : []}
+        messages={[]}
+        activeRunId={runId}
+        isWorking
+        streamIdPrefix="read-only-reasoning"
+        streamingMotionEnabled={false}
+      >
+        {timeline()}
+      </WorkingReasoningDialogProvider>,
+    );
+    const reasoningLog = screen.container.querySelector<HTMLElement>("[data-reasoning-log]");
+    expect(reasoningLog).not.toBeNull();
+    await click(reasoningLog!);
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(page.getByRole("dialog").element().textContent).toContain(
+      "The inputs need validation before saving.",
+    );
+    await screen.rerender(timeline());
+    expect(screen.container.querySelector("[data-reasoning-log]")).toBeNull();
+    expect(screen.text()).toContain("The inputs need validation before saving.");
+  });
+
   it("keeps the worked-for heading in place when expanded at the bottom", async () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");
@@ -267,6 +334,40 @@ describe("MessagesTimeline work rows", () => {
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
         500,
       );
+    });
+  });
+
+  it("keeps following the live end when one update grows past a viewport", async () => {
+    const props = baseProps();
+    const runId = RunId.make("streaming-run");
+    const entries = (reply: string) => [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      message(reply, { role: "assistant", runId, streaming: true }, "reply"),
+    ];
+    const timeline = (reply: string) => (
+      <MessagesTimeline
+        {...props}
+        isWorking
+        latestRun={{ runId, status: "running", startedAt: CREATED_AT, completedAt: null }}
+        activeTurnStartedAt={CREATED_AT}
+        timelineEntries={entries(reply)}
+      />
+    );
+    const container = document.createElement("div");
+    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(timeline("Starting"), { container });
+    await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+
+    await screen.rerender(timeline(`Starting\n\n${"A long streamed paragraph.\n\n".repeat(150)}`));
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight * 4);
+      expect(distanceFromEnd()).toBeLessThan(2);
     });
   });
 
@@ -348,6 +449,183 @@ describe("MessagesTimeline work rows", () => {
 });
 
 describe("MessagesTimeline messages", () => {
+  it.each(["assistant", "user"] as const)(
+    "adds %s diagram fixes to the draft without dispatching an app message",
+    async (role) => {
+      setup();
+      visualizationFeature.enabled = true;
+      using _visualizations = {
+        [Symbol.dispose]: () => {
+          visualizationFeature.enabled = false;
+        },
+      };
+      const onVisualizationAction = vi.fn();
+      const onSendAppMessage = vi.fn(async () => {});
+      await using screen = await renderTimeline(
+        [message("```vega-lite\n{ invalid json }\n```", { role })],
+        { onVisualizationAction, onSendAppMessage },
+      );
+      await screen.getByRole("button", { name: "Fix with agent", exact: true }).click();
+      expect(onVisualizationAction).toHaveBeenCalledExactlyOnceWith(
+        expect.stringContaining("{ invalid json }"),
+      );
+      expect(onSendAppMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps user table state per message across corrections and remounts", async () => {
+    setup();
+    const props = baseProps();
+    const markdown = "| Value |\n| --- |\n| Original |";
+    const timeline = (entries: Entry[]) => (
+      <MessagesTimeline {...props} timelineEntries={entries} />
+    );
+    const first = (text = markdown) => message(text, {}, "first-table");
+    const second = message(markdown, {}, "second-table");
+    await using screen = await renderElement(timeline([first()]));
+    await screen.getByRole("button", { name: "Expand table", exact: true }).click();
+    await screen.rerender(timeline([first(), second]));
+    const table = (id: string) =>
+      page.elementLocator(
+        screen.container.querySelector(`[data-message-id="${id}"] .chat-markdown-table-container`)!,
+      );
+    await expect.element(table("first-table")).toHaveAttribute("data-expanded", "true");
+    await expect.element(table("second-table")).toHaveAttribute("data-expanded", "false");
+    await screen.rerender(timeline([first(markdown.replace("Original", "Corrected")), second]));
+    await expect.element(table("first-table")).toHaveAttribute("data-expanded", "true");
+    await screen.rerender(timeline([]));
+    await screen.rerender(timeline([first(markdown.replace("Original", "Corrected")), second]));
+    await expect.element(table("first-table")).toHaveAttribute("data-expanded", "true");
+    await expect.element(table("second-table")).toHaveAttribute("data-expanded", "false");
+  });
+
+  it.each(["current", "classic", "better-t3"] as const)(
+    "forks assistant messages at exact boundaries in %s",
+    async (mode) => {
+      setup();
+      presentationMode.mode = mode;
+      const props = baseProps();
+      const onForkBoundary = vi.fn();
+      const onForkFromRun = vi.fn();
+      const messageId = MessageId.make("assistant-boundary");
+      const entries = (runId: RunId | null): Entry[] => [
+        {
+          ...message("Keep only this answer", { role: "assistant", runId }, messageId),
+          projectedItem: v2Item("assistant_message", {
+            id: "assistant-item",
+            messageId,
+            runId,
+            text: "Keep only this answer",
+          }),
+        },
+      ];
+      const timeline = (
+        runId: RunId | null,
+        forkPendingBoundary: ThreadForkBoundary | null = null,
+        forkAvailable = true,
+      ) => (
+        <MessagesTimeline
+          {...props}
+          timelineEntries={entries(runId)}
+          onForkBoundary={onForkBoundary}
+          onForkFromRun={onForkFromRun}
+          forkAvailable={forkAvailable}
+          forkPendingBoundary={forkPendingBoundary}
+        />
+      );
+      await using screen = await renderElement(timeline(RunId.make("answer-run")));
+      const fork = screen.getByRole("button", { name: "Fork chat from here", exact: true });
+      await fork.click();
+      expect(onForkBoundary).toHaveBeenLastCalledWith({ kind: "message", messageId });
+      expect(onForkFromRun).not.toHaveBeenCalled();
+
+      await screen.rerender(timeline(null));
+      await fork.click();
+      expect(onForkBoundary).toHaveBeenCalledTimes(2);
+      expect(onForkBoundary).toHaveBeenLastCalledWith({ kind: "message", messageId });
+      await screen.rerender(timeline(null, { kind: "message", messageId }));
+      const busy = screen.getByRole("button", { name: "Forking chat", exact: true });
+      await expect.element(busy).toBeDisabled();
+      await expect.element(busy).toHaveAttribute("aria-busy", "true");
+      const other = MessageId.make("another-boundary");
+      await screen.rerender(timeline(null, { kind: "message", messageId: other }));
+      await expect.element(fork).toBeDisabled();
+      await expect.element(fork).not.toHaveAttribute("aria-busy");
+      await screen.rerender(timeline(null, null, false));
+      await expect.element(fork).toBeDisabled();
+    },
+  );
+
+  it("offers forking only on this thread's committed messages", async () => {
+    setup();
+    const committed = MessageId.make("committed");
+    const inherited = MessageId.make("inherited");
+    const item = (messageId: MessageId) =>
+      v2Item("assistant_message", { id: `${messageId}-item`, messageId, text: messageId });
+    const onForkBoundary = vi.fn();
+    await using screen = await renderTimeline(
+      [
+        {
+          ...message("From the source", { role: "assistant" }, inherited),
+          projectedItem: { ...(item(inherited) as object), visibility: "inherited" } as never,
+        },
+        { ...message("Mine", { role: "assistant" }, committed), projectedItem: item(committed) },
+        message("Still sending", {}, "optimistic"),
+      ],
+      { onForkBoundary },
+    );
+    expect(screen.buttons("Fork chat from here")).toHaveLength(1);
+    await click(screen.button("Fork chat from here"));
+    expect(onForkBoundary).toHaveBeenCalledExactlyOnceWith({
+      kind: "message",
+      messageId: committed,
+    });
+  });
+
+  it("retains mutation controls while work or disconnection temporarily prevents changes", async () => {
+    setup();
+    const props = baseProps();
+    const timeline = (isWorking: boolean, connected: boolean, enabled = true) => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[message("Correct this message")]}
+        messageEditingEnabled={enabled}
+        retryAction={{
+          messageId: MessageId.make("message-1"),
+          available: connected,
+          pending: false,
+          onRetry: () => {},
+        }}
+        canOperateThread
+        presentationConnected={connected}
+        isWorking={isWorking}
+      />
+    );
+    await using screen = await renderElement(timeline(true, true));
+    const edit = screen.getByRole("button", { name: "Edit message", exact: true });
+    const retry = screen.getByRole("button", { name: "Retry response", exact: true });
+    await expect.element(edit).toBeDisabled();
+    await expect.element(retry).toBeDisabled();
+    await screen.rerender(timeline(false, false));
+    await expect.element(edit).toBeDisabled();
+    await expect.element(retry).toBeDisabled();
+    await screen.rerender(timeline(false, true));
+    await expect.element(edit).toBeEnabled();
+    await expect.element(retry).toBeEnabled();
+    await edit.click();
+    const save = screen.getByRole("button", { name: "Save correction", exact: true });
+    await expect.element(save).toBeEnabled();
+    await expect
+      .element(screen.getByRole("textbox", { name: "Edit message" }))
+      .toHaveValue("Correct this message");
+    await screen.rerender(timeline(false, false));
+    await expect.element(save).toBeDisabled();
+    await screen.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect.element(edit).toBeDisabled();
+    await screen.rerender(timeline(false, true, false));
+    await expect.element(edit).not.toBeInTheDocument();
+  });
+
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
     const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");

@@ -7,6 +7,7 @@ import {
 } from "../../../../lib/appearancePreferences";
 import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
+import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
 const CODE_FONT_FAMILY = Platform.select({
   ios: "ui-monospace",
@@ -19,6 +20,7 @@ export function AppearancePreviewSeparator() {
 }
 
 export function TextAppearancePreview(props: { readonly fontSize: number }) {
+  const translator = useMobileInterfaceTranslator();
   const sizes = resolveMarkdownFontSizes(props.fontSize);
 
   return (
@@ -27,19 +29,20 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
         className="text-foreground"
         style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
       >
-        The quick brown fox jumps over the lazy dog.
+        {translator.message("mobile.ui.theQuickBrownFoxJumpsOverThe")}
       </Text>
       <Text
         className="text-foreground-muted"
         style={{ fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
       >
-        Messages, labels, and headings scale with this size.
+        {translator.message("mobile.ui.messagesLabelsAndHeadingsScaleWithThis")}
       </Text>
     </View>
   );
 }
 
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
+  const translator = useMobileInterfaceTranslator();
   const { themeAppearance: scheme, themeId } = useAppearancePreferences();
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
@@ -65,13 +68,13 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
         <Text style={span(theme.foreground)}> vpr dev</Text>
       </Text>
       <Text style={span(theme.foreground)}>
-        <Text style={span(theme.palette[2])}>VITE v7.1.1</Text>
+        <Text style={span(theme.palette[2])}>{translator.message("mobile.ui.viteV711")}</Text>
         <Text style={span(theme.mutedForeground)}> ready in</Text>
         <Text style={span(theme.foreground)}> 1.24s</Text>
       </Text>
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.palette[2])}>→ </Text>
-        <Text style={span(theme.mutedForeground)}>Local: </Text>
+        <Text style={span(theme.mutedForeground)}>{translator.message("mobile.ui.local")} </Text>
         <Text style={span(theme.palette[6], { textDecorationLine: "underline" })}>
           http://127.0.0.1:5173/
         </Text>

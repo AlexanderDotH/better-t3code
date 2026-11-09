@@ -69,6 +69,7 @@ import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2OlderProjectsShelfHeader,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -86,6 +87,7 @@ import {
 } from "./threadListV2";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type SidebarListItem =
   | ThreadListV2ListItem
@@ -146,6 +148,7 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const drawerColor = materialTheme["--color-drawer"];
@@ -273,10 +276,12 @@ function ThreadNavigationSidebarPane(
     setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT);
   const {
     loaded: shelfPreferencesLoaded,
+    olderProjectsExpanded,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    toggleOlderProjects,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -322,6 +327,8 @@ function ThreadNavigationSidebarPane(
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
+    olderProjectGroups: selectedProjectScope === null ? projectScopes : null,
+    olderProjectsExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
   });
   const listItems: readonly SidebarListItem[] =
@@ -343,12 +350,12 @@ function ThreadNavigationSidebarPane(
   const listMenuActions = [
     {
       id: "environment",
-      title: "Environment",
+      title: translator.message("mobile.navigation.environment"),
       subactions: [
         {
           id: "environment:all",
-          title: "All environments",
-          subtitle: "Show threads from every environment",
+          title: translator.message("mobile.navigation.allEnvironments"),
+          subtitle: translator.message("mobile.navigation.allEnvironmentsDescription"),
           state: options.selectedEnvironmentId === null ? "on" : "off",
         },
         ...environments.map((environment) => ({
@@ -366,12 +373,12 @@ function ThreadNavigationSidebarPane(
       : ([
           {
             id: "project",
-            title: "Project",
+            title: translator.message("mobile.navigation.project"),
             subactions: [
               {
                 id: "project:all",
-                title: "All projects",
-                subtitle: "Show threads from every project",
+                title: translator.message("mobile.navigation.allProjects"),
+                subtitle: translator.message("mobile.navigation.allProjectsDescription"),
                 state: selectedProjectKey === null ? "on" : "off",
               },
               ...projectFilterOptions.map((project) => ({
@@ -619,6 +626,16 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-older-projects-shelf":
+        return (
+          <ThreadListV2OlderProjectsShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleOlderProjects}
+            pane="sidebar"
+          />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader
@@ -689,16 +706,16 @@ function ThreadNavigationSidebarPane(
       }
     >
       {catalogState.isLoadingConnections
-        ? "Loading threads…"
+        ? translator.message("mobile.ui.loadingThreads")
         : Platform.OS === "android" && !catalogState.hasConnections
-          ? "No environments connected"
+          ? translator.message("mobile.home.noEnvironments")
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending
-              ? "Searching thread messages…"
-              : "No matching threads"
+              ? translator.message("mobile.navigation.searchingMessages")
+              : translator.message("mobile.navigation.noMatchingThreads")
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
+              : translator.message("mobile.navigation.noThreadsYet")}
     </Text>
   );
 
@@ -720,7 +737,7 @@ function ThreadNavigationSidebarPane(
               hideNavigationBar: false,
               hideWhenScrolling: false,
               obscureBackground: false,
-              placeholder: "Search",
+              placeholder: translator.message("mobile.archive.searchShort"),
               placement: "stacked",
               onCancelButtonPress: () => {
                 props.onSearchQueryChange("");
@@ -876,7 +893,10 @@ function ThreadNavigationSidebarPane(
             />
             <View className="flex-row items-center gap-2.5">
               <Menu actions={listMenuActions} onPressAction={handleListMenuAction}>
-                <SidebarFilterButton accessibilityLabel="Filter threads" icon={filterIcon} />
+                <SidebarFilterButton
+                  accessibilityLabel={translator.message("mobile.ui.filterThreads")}
+                  icon={filterIcon}
+                />
               </Menu>
               <SidebarHeaderActions onOpenSettings={props.onOpenSettings} />
             </View>
@@ -891,12 +911,12 @@ function ThreadNavigationSidebarPane(
             />
             <TextInput
               ref={searchInputRef}
-              accessibilityLabel="Search threads"
+              accessibilityLabel={translator.message("mobile.navigation.searchThreads")}
               autoCapitalize="none"
               autoCorrect={false}
               clearButtonMode="while-editing"
               onChangeText={props.onSearchQueryChange}
-              placeholder="Search"
+              placeholder={translator.message("mobile.archive.searchShort")}
               placeholderTextColorClassName="accent-placeholder"
               selectionColorClassName={undefined}
               cursorColorClassName={undefined}

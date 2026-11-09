@@ -95,6 +95,7 @@ import {
 } from "./use-thread-outbox";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
 import { workspaceConnections } from "./workspace";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 const threadOutboxDebug = createDebugLogger("thread-outbox");
 
@@ -512,7 +513,9 @@ export async function restoreRejectedQueuedMessage(
     console.warn("[thread-outbox] failed to restore an undeliverable message", error);
     setThreadComposerError(
       threadKey,
-      error instanceof Error ? error.message : "The unsent message could not be restored.",
+      error instanceof Error
+        ? error.message
+        : currentInterfaceTranslator().message("mobile.ui.theUnsentMessageCouldNotBeRestored"),
       queuedMessage.messageId,
     );
     return "retry";
@@ -658,7 +661,10 @@ function reportCommandFailure(
   });
   return {
     action,
-    message: error instanceof Error ? error.message : "The message could not be sent.",
+    message:
+      error instanceof Error
+        ? error.message
+        : currentInterfaceTranslator().message("mobile.ui.theMessageCouldNotBeSent"),
   };
 }
 
@@ -881,7 +887,9 @@ export function createThreadOutboxDelivery(): {
       if (!shouldRetryThreadOutboxDelivery(error)) {
         return restoreQueuedMessage(
           queuedMessage,
-          error instanceof Error ? error.message : "An attachment could not upload.",
+          error instanceof Error
+            ? error.message
+            : currentInterfaceTranslator().message("mobile.ui.anAttachmentCouldNotUpload"),
         );
       }
       return false;
@@ -921,7 +929,9 @@ export function createThreadOutboxDelivery(): {
       if (shouldRetryThreadOutboxDelivery(error)) return false;
       return restoreQueuedMessage(
         persistedMessage,
-        error instanceof Error ? error.message : "Deep Planning could not start.",
+        error instanceof Error
+          ? error.message
+          : currentInterfaceTranslator().message("mobile.ui.deepPlanningCouldNotStart"),
       );
     }
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
@@ -1042,7 +1052,9 @@ export function createThreadOutboxDelivery(): {
       if (!shouldRetryThreadOutboxDelivery(error)) {
         return restoreQueuedMessage(
           queuedMessage,
-          error instanceof Error ? error.message : "An attachment could not upload.",
+          error instanceof Error
+            ? error.message
+            : currentInterfaceTranslator().message("mobile.ui.anAttachmentCouldNotUpload"),
         );
       }
       return false;
@@ -1142,7 +1154,9 @@ export function createThreadOutboxDelivery(): {
       if (shouldRetryThreadOutboxDelivery(error)) return false;
       return restoreQueuedMessage(
         persistedMessage,
-        error instanceof Error ? error.message : "Deep Planning could not start.",
+        error instanceof Error
+          ? error.message
+          : currentInterfaceTranslator().message("mobile.ui.deepPlanningCouldNotStart"),
       );
     }
     const { createThread: _createdThread, ...remainingBootstrap } = creationInput.bootstrap;
@@ -1487,11 +1501,14 @@ function loadThreadOutbox(isActive: () => boolean): void {
   void threadOutboxManager.load().then((loaded) => {
     if (loaded || !isActive()) return;
     Dialog.alert(
-      "Some queued messages could not be loaded",
-      "Unreadable records and attachment files are still saved. Other messages can still be sent.",
+      currentInterfaceTranslator().message("mobile.ui.someQueuedMessagesCouldNotBeLoaded"),
+      currentInterfaceTranslator().message("mobile.ui.unreadableRecordsAndAttachmentFilesAreStill"),
       [
-        { text: "Dismiss", style: "cancel" },
-        { text: "Retry", onPress: () => loadThreadOutbox(isActive) },
+        { text: currentInterfaceTranslator().message("mobile.thread.dismiss"), style: "cancel" },
+        {
+          text: currentInterfaceTranslator().message("common.retry"),
+          onPress: () => loadThreadOutbox(isActive),
+        },
       ],
     );
   });

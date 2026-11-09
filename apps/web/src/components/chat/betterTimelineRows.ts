@@ -21,6 +21,8 @@ export interface BetterTimelineOptions {
   readonly showMessageReasoning?: boolean;
   readonly hideWorkingIndicator?: boolean;
   readonly nativeSubagentDisplay?: boolean;
+  /** The run whose task list the composer bubble shows; its task rows leave the timeline. */
+  readonly composerPlanRunId?: RunId | null;
 }
 
 function groupsReasoning(options: BetterTimelineOptions) {
@@ -36,8 +38,18 @@ export function timelinePresentationEntries(
   options: BetterTimelineOptions,
 ) {
   const keepReasoning = !groupsReasoning(options) && options.showReasoning !== false;
-  if (keepReasoning && options.nativeSubagentDisplay !== false) return entries;
+  const composerPlanRunId = options.composerPlanRunId ?? null;
+  if (keepReasoning && options.nativeSubagentDisplay !== false && composerPlanRunId === null) {
+    return entries;
+  }
   return entries.filter((entry) => {
+    if (
+      composerPlanRunId !== null &&
+      entry.kind === "work" &&
+      entry.entry.itemType === "todo_list" &&
+      entry.entry.runId === composerPlanRunId
+    )
+      return false;
     if (
       options.nativeSubagentDisplay === false &&
       ((entry.kind === "event" && entry.projectedItem.item.type === "subagent") ||
@@ -191,25 +203,35 @@ export function presentBetterTimelineRows(
   activeRunId: RunId | null,
   isWorking: boolean,
   expandedGroupIds: ReadonlySet<string> | undefined,
+  collapsedFoldMemberIds: ReadonlySet<string>,
 ): MessagesTimelineRow[] {
-  const groups = reasoningRows(entries, options, activeRunId, isWorking).filter(
-    (group) =>
-      !rows.some((row) => row.kind === "turn-fold" && row.runId === group.runId && !row.expanded),
-  );
-  const result = [...rows];
   const scopeFor = createChatReasoningScope();
   const scopeByEntry = new Map<string, string>();
   const assistantByScope = new Map<string, string>();
+  const collapsedScopes = new Set<string>();
   for (const entry of entries) {
     const scope = scopeFor(entry.kind === "message" ? entry.message : undefined);
     scopeByEntry.set(entry.id, scope);
+    if (collapsedFoldMemberIds.has(entry.id)) collapsedScopes.add(scope);
     if (entry.kind === "message" && entry.message.role === "assistant" && entry.message.text.trim())
       assistantByScope.set(scope, entry.message.id);
   }
+  const groups = reasoningRows(entries, options, activeRunId, isWorking).filter(
+    (group) =>
+      !options.showWorkingReasoning ||
+      !collapsedScopes.has(scopeByEntry.get(group.entries[0]?.id ?? "") ?? ""),
+  );
+  const tail = entries.at(-1);
+  const activeReasoning =
+    tail?.kind === "work" &&
+    workEntryIsProviderReasoning(tail.entry) &&
+    tail.entry.toolLifecycleStatus === "inProgress" &&
+    groups.some((group) => group.active && group.entries.at(-1)?.id === tail.id);
+  const result = activeReasoning ? rows.filter((row) => row.kind !== "thinking") : [...rows];
   for (const group of groups) {
     const scope = scopeByEntry.get(group.entries[0]?.id ?? "");
     const assistantId = scope === undefined ? undefined : assistantByScope.get(scope);
-    if (assistantId && (options.chatVisualMode === "better-t3" || options.showMessageReasoning)) {
+    if (assistantId && options.showMessageReasoning) {
       const messageIndex = result.findIndex(
         (row) => row.kind === "message" && row.message.id === assistantId,
       );

@@ -26,8 +26,10 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu as ControlPillMenu } from "../../components/ui/Menu";
 import { ResetCredits } from "./UsageLimitsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function RecommendationGauge({ recommendation }: { readonly recommendation: ResetRecommendation }) {
+  const translator = useMobileInterfaceTranslator();
   const low = StyleSheet.flatten(useResolveClassNames("text-primary-text"))?.color;
   const warning = StyleSheet.flatten(useResolveClassNames("text-warning-foreground"))?.color;
   const danger = StyleSheet.flatten(useResolveClassNames("text-danger-foreground"))?.color;
@@ -40,7 +42,7 @@ function RecommendationGauge({ recommendation }: { readonly recommendation: Rese
       <View
         accessible
         accessibilityRole="progressbar"
-        accessibilityLabel="Reset recommendation"
+        accessibilityLabel={translator.message("mobile.ui.resetRecommendation")}
         accessibilityValue={{
           min: 0,
           max: 100,
@@ -117,13 +119,18 @@ function CreditRow({
   readonly credit: ServerProviderResetCredit;
   readonly history?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="gap-1 rounded-2xl bg-card p-3">
       <View className="flex-row items-center justify-between gap-3">
         <Text className="flex-1 text-sm font-t3-medium text-foreground">
-          {credit.title ?? "Usage limit reset"}
+          {credit.title ?? translator.message("mobile.ui.usageLimitReset")}
         </Text>
-        <Text className="text-xs text-foreground-muted">{history ? "Used" : "Available"}</Text>
+        <Text className="text-xs text-foreground-muted">
+          {history
+            ? translator.message("mobile.ui.used")
+            : translator.message("settings.common.available")}
+        </Text>
       </View>
       {credit.description ? (
         <Text className="text-xs text-foreground-muted">{credit.description}</Text>
@@ -132,7 +139,7 @@ function CreditRow({
         <Text className="text-xs text-foreground-muted">
           {credit.redeemedAt
             ? `Used ${timestamp(credit.redeemedAt)}`
-            : "Redemption date not reported"}
+            : translator.message("mobile.ui.redemptionDateNotReported")}
         </Text>
       ) : (
         <>
@@ -142,7 +149,9 @@ function CreditRow({
             </Text>
           ) : null}
           <Text className="text-xs text-foreground-muted">
-            {credit.expiresAt ? `Expires ${timestamp(credit.expiresAt)}` : "Expiry not reported"}
+            {credit.expiresAt
+              ? `Expires ${timestamp(credit.expiresAt)}`
+              : translator.message("mobile.ui.expiryNotReported")}
           </Text>
         </>
       )}
@@ -159,6 +168,7 @@ function AccountDetails({
   readonly environmentId: EnvironmentId;
   readonly now: number;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { limits } = account;
   const available = availableResetCredits(limits, now);
   const history = redeemedResetCredits(limits);
@@ -170,9 +180,13 @@ function AccountDetails({
       <View className="flex-row items-center justify-between gap-4">
         <View className="flex-1 gap-1">
           <Text className="text-sm font-t3-medium text-foreground">
-            {account.driver === "codex" ? "ChatGPT credits" : "Account credits"}
+            {account.driver === "codex"
+              ? translator.message("mobile.ui.chatgptCredits")
+              : translator.message("mobile.ui.accountCredits")}
           </Text>
-          <Text className="text-xs text-foreground-muted">Balance for extra usage</Text>
+          <Text className="text-xs text-foreground-muted">
+            {translator.message("mobile.ui.balanceForExtraUsage")}
+          </Text>
         </View>
         <Text className="max-w-[55%] text-right text-lg font-t3-bold tabular-nums text-foreground">
           {accountCreditBalance(limits.accountCredits)}
@@ -181,7 +195,7 @@ function AccountDetails({
       <View className="h-px bg-border" />
       <View className="gap-3">
         <Text accessibilityRole="header" className="text-base font-t3-bold text-foreground">
-          Available resets
+          {translator.message("mobile.ui.availableResets")}
         </Text>
         {input && limits.resetCredits ? (
           <ResetCredits
@@ -194,7 +208,7 @@ function AccountDetails({
           <Text className="text-sm text-foreground-muted">
             {limits.resetCredits
               ? `${limits.resetCredits.availableCount} resets available`
-              : "Reset availability has not been reported."}
+              : translator.message("mobile.ui.resetAvailabilityHasNotBeenReported")}
           </Text>
         )}
         {available.map((credit) => (
@@ -210,7 +224,7 @@ function AccountDetails({
       </View>
       <View className="gap-3">
         <Text accessibilityRole="header" className="text-base font-t3-bold text-foreground">
-          Current usage limits
+          {translator.message("mobile.ui.currentUsageLimits")}
         </Text>
         {limits.windows.length ? (
           limits.windows.map((window) => (
@@ -228,29 +242,30 @@ function AccountDetails({
                 />
               </View>
               <Text className="text-xs text-foreground-muted">
-                {formatResetsIn(window, now) ?? "Reset time not reported"}
+                {formatResetsIn(window, now) ??
+                  translator.message("mobile.ui.resetTimeNotReported")}
               </Text>
             </View>
           ))
         ) : (
           <Text className="text-sm text-foreground-muted">
-            Current usage limits have not been reported.
+            {translator.message("mobile.ui.currentUsageLimitsHaveNotBeenReported")}
           </Text>
         )}
       </View>
       <View className="gap-3">
         <Text accessibilityRole="header" className="text-base font-t3-bold text-foreground">
-          Reset usage history
+          {translator.message("mobile.ui.resetUsageHistory")}
         </Text>
         {history.length ? (
           history.map((credit) => <CreditRow key={credit.id} credit={credit} history />)
         ) : (
           <Text className="text-sm text-foreground-muted">
-            No past redemptions were included in the latest account data.
+            {translator.message("mobile.ui.noPastRedemptionsWereIncludedInThe")}
           </Text>
         )}
         <Text className="text-xs text-foreground-muted">
-          Shows the reset records reported by your provider. This history may be incomplete.
+          {translator.message("mobile.ui.showsTheResetRecordsReportedByYour")}
         </Text>
       </View>
       <Text className="text-xs text-foreground-muted">
@@ -270,6 +285,7 @@ function ResetManagementDialog({
   readonly environmentId: EnvironmentId;
   readonly onClose: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const [selectedId, setSelectedId] = useState(report.accounts[0]?.id);
@@ -293,11 +309,11 @@ function ResetManagementDialog({
       <View className="flex-1 bg-sheet" accessibilityViewIsModal>
         <View className="flex-row items-center justify-between gap-3 border-b border-border p-5">
           <Text accessibilityRole="header" className="flex-1 text-lg font-t3-bold text-foreground">
-            Manage resets
+            {translator.message("mobile.ui.manageResets")}
           </Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close reset management"
+            accessibilityLabel={translator.message("mobile.ui.closeResetManagement")}
             hitSlop={12}
             onPress={onClose}
             className="size-11 items-center justify-center"
@@ -345,7 +361,7 @@ function ResetManagementDialog({
             </>
           ) : (
             <Text className="text-sm text-foreground-muted">
-              No account usage data is available.
+              {translator.message("mobile.ui.noAccountUsageDataIsAvailable")}
             </Text>
           )}
         </ScrollView>
@@ -361,6 +377,7 @@ export function UsageResetMenu({
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -368,7 +385,7 @@ export function UsageResetMenu({
         actions={[
           {
             id: "manage-resets",
-            title: "Manage resets",
+            title: translator.message("mobile.ui.manageResets"),
             image: Platform.OS === "ios" ? "ticket" : "ic_menu_manage",
           },
         ]}
@@ -378,7 +395,7 @@ export function UsageResetMenu({
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Usage limit options"
+          accessibilityLabel={translator.message("mobile.ui.usageLimitOptions")}
           hitSlop={12}
           className="p-1 active:opacity-60"
         >

@@ -10,6 +10,7 @@ import { FilePreviewLoading, FilePreviewNotice } from "../features/files/FilePre
 import { pdfInitialPage, pdfLinkUrl, preparePdfPreview } from "../lib/pdfPreview";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { ControlPill } from "./ui/ControlPill";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 const preparedPdfAtom = Atom.family((uri: string) =>
   Atom.make(
@@ -40,6 +41,7 @@ const preparedPdfAtom = Atom.family((uri: string) =>
 );
 
 export function PdfPreview(props: { readonly uri: string }) {
+  const translator = useMobileInterfaceTranslator();
   const atom = preparedPdfAtom(props.uri);
   const prepared = useAtomValue(atom);
   const refresh = useAtomRefresh(atom);
@@ -57,14 +59,23 @@ export function PdfPreview(props: { readonly uri: string }) {
   if (error) {
     return (
       <View className="flex-1 gap-4 bg-card">
-        <FilePreviewNotice title="Could not load PDF">{error}</FilePreviewNotice>
+        <FilePreviewNotice title={translator.message("mobile.ui.couldNotLoadPdf")}>
+          {error}
+        </FilePreviewNotice>
         <View className="items-center">
-          <ControlPill label="Try again" variant="pill" onPress={refresh} />
+          <ControlPill
+            label={translator.message("cloud.action.tryAgain")}
+            variant="pill"
+            onPress={refresh}
+          />
         </View>
       </View>
     );
   }
-  if (localUri === null) return <FilePreviewLoading message="Loading PDF..." background="card" />;
+  if (localUri === null)
+    return (
+      <FilePreviewLoading message={translator.message("mobile.ui.loadingPdf")} background="card" />
+    );
 
   return (
     <Pdf

@@ -28,6 +28,7 @@ import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function PullRequestDiscussionScreen({
   route,
@@ -41,6 +42,7 @@ export function PullRequestDiscussionScreen({
 }
 
 function Discussion({ params }: { params: PullRequestParams & { readonly discussionId: string } }) {
+  const translator = useMobileInterfaceTranslator();
   const target = pullRequestTarget(params);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -85,7 +87,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     if (result && AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       setError(
-        cause instanceof Error ? cause.message : "The provider could not complete this action.",
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.theProviderCouldNotCompleteThisAction"),
       );
     }
   };
@@ -132,16 +136,21 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     ).values(),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const canReply = permissions.canReply && Boolean(thread);
-  const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
+  const resolveLabel = thread?.isResolved
+    ? translator.message("mobile.ui.unresolve")
+    : translator.message("mobile.ui.resolve");
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={detail.data}>
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
         <NativeStackScreenOptions
-          options={{ title: "Discussion", unstable_headerSubtitle: `#${params.number}` }}
+          options={{
+            title: translator.message("mobile.ui.discussion"),
+            unstable_headerSubtitle: `#${params.number}`,
+          }}
         />
         {Platform.OS === "android" ? (
           <AndroidScreenHeader
-            title="Discussion"
+            title={translator.message("mobile.ui.discussion")}
             subtitle={`#${params.number}`}
             onBack={() => navigation.goBack()}
             actions={
@@ -185,25 +194,27 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   {thread.line ? `:${thread.line}` : ""}
                 </Text>
                 <Text className="text-xs text-foreground-muted">
-                  {thread.isResolved ? "Resolved" : "Unresolved"}
+                  {thread.isResolved
+                    ? translator.message("pullRequest.thread.resolved")
+                    : translator.message("projectIndexing.importResolution.unresolved")}
                   {thread.isOutdated ? " · Outdated" : ""}
                 </Text>
                 <Button
-                  label="View file diff"
+                  label={translator.message("mobile.ui.viewFileDiff")}
                   onPress={() =>
                     navigation.navigate("PullRequestFile", { ...params, path: thread.path })
                   }
                 />
               </View>
             ) : !activity.isPending ? (
-              <Text>This discussion is no longer available.</Text>
+              <Text>{translator.message("mobile.ui.thisDiscussionIsNoLongerAvailable")}</Text>
             ) : null}
             {comments.map((comment) => (
               <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">
                 <View className="flex-row items-center gap-2">
                   <PullRequestAvatar actor={comment.author} size={28} />
                   <Text className="min-w-0 flex-1 text-sm font-t3-medium">
-                    {comment.author?.login ?? "Unknown author"}
+                    {comment.author?.login ?? translator.message("mobile.ui.unknownAuthor")}
                   </Text>
                   <Text className="text-2xs text-foreground-muted">
                     {relativeTime(comment.createdAt)}
@@ -224,7 +235,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             ))}
             {nextCursor ? (
               <Button
-                label={busy ? "Loading…" : "Load more replies"}
+                label={
+                  busy
+                    ? translator.message("common.loading")
+                    : translator.message("mobile.ui.loadMoreReplies")
+                }
                 disabled={busy}
                 onPress={() => void more()}
               />
@@ -245,10 +260,10 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               className="flex-row items-end gap-1 p-1"
             >
               <TextInput
-                accessibilityLabel="Discussion reply"
+                accessibilityLabel={translator.message("mobile.ui.discussionReply")}
                 multiline
                 maxLength={65536}
-                placeholder="Reply…"
+                placeholder={translator.message("mobile.ui.reply")}
                 placeholderTextColorClassName="accent-foreground-muted"
                 value={body}
                 onChangeText={setBody}
@@ -257,7 +272,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               />
               <View>
                 <Button
-                  label={busy ? "Posting…" : "Reply"}
+                  label={
+                    busy
+                      ? translator.message("mobile.ui.posting")
+                      : translator.message("chat.reply.action")
+                  }
                   tone="contrast"
                   disabled={busy || !body.trim()}
                   onPress={() => void post()}

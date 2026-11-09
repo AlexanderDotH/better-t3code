@@ -1,6 +1,15 @@
 import type { UsageActivity } from "./contextWindow.ts";
 import { describe, expect, it } from "vite-plus/test";
-import { EventId, SubagentId, TurnId } from "@t3tools/contracts";
+import {
+  EventId,
+  ProviderInstanceId,
+  ProviderThreadId,
+  RunId,
+  SubagentId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow.ts";
 
@@ -220,5 +229,128 @@ describe("contextWindow", () => {
         makeActivity("activity-1", "context-window.updated", payload),
       ]),
     ).toMatchObject(payload);
+  });
+});
+
+describe("contextWindow from a thread projection", () => {
+  const threadId = ThreadId.make("thread-1");
+  const providerThreadId = ProviderThreadId.make("provider-thread-1");
+  const instanceId = ProviderInstanceId.make("codex");
+  const at = (iso: string) => DateTime.makeUnsafe(iso);
+  const projection = (
+    overrides: Partial<Parameters<typeof deriveLatestContextWindowSnapshot>[0] & object> = {},
+  ) => ({
+    thread: {
+      id: threadId,
+      activeProviderThreadId: providerThreadId,
+      forkedFrom: null,
+      modelSelection: { instanceId, model: "gpt-5.4" },
+    },
+    providerThreads: [
+      {
+        id: providerThreadId,
+        updatedAt: at("2026-03-23T00:00:00.000Z"),
+        contextUsage: { usedTokens: 10_000, maxTokens: 100_000 },
+      },
+    ],
+    providerTurns: [],
+    visibleTurnItems: [],
+    contextTransfers: [],
+    ...overrides,
+  });
+
+  it("follows the running turn's live usage over the previous turn's snapshot", () => {
+    expect(
+      deriveLatestContextWindowSnapshot(
+        projection({
+          providerTurns: [
+            { tokenUsage: { usedTokens: 10_000, updatedAt: "2026-03-23T00:00:00.000Z" } },
+            {
+              tokenUsage: {
+                usedTokens: 42_000,
+                maxTokens: 100_000,
+                updatedAt: "2026-03-23T00:01:00.000Z",
+              },
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      usedTokens: 42_000,
+      usedPercentage: 42,
+      updatedAt: "2026-03-23T00:01:00.000Z",
+    });
+  });
+
+  it("reports the first turn before the provider thread has a snapshot", () => {
+    expect(
+      deriveLatestContextWindowSnapshot(
+        projection({
+          providerThreads: [],
+          providerTurns: [
+            { tokenUsage: { usedTokens: 5_000, updatedAt: "2026-03-23T00:01:00.000Z" } },
+          ],
+        }),
+      ),
+    ).toMatchObject({ usedTokens: 5_000, maxTokens: null });
+  });
+
+  it("falls back to the latest compaction size", () => {
+    expect(
+      deriveLatestContextWindowSnapshot(
+        projection({
+          providerThreads: [],
+          visibleTurnItems: [
+            {
+              item: {
+                type: "compaction",
+                beforeTokenCount: 90_000,
+                afterTokenCount: 8_000,
+                startedAt: at("2026-03-23T00:02:00.000Z"),
+                updatedAt: at("2026-03-23T00:03:00.000Z"),
+              },
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      usedTokens: 8_000,
+      totalProcessedTokens: 90_000,
+      updatedAt: "2026-03-23T00:02:00.000Z",
+    });
+  });
+
+  it("starts a native fork from the source run's usage", () => {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const runId = RunId.make("source-run");
+    expect(
+      deriveLatestContextWindowSnapshot(
+        projection({
+          thread: {
+            id: threadId,
+            activeProviderThreadId: null,
+            forkedFrom: { type: "run", threadId: sourceThreadId, runId },
+            modelSelection: { instanceId, model: "gpt-5.4" },
+          },
+          providerThreads: [],
+          contextTransfers: [
+            {
+              type: "fork",
+              targetThreadId: threadId,
+              sourceThreadId,
+              sourcePoint: { threadId: sourceThreadId, runId },
+              sourceProviderInstanceId: instanceId,
+              status: "pending",
+              resolution: null,
+              sourceTokenUsage: {
+                usedTokens: 20_000,
+                maxTokens: 100_000,
+                updatedAt: "2026-03-23T00:00:00.000Z",
+              },
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ usedTokens: 20_000, usedPercentage: 20 });
   });
 });

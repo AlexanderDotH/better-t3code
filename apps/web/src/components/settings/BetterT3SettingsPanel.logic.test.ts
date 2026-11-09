@@ -191,6 +191,7 @@ describe("buildBetterT3ControlStates", () => {
         {
           ...shiftClickShowLess,
           availability: { ...shiftClickShowLess.availability, surfaces: ["web"] },
+          dependencies: [{ featureId: "chat.classicSidebar", condition: "enabled" }],
         },
       ],
       device: {

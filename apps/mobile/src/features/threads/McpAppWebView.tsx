@@ -44,6 +44,8 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const ROW_BOTTOM_MARGIN = 8;
 
@@ -80,7 +82,11 @@ const confirm = (title: string, message: string, action: string) =>
       title,
       message,
       [
-        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        {
+          text: currentInterfaceTranslator().message("mobile.settings.projects.settings.cancel"),
+          style: "cancel",
+          onPress: () => resolve(false),
+        },
         { text: action, onPress: () => resolve(true) },
       ],
       // Android dismisses earlier alerts when showing another; decline dismissed requests to release their slots.
@@ -115,6 +121,7 @@ export function ThreadMcpApp(props: {
   readonly onExitFullscreen?: () => void;
   readonly height?: number;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [height, setHeight] = useState(MCP_APP_INLINE_MAX_HEIGHT);
   const [documentKey, setDocumentKeyState] = useState(0);
   // The view keeps its first URL: a re-minted one would reload the app.
@@ -502,7 +509,7 @@ export function ThreadMcpApp(props: {
         <Text className="text-sm text-foreground-muted">The {app.server} app was closed</Text>
         <View className="items-center">
           <Button
-            label="Show app"
+            label={translator.message("mobile.ui.showApp")}
             tone="secondary"
             onPress={() => {
               reopenDocument();

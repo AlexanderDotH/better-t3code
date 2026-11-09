@@ -9,17 +9,17 @@ import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
-export function useSelectedThreadGitState() {
+export function useSelectedThreadGitState(enabled = true) {
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
 
   const selectedThreadGitTarget = {
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
+    environmentId: enabled ? (selectedThread?.environmentId ?? null) : null,
+    cwd: enabled ? selectedThreadCwd : null,
   };
   const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useEnvironmentQuery(
-    selectedThread === null
+    !enabled || selectedThread === null
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: selectedThread.environmentId,
@@ -28,8 +28,8 @@ export function useSelectedThreadGitState() {
   );
 
   const selectedThreadBranchTarget = {
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
+    environmentId: enabled ? (selectedThread?.environmentId ?? null) : null,
+    cwd: enabled ? selectedThreadCwd : null,
     query: null,
   };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);

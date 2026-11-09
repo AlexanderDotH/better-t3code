@@ -1,9 +1,8 @@
-import { CommandId, type ThreadId } from "@t3tools/contracts";
+import { CommandId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
 import { OrchestratorV2, type OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
@@ -13,18 +12,10 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { planFetchExploration } from "./FetchExplorationPlanner.ts";
 import { buildFetchContext } from "./FetchContext.ts";
 import { buildFetchWorkerPrompt } from "./FetchWorkerPolicy.ts";
-import type {
-  FetchRunInput,
-  FetchRunResult,
-  FetchHandoffInput,
-  FetchInterruptInput,
-  FetchWorkerOutcome,
-} from "./FetchWorkerState.ts";
+import type { FetchRunInput, FetchRunResult, FetchWorkerOutcome } from "./FetchWorkerState.ts";
 export type {
   FetchRunInput,
   FetchRunResult,
-  FetchHandoffInput,
-  FetchInterruptInput,
   FetchWorkerAssignment,
   FetchWorkerOutcome,
   FetchWorkerOutcomeStatus,
@@ -34,14 +25,6 @@ export interface FetchWorkerCoordinatorShape {
   readonly run: (
     input: FetchRunInput,
   ) => Effect.Effect<FetchRunResult, FetchWorkerCoordinatorError>;
-  readonly handoffToMain: <A, E, R>(
-    input: FetchHandoffInput,
-    sendMainEffect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<boolean, E, R>;
-  readonly requestInterrupt: (
-    input: FetchInterruptInput,
-  ) => Effect.Effect<boolean, FetchWorkerCoordinatorError>;
-  readonly hasActiveRun: (threadId: ThreadId) => Effect.Effect<boolean>;
 }
 
 export class FetchWorkerCoordinator extends Context.Service<
@@ -54,8 +37,6 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
   const generation = yield* TextGeneration;
   const crypto = yield* Crypto.Crypto;
-  const handoffLock = yield* Semaphore.make(1);
-  const handedOff = new Set<string>();
   const nextId = () => crypto.randomUUIDv4().pipe(Effect.map(CommandId.make), Effect.orDie);
   const run: FetchWorkerCoordinatorShape["run"] = Effect.fn("FetchWorkerCoordinator.run")(
     function* (input) {
@@ -204,51 +185,6 @@ const make = Effect.gen(function* () {
       };
     },
   );
-  const handoffToMain = Effect.fn("FetchWorkerCoordinator.handoffToMain")(
-    <A, E, R>(input: FetchHandoffInput, sendMainEffect: Effect.Effect<A, E, R>) =>
-      handoffLock.withPermit(
-        Effect.gen(function* () {
-          const key = `${input.threadId}:${input.runId}`;
-          if (handedOff.has(key)) return false;
-          handedOff.add(key);
-          yield* sendMainEffect;
-          return true;
-        }).pipe(
-          Effect.onError(() =>
-            Effect.sync(() => handedOff.delete(`${input.threadId}:${input.runId}`)),
-          ),
-        ),
-      ),
-  );
-  return FetchWorkerCoordinator.of({
-    run,
-    handoffToMain,
-    requestInterrupt: Effect.fn("FetchWorkerCoordinator.requestInterrupt")(function* (input) {
-      const parent = yield* orchestration.getThreadRecords(input.threadId, ["subagents"]);
-      const tasks = parent.subagents.filter(
-        (task) =>
-          task.title?.startsWith("Fetch:") &&
-          ["running", "pending", "waiting"].includes(task.status),
-      );
-      for (const task of tasks)
-        if (task.childThreadId)
-          yield* threads.dispatch({
-            type: "thread.stop",
-            commandId: yield* nextId(),
-            threadId: task.childThreadId,
-          });
-      return tasks.length > 0;
-    }),
-    hasActiveRun: Effect.fn("FetchWorkerCoordinator.hasActiveRun")(function* (threadId) {
-      const parent = yield* orchestration
-        .getThreadRecords(threadId, ["subagents"])
-        .pipe(Effect.orDie);
-      return parent.subagents.some(
-        (task) =>
-          task.title?.startsWith("Fetch:") &&
-          ["running", "pending", "waiting"].includes(task.status),
-      );
-    }),
-  });
+  return FetchWorkerCoordinator.of({ run });
 });
 export const FetchWorkerCoordinatorLive = Layer.effect(FetchWorkerCoordinator, make);

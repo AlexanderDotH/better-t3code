@@ -18,12 +18,14 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { AppText as Text } from "./ui/AppText";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { PresentationSource } from "./ui/NativePresentation";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 export function ComposerContextAttachment(props: {
   record: Extract<ComposerContextRecord, { attachmentId: string }>;
   environmentId?: EnvironmentId;
   attachment?: DraftComposerAttachment;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { record, attachment } = props;
   const shareSourceIdentifier = useId();
   const resource = {
@@ -73,8 +75,8 @@ export function ComposerContextAttachment(props: {
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not open attachment",
-        cause instanceof Error ? cause.message : "Try again.",
+        translator.message("mobile.ui.couldNotOpenAttachment"),
+        cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
       );
     }
   };
@@ -100,12 +102,16 @@ export function ComposerContextAttachment(props: {
       ) : null}
       {error || (!local && asset._tag === "Failure") ? (
         <Text className="text-foreground-muted">
-          {error ?? "Attachment unavailable. Reconnect and try again."}
+          {error ?? translator.message("mobile.ui.attachmentUnavailableReconnectAndTryAgain")}
         </Text>
       ) : null}
       <PresentationSource identifier={shareSourceIdentifier}>
         <Button
-          label={sharing ? "Opening attachment…" : "Open or share attachment"}
+          label={
+            sharing
+              ? translator.message("mobile.ui.openingAttachment")
+              : translator.message("mobile.ui.openOrShareAttachment")
+          }
           tone="secondary"
           disabled={sharing}
           onPress={() => void share()}

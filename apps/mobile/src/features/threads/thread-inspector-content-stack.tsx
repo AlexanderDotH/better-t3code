@@ -3,6 +3,7 @@ import { View } from "react-native";
 
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { NativeInspectorContent } from "../../native/NativeInspectorContent";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
 
@@ -14,6 +15,7 @@ function InspectorContentPane(props: {
   readonly resetKeys: readonly [string | null, string | null];
   readonly visible: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   if (!props.mounted) {
     return null;
   }
@@ -35,7 +37,10 @@ function InspectorContentPane(props: {
         resetKeys={props.resetKeys}
         renderFallback={(fallback) => (
           <NativeInspectorContent>
-            <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+            <RenderFailureView
+              {...fallback}
+              title={translator.message("mobile.ui.theInspectorCouldntBeDisplayed")}
+            />
           </NativeInspectorContent>
         )}
       >

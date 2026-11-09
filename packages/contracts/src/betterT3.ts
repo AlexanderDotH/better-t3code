@@ -514,8 +514,8 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     scope: "device",
     controlKind: "switch",
     existing: true,
+    // The classic sidebar's projects and the boring sidebar's folders both honor it.
     surfaces: ["web", "desktop"],
-    dependencies: [{ featureId: "chat.classicSidebar", condition: "enabled" }],
   }),
   descriptor({
     id: "chat.draftIndicators",

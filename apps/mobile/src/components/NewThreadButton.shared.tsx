@@ -1,3 +1,4 @@
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 import { Pressable, type StyleProp, type ViewStyle } from "react-native";
 
 import { cn } from "../lib/cn";
@@ -11,9 +12,11 @@ export function NewThreadButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
+  const translator = useMobileInterfaceTranslator();
+  const label = translator.message("sidebar.thread.new");
   return (
     <Pressable
-      accessibilityLabel="New thread"
+      accessibilityLabel={label}
       accessibilityRole="button"
       onPress={props.onPress}
       className={cn(
@@ -32,7 +35,7 @@ export function NewThreadButton(props: {
         type="monochrome"
       />
       {props.extended && props.expanded !== false ? (
-        <AppText className="text-[16px] font-t3-medium text-primary-foreground">New thread</AppText>
+        <AppText className="text-[16px] font-t3-medium text-primary-foreground">{label}</AppText>
       ) : null}
     </Pressable>
   );

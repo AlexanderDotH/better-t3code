@@ -61,12 +61,14 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
     setLoading(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setError(failureMessage(result, "Could not scan for other T3 Code instances."));
+        setError(
+          failureMessage(result, translator.message("mobile.ui.couldNotScanForOtherT3Code")),
+        );
       }
       return;
     }
     setSources(result.value.sources);
-  }, [discoverSources, props.environmentId]);
+  }, [discoverSources, props.environmentId, translator]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Discover import sources in this environment and invalidate pending requests on unmount.
   useEffect(() => {
@@ -90,16 +92,16 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
       setActiveSourceId(null);
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
-          const message = failureMessage(result, "Could not import chats.");
+          const message = failureMessage(result, translator.message("settings.chatImport.failed"));
           setError(message);
-          Alert.alert("Could not import chats", message);
+          Alert.alert(translator.message("mobile.ui.couldNotImportChats"), message);
         }
         return;
       }
       setLastResult(result.value);
       void reload();
     },
-    [activeSourceId, importSource, props.environmentId, reload],
+    [activeSourceId, importSource, props.environmentId, reload, translator],
   );
 
   return (
@@ -154,7 +156,7 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
                   onPress={() => void runImport(source)}
                   className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
                 >
-                  <Text className="font-t3-medium text-background">
+                  <Text className="font-t3-medium text-screen">
                     {importing
                       ? translator.message("mobile.settings.data.importing")
                       : translator.message("mobile.settings.data.importChats")}
@@ -241,12 +243,14 @@ export function EnvironmentSpeechProfileSettings(props: {
     setLoading(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setLoadError(failureMessage(result, "Could not load project speech profiles."));
+        setLoadError(
+          failureMessage(result, translator.message("mobile.ui.couldNotLoadProjectSpeechProfiles")),
+        );
       }
       return;
     }
     setProfiles(new Map(result.value.profiles.map((profile) => [profile.projectId, profile])));
-  }, [listProfiles, props.environmentId]);
+  }, [listProfiles, props.environmentId, translator]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load project speech profiles from this environment and discard replaced requests.
   useEffect(() => {
@@ -282,8 +286,13 @@ export function EnvironmentSpeechProfileSettings(props: {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           Alert.alert(
-            action === "index" ? "Could not index project" : "Could not create basic context",
-            failureMessage(result, "The project speech profile could not be updated."),
+            action === "index"
+              ? translator.message("mobile.ui.couldNotIndexProject")
+              : translator.message("chat.speechIndex.basicCreateTitle"),
+            failureMessage(
+              result,
+              translator.message("mobile.ui.theProjectSpeechProfileCouldNotBe"),
+            ),
           );
         }
         return;
@@ -294,7 +303,7 @@ export function EnvironmentSpeechProfileSettings(props: {
         return next;
       });
     },
-    [busyActions, createBasicProfile, indexProfile, props.environmentId],
+    [busyActions, createBasicProfile, indexProfile, props.environmentId, translator],
   );
 
   const loadState: SpeechProfileLoadState = loadError
@@ -418,7 +427,7 @@ export function EnvironmentSpeechProfileSettings(props: {
                         onPress={() => void runAction(project, "index")}
                         className="rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
                       >
-                        <Text className="font-t3-medium text-background">
+                        <Text className="font-t3-medium text-screen">
                           {busyAction === "index"
                             ? translator.message(
                                 profile?.source === "indexed"

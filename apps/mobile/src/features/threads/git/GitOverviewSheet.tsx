@@ -53,6 +53,7 @@ import {
   useLinkedPullRequestLines,
 } from "../LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -77,6 +78,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -270,11 +272,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {behindCount > 0 ? (
           <ListRow
             icon="arrow.down.circle"
-            label="Pull latest"
+            label={translator.message("mobile.git.pullLatest")}
             description={
               canWriteSourceControl
                 ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
-                : "This connection cannot change source control."
+                : translator.message("mobile.ui.thisConnectionCannotChangeSourceControl")
             }
             disabled={!canWriteSourceControl || busy || !isRepo}
             onPress={() => void gitActions.onPullSelectedThreadBranch()}
@@ -282,8 +284,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         ) : null}
         <ListRow
           icon="text.bubble"
-          label="Review changes"
-          description="Inspect changes, uncommitted edits, and turn diffs"
+          label={translator.message("mobile.review.changes")}
+          description={translator.message("mobile.ui.inspectChangesUncommittedEditsAndTurnDiffs")}
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
@@ -296,11 +298,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         />
         <ListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          label="Branches & worktrees"
+          label={translator.message("mobile.git.branchesWorktrees")}
           description={
             canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
+              ? translator.message("mobile.git.switchBranchDescription")
+              : translator.message("mobile.ui.viewBranchesAndWorktrees")
           }
           disabled={busy || !isRepo}
           onPress={() =>
@@ -343,7 +345,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       />
 
       {currentWorktreePath ? (
-        <ListSection title="Worktree">
+        <ListSection title={translator.message("mobile.git.worktree")}>
           <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
             {currentWorktreePath}
           </Text>
@@ -399,11 +401,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const refreshMenu = (
     <AndroidAnchoredMenu
-      title="Repository options"
+      title={translator.message("mobile.ui.repositoryOptions")}
       actions={[
         {
           id: "refresh",
-          title: "Refresh repository status",
+          title: translator.message("mobile.git.refreshStatus"),
           attributes: { disabled: busy || isRefreshing },
         },
       ]}
@@ -413,7 +415,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     >
       {(open) => (
         <AndroidHeaderIconButton
-          accessibilityLabel="Repository options"
+          accessibilityLabel={translator.message("mobile.ui.repositoryOptions")}
           icon="ellipsis"
           onPress={open}
         />
@@ -470,7 +472,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             </Pressable>
           )}
           <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-            Repository
+            {translator.message("mobile.git.repository")}
           </Text>
           <Text className="pr-10 text-xl font-t3-bold">{currentBranchLabel}</Text>
           <Text className="text-foreground-secondary text-sm font-medium leading-normal">
@@ -489,7 +491,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               ? undefined
               : [
                   {
-                    accessibilityLabel: "Refresh repository status",
+                    accessibilityLabel: translator.message("mobile.git.refreshStatus"),
                     disabled: busy,
                     icon: "arrow.clockwise",
                     onPress: () => void gitActions.refreshSelectedThreadGitStatus(),

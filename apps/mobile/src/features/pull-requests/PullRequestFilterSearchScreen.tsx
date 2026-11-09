@@ -20,6 +20,7 @@ import { pullRequestFilterChoices, pullRequestLabelColors } from "./pullRequestL
 import { PullRequestLabelDot } from "./PullRequestLabelDot";
 import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestListControls } from "./usePullRequestListControls";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type PullRequestFilterSearchParams = {
   readonly kind: PullRequestFilterOptionKind;
@@ -51,6 +52,7 @@ const optionsFamily = Atom.family((key: string) => {
 export function PullRequestFilterSearchScreen({
   route,
 }: StaticScreenProps<PullRequestFilterSearchParams>) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { kind, environmentId, environmentIds, suggestions, labelColors } = route.params;
   const listControls = usePullRequestListControls();
@@ -110,13 +112,28 @@ export function PullRequestFilterSearchScreen({
       },
     });
   };
-  const placeholder = kind === "labels" ? "Search labels" : "Search authors";
+  const placeholder =
+    kind === "labels"
+      ? translator.message("mobile.ui.searchLabelsLabel")
+      : translator.message("mobile.ui.searchAuthorsLabel");
   return (
     <PullRequestSearchSheet
-      title={kind === "labels" ? "Filter by label" : "Filter by author"}
+      title={
+        kind === "labels"
+          ? translator.message("mobile.ui.filterByLabel")
+          : translator.message("mobile.ui.filterByAuthor")
+      }
       placeholder={placeholder}
-      closeAccessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
-      clearAccessibilityLabel={kind === "labels" ? "Clear label search" : "Clear author search"}
+      closeAccessibilityLabel={
+        kind === "labels"
+          ? translator.message("mobile.ui.closeLabelFilter")
+          : translator.message("mobile.ui.closeAuthorFilter")
+      }
+      clearAccessibilityLabel={
+        kind === "labels"
+          ? translator.message("mobile.ui.clearLabelSearch")
+          : translator.message("mobile.ui.clearAuthorSearch")
+      }
       searchTextChangeId="pr-filter-option-search"
       query={query}
       onQueryChange={setQuery}
@@ -154,17 +171,17 @@ export function PullRequestFilterSearchScreen({
               <EmptyState
                 title={
                   hosted.failed
-                    ? "Couldn't search the host"
+                    ? translator.message("mobile.ui.couldntSearchTheHost")
                     : kind === "labels"
-                      ? "No matching labels"
-                      : "No matching authors"
+                      ? translator.message("mobile.ui.noMatchingLabels")
+                      : translator.message("mobile.ui.noMatchingAuthors")
                 }
                 detail={
                   hosted.failed
-                    ? "The host didn't answer. Try again in a moment."
+                    ? translator.message("mobile.ui.theHostDidntAnswerTryAgainIn")
                     : kind === "labels"
-                      ? "Search the labels of the repositories this list covers."
-                      : "Search people by name or handle on the repositories' hosts."
+                      ? translator.message("mobile.ui.searchTheLabelsOfTheRepositoriesThis")
+                      : translator.message("mobile.ui.searchPeopleByNameOrHandleOn")
                 }
                 variant="plain"
               />

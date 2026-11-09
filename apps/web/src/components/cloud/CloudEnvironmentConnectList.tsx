@@ -155,12 +155,17 @@ export function CloudEnvironmentConnectRows({
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: savedWithoutRelay.has(environment.environmentId)
-          ? "T3 Connect route added"
-          : "Environment added",
-        description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to T3 Connect when its other routes are unreachable.`
-          : `Connecting to ${environment.label} through T3 Connect.`,
+        title: translator.message(
+          savedWithoutRelay.has(environment.environmentId)
+            ? "cloud.environment.routeAddedTitle"
+            : "cloud.environment.addedTitle",
+        ),
+        description: translator.message(
+          savedWithoutRelay.has(environment.environmentId)
+            ? "cloud.environment.routeAddedDescription"
+            : "cloud.environment.connectingDescription",
+          { environment: environment.label },
+        ),
       });
       return true;
     }
@@ -353,24 +358,35 @@ export function CloudEnvironmentConnectRows({
           : availability === "checking"
             ? "bg-warning"
             : "bg-muted-foreground/35";
-    const notAdded = savedWithoutRelay.has(environment.environmentId)
-      ? "Saved without T3 Connect"
-      : "Not added";
+    const relayStatusText =
+      availability === "online"
+        ? translator.message("cloud.environment.relayOnline")
+        : availability === "offline"
+          ? translator.message("cloud.environment.relayOffline")
+          : availability === "checking"
+            ? translator.message("cloud.environment.relayChecking")
+            : (Option.getOrNull(error)?.message ??
+              translator.message("cloud.environment.relayUnavailable"));
+    const notAddedStatus = (detail: string) =>
+      [
+        "T3 Connect",
+        translator.message(
+          savedWithoutRelay.has(environment.environmentId)
+            ? "cloud.environment.savedWithoutRelay"
+            : "cloud.environment.notAdded",
+        ),
+        detail,
+      ].join(" · ");
     const statusText =
       unsupported && !savedEnvironment
-        ? `T3 Connect · ${notAdded} · Client not supported`
+        ? notAddedStatus(translator.message("cloud.connection.unsupported"))
         : offlineReason !== null
           ? offlineReason
           : savedConnection
             ? savedConnection.statusText
-            : availability === "online"
-              ? `T3 Connect · ${notAdded} · Relay online`
-              : availability === "offline"
-                ? `T3 Connect · ${notAdded} · Relay offline`
-                : availability === "checking"
-                  ? `T3 Connect · ${notAdded} · Checking relay status…`
-                  : (Option.getOrNull(error)?.message ??
-                    `T3 Connect · ${notAdded} · Relay status unavailable`);
+            : availability === "error"
+              ? (Option.getOrNull(error)?.message ?? notAddedStatus(relayStatusText))
+              : notAddedStatus(relayStatusText);
     if (selection) {
       return (
         <label
@@ -413,13 +429,15 @@ export function CloudEnvironmentConnectRows({
               {connectingEnvironmentIds.has(environment.environmentId)
                 ? translator.message("settings.connections.adding")
                 : (savedConnection?.buttonLabel ??
-                  (availability === "online"
-                    ? "Available"
-                    : availability === "offline"
-                      ? "Offline"
-                      : availability === "error"
-                        ? "Unavailable"
-                        : "Checking…"))}
+                  translator.message(
+                    availability === "online"
+                      ? "cloud.connection.available"
+                      : availability === "offline"
+                        ? "cloud.connection.offline"
+                        : availability === "error"
+                          ? "common.unavailable"
+                          : "cloud.environment.checking",
+                  ))}
             </TooltipTrigger>
             <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
@@ -446,13 +464,7 @@ export function CloudEnvironmentConnectRows({
                       ? offlineReason
                       : savedConnection
                         ? savedConnection.statusText
-                        : availability === "online"
-                          ? "Relay online"
-                          : availability === "offline"
-                            ? "Relay offline"
-                            : availability === "checking"
-                              ? "Checking relay status"
-                              : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                        : relayStatusText
                 }
               />
               <EnvironmentMachineIcon
@@ -479,10 +491,12 @@ export function CloudEnvironmentConnectRows({
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
                 <Button size="sm" disabled>
-                  Add
+                  {translator.message("settings.common.add")}
                 </Button>
               </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
+              <TooltipPopup>
+                {unsupportedDetail ?? translator.message("cloud.connection.unsupported")}
+              </TooltipPopup>
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>
@@ -494,11 +508,13 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Adding…"
-                : savedWithoutRelay.has(environment.environmentId)
-                  ? "Add route"
-                  : "Add"}
+              {translator.message(
+                connectingEnvironmentIds.has(environment.environmentId)
+                  ? "settings.connections.adding"
+                  : savedWithoutRelay.has(environment.environmentId)
+                    ? "cloud.environment.addRoute"
+                    : "settings.common.add",
+              )}
             </Button>
           )}
         </div>

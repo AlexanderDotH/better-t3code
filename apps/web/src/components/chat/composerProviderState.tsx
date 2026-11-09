@@ -44,6 +44,7 @@ type ComposerProviderState = {
 };
 
 type ComposerTraitsTarget = {
+  onManualModelSelectionChange?: ((selection: ModelSelection) => void) | undefined;
   provider: ProviderDriverKind;
   instanceId: ProviderInstanceId;
   threadRef?: ScopedThreadRef | undefined;

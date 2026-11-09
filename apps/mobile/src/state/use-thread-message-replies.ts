@@ -11,8 +11,13 @@ import {
   type ProviderInteractionMode,
   type ServerConfig,
   type BetterT3SettingsV1,
+  type OrchestrationV2MessageReply,
 } from "@t3tools/contracts";
-import { createMessageReplyReference } from "@t3tools/client-runtime/messageReplies";
+import {
+  createMessageReplyReference,
+  resolveMessageReplyDispatch,
+  resolveMessageReplyTarget,
+} from "@t3tools/client-runtime/messageReplies";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
@@ -31,7 +36,8 @@ import {
   setComposerDraftMessageReply,
   type ComposerDraft,
 } from "./use-composer-drafts";
-import { threadEnvironment } from "./threads";
+import { appAtomRegistry } from "./atom-registry";
+import { environmentThreadShells, threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 
 export function useThreadMessageReplies(input: {
@@ -41,6 +47,7 @@ export function useThreadMessageReplies(input: {
     readonly modelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
+    readonly messageReply?: OrchestrationV2MessageReply;
   } | null;
   readonly serverConfig: ServerConfig | null;
   readonly connected: boolean;
@@ -48,6 +55,7 @@ export function useThreadMessageReplies(input: {
 }) {
   const translator = useMobileInterfaceTranslator();
   const startReply = useAtomCommand(threadEnvironment.startReply, { reportFailure: false });
+  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const inFlight = useRef(new Set<string>());
   const [sendingKeys, setSendingKeys] = useState<ReadonlySet<string>>(new Set());
   const enabled = mobileMessageRepliesEnabled(
@@ -59,15 +67,19 @@ export function useThreadMessageReplies(input: {
     : null;
   const selectReply = (message: Parameters<typeof createMessageReplyReference>[0]) => {
     if (!enabled || !threadKey) return;
-    const replyTo = createMessageReplyReference(
+    const reference = createMessageReplyReference(
       message,
       translator.message(message.role === "user" ? "chat.reply.you" : "chat.reply.assistant"),
     );
-    if (replyTo)
-      setComposerDraftMessageReply(threadKey, {
-        replyTo,
-        replyTopicId: message.replyTopicId ?? SubagentId.make(uuidv4()),
-      });
+    if (reference)
+      setComposerDraftMessageReply(
+        threadKey,
+        resolveMessageReplyTarget({
+          reference,
+          currentReply: input.thread?.messageReply,
+          createTopicId: () => SubagentId.make(uuidv4()),
+        }),
+      );
   };
   const cancelReply = () => {
     if (threadKey) setComposerDraftMessageReply(threadKey, undefined);
@@ -101,27 +113,62 @@ export function useThreadMessageReplies(input: {
       });
       if (prepared.status !== "ready" || getComposerDraftSnapshot(threadKey).messageReply !== reply)
         return null;
+      const dispatch = resolveMessageReplyDispatch({
+        threadId: thread.id,
+        currentReply: thread.messageReply,
+        replyTo: reply.replyTo,
+        replyTopicId: reply.replyTopicId,
+        threads: appAtomRegistry
+          .get(environmentThreadShells.threadShellsAtom)
+          .filter((shell) => shell.environmentId === thread.environmentId),
+      });
+      if (dispatch.kind === "unavailable")
+        throw new Error(translator.message("chat.reply.unavailable"));
       const metadata = makeQueuedMessageMetadata();
       const messageId = MessageId.make(metadata.messageId);
-      const result = await startReply({
-        environmentId: thread.environmentId,
-        input: {
-          threadId: thread.id,
-          replyTopicId: reply.replyTopicId,
-          replyTo: reply.replyTo,
-          commandId: CommandId.make(metadata.commandId),
-          targetThreadId: ThreadId.make(`reply:${reply.replyTopicId}`),
-          messageId,
-          modelSelection: draft.modelSelection ?? thread.modelSelection,
-          runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-          interactionMode: draft.interactionMode ?? thread.interactionMode,
-          ...serializeComposerMessageForServer(
-            appendVoiceFileContext(draft.text.trim(), draft.voiceFileReferences ?? []),
-            uploadedComposerContext(draft.context, draft.attachments, prepared.attachments),
-          ),
-          attachments: prepared.attachments,
-        },
-      });
+      const message = serializeComposerMessageForServer(
+        appendVoiceFileContext(draft.text.trim(), draft.voiceFileReferences ?? []),
+        uploadedComposerContext(draft.context, draft.attachments, prepared.attachments),
+      );
+      const settings = {
+        modelSelection: draft.modelSelection ?? thread.modelSelection,
+        runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+        interactionMode: draft.interactionMode ?? thread.interactionMode,
+      };
+      const commandId = CommandId.make(metadata.commandId);
+      const result =
+        dispatch.kind === "continue"
+          ? await startTurn({
+              environmentId: thread.environmentId,
+              input: {
+                threadId: dispatch.threadId,
+                commandId,
+                message: {
+                  messageId,
+                  role: "user",
+                  ...message,
+                  attachments: prepared.attachments,
+                },
+                ...settings,
+                replyTo: reply.replyTo,
+                replyTopicId: reply.replyTopicId,
+              },
+            })
+          : await startReply({
+              environmentId: thread.environmentId,
+              input: {
+                threadId: dispatch.sourceThreadId,
+                replyTopicId: reply.replyTopicId,
+                replyTo: reply.replyTo,
+                commandId,
+                targetThreadId: ThreadId.make(`reply:${reply.replyTopicId}`),
+                messageId,
+                ...settings,
+                ...message,
+                attachments: prepared.attachments,
+                creationSource: "mobile",
+              },
+            });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       const completion = messageReplyDraftCompletion(getComposerDraftSnapshot(threadKey), draft);
       if (completion === "clear") clearComposerDraftContent(threadKey);

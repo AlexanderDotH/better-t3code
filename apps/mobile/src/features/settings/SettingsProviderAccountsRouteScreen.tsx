@@ -1,3 +1,4 @@
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   isAtomCommandInterrupted,
@@ -35,8 +36,10 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsProviderAccountsRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const { selectedTargets } = useSettingsEnvironmentFilter();
   const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
@@ -44,7 +47,10 @@ export function SettingsProviderAccountsRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Providers" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen
+        title={translator.message("mobile.settings.agents.providers")}
+        trailing={<AndroidSettingsEnvironmentFilter />}
+      >
         <ScreenScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
@@ -52,13 +58,17 @@ export function SettingsProviderAccountsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           {selectedTargets.length === 0 ? (
-            <Text className="text-foreground-muted">Select a connected environment.</Text>
+            <Text className="text-foreground-muted">
+              {translator.message("mobile.ui.selectAConnectedEnvironment")}
+            </Text>
           ) : (
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
                 {!permittedEnvironments.has(environment.environmentId) ? (
                   <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">Limited permissions</Text>
+                    <Text className="text-base text-foreground">
+                      {translator.message("settings.providers.panel.limited")}
+                    </Text>
                     <Text className="text-sm text-foreground-muted">
                       {`This session can view ${environment.label}'s providers but can't change their settings.`}
                     </Text>
@@ -79,7 +89,7 @@ export function SettingsProviderAccountsRouteScreen() {
                       canManageProvider,
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
-                        Configure a provider with in-app sign-in in web or desktop Settings.
+                        {translator.message("mobile.ui.configureAProviderWithInAppSign")}
                       </Text>
                     ) : null}
                   </>
@@ -118,6 +128,7 @@ function ProviderAccount({
   readonly provider: ServerProvider;
   readonly divider: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const environmentId = environment.environmentId;
   const instanceId = provider.instanceId;
   const target = { environmentId, input: { instanceId } };
@@ -170,7 +181,11 @@ function ProviderAccount({
     if (result._tag === "Success") return true;
     if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : translator.message("mobile.ui.couldNotUpdateProviderSignIn"),
+      );
     }
     return false;
   }
@@ -222,18 +237,18 @@ function ProviderAccount({
     active || state?.phase === "failed" || state?.phase === "cancelled"
       ? state.message
       : !provider.enabled
-        ? "Turned off"
+        ? currentInterfaceTranslator().message("mobile.ui.turnedOff")
         : signedIn
-          ? "Signed in"
+          ? translator.message("mobile.settings.signedIn")
           : isDiscovering
-            ? "Discovering sign-in methods…"
+            ? translator.message("mobile.ui.discoveringSignInMethods")
             : needsExternalSetup
-              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+              ? translator.message("mobile.ui.noInAppSignInAdvertisedFollowThe")
               : !provider.installed
-                ? "Not installed"
+                ? translator.message("settings.mcp.store.notInstalled")
                 : usesCredentials
-                  ? "Connect to load models"
-                  : "Not signed in";
+                  ? translator.message("mobile.ui.connectToLoadModels")
+                  : translator.message("mobile.ui.notSignedIn");
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
@@ -244,12 +259,12 @@ function ProviderAccount({
   }
   function signOut() {
     Dialog.alert(
-      "Sign out?",
+      translator.message("mobile.ui.signOut2"),
       `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
         {
-          text: "Sign out",
+          text: translator.message("mobile.ui.signOut"),
           style: "destructive",
           onPress: () => {
             void run(() => logout(target));
@@ -270,7 +285,7 @@ function ProviderAccount({
       ? [
           {
             id: "change",
-            title: "Change account",
+            title: translator.message("mobile.ui.changeAccount"),
             image: "person.crop.circle",
             attributes: { disabled: signInDisabled },
             ...(methodActions.length > 1
@@ -288,7 +303,7 @@ function ProviderAccount({
       ? [
           {
             id: "signOut",
-            title: "Sign out",
+            title: translator.message("mobile.ui.signOut"),
             image: "rectangle.portrait.and.arrow.right",
             attributes: { destructive: true, disabled: disabled || state === null },
           },
@@ -302,17 +317,17 @@ function ProviderAccount({
   ) : needsExternalSetup && provider.setup?.documentationUrl ? (
     <ControlPill
       variant="pill"
-      label="Docs"
+      label={translator.message("mobile.ui.docs")}
       onPress={() => {
         void Linking.openURL(provider.setup!.documentationUrl!).catch(() =>
-          setError("Could not open the provider docs."),
+          setError(translator.message("mobile.ui.couldNotOpenTheProviderDocs")),
         );
       }}
     />
   ) : active && state?.flowId ? (
     <ControlPill
       variant="pill"
-      label="Cancel"
+      label={translator.message("mobile.settings.projects.settings.cancel")}
       accessibilityLabel={`Cancel ${name} sign-in`}
       disabled={disabled}
       onPress={() => {
@@ -335,16 +350,24 @@ function ProviderAccount({
       accessible
       accessibilityRole="button"
       accessibilityLabel={`Sign in to ${name}`}
-      title="Sign in with"
+      title={translator.message("mobile.ui.signInWith")}
       actions={methodActions}
       onPressAction={({ nativeEvent }) => onMenuAction(nativeEvent.event)}
     >
-      <ControlPill variant="primary" label="Sign in" accessibilityLabel={`Sign in to ${name}`} />
+      <ControlPill
+        variant="primary"
+        label={translator.message("mobile.settings.signIn")}
+        accessibilityLabel={`Sign in to ${name}`}
+      />
     </Menu>
   ) : canSignIn && !signedIn ? (
     <ControlPill
       variant="primary"
-      label={usesCredentials ? "Connect" : "Sign in"}
+      label={
+        usesCredentials
+          ? translator.message("mobile.settings.agents.connect")
+          : translator.message("mobile.settings.signIn")
+      }
       accessibilityLabel={usesCredentials ? `Connect to ${name}` : `Sign in to ${name}`}
       disabled={signInDisabled}
       onPress={() => startSignIn()}
@@ -384,7 +407,7 @@ function ProviderAccount({
               {field("input", "Terminal response", true)}
               <SettingsActionRow
                 icon="arrow.up"
-                label="Send response"
+                label={translator.message("mobile.ui.sendResponse")}
                 disabled={disabled}
                 onPress={() => {
                   void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
@@ -401,7 +424,7 @@ function ProviderAccount({
               ))}
               <SettingsActionRow
                 icon="person.crop.circle"
-                label="Connect"
+                label={translator.message("mobile.settings.agents.connect")}
                 disabled={disabled}
                 onPress={() => {
                   void send({ type: "credentials", values }).then((sent) => {
@@ -416,7 +439,7 @@ function ProviderAccount({
               {field("callback", "Final localhost URL", false)}
               <SettingsActionRow
                 icon="arrow.right"
-                label="Continue"
+                label={translator.message("mobile.settings.connect.continue")}
                 disabled={disabled || !values.callback?.trim()}
                 onPress={() => {
                   if (!state?.flowId) return;
@@ -442,7 +465,7 @@ function ProviderAccount({
       {url ? (
         <SettingsActionRow
           icon="globe"
-          label="Open sign-in page"
+          label={translator.message("mobile.ui.openSignInPage")}
           disabled={disabled}
           onPress={() => {
             void (async () => {
@@ -453,7 +476,7 @@ function ProviderAccount({
               )
                 return;
               await Linking.openURL(url);
-            })().catch(() => setError("Could not open the sign-in page."));
+            })().catch(() => setError(translator.message("mobile.ui.couldNotOpenTheSignInPage")));
           }}
         />
       ) : null}
@@ -470,6 +493,7 @@ function ProviderAccountSummary({
   readonly status: string | null | undefined;
   readonly email: string | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [revealed, setRevealed] = useState(false);
   const content = (
     <>
@@ -496,7 +520,11 @@ function ProviderAccountSummary({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={[name, status, revealed ? email : null].filter(Boolean).join(", ")}
-      accessibilityHint={revealed ? "Hides the account email" : "Reveals the account email"}
+      accessibilityHint={
+        revealed
+          ? translator.message("mobile.ui.hidesTheAccountEmail")
+          : translator.message("mobile.ui.revealsTheAccountEmail")
+      }
       onPress={() => setRevealed((value) => !value)}
       className="min-w-0 shrink grow gap-0.5"
     >

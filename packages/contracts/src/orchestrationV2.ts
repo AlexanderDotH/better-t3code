@@ -499,6 +499,7 @@ const BetterT3ThreadFields = {
   pendingHistoryEdit: Schema.optional(CommandId),
   deepPlanExecution: Schema.optional(DeepPlanExecutionContext),
   fetchWorker: Schema.optional(Schema.Struct({ commandExecutionPolicy: Schema.Literal("deny") })),
+  generalSubagent: Schema.optional(Schema.Literal(true)),
   deepPlan: Schema.optional(Schema.NullOr(DeepPlanRun)),
   harnessSync: Schema.optional(Schema.NullOr(OrchestrationHarnessSyncState)),
   messageReply: Schema.optional(OrchestrationV2MessageReply),
@@ -2156,6 +2157,95 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
 
+/** Only an idle, local, unanswered user input can be retried without adding a message. */
+export function resolveResultlessRetryTarget(projection: {
+  readonly thread: Pick<OrchestrationV2AppThread, "archivedAt" | "deletedAt" | "harnessSync">;
+  readonly runs: ReadonlyArray<
+    Pick<
+      OrchestrationV2Run,
+      "id" | "ordinal" | "userMessageId" | "status" | "workspacePreparation" | "startedAt"
+    >
+  >;
+  readonly messages: ReadonlyArray<
+    Pick<
+      OrchestrationV2ConversationMessage,
+      "id" | "runId" | "role" | "streaming" | "createdBy" | "createdAt"
+    >
+  >;
+  readonly turnItems: ReadonlyArray<{
+    readonly type: string;
+    readonly ordinal: number;
+    readonly runId: RunId | null;
+    readonly messageId?: MessageId;
+    readonly inputIntent?: string;
+  }>;
+  readonly nodes: ReadonlyArray<{ readonly status: string }>;
+  readonly providerSessions: ReadonlyArray<{ readonly status: string }>;
+  readonly providerTurns: ReadonlyArray<{ readonly status: string }>;
+  readonly runtimeRequests: ReadonlyArray<{ readonly status: string }>;
+}): { readonly messageId: MessageId; readonly runId: RunId | null } | null {
+  const { thread } = projection;
+  if (
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    thread.harnessSync?.activity === "active"
+  )
+    return null;
+  if (
+    projection.runs.some(
+      (run) =>
+        !["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(run.status),
+    ) ||
+    projection.runtimeRequests.some((request) => request.status === "pending") ||
+    projection.providerSessions.some((session) =>
+      ["starting", "running", "waiting"].includes(session.status),
+    ) ||
+    projection.nodes.some((node) => ["pending", "running", "waiting"].includes(node.status)) ||
+    projection.providerTurns.some((turn) => turn.status === "pending" || turn.status === "running")
+  )
+    return null;
+  let item: (typeof projection.turnItems)[number] | undefined;
+  for (const candidate of projection.turnItems) {
+    if (candidate.type === "user_message" && (!item || candidate.ordinal > item.ordinal))
+      item = candidate;
+  }
+  if (item === undefined || item.inputIntent === "queued_turn") return null;
+  const message = projection.messages.find((message) => message.id === item.messageId);
+  if (!message || message.role !== "user" || message.streaming || message.createdBy !== "user")
+    return null;
+  let latestRun: (typeof projection.runs)[number] | undefined;
+  let run: (typeof projection.runs)[number] | undefined;
+  for (const candidate of projection.runs) {
+    if (!latestRun || candidate.ordinal > latestRun.ordinal) latestRun = candidate;
+    if (candidate.userMessageId === message.id && (!run || candidate.ordinal > run.ordinal))
+      run = candidate;
+  }
+  if (
+    run &&
+    (run.id !== latestRun?.id ||
+      (run.status !== "failed" && run.status !== "interrupted") ||
+      (run.workspacePreparation !== undefined && run.startedAt === null))
+  )
+    return null;
+  if (!run && message.runId !== null) return null;
+  if (
+    projection.messages.some(
+      (candidate) =>
+        candidate.role === "assistant" &&
+        (run
+          ? candidate.runId === run.id
+          : DateTime.Order(candidate.createdAt, message.createdAt) >= 0),
+    ) ||
+    projection.turnItems.some(
+      (candidate) =>
+        candidate.type === "assistant_message" &&
+        (run ? candidate.runId === run.id : candidate.ordinal > item.ordinal),
+    )
+  )
+    return null;
+  return { messageId: message.id, runId: run?.id ?? null };
+}
+
 export const OrchestrationV2ThreadTranscript = Schema.Struct({
   threadId: ThreadId,
   title: Schema.String,
@@ -3377,6 +3467,15 @@ export const OrchestrationV2Command = Schema.Union([
     failure: OrchestrationV2ProviderFailure,
   }),
   Schema.Struct({
+    type: Schema.Literal("message.retry"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    runId: Schema.NullOr(RunId),
+    modelSelection: Schema.optional(ModelSelection),
+    fetchMode: Schema.optional(Schema.NullOr(Schema.Literal("repository-exploration"))),
+  }),
+  Schema.Struct({
     type: Schema.Literal("prepared-run.retry"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3489,6 +3588,7 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
     fetchWorker: Schema.optional(Schema.Struct({ commandExecutionPolicy: Schema.Literal("deny") })),
+    generalSubagent: Schema.optional(Schema.Literal(true)),
     deepPlanExecution: Schema.optional(DeepPlanExecutionContext),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,

@@ -615,11 +615,16 @@ function startAnnotation(sendEnabled: boolean): void {
     "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
   composerRow.appendChild(dragHandle);
 
-  const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const submit = createButton(
+    annotationMessage("desktop.preview.annotation.attach"),
+    annotationMessage("desktop.preview.annotation.attachTitle"),
+  );
   const updateSendHint = () => {
-    submit.title = sendEnabled
-      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
-      : "Attach annotation and screenshot (Enter)";
+    submit.title = annotationMessage(
+      sendEnabled
+        ? "desktop.preview.annotation.attachAndSendTitle"
+        : "desktop.preview.annotation.attachTitle",
+    );
   };
   updateSendHint();
   submit.className +=

@@ -6,7 +6,9 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   DeepPlanRunId,
   EnvironmentId,
+  MessageId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
@@ -16,7 +18,11 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunAttemptId,
+  RunId,
+  RuntimeRequestId,
   type ProviderSessionId,
+  SubagentId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -35,6 +41,7 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -340,6 +347,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly compactThread?: Effect.Effect<void>;
+    readonly steerTurn?: Effect.Effect<void>;
+    readonly requestResponse?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
@@ -435,7 +445,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
-          steerTurn: () => Effect.void,
+          steerTurn: () => options.steerTurn ?? Effect.void,
+          ...(options.compactThread === undefined
+            ? {}
+            : { compactThread: () => options.compactThread! }),
           interruptTurn: () =>
             Ref.update(state, (current) => ({
               ...current,
@@ -453,7 +466,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                 })),
               ),
             ),
-          respondToRuntimeRequest: () => Effect.void,
+          respondToRuntimeRequest: () => options.requestResponse ?? Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
@@ -488,6 +501,9 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly compactThread?: Effect.Effect<void>;
+  readonly steerTurn?: Effect.Effect<void>;
+  readonly requestResponse?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
@@ -524,6 +540,9 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.steerTurn === undefined ? {} : { steerTurn: input.steerTurn }),
+      ...(input.requestResponse === undefined ? {} : { requestResponse: input.requestResponse }),
+      ...(input.compactThread === undefined ? {} : { compactThread: input.compactThread }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
@@ -1759,11 +1778,157 @@ it.effect(
 );
 
 it.effect.each([
-  { relationshipToParent: null, subagent: false },
-  { relationshipToParent: "subagent", subagent: true },
+  { scenario: "unsupported", reason: "unsupported-provider" },
+  { scenario: "mismatch", reason: "implementation-provider-mismatch" },
+  { scenario: "refresh", reason: null },
+] as const)(
+  "ProviderSessionManagerV2 refreshes MCP access each turn ($scenario)",
+  ({ scenario, reason }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread-provider-session-manager-refresh-${scenario}`);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const token = (yield* Ref.get(mcpConfigs))[0]!.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        assert.isFalse((yield* registry.resolve(token))?.capabilities.has("deep-plan"));
+        assert.isTrue((yield* registry.resolve(token))?.capabilities.has("workspace-write"));
+
+        const planningRun = {
+          id: DeepPlanRunId.make("refresh-plan"),
+          threadId,
+          phase: "planning",
+          approval: null,
+          plan: null,
+        } as unknown as NonNullable<OrchestrationV2AppThread["deepPlan"]>;
+        const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+        const turn = (
+          deepPlan: OrchestrationV2AppThread["deepPlan"],
+          policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) =>
+          Effect.gen(function* () {
+            const rootNodeId = NodeId.make(`${threadId}-root`);
+            return yield* runtime.startTurn({
+              appThread: { ...appThread, deepPlan },
+              threadId,
+              runId: RunId.make(`${threadId}-run`),
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: RunAttemptId.make(`${threadId}-attempt`),
+              rootNodeId,
+              providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: MessageId.make(`${threadId}-message`),
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy: policy,
+            });
+          });
+
+        if (reason !== null) {
+          const failed = yield* turn(
+            scenario === "mismatch"
+              ? ({
+                  ...planningRun,
+                  phase: "implementing",
+                  plan: { version: 1 },
+                  approval: {
+                    implementationThreadId: threadId,
+                    planVersion: 1,
+                    implementation: {
+                      instanceId: ProviderInstanceId.make("claude"),
+                      model: "other",
+                    },
+                  },
+                } as unknown as NonNullable<OrchestrationV2AppThread["deepPlan"]>)
+              : planningRun,
+            { ...runtimePolicy, interactionMode: "plan" },
+          ).pipe(Effect.flip);
+          assert.equal(failed._tag, "ProviderAdapterTurnStartError");
+          const cause = (failed as { readonly cause?: { readonly reason?: unknown } }).cause;
+          assert.equal(cause?.reason, reason);
+          assert.isFalse((yield* registry.resolve(token))?.capabilities.has("deep-plan"));
+          yield* manager.close(providerSessionId);
+          return;
+        }
+
+        yield* turn(planningRun, { ...runtimePolicy, interactionMode: "plan" });
+        const planning = yield* registry.resolve(token);
+        assert.isTrue(planning?.capabilities.has("deep-plan"));
+        assert.equal(planning?.deepPlan?.phase, "planning");
+        assert.isFalse(planning?.capabilities.has("workspace-write"));
+        assert.equal(
+          NativeMcpProviderSession.readMcpProviderSession(threadId)?.deepPlan?.phase,
+          "planning",
+        );
+
+        yield* turn(
+          { ...planningRun, phase: "completed" },
+          { ...runtimePolicy, projectMemoryMode: "off" },
+        );
+        const finished = yield* registry.resolve(token);
+        assert.isFalse(finished?.capabilities.has("deep-plan"));
+        assert.isUndefined(finished?.deepPlan);
+        assert.isTrue(finished?.capabilities.has("workspace-write"));
+        assert.isFalse(finished?.projectMemoryEnabled);
+        yield* manager.close(providerSessionId);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            mcpConfigs,
+            ...(scenario === "unsupported"
+              ? {
+                  capabilities: {
+                    ...CodexCapabilities,
+                    deepPlan: { supported: false as const, reason: "No read-only plan mode." },
+                  },
+                }
+              : {}),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect.each([
+  { relationshipToParent: null, subagent: false, coordination: true },
+  { relationshipToParent: "subagent", subagent: true, coordination: false },
+  { relationshipToParent: null, fetchWorker: true, subagent: false, coordination: false },
+  { relationshipToParent: "subagent", reply: true, subagent: true, coordination: true },
 ] as const)(
   "ProviderSessionManagerV2 marks MCP credentials of delegated children ($relationshipToParent)",
-  ({ relationshipToParent, subagent }) =>
+  ({ relationshipToParent, subagent, coordination, ...kind }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const mcpConfigs = yield* Ref.make<
@@ -1792,6 +1957,18 @@ it.effect.each([
                   relationshipToParent === null
                     ? created.payload.lineage
                     : { parentThreadId, relationshipToParent, rootThreadId: parentThreadId },
+                ...("fetchWorker" in kind
+                  ? { fetchWorker: { commandExecutionPolicy: "deny" as const } }
+                  : {}),
+                ...("reply" in kind
+                  ? {
+                      messageReply: {
+                        replyTopicId: SubagentId.make("manager-reply-topic"),
+                        sourceThreadId: parentThreadId,
+                        messageId: MessageId.make("manager-reply-source"),
+                      },
+                    }
+                  : {}),
               },
             },
           ],
@@ -1803,7 +1980,9 @@ it.effect.each([
           "",
         );
         assert.isDefined(token);
-        assert.equal((yield* registry.resolve(token!))?.thread.subagent, subagent);
+        const resolved = yield* registry.resolve(token!);
+        assert.equal(resolved?.thread.subagent, subagent);
+        assert.equal(resolved?.capabilities.has("coordination"), coordination);
         yield* manager.close(providerSessionId);
       });
 
@@ -3848,5 +4027,99 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
       delegatedBy: ThreadId.make("thread-provider-session-manager-parent"),
     });
     assert.isTrue(child?.capabilities?.has("device"));
+  }),
+);
+
+it.effect("enforces the hard daily budget before provider work without blocking stop", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const requests = yield* Ref.make<string[]>([]);
+    const settingsLayer = ServerSettings.layerTest({ usageHardBudgetEnabled: true });
+    yield* Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("budget-protected-thread");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const turn = {
+        appThread: (yield* projections.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "hello",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      } satisfies ProviderAdapter.ProviderAdapterV2TurnInput;
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: "budget-turn",
+      });
+      const operations = [
+        runtime.startTurn(turn),
+        runtime.steerTurn({ ...turn, providerTurnId }),
+        runtime.compactThread!(turn),
+        runtime.respondToRuntimeRequest({
+          requestId: RuntimeRequestId.make("budget-request"),
+          decision: "accept",
+        }),
+      ];
+      for (const operation of operations) {
+        const error = yield* operation.pipe(Effect.flip);
+        assert.include(knownProviderFailureMessage(error), "Hard daily budget");
+      }
+      assert.deepEqual(yield* Ref.get(requests), []);
+      yield* runtime.interruptTurn({ providerThread, providerTurnId });
+      assert.equal((yield* Ref.get(state)).interruptCount, 1);
+      yield* settings.updateSettings({ usageHardBudgetEnabled: false });
+      for (const operation of operations) yield* operation;
+      assert.deepEqual(yield* Ref.get(requests), ["send", "steer", "compact", "respond"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          settingsLayer,
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            serverSettingsLayer: settingsLayer,
+            startTurn: Ref.update(requests, (values) => [...values, "send"]),
+            steerTurn: Ref.update(requests, (values) => [...values, "steer"]),
+            compactThread: Ref.update(requests, (values) => [...values, "compact"]),
+            requestResponse: Ref.update(requests, (values) => [...values, "respond"]),
+          }),
+        ),
+      ),
+    );
   }),
 );

@@ -1,3 +1,4 @@
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
@@ -9,7 +10,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
-import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
@@ -59,7 +61,7 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { useDeadlinePassed } from "../../lib/clock";
+import { useDeadlinePassed, useNowMinuteMs } from "../../lib/clock";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
@@ -81,6 +83,7 @@ import * as Haptics from "expo-haptics";
 import {
   useCallback,
   useContext,
+  useMemo,
   useEffect,
   useEffectEvent,
   useRef,
@@ -382,6 +385,7 @@ function ThreadDetailBody(
     >;
   },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
@@ -479,7 +483,16 @@ function ThreadDetailBody(
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
-  const agentsSegment = resolveSubagentPillSegment(turnSubagents);
+  const agentsSegment = resolveSubagentPillSegment(turnSubagents, {
+    done: (count) => translator.message("mobile.thread.subagentsDone", { count }),
+    doneAccessibility: (count) =>
+      translator.message(
+        count === 1 ? "mobile.thread.oneSubagentDone" : "mobile.thread.subagentsDoneAccessibility",
+        { count },
+      ),
+    working: (count, total) =>
+      translator.message("mobile.thread.subagentsWorking", { count, total }),
+  });
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
@@ -543,7 +556,7 @@ function ThreadDetailBody(
       case "cached":
       case "synchronizing":
         if (contentPresentationKind === "ready") {
-          return "Syncing messages...";
+          return translator.message("mobile.thread.syncingMessages");
         }
         return contentPresentationKind === "loading" ? "Loading messages..." : null;
       default:
@@ -596,16 +609,17 @@ function ThreadDetailBody(
     });
     setForceStoppingKey((current) => (current === threadKey ? null : current));
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) Dialog.alert("Could not force stop the agent");
+      if (!isAtomCommandInterrupted(result))
+        Dialog.alert(translator.message("mobile.ui.couldNotForceStopTheAgent"));
       return;
     }
     const others = result.value.sharedWithThreadIds.length;
     if (result.value.outcome === "releasing") {
-      Dialog.alert("Turn stopped; the agent is still shutting down");
+      Dialog.alert(translator.message("mobile.ui.turnStoppedTheAgentIsStillShutting"));
     }
     if (result.value.outcome === "shared") {
       Dialog.alert(
-        "Turn stopped; the agent process kept running",
+        translator.message("mobile.ui.turnStoppedTheAgentProcessKeptRunning"),
         `It is shared with ${others === 0 ? "other" : others} working ${others === 1 ? "thread" : "threads"}. Stop those to free it.`,
       );
     }
@@ -704,8 +718,8 @@ function ThreadDetailBody(
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not update thread",
-        error instanceof Error ? error.message : "Try again.",
+        translator.message("mobile.ui.couldNotUpdateThread"),
+        error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
       );
     }
   };
@@ -714,6 +728,7 @@ function ThreadDetailBody(
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
+      translator,
       connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
       environmentLabel: props.environmentLabel,
@@ -728,19 +743,23 @@ function ThreadDetailBody(
       return {
         kind: "stop",
         unresponsive,
-        label: unresponsive ? "Not responding to Stop" : "Stopping…",
+        label: unresponsive
+          ? translator.message("mobile.ui.notRespondingToStop")
+          : translator.message("mobile.ui.stopping"),
         action:
           unresponsive && canForceStop
             ? {
-                label: forceStoppingKey === selectedThreadKey ? "Force stopping..." : "Force stop",
-                accessibilityLabel: "Force stop the agent",
+                label:
+                  forceStoppingKey === selectedThreadKey
+                    ? translator.message("mobile.ui.forceStopping")
+                    : translator.message("mobile.ui.forceStop"),
+                accessibilityLabel: translator.message("mobile.ui.forceStopTheAgent"),
                 disabled: forceStoppingKey === selectedThreadKey,
                 onPress: () =>
                   Dialog.confirm({
-                    title: "Force stop the agent?",
-                    message:
-                      "It has not answered Stop. Force stop ends the turn and kills the agent's processes, unless other working threads share them.",
-                    confirmText: "Force stop",
+                    title: translator.message("mobile.ui.forceStopTheAgent2"),
+                    message: translator.message("mobile.ui.itHasNotAnsweredStopForceStop"),
+                    confirmText: translator.message("mobile.ui.forceStop"),
                     destructive: true,
                     onConfirm: () => void forceStop(runStop.runId),
                   }),
@@ -755,7 +774,9 @@ function ThreadDetailBody(
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: props.creationState.preparingWorktree
+          ? translator.message("mobile.ui.settingUpWorktree")
+          : translator.message("mobile.ui.starting2"),
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -798,8 +819,10 @@ function ThreadDetailBody(
           });
         },
         action: {
-          label: statusPending ? "Stopping..." : "Stop",
-          accessibilityLabel: "Stop background work",
+          label: statusPending
+            ? translator.message("chat.background.stopping")
+            : translator.message("mobile.thread.stop"),
+          accessibilityLabel: translator.message("mobile.ui.stopBackgroundWork"),
           disabled: !props.canOperateThread || statusPending,
           onPress: () => void runStatusAction("stop"),
         },
@@ -811,9 +834,13 @@ function ThreadDetailBody(
         snoozed && snoozedUntil !== null
           ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
           : settled
-            ? "Settled"
-            : "Woke from snooze";
-      const actionLabel = snoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
+            ? translator.message("mobile.thread.settled")
+            : translator.message("mobile.ui.wokeFromSnooze");
+      const actionLabel = snoozed
+        ? translator.message("mobile.ui.wakeNow")
+        : settled
+          ? translator.message("mobile.ui.unSettle")
+          : translator.message("mobile.ui.dismiss");
       return {
         kind: "lifecycle",
         state,
@@ -821,10 +848,10 @@ function ThreadDetailBody(
         action: {
           label: statusPending
             ? snoozed
-              ? "Waking..."
+              ? translator.message("chat.thread.waking")
               : settled
-                ? "Un-settling..."
-                : "Dismissing..."
+                ? translator.message("chat.thread.unsettling")
+                : translator.message("mobile.ui.dismissing")
             : actionLabel,
           accessibilityLabel: actionLabel,
           disabled: !props.canOperateThread || statusPending,
@@ -913,46 +940,37 @@ function ThreadDetailBody(
   const pendingMessageEditBlocked =
     queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
     null;
-  const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
-    readonly key: string;
-    readonly threadKey: string;
-    readonly now: number;
-  } | null>(null);
-  // Approval/question identity invalidates quota: answering on any client resumes spending.
-  const usageLimitsKey = [
-    selectedThreadKey,
-    props.selectedThread.modelSelection.instanceId,
-    props.selectedThread.latestRun?.runId ?? "",
-    props.activePendingApproval?.requestId ?? props.activePendingUserInput?.requestId ?? "",
-  ].join(":");
-  if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
-    setUsageLimitsPanel(null);
-  }
-  const usageLimitsReport =
-    usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
-      ? collectProviderUsageLimits(
-          props.selectedThread.modelSelection.instanceId,
-          props.serverConfig?.providers ?? [],
-          props.serverConfig?.usageLimitSources ?? [],
-          usageLimitsPanel.now,
-        )
-      : null;
-  const showUsageLimits = (report: UsageLimitsReport | null) =>
-    setUsageLimitsPanel(
-      report === null
-        ? null
-        : {
-            key: usageLimitsKey,
-            threadKey: selectedThreadKey,
-            now: Date.parse(report.createdAt),
-          },
-    );
-  const dismissUsageLimits = () => setUsageLimitsPanel(null);
-  // Late sends clear only their originating thread's limits panel.
-  const clearUsageLimitsFor = (threadKey: string) =>
-    setUsageLimitsPanel((current) =>
-      current !== null && current.threadKey === threadKey ? null : current,
-    );
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const usageLimitsVisible =
+    AsyncResult.isSuccess(preferences) && preferences.value.composerUsageLimitsVisible === true;
+  const usageLimitsNow = useNowMinuteMs();
+  const usageLimitsReport = useMemo(
+    () =>
+      usageLimitsVisible
+        ? collectProviderUsageLimits(
+            props.selectedThread.modelSelection.instanceId,
+            props.serverConfig?.providers ?? [],
+            props.serverConfig?.usageLimitSources ?? [],
+            usageLimitsNow,
+          )
+        : null,
+    [
+      props.selectedThread.modelSelection.instanceId,
+      props.serverConfig,
+      usageLimitsVisible,
+      usageLimitsNow,
+    ],
+  );
+  const showUsageLimits = (report: UsageLimitsReport | null) => {
+    if (report === null) return;
+    savePreferences({
+      transform: (current) => ({
+        composerUsageLimitsVisible: current.composerUsageLimitsVisible !== true,
+      }),
+    });
+  };
+  const dismissUsageLimits = () => savePreferences({ composerUsageLimitsVisible: false });
   const userInputToggled =
     userInputToggle !== null && userInputToggle.requestId === activeUserInputRequestId;
   const userInputCollapsed = userInputToggled && userInputToggle.collapsed;
@@ -1224,7 +1242,6 @@ function ThreadDetailBody(
     stillSendable?: () => boolean,
   ) => {
     const scope = threadScope.current.signal;
-    const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
     );
@@ -1240,8 +1257,8 @@ function ThreadDetailBody(
             if (feedbackTarget?.supportsFeedback) {
               if (hasAttachmentsOrContext) {
                 Dialog.alert(
-                  "Approval feedback",
-                  "Send approval feedback without attachments or added context.",
+                  translator.message("mobile.ui.approvalFeedback"),
+                  translator.message("mobile.ui.sendApprovalFeedbackWithoutAttachmentsOrAdded"),
                 );
                 return false;
               }
@@ -1268,8 +1285,6 @@ function ThreadDetailBody(
     if (messageId === null || scope.aborted) {
       return messageId;
     }
-
-    clearUsageLimitsFor(targetThreadKey);
 
     const nextAnchorMessageId = resolveThreadFeedSubmissionAnchor({
       currentAnchorMessageId: anchorMessageId,
@@ -1311,8 +1326,8 @@ function ThreadDetailBody(
     if (AsyncResult.isFailure(edited)) {
       const error = squashAtomCommandFailure(edited);
       Dialog.alert(
-        "Could not edit message",
-        error instanceof Error ? error.message : "Please try again.",
+        translator.message("mobile.ui.couldNotEditMessage"),
+        error instanceof Error ? error.message : translator.message("mobile.ui.pleaseTryAgain"),
       );
       return;
     }
@@ -1417,7 +1432,7 @@ function ThreadDetailBody(
             renderFallback={(fallback) => (
               <RenderFailureView
                 {...fallback}
-                title="The conversation couldn't be displayed"
+                title={translator.message("mobile.ui.theConversationCouldntBeDisplayed")}
                 bottomInset={estimatedOverlayHeight}
               />
             )}
@@ -1751,9 +1766,9 @@ function ThreadDetailBody(
                         placeholder={
                           props.activePendingApproval
                             ? props.activePendingApproval.supportsFeedback
-                              ? "Send feedback to decline this request"
-                              : "Send a message to decline and redirect the agent"
-                            : "Ask anything"
+                              ? translator.message("mobile.thread.declineWithFeedback")
+                              : translator.message("mobile.thread.declineAndRedirect")
+                            : translator.message("mobile.thread.askAnything")
                         }
                         contentMaxWidth={contentMaxWidth}
                         draftControls={props.draftMode?.controls}
@@ -1775,7 +1790,7 @@ function ThreadDetailBody(
                             ? props.draftMode.sendBlockedReason
                             : props.creationState?.kind === "preparing" &&
                                 !props.creationState.serverOwned
-                              ? "Starting the task…"
+                              ? translator.message("mobile.ui.startingTheTask")
                               : null
                         }
                         interactionLocked={props.draftMode?.interactionLocked}

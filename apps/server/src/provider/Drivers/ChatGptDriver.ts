@@ -295,7 +295,7 @@ export const ChatGptDriver: ProviderDriver<ChatGptSettings, ChatGptDriverEnv> = 
           driverKind: DRIVER_KIND,
           instanceId,
           continuationKey: continuationIdentity.continuationKey,
-          displayName: displayName ?? "ChatGpt",
+          displayName: displayName ?? "ChatGPT",
           capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
         }),
         reason: "Conversation history is already stored by T3 Code.",

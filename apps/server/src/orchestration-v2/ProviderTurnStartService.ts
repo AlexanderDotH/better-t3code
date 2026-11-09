@@ -58,6 +58,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TurnPromptContext from "./TurnPromptContext.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -163,6 +164,10 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    // Optional so runtimes without the workspace services start turns from the plain message.
+    const turnPromptContext = Option.getOrUndefined(
+      yield* Effect.serviceOption(TurnPromptContext.TurnPromptContext),
+    );
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -736,7 +741,38 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const resolvedRuntimePolicy = resolvedPolicy.success;
+      const projectedText = TurnPromptContext.isProviderCommandText(
+        message.text,
+        message.attachments.length,
+      )
+        ? message.text
+        : projectComposerContextForProvider({
+            text: message.text,
+            records: message.context?.records ?? [],
+          });
+      const turnPrompt =
+        turnPromptContext === undefined
+          ? undefined
+          : yield* projects.getById(projection.thread.projectId).pipe(
+              Effect.map(Option.getOrUndefined),
+              Effect.orElseSucceed(() => undefined),
+              Effect.flatMap((project) =>
+                turnPromptContext.prepare({
+                  thread: projection.thread,
+                  workspaceRoot: project?.workspaceRoot,
+                  cwd: resolvedPolicy.success.cwd,
+                  modelSelection: effectiveModelSelection,
+                  text: projectedText,
+                  attachmentCount: message.attachments.length,
+                  expandSkills:
+                    !isCompactionCommandMessage(message) && parseGoalCommand(message) === null,
+                }),
+              ),
+            );
+      const resolvedRuntimePolicy =
+        turnPrompt?.projectMemoryMode === undefined
+          ? resolvedPolicy.success
+          : { ...resolvedPolicy.success, projectMemoryMode: turnPrompt.projectMemoryMode };
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
@@ -857,19 +893,19 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText =
-        message.attachments.length === 0 && message.text.trimStart().startsWith("/")
-          ? message.text
-          : [
-              run.additionalContext,
-              run.fetchContext,
-              projectComposerContextForProvider({
-                text: message.text,
-                records: message.context?.records ?? [],
-              }),
-            ]
-              .filter((text) => text !== undefined && text.length > 0)
-              .join("\n\n");
+      const promptText = turnPrompt?.text ?? projectedText;
+      const isCommand = TurnPromptContext.isProviderCommandText(
+        promptText,
+        message.attachments.length,
+      );
+      const userText = isCommand
+        ? promptText
+        : [run.additionalContext, run.fetchContext, turnPrompt?.projectContext, promptText]
+            .filter((text) => text !== undefined && text.length > 0)
+            .join("\n\n");
+      const memoryContext = isCommand ? undefined : turnPrompt?.memory;
+      const withMemory = (text: string, nativeThreadHasTurns: boolean) =>
+        nativeThreadHasTurns || memoryContext === undefined ? text : `${memoryContext}\n\n${text}`;
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
@@ -1030,21 +1066,25 @@ export const layer: Layer.Layer<
             !deliveredAttemptIds.has(source.activeAttemptId),
         );
         const missedRunIds = new Set(missedRuns.map((source) => source.id));
+        const nativeThreadHasTurns =
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
         return {
-          sameNativeThread,
+          nativeThreadHasTurns,
           handoffUsage,
           deliveredItemIds,
           coveredItemIds,
-          acceptedAttempts,
-          nativeInputRunIds,
-          legacyInputRunIds,
           missedRuns,
           missedRunIds,
           budget: Effect.gen(function* () {
             return handoffBudget({
               tokenCap,
               modelContextWindow,
-              userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
+              userText: [restartNote, withMemory(userText, nativeThreadHasTurns)]
+                .filter((text) => text.length > 0)
+                .join("\n\n"),
               attachments: message.attachments,
               providerThread: budgetProviderThread,
               nativeContextEstimate:
@@ -1419,15 +1459,7 @@ export const layer: Layer.Layer<
       }
       const now = yield* DateTime.now;
       const handoffContext = resumedHandoffContext ?? handoffContextForThread(loadedProviderThread);
-      const {
-        sameNativeThread,
-        handoffUsage,
-        deliveredItemIds,
-        acceptedAttempts,
-        nativeInputRunIds,
-        legacyInputRunIds,
-        budget,
-      } = handoffContext;
+      const { nativeThreadHasTurns, handoffUsage, deliveredItemIds, budget } = handoffContext;
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
@@ -1705,18 +1737,14 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        nativeThreadHasTurns:
-          nativeInputRunIds.size > 0 ||
-          (legacyInputRunIds.size > 0 &&
-            sameNativeThread &&
-            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
+        nativeThreadHasTurns,
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         message: {
           messageId: message.id,
-          text: userText,
+          text: withMemory(userText, nativeThreadHasTurns),
           attachments: message.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,

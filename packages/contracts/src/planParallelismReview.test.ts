@@ -52,6 +52,11 @@ describe("plan parallelism review contracts", () => {
 
     expect(input.threadId).toBe("thread-review");
     expect(input.expectedPlanUpdatedAt).toBe("2026-07-31T12:00:00.000Z");
+    expect(
+      decodeInput({ ...input, deepPlan: { runId: "deep-run", planVersion: 2 } }),
+    ).toMatchObject({
+      deepPlan: { runId: "deep-run", planVersion: 2 },
+    });
     expect(result.recommendedSubagents).toBe(7);
   });
 

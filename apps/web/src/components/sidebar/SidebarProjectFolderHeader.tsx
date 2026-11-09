@@ -4,6 +4,7 @@ import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
@@ -39,11 +40,18 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   group: SidebarProjectSnapshot;
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
-  onToggle: (group: SidebarProjectSnapshot) => void;
+  onToggle: (
+    group: SidebarProjectSnapshot,
+    click: { readonly button: number; readonly detail: number; readonly shiftKey: boolean },
+  ) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
 }) {
   const { group, collapsed, hiddenThreads } = props;
+  const translator = useInterfaceTranslator();
+  const newThreadLabel = translator.message("sidebar.classic.createThreadIn", {
+    project: group.displayName,
+  });
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed
@@ -70,7 +78,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         tabIndex={-1}
         data-sidebar-row={rowId}
         aria-expanded={!collapsed}
-        onClick={() => props.onToggle(group)}
+        onClick={(event) => props.onToggle(group, event)}
         onContextMenu={(event) => {
           event.preventDefault();
           props.onContextMenu(group, { x: event.clientX, y: event.clientY });
@@ -108,16 +116,45 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
                 data-sidebar-action-for={rowId}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`New thread in ${group.displayName}`}
+                aria-label={newThreadLabel}
                 onClick={() => props.onNewThread(group)}
               />
             }
           >
             <SquarePenIcon aria-hidden />
           </TooltipTrigger>
-          <TooltipPopup>New thread in {group.displayName}</TooltipPopup>
+          <TooltipPopup>{newThreadLabel}</TooltipPopup>
         </Tooltip>
       </span>
+    </li>
+  );
+});
+
+/** Below an open folder's preview: shows the threads past the preview count, or folds them back. */
+export const SidebarProjectFolderDisclosure = memo(function SidebarProjectFolderDisclosure(props: {
+  group: SidebarProjectSnapshot;
+  hiddenCount: number;
+  onShowAllChange: (group: SidebarProjectSnapshot, showAll: boolean) => void;
+}) {
+  const { group, hiddenCount } = props;
+  const translator = useInterfaceTranslator();
+  const folderRowId = sidebarFolderRowId(group.projectKey);
+  const showMore = hiddenCount > 0;
+  return (
+    <li className="list-none">
+      <button
+        type="button"
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={`${folderRowId}:disclosure`}
+        data-sidebar-parent={folderRowId}
+        onClick={() => props.onShowAllChange(group, showMore)}
+        className="flex h-8 w-full cursor-pointer items-center rounded-(--control-radius) ps-9 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        {showMore
+          ? translator.message("sidebar.classic.showMoreCount", { count: hiddenCount })
+          : translator.message("sidebar.classic.showLess")}
+      </button>
     </li>
   );
 });

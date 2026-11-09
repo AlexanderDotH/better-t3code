@@ -59,6 +59,19 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     workingShelfExpanded: false,
     snoozedShelfExpanded: false,
     settledShelfExpanded: true,
+    olderProjectGroups: [
+      {
+        key: "project-test",
+        projectRefs: [environmentId, otherEnvironmentId].map((id) => ({
+          environmentId: id,
+          projectId: ProjectId.make("project-test"),
+        })),
+        projects: [
+          { createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      },
+    ],
+    olderProjectsExpanded: false,
     selectedThreadKey: null,
   };
   const seen: Array<ReturnType<typeof useThreadListV2>> = [];
@@ -241,4 +254,14 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   expect(loaded.layout.items).toHaveLength(160);
   expect(loaded.olderSettledShelf.isListed(threads[150]!)).toBe(true);
   expect(loaded.items).not.toBe(loading.items);
+
+  await act(async () =>
+    root.render(<Probe input={{ ...input, now: "2026-01-09T00:01:00.000Z" }} tab="chats" />),
+  );
+  const idle = seen.at(-1)!;
+  expect(idle.layout.olderProjectCount).toBe(1);
+  expect(idle.items.filter((item) => item.type === "v2-older-projects-shelf")).toEqual([
+    expect.objectContaining({ count: 1, expanded: false }),
+  ]);
+  expect(idle.layout.items.some((item) => item.variant === "card")).toBe(false);
 });

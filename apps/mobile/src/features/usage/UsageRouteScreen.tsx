@@ -44,6 +44,8 @@ import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { mobileUsageCallMessageKey, visibleMobileContextDiagnostics } from "./usage-presentation";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -54,19 +56,44 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type UsageView = UsageChartMetric | "limits";
 const VIEW_OPTIONS = [
-  { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
-  { value: "limits", label: "Limits" },
-] as const satisfies readonly { value: UsageView; label: string }[];
+  { value: "cost", labelKey: "mobile.usage.cost" },
+  { value: "tokens", labelKey: "mobile.usage.tokens" },
+  { value: "limits", labelKey: "mobile.usage.limits" },
+] as const satisfies readonly { value: UsageView; labelKey: string }[];
 
 const WINDOW_OPTIONS = [
-  { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
-  { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
-  { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
-  { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
+  {
+    value: 1,
+    label: "24h",
+    get accessibilityLabel() {
+      return currentInterfaceTranslator().message("mobile.ui.past24Hours");
+    },
+  },
+  {
+    value: 7,
+    label: "7d",
+    get accessibilityLabel() {
+      return currentInterfaceTranslator().message("mobile.ui.past7Days");
+    },
+  },
+  {
+    value: 30,
+    label: "30d",
+    get accessibilityLabel() {
+      return currentInterfaceTranslator().message("mobile.ui.past30Days");
+    },
+  },
+  {
+    value: 90,
+    label: "90d",
+    get accessibilityLabel() {
+      return currentInterfaceTranslator().message("mobile.ui.past90Days");
+    },
+  },
 ] as const;
 
 const CHART_HEIGHT = 180;
@@ -86,6 +113,11 @@ function UsageScreen(props: {
   readonly workspace?: boolean;
   readonly tabParam: string | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
+  const viewOptions = VIEW_OPTIONS.map(({ value, labelKey }) => ({
+    value,
+    label: translator.message(labelKey),
+  }));
   const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState(() => ({
     params: props.tabParam,
@@ -203,7 +235,7 @@ function UsageScreen(props: {
   const environmentActions = [
     {
       id: "all",
-      title: "All environments",
+      title: translator.message("mobile.navigation.allEnvironments"),
       subtitle: undefined,
       state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
     },
@@ -229,14 +261,14 @@ function UsageScreen(props: {
     <Menu
       accessible
       accessibilityRole="button"
-      accessibilityLabel="Filter usage environments"
-      title="Environments"
+      accessibilityLabel={translator.message("mobile.ui.filterUsageEnvironments")}
+      title={translator.message("mobile.settings.environments")}
       actions={environmentActions}
       onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Filter usage environments"
+        accessibilityLabel={translator.message("mobile.ui.filterUsageEnvironments")}
         className={cn(
           "items-center justify-center rounded-full",
           Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
@@ -248,7 +280,11 @@ function UsageScreen(props: {
   ) : null;
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
+    <SettingsScreen
+      title={translator.message("usage.title")}
+      trailing={environmentFilter}
+      workspaceRoot={props.workspace}
+    >
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
@@ -258,12 +294,12 @@ function UsageScreen(props: {
               showEnvironmentFilter
                 ? [
                     withNativeGlassHeaderItem({
-                      accessibilityLabel: "Filter usage environments",
+                      accessibilityLabel: translator.message("mobile.ui.filterUsageEnvironments"),
                       icon: { name: filterIcon, type: "sfSymbol" },
                       label: "",
                       type: "menu",
                       menu: {
-                        title: "Environments",
+                        title: translator.message("mobile.settings.environments"),
                         items: environmentActions.map((action) => ({
                           type: "action" as const,
                           label: action.title,
@@ -309,7 +345,7 @@ function UsageScreen(props: {
                 />
               )}
               <SegmentedControl
-                options={VIEW_OPTIONS}
+                options={viewOptions}
                 selected={view}
                 onSelect={setView}
                 size="compact"
@@ -318,12 +354,7 @@ function UsageScreen(props: {
               />
             </View>
           ) : (
-            <SegmentedControl
-              options={VIEW_OPTIONS}
-              selected={view}
-              onSelect={setView}
-              role="tab"
-            />
+            <SegmentedControl options={viewOptions} selected={view} onSelect={setView} role="tab" />
           )}
           <Animated.View
             key={showingLimits ? "limits" : "usage"}
@@ -364,13 +395,13 @@ function UsageScreen(props: {
                 ) : null}
                 {isPending ? (
                   <Text className="py-16 text-center text-base text-foreground-muted">
-                    Scanning provider transcripts…
+                    {translator.message("mobile.usage.scanning")}
                   </Text>
                 ) : selectedEnvironments.length === 0 ? (
                   <Text className="py-16 text-center text-base text-foreground-muted">
                     {environments.length === 0
-                      ? "Connect an environment to see usage."
-                      : "Select an environment to see usage."}
+                      ? translator.message("mobile.usage.connectEnvironment")
+                      : translator.message("mobile.ui.selectAnEnvironmentToSeeUsage")}
                   </Text>
                 ) : !canReadDiagnostics ? (
                   <View className="gap-2 py-16">
@@ -405,7 +436,15 @@ function UsageScreen(props: {
                               {...chart}
                               height={WIDE_CHART_HEIGHT}
                               fill
-                              title={`${isPast24Hours ? "Hourly" : "Daily"} ${metric === "cost" ? "cost" : "processed tokens"}`}
+                              title={translator.message(
+                                metric === "cost"
+                                  ? isPast24Hours
+                                    ? "mobile.ui.hourlyCost"
+                                    : "mobile.ui.dailyCost"
+                                  : isPast24Hours
+                                    ? "mobile.ui.hourlyProcessedTokens"
+                                    : "mobile.ui.dailyProcessedTokens",
+                              )}
                             />
                           </View>
                         </View>
@@ -421,6 +460,8 @@ function UsageScreen(props: {
                         columns={width >= 900 ? 6 : wide ? 3 : 2}
                       />
                       <CostSection merged={merged} wide={wide} />
+                      <CallsSection merged={merged} columns={wide ? 3 : 2} />
+                      <ContextDiagnosticsSection merged={merged} columns={wide ? 3 : 2} />
                       <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
                     </UsageUpdating>
                   </>
@@ -563,7 +604,11 @@ function CursorEnableLimits({
               key={environment.environmentId}
               environmentId={environment.environmentId}
               label={environment.label}
-              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
+              buttonText={
+                environments.length > 1
+                  ? `Enable on ${environment.label}`
+                  : currentInterfaceTranslator().message("settings.connections.enable")
+              }
               onEnabled={onEnabled}
             />
           ))}
@@ -588,6 +633,7 @@ function ChartCard(props: {
   /** Grows the chart past `height` to match a taller neighbouring column. */
   readonly fill?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged, metric } = props;
   const colors = useProviderColors();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
@@ -597,7 +643,9 @@ function ChartCard(props: {
     <UsageDailyChart days={props.days} daily={props.daily} metric={metric} height={height} />
   ) : (
     <View style={{ height }} className="items-center justify-center">
-      <Text className="text-base text-foreground-muted">No activity in this window.</Text>
+      <Text className="text-base text-foreground-muted">
+        {translator.message("mobile.usage.noActivity")}
+      </Text>
     </View>
   );
 
@@ -656,11 +704,14 @@ function ChartCard(props: {
 }
 
 function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: UsageChartMetric }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged, metric } = props;
   return (
     <View className="gap-0.5">
       <Text className="text-sm text-foreground-muted">
-        {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+        {metric === "cost"
+          ? translator.message("mobile.usage.rawTokenCost")
+          : translator.message("mobile.usage.processedTokens")}
       </Text>
       <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
         {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
@@ -683,6 +734,7 @@ function ProviderSection(props: {
   /** Drops the share bar so the list fits beside the chart. */
   readonly compact: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.providers.length === 0 && props.cursorAccessEnvironments.length === 0) return null;
@@ -710,7 +762,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers">
+    <SettingsSection title={translator.message("mobile.settings.agents.providers")}>
       {rows.map((row, index) => {
         if (row.kind === "enable") {
           return (
@@ -786,6 +838,7 @@ function TotalsSection(props: {
   readonly isPast24Hours: boolean;
   readonly columns: number;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged } = props;
   const activePeriods = (props.isPast24Hours ? merged.hourly : merged.daily).filter(
     (period) => period.totalTokens > 0,
@@ -795,17 +848,17 @@ function TotalsSection(props: {
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals">
+    <SettingsSection title={translator.message("mobile.usage.totals")}>
       <View className="flex-row flex-wrap">
         <MetricCell
           columns={props.columns}
-          label="Processed tokens"
+          label={translator.message("mobile.usage.processedTokens")}
           value={formatTokens(merged.totalTokens)}
           detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
         />
         <MetricCell
           columns={props.columns}
-          label="Cache savings"
+          label={translator.message("mobile.usage.cacheSavings")}
           value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           detail={
             merged.costUsd > 0
@@ -815,25 +868,25 @@ function TotalsSection(props: {
         />
         <MetricCell
           columns={props.columns}
-          label="Cached input"
+          label={translator.message("mobile.usage.cachedInput")}
           value={formatTokens(merged.cachedInputTokens)}
           detail={`${formatPercent(cachedShare)} of observed input`}
         />
         <MetricCell
           columns={props.columns}
-          label="Uncached input"
+          label={translator.message("mobile.usage.uncachedInput")}
           value={formatTokens(merged.uncachedInputTokens)}
           detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
         />
         <MetricCell
           columns={props.columns}
-          label="Output"
+          label={translator.message("mobile.usage.output")}
           value={formatTokens(merged.outputTokens)}
           detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
         />
         <MetricCell
           columns={props.columns}
-          label="Unpriced"
+          label={translator.message("mobile.usage.unpriced")}
           value={formatPercent(merged.costQuality.unpricedShare)}
           detail="of records, excluded from cost"
         />
@@ -843,33 +896,62 @@ function TotalsSection(props: {
 }
 
 function CostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
+  const translator = useMobileInterfaceTranslator();
   const { categoryCost, speedCost } = props.merged;
   const colors = useUsageMixColors();
   const byType = [
-    { label: "Input", value: categoryCost.input, color: colors.input },
-    { label: "Cache read", value: categoryCost.cacheRead, color: colors.cacheRead },
-    { label: "Cache write", value: categoryCost.cacheWrite, color: colors.cacheWrite },
-    { label: "Output", value: categoryCost.output, color: colors.output },
+    {
+      label: translator.message("mobile.agentActivity.input"),
+      value: categoryCost.input,
+      color: colors.input,
+    },
+    {
+      label: translator.message("mobile.ui.cacheRead"),
+      value: categoryCost.cacheRead,
+      color: colors.cacheRead,
+    },
+    {
+      label: translator.message("mobile.ui.cacheWrite"),
+      value: categoryCost.cacheWrite,
+      color: colors.cacheWrite,
+    },
+    {
+      label: translator.message("mobile.usage.output"),
+      value: categoryCost.output,
+      color: colors.output,
+    },
     // Reported cost with no rates to split it, or from older servers. Below a
     // cent it is rounding, not usage.
     {
-      label: "Other",
+      label: translator.message("projectIndexing.reviewCategory.other"),
       value: categoryCost.unsplit >= 0.005 ? categoryCost.unsplit : 0,
       color: colors.other,
     },
   ];
   const bySpeed = [
-    { label: "Standard", value: speedCost.standard, color: colors.standard },
-    { label: "Fast", value: speedCost.fast, color: colors.fast },
-    { label: "Ultrafast", value: speedCost.ultrafast, color: colors.ultrafast },
+    {
+      label: translator.message("browser.device.standard"),
+      value: speedCost.standard,
+      color: colors.standard,
+    },
+    {
+      label: translator.message("chat.planEstimate.fast"),
+      value: speedCost.fast,
+      color: colors.fast,
+    },
+    {
+      label: translator.message("mobile.ui.ultrafast"),
+      value: speedCost.ultrafast,
+      color: colors.ultrafast,
+    },
   ];
   if (props.merged.costUsd <= 0) return null;
 
   return (
-    <SettingsSection title="Cost">
+    <SettingsSection title={translator.message("mobile.usage.cost")}>
       <View className={props.wide ? "flex-row" : undefined}>
         <View className={props.wide ? "min-w-0 flex-1" : undefined}>
-          <ShareBar label="By type" segments={byType} />
+          <ShareBar label={translator.message("mobile.ui.byType")} segments={byType} />
         </View>
         {speedCost.fast + speedCost.ultrafast > 0 ? (
           <View
@@ -880,7 +962,7 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
             }
           >
             <ShareBar
-              label="By speed"
+              label={translator.message("mobile.ui.bySpeed")}
               segments={bySpeed}
               aside={`${formatUsd(speedCost.premium)} premium`}
             />
@@ -932,15 +1014,65 @@ function ShareBar(props: {
 function MetricCell(props: {
   readonly label: string;
   readonly value: string;
-  readonly detail: string;
+  readonly detail?: string;
   readonly columns: number;
 }) {
   return (
     <View className="gap-0.5 p-4" style={{ width: `${100 / props.columns}%` }}>
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
-      <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      {props.detail ? (
+        <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      ) : null}
     </View>
+  );
+}
+
+function CallsSection(props: { readonly merged: MergedUsage; readonly columns: number }) {
+  const translator = useMobileInterfaceTranslator();
+  const calls = props.merged.calls.filter(
+    (call) => call.kind !== "unknown" || call.records > 0 || call.totalTokens > 0,
+  );
+  if (!calls.some((call) => call.records > 0 || call.totalTokens > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.calls")}>
+      <View className="flex-row flex-wrap">
+        {calls.map((call) => (
+          <MetricCell
+            key={call.kind}
+            columns={props.columns}
+            label={translator.message(mobileUsageCallMessageKey(call.kind))}
+            value={formatTokens(call.totalTokens)}
+            detail={translator.message("mobile.usage.callCount", { count: call.records })}
+          />
+        ))}
+      </View>
+    </SettingsSection>
+  );
+}
+
+function ContextDiagnosticsSection(props: {
+  readonly merged: MergedUsage;
+  readonly columns: number;
+}) {
+  const translator = useMobileInterfaceTranslator();
+  const diagnostics = props.merged.contextDiagnostics;
+  if (!Object.values(diagnostics).some((value) => value > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.contextDiagnostics")}>
+      <View className="flex-row flex-wrap">
+        {visibleMobileContextDiagnostics(diagnostics).map((row) => (
+          <MetricCell
+            key={row.key}
+            columns={props.columns}
+            label={translator.message(row.messageKey)}
+            value={row.tokens ? formatTokens(row.value) : translator.number(row.value)}
+          />
+        ))}
+      </View>
+    </SettingsSection>
   );
 }
 
@@ -949,6 +1081,7 @@ function ModelsSection(props: {
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
@@ -961,7 +1094,7 @@ function ModelsSection(props: {
   );
 
   return (
-    <SettingsSection title="By model">
+    <SettingsSection title={translator.message("mobile.usage.byModel")}>
       <View className="flex-row flex-wrap">
         {ordered.map((model, index) => (
           <View
@@ -995,7 +1128,7 @@ function ModelsSection(props: {
               {metric === "tokens"
                 ? formatTokens(model.totalTokens)
                 : isModelCostUnknown(model)
-                  ? "Unpriced"
+                  ? translator.message("mobile.usage.unpriced")
                   : formatUsd(model.costUsd)}
             </Text>
           </View>
@@ -1020,7 +1153,9 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing:
   if (environment.error)
     return environment.summary ? `${environment.error} Showing saved totals.` : environment.error;
   if (!environment.isConnected)
-    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
+    return environment.summary
+      ? "Disconnected · showing saved usage"
+      : currentInterfaceTranslator().message("mobile.ui.waitingForConnection");
   const progress = usageEnvironmentProgress(environment, refreshing);
   if (progress.phase === "loading") return "Loading usage…";
   if (progress.phase === "stale") return "Updating usage…";

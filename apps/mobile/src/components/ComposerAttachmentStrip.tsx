@@ -28,6 +28,7 @@ import {
   retryComposerAttachmentUpload,
   useComposerAttachmentUploadState,
 } from "../state/composer-attachment-uploads";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 export interface ComposerAttachmentStripProps {
   readonly environmentId?: EnvironmentId;
@@ -59,6 +60,7 @@ type ComposerAttachmentThumbnailProps = {
 };
 
 export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
+  const translator = useMobileInterfaceTranslator();
   const upload = useComposerAttachmentUploadState(props.environmentId, props.attachment.id);
   return (
     <View style={{ width: props.size, height: props.size }}>
@@ -87,7 +89,9 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
           />
           {!props.compact ? (
             <Text className="text-2xs text-white">
-              {upload.status === "failed" ? "Retry" : `${Math.floor(upload.progress * 100)}%`}
+              {upload.status === "failed"
+                ? translator.message("common.retry")
+                : `${Math.floor(upload.progress * 100)}%`}
             </Text>
           ) : null}
         </Pressable>

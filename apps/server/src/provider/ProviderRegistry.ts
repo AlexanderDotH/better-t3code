@@ -325,13 +325,33 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
 
+// Only the adapter knows whether it can run Deep Plans, so clients learn it through the snapshot.
+const withDeepPlanning = (instance: ProviderInstance, provider: ServerProvider) =>
+  Effect.suspend(() => instance.orchestrationAdapter.getCapabilities()).pipe(
+    Effect.map((capabilities): ServerProvider =>
+      capabilities.deepPlan?.supported === true
+        ? {
+            ...provider,
+            deepPlanning: { version: 1, structuredPlans: true, durableExecution: true },
+          }
+        : provider,
+    ),
+    Effect.catchCause(() => Effect.succeed(provider)),
+  );
+
 // Rebuilt instances have new PubSubs; capture their fresh closures instead of a closed source.
 const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
-  getSnapshot: instance.snapshot.getSnapshot,
-  refresh: instance.snapshot.refresh,
-  streamChanges: instance.snapshot.streamChanges,
+  getSnapshot: instance.snapshot.getSnapshot.pipe(
+    Effect.flatMap((provider) => withDeepPlanning(instance, provider)),
+  ),
+  refresh: instance.snapshot.refresh.pipe(
+    Effect.flatMap((provider) => withDeepPlanning(instance, provider)),
+  ),
+  streamChanges: instance.snapshot.streamChanges.pipe(
+    Stream.mapEffect((provider) => withDeepPlanning(instance, provider)),
+  ),
 });
 
 export const layer = Layer.effect(

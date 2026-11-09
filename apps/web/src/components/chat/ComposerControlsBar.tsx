@@ -1,17 +1,24 @@
 import {
   ContextWindowPicker,
+  ContextWindowMenuContent,
   shouldRenderContextWindowControl,
   type ContextWindowPickerProps,
 } from "./ContextWindowPicker";
 import type { ContextWindowSelector } from "@t3tools/contracts";
 import type { ComposerMode } from "@t3tools/contracts";
 import type { ChatComposerProps } from "./ChatComposer";
-import type { PromptUltrathink } from "./TraitsPicker";
+import {
+  getTraitsSectionVisibility,
+  TraitsMenuContent,
+  TraitsPicker,
+  type PromptUltrathink,
+} from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
 import { CircleAlertIcon } from "lucide-react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { ComposerControl } from "./ComposerControl";
+import { ComposerControl, ComposerControlSeparator } from "./ComposerControl";
 import {
   ComposerFooterModeControls,
   ComposerModelPicker,
@@ -46,7 +53,10 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
 const MODEL_TRIGGER_STATES = "data-popup-open:bg-accent data-popup-open:text-foreground";
 
 export function ComposerControlsBar(props: {
+  onManualModelSelectionChange?: ((selection: ModelSelection) => void) | undefined;
   environmentId: EnvironmentId;
+  composerLayout?: "current" | "classic" | undefined;
+  planningDisabledReason?: string | null | undefined;
   contextWindowSelector?: ContextWindowSelector;
   autoReasoningEffort?: string | null | undefined;
   routeKind: ChatComposerProps["routeKind"];
@@ -65,14 +75,17 @@ export function ComposerControlsBar(props: {
   effortDisplay: EffortDisplay;
   /** The strip under a new thread names the permissions, so the row does not repeat them. */
   permissionsShownInStrip: boolean;
-  composerMode?: ComposerMode;
+  composerMode: ComposerMode;
+  deepPlanningDisabledReason: string | null;
   interactionMode: ProviderInteractionMode;
   compatibleRuntimeMode: RuntimeMode;
   defaultRuntimeMode: RuntimeMode | undefined;
   compatibleRuntimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   toggleInteractionMode: () => void;
+  handleInteractionModeChange: (mode: ComposerMode) => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   composerControlsCollapsed: boolean;
+  composerControlsCompact: boolean;
   composerControlsHidden: boolean;
   restingHiddenBlockCount: number;
   iconOnlyBlockCount: number;
@@ -147,20 +160,9 @@ export function ComposerControlsBar(props: {
     modelPickerIconClassName,
     getModelDisabledReason,
   } = props;
+  const translate = useInterfaceTranslator().message;
+  const classic = props.composerLayout === "classic";
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
-  const {
-    accessDisplay,
-    showModeBlock,
-    hiddenBlockCount: restingHiddenBlockCount,
-    hiddenBlockIds: hiddenRestingBlockIds,
-    overflowShowsPermissions,
-    pickerOwnsModeShortcut,
-  } = resolveComposerControlsOwnership({
-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
-    planModeUiEnabled,
-    collapsed: composerControlsCollapsed,
-    measuredHiddenBlockCount,
-  });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
   const contextWindowProps = {
     provider: selectedProvider,
@@ -173,12 +175,16 @@ export function ComposerControlsBar(props: {
     size: controlSize,
     isComposerOwned: true,
     hidden: composerControlsHidden,
+    ...(props.onManualModelSelectionChange
+      ? { onManualModelSelectionChange: props.onManualModelSelectionChange }
+      : {}),
   } satisfies ContextWindowPickerProps;
   const showContextWindowPicker =
     (routeKind === "server" || draftId !== null) &&
     props.contextWindowSelector === "better-t3" &&
     shouldRenderContextWindowControl(contextWindowProps);
   const traitsInput = resolveComposerTraitsInput({
+    onManualModelSelectionChange: props.onManualModelSelectionChange,
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
@@ -193,37 +199,87 @@ export function ComposerControlsBar(props: {
     onPromptEdit,
     planModeEnabled,
   });
+  const hasTraitsControl =
+    traitsInput !== null && getTraitsSectionVisibility(traitsInput).hasAnyControls;
+  const {
+    accessDisplay,
+    hiddenBlockCount: restingHiddenBlockCount,
+    hiddenBlockIds: hiddenRestingBlockIds,
+    pickerOwnsModeShortcut,
+  } = resolveComposerControlsOwnership({
+    layout: props.composerLayout ?? "current",
+    hasTraitsControl,
+    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
+    collapsed: composerControlsCollapsed,
+    compact: props.composerControlsCompact,
+    hasContextWindowControl: showContextWindowPicker,
+    measuredHiddenBlockCount,
+  });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize);
-  const restingBlockDefs = showModeBlock
-    ? [
-        {
-          id: "mode",
-          content: (
-            <ComposerFooterModeControls
-              showInteractionModeToggle={planModeUiEnabled}
-              composerMode={props.composerMode}
-              interactionMode={interactionMode}
-              runtimeMode={compatibleRuntimeMode}
-              runtimeModeOptions={compatibleRuntimeModeOptions}
-              size={controlSize}
-              hidden={composerControlsHidden || restingHiddenBlockCount > 0}
-              accessDisplay={accessDisplay}
-              emphasized={!accessMatchesDefault}
-              onToggleInteractionMode={toggleInteractionMode}
-              onRuntimeModeChange={handleRuntimeModeChange}
-            />
-          ),
-        },
-      ]
-    : [];
+  // Build and Chat need no planning support, so the mode block always shows.
+  const restingBlockDefs = [
+    ...((classic && hasTraitsControl) || showContextWindowPicker
+      ? [
+          {
+            id: classic ? "traits" : "context",
+            content: (
+              <>
+                {classic && traitsInput && hasTraitsControl ? (
+                  <TraitsPicker
+                    {...traitsInput}
+                    size={controlSize}
+                    hidden={composerControlsHidden || hiddenRestingBlockIds.includes("traits")}
+                  />
+                ) : null}
+                {classic && hasTraitsControl && showContextWindowPicker ? (
+                  <ComposerControlSeparator size={controlSize} />
+                ) : null}
+                {showContextWindowPicker ? (
+                  <ContextWindowPicker
+                    {...contextWindowProps}
+                    hidden={
+                      composerControlsHidden ||
+                      hiddenRestingBlockIds.includes(classic ? "traits" : "context")
+                    }
+                  />
+                ) : null}
+              </>
+            ),
+          },
+        ]
+      : []),
+    {
+      id: "mode",
+      content: (
+        <ComposerFooterModeControls
+          showInteractionModeToggle
+          composerMode={props.composerMode}
+          deepPlanningDisabledReason={props.deepPlanningDisabledReason}
+          interactionMode={interactionMode}
+          runtimeMode={compatibleRuntimeMode}
+          runtimeModeOptions={compatibleRuntimeModeOptions}
+          size={controlSize}
+          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          accessDisplay={accessDisplay}
+          emphasized={!accessMatchesDefault}
+          onToggleInteractionMode={toggleInteractionMode}
+          onComposerModeChange={props.handleInteractionModeChange}
+          planningEnabled={planModeUiEnabled}
+          planningDisabledReason={props.planningDisabledReason}
+          onRuntimeModeChange={handleRuntimeModeChange}
+        />
+      ),
+    },
+  ];
   // Its own element, so typing (which rebuilds the controls around it) leaves it cached.
   const composerModelPicker = (
     <ComposerModelPicker
       environmentId={environmentId}
+      layout={props.composerLayout ?? "current"}
       compact={false}
       isComposerOwned
       // The trigger grows away from this edge when its model or effort label changes.
-      popupAlign={composerControlsCollapsed ? "start" : "end"}
+      popupAlign={classic || composerControlsCollapsed ? "start" : "end"}
       disabled={providerCatalogPending || isSendBusy}
       multipleModelsEnabled={multipleModelsEnabled}
       multipleModelSelections={multipleModelSelections}
@@ -251,19 +307,25 @@ export function ComposerControlsBar(props: {
         MODEL_TRIGGER_STATES,
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
-      triggerSuffix={effort.suffix}
-      triggerDetail={effort.detail}
-      triggerShortcuts={
-        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
-      }
-      effortColumn={<ComposerEffortColumn traits={traitsInput} />}
+      triggerSuffix={classic ? undefined : effort.suffix}
+      triggerDetail={classic ? null : effort.detail}
+      {...(classic
+        ? {}
+        : {
+            triggerShortcuts: pickerOwnsModeShortcut
+              ? "composer.effort composer.mode"
+              : "composer.effort",
+          })}
+      effortColumn={classic ? undefined : <ComposerEffortColumn traits={traitsInput} />}
       footer={
-        <ComposerPickerFooter
-          traits={traitsInput}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
+        classic ? undefined : (
+          <ComposerPickerFooter
+            traits={traitsInput}
+            runtimeMode={compatibleRuntimeMode}
+            runtimeModeOptions={compatibleRuntimeModeOptions}
+            onRuntimeModeChange={handleRuntimeModeChange}
+          />
+        )
       }
       terminalOpen={terminalOpen}
       open={modelPickerOpen}
@@ -293,12 +355,13 @@ export function ComposerControlsBar(props: {
       className="shrink-0"
     >
       <CircleAlertIcon className="size-4" />
-      {providerSetupInstanceId ? "Open provider settings" : "No provider available"}
+      {providerSetupInstanceId
+        ? "Open provider settings"
+        : translate("chat.composer.noProviderAvailable")}
     </ComposerControl>
   ) : (
     <>
       {composerModelPicker}
-      {showContextWindowPicker ? <ContextWindowPicker {...contextWindowProps} /> : null}
 
       <>
         {restingBlockDefs.map((def, index) => {
@@ -333,15 +396,33 @@ export function ComposerControlsBar(props: {
           )}
         >
           <CompactComposerControlsMenu
+            traitsContent={
+              classic &&
+              hiddenRestingBlockIds.includes("traits") &&
+              traitsInput &&
+              hasTraitsControl ? (
+                <TraitsMenuContent {...traitsInput} />
+              ) : undefined
+            }
+            contextWindowContent={
+              hiddenRestingBlockIds.includes(classic ? "traits" : "context") &&
+              showContextWindowPicker ? (
+                <ContextWindowMenuContent {...contextWindowProps} />
+              ) : undefined
+            }
             interactionMode={interactionMode}
+            composerMode={props.composerMode}
+            deepPlanningDisabledReason={props.deepPlanningDisabledReason}
+            planningEnabled={planModeUiEnabled}
+            planningDisabledReason={props.planningDisabledReason}
             runtimeMode={compatibleRuntimeMode}
             runtimeModeOptions={compatibleRuntimeModeOptions}
             size={controlSize}
             hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
-            showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.length > 0}
-            // Permissions join the overflow only when their normal home is in it.
-            showPermissions={overflowShowsPermissions}
+            showInteractionModeToggle={hiddenRestingBlockIds.includes("mode")}
+            showPermissions={classic && hiddenRestingBlockIds.includes("mode")}
             onToggleInteractionMode={toggleInteractionMode}
+            onComposerModeChange={props.handleInteractionModeChange}
             onRuntimeModeChange={handleRuntimeModeChange}
           />
         </div>

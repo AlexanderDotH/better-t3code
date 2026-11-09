@@ -73,6 +73,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
   confirmProjectFileQueryData: () => true,
 }));
 
+import { NotificationSuppressionProvider } from "../ui/notificationSuppression";
 import FilePreviewPanel from "./FilePreviewPanel";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
@@ -139,6 +140,21 @@ describe("rendered Markdown task saves", () => {
     expect(checkbox.checked).toBe(false);
     expect(state.optimistic).toBeNull();
     expect(state.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("hides the truncation warning while errors and warnings are suppressed", async () => {
+    using _settings = setup();
+    const preview = (suppressed: boolean) => (
+      <NotificationSuppressionProvider enabled={suppressed}>
+        {markdownPreview(true)}
+      </NotificationSuppressionProvider>
+    );
+    await using screen = await render(preview(false));
+    const warning = screen.getByText(/^Preview limited to the first 1 MB/);
+    await expect.element(warning).toBeVisible();
+
+    await screen.rerender(preview(true));
+    await expect.element(warning).not.toBeInTheDocument();
   });
 
   it("still toggles and saves tasks from a complete read", async () => {

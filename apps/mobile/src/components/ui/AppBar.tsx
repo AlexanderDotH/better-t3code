@@ -17,6 +17,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -38,6 +39,7 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 }
 
 export function AppBar(props: AppBarProps) {
+  const translator = useMobileInterfaceTranslator();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const headerId = useId();
@@ -131,7 +133,7 @@ export function AppBar(props: AppBarProps) {
               accessibilityLabel={
                 panes.primarySidebarVisible
                   ? `Maximize ${props.title.toLowerCase()}`
-                  : "Show threads"
+                  : translator.message("mobile.files.showThreads")
               }
               icon={
                 panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"

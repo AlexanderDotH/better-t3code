@@ -64,6 +64,8 @@ import {
 } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
   providers: serverEnvironment.providersValueAtom,
@@ -123,28 +125,28 @@ export function buildComposerSlashCommandItems(input: {
       type: "slash-command",
       command: "model",
       label: "/model",
-      description: "Switch model",
+      description: currentInterfaceTranslator().message("mobile.ui.switchModel"),
     },
     {
       id: "cmd:plan",
       type: "slash-command",
       command: "plan",
       label: "/plan",
-      description: "Switch to plan mode",
+      description: currentInterfaceTranslator().message("mobile.ui.switchToPlanMode"),
     },
     {
       id: "cmd:chat",
       type: "slash-command",
       command: "chat",
       label: "/chat",
-      description: "Discuss without starting work",
+      description: currentInterfaceTranslator().message("mobile.ui.discussWithoutStartingWork"),
     },
     {
       id: "cmd:default",
       type: "slash-command",
       command: "default",
       label: "/default",
-      description: "Switch to default mode",
+      description: currentInterfaceTranslator().message("mobile.ui.switchToDefaultMode"),
     },
   ] satisfies ComposerCommandItem[];
   const items: ComposerCommandItem[] = builtIn.filter(
@@ -287,6 +289,7 @@ export function useComposerCommandMenu({
   readonly onUpdateComposerMode?: (mode: ComposerMode) => void;
   readonly onUsageLimits?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [localSelection, setLocalSelection] = useState(() => ({
     ownerKey,
     ...composerSelectionAtEnd(draftMessage),
@@ -372,7 +375,7 @@ export function useComposerCommandMenu({
           isDraft: entry.isDraft,
         },
         label: `#${entry.number}`,
-        description: `${entry.isDraft ? "Draft" : entry.state} · ${
+        description: `${entry.isDraft ? translator.message("pullRequest.filter.draft") : entry.state} · ${
           entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
             ? ""
             : `${entry.repository} · `
@@ -540,7 +543,10 @@ export function useComposerCommandMenu({
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
       if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        Dialog.alert(
+          translator.message("mobile.ui.tooManyContextItems"),
+          translator.message("mobile.ui.removeSomeContextFromTheDraftAnd"),
+        );
         return;
       }
       const result = replaceTextRange(
@@ -572,7 +578,10 @@ export function useComposerCommandMenu({
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
       if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        Dialog.alert(
+          translator.message("mobile.ui.tooManyContextItems"),
+          translator.message("mobile.ui.removeSomeContextFromTheDraftAnd"),
+        );
         return;
       }
       const result = replaceTextRange(
@@ -604,7 +613,10 @@ export function useComposerCommandMenu({
         (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
         COMPOSER_CONTEXT_MAX_RECORDS
       ) {
-        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        Dialog.alert(
+          translator.message("mobile.ui.tooManyContextItems"),
+          translator.message("mobile.ui.removeSomeContextFromTheDraftAnd"),
+        );
         return;
       }
       const result = replaceTextRange(
@@ -662,7 +674,7 @@ export function useComposerCommandMenu({
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null
-          ? "Pull requests are unavailable for this project."
+          ? translator.message("mobile.ui.pullRequestsAreUnavailableForThisProject")
           : pullRequestSearch.error
         : null,
     onSelect,

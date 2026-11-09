@@ -46,6 +46,7 @@ import {
   pullRequestAgentPrompt,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
@@ -54,6 +55,7 @@ export function usePullRequestThreads(
   pr: PullRequestDetail | null,
   filePath?: string,
 ) {
+  const translator = useMobileInterfaceTranslator();
   const target = pullRequestTarget(params);
   const config = useEnvironmentServerConfig(target.environmentId);
   const supported = threadPullRequestLinkMode(config?.environment.capabilities) === "multiple";
@@ -179,7 +181,10 @@ export function usePullRequestThreads(
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
+      Dialog.alert(
+        translator.message("mobile.ui.couldntOpenAThread"),
+        cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
+      );
     }
   };
   return {

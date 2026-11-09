@@ -53,6 +53,8 @@ import {
   type ZipEntry,
   type ZipTreeRow,
 } from "./zipTree";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function isZipFile(file: { readonly name: string; readonly mimeType: string }) {
   const mime = file.mimeType.split(";", 1)[0]?.trim().toLowerCase();
@@ -76,18 +78,28 @@ interface ZipFailure {
 
 const SAVE_ZIP_HINT = "Save the ZIP to open it in another app.";
 const TOO_LARGE: ZipFailure = {
-  title: "Too large to browse here",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.ui.tooLargeToBrowseHere");
+  },
   detail: `Browsing works up to ${formatAttachmentSize(ARCHIVE_MAX_BYTES)}. ${SAVE_ZIP_HINT}`,
   retry: false,
 };
 const CANCELLED: ZipFailure = {
-  title: "Download cancelled",
-  detail: "The ZIP wasn't downloaded. Try again to list its files.",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.ui.downloadCancelled");
+  },
+  get detail() {
+    return currentInterfaceTranslator().message("mobile.ui.theZipWasntDownloadedTryAgainTo");
+  },
   retry: true,
 };
 const NETWORK: ZipFailure = {
-  title: "Couldn't download this ZIP",
-  detail: "Check the connection to this environment and try again.",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.ui.couldntDownloadThisZip");
+  },
+  get detail() {
+    return currentInterfaceTranslator().message("mobile.ui.checkTheConnectionToThisEnvironmentAnd");
+  },
   retry: true,
 };
 
@@ -135,7 +147,7 @@ async function openArchive(bytes: ArrayBuffer): Promise<ZipArchive> {
     files = await boundedZip(bytes);
   } catch (cause) {
     throw new ZipFailureError({
-      title: "Couldn't browse this ZIP",
+      title: currentInterfaceTranslator().message("mobile.ui.couldntBrowseThisZip"),
       detail: `${errorMessage(cause, "It may be incomplete or damaged.")} ${SAVE_ZIP_HINT}`,
       retry: false,
     });
@@ -292,6 +304,7 @@ function ZipArchiveHeader(props: {
   readonly onSave: () => void;
   readonly onRemove: (() => void) | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const isAndroid = Platform.OS === "android";
   return (
@@ -313,11 +326,15 @@ function ZipArchiveHeader(props: {
             if (navigation.canGoBack()) navigation.goBack();
           }}
           actions={[
-            { accessibilityLabel: "Save ZIP", icon: "square.and.arrow.up", onPress: props.onSave },
+            {
+              accessibilityLabel: translator.message("mobile.ui.saveZip"),
+              icon: "square.and.arrow.up",
+              onPress: props.onSave,
+            },
             ...(props.onRemove
               ? [
                   {
-                    accessibilityLabel: "Remove from draft",
+                    accessibilityLabel: translator.message("mobile.ui.removeFromDraft"),
                     icon: "trash" as const,
                     onPress: props.onRemove,
                     destructive: true,
@@ -330,17 +347,20 @@ function ZipArchiveHeader(props: {
       ) : (
         <Toolbar placement="right">
           {props.onRemove ? (
-            <Toolbar.Menu accessibilityLabel="ZIP actions" icon="ellipsis">
+            <Toolbar.Menu
+              accessibilityLabel={translator.message("mobile.ui.zipActions")}
+              icon="ellipsis"
+            >
               <Toolbar.MenuAction icon="square.and.arrow.up" onPress={props.onSave}>
-                Save ZIP
+                {translator.message("mobile.ui.saveZip")}
               </Toolbar.MenuAction>
               <Toolbar.MenuAction icon="trash" destructive onPress={props.onRemove}>
-                Remove from draft
+                {translator.message("mobile.ui.removeFromDraft")}
               </Toolbar.MenuAction>
             </Toolbar.Menu>
           ) : (
             <Toolbar.Button
-              accessibilityLabel="Save ZIP"
+              accessibilityLabel={translator.message("mobile.ui.saveZip")}
               icon="square.and.arrow.up"
               onPress={props.onSave}
             />
@@ -357,6 +377,7 @@ function ZipArchiveProgress(props: {
   readonly timeLeft: string | null;
   readonly onCancel: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { timeLeft } = props;
   return (
     <View className="flex-1 justify-center gap-3 bg-sheet px-8">
@@ -370,12 +391,15 @@ function ZipArchiveProgress(props: {
       </Text>
       <Progress
         value={props.totalBytes > 0 ? props.receivedBytes / props.totalBytes : undefined}
-        label="ZIP download progress"
+        label={translator.message("mobile.ui.zipDownloadProgress")}
       />
       <Text className="text-sm text-foreground-muted">
         {`Downloading the ZIP so its files can be listed.${timeLeft ? ` ${timeLeft} on this connection.` : ""}`}
       </Text>
-      <Button label="Cancel" onPress={props.onCancel} />
+      <Button
+        label={translator.message("mobile.settings.projects.settings.cancel")}
+        onPress={props.onCancel}
+      />
     </View>
   );
 }
@@ -385,6 +409,7 @@ function ZipArchiveFailure(props: {
   readonly onRetry: () => void;
   readonly onSave: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <EmptyState
@@ -394,11 +419,15 @@ function ZipArchiveFailure(props: {
         action={
           <View className="flex-row gap-3">
             {props.failure.retry ? (
-              <Button tone="primary" label="Try again" onPress={props.onRetry} />
+              <Button
+                tone="primary"
+                label={translator.message("cloud.action.tryAgain")}
+                onPress={props.onRetry}
+              />
             ) : null}
             <Button
               tone={props.failure.retry ? "secondary" : "primary"}
-              label="Save ZIP"
+              label={translator.message("mobile.ui.saveZip")}
               onPress={props.onSave}
             />
           </View>
@@ -413,6 +442,7 @@ function ZipArchiveList(props: {
   readonly headerInset: number;
   readonly onOpen: (entry: ZipEntry) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const { archive } = props;
@@ -445,7 +475,7 @@ function ZipArchiveList(props: {
             <View className="h-[38px] flex-row items-center gap-2 rounded-[10px] bg-subtle px-3">
               <SymbolView name="magnifyingglass" size={15} tintColorClassName="accent-icon-muted" />
               <TextInput
-                accessibilityLabel="Filter files in ZIP"
+                accessibilityLabel={translator.message("mobile.ui.filterFilesInZip")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 placeholder={`Filter ${fileCount} ${fileCount === 1 ? "file" : "files"}`}
@@ -458,7 +488,7 @@ function ZipArchiveList(props: {
               {query ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Clear filter"
+                  accessibilityLabel={translator.message("mobile.ui.clearFilter")}
                   hitSlop={10}
                   onPress={() => setQuery("")}
                 >
@@ -485,11 +515,20 @@ function ZipArchiveList(props: {
             <EmptyState
               variant="plain"
               title={`No files match “${query.trim()}”`}
-              detail="The filter checks file names and folder paths."
-              action={<Button label="Clear filter" onPress={() => setQuery("")} />}
+              detail={translator.message("mobile.ui.theFilterChecksFileNamesAndFolder")}
+              action={
+                <Button
+                  label={translator.message("mobile.ui.clearFilter")}
+                  onPress={() => setQuery("")}
+                />
+              }
             />
           ) : (
-            <EmptyState variant="plain" title="This ZIP is empty" detail="It has no files." />
+            <EmptyState
+              variant="plain"
+              title={translator.message("mobile.ui.thisZipIsEmpty")}
+              detail={translator.message("mobile.ui.itHasNoFiles")}
+            />
           )
         }
       />
@@ -511,6 +550,7 @@ export function ZipArchiveView(props: {
   readonly onSave: () => void;
   readonly onRemove: (() => void) | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { state, retry, cancel } = useZipArchive(props);
   const [selection, setSelection] = useState<{
     readonly archive: ZipArchive;
@@ -551,7 +591,7 @@ export function ZipArchiveView(props: {
         <View className="flex-1" style={{ paddingTop: headerInset }}>
           {state.status === "loading" ? (
             props.isLocal || state.receivedBytes === 0 ? (
-              <FilePreviewLoading message="Opening ZIP..." />
+              <FilePreviewLoading message={translator.message("mobile.ui.openingZip")} />
             ) : (
               <ZipArchiveProgress
                 receivedBytes={state.receivedBytes}
@@ -628,6 +668,7 @@ function ZipEntryView(props: {
   readonly maxAttachmentBytes: number | undefined;
   readonly onBack: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { entry, draftKey, maxAttachmentBytes } = props;
   const { mimeType } = entry;
   const previewKind = filePreviewKind({ name: entry.name, mimeType });
@@ -640,7 +681,7 @@ function ZipEntryView(props: {
     tooBig
       ? {
           status: "failed",
-          title: "Too big to preview",
+          title: translator.message("mobile.ui.tooBigToPreview"),
           message: `Previews stop at ${formatAttachmentSize(ARCHIVE_ENTRY_MAX_BYTES)}. Save the file to open it in another app.`,
         }
       : { status: "loading" },
@@ -679,7 +720,7 @@ function ZipEntryView(props: {
         if (!controller.signal.aborted)
           setContent({
             status: "failed",
-            title: "Couldn't read this file",
+            title: translator.message("mobile.ui.couldntReadThisFile"),
             message: errorMessage(cause, "Could not read this file."),
           });
       });
@@ -688,7 +729,7 @@ function ZipEntryView(props: {
       release?.();
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reread the entry.
-  }, [entry, isText, mimeType, tooBig, revision]);
+  }, [entry, isText, mimeType, tooBig, revision, translator]);
 
   const run = (kind: "save" | "attach", task: (signal: AbortSignal) => Promise<unknown>) => {
     if (busy) return;
@@ -700,13 +741,18 @@ function ZipEntryView(props: {
         if (controller.signal.aborted) return;
         setBusy(null);
         if (kind === "attach")
-          Dialog.alert("Added to chat", `${entry.name} is attached to your message.`);
+          Dialog.alert(
+            translator.message("mobile.ui.addedToChat"),
+            `${entry.name} is attached to your message.`,
+          );
       },
       (cause: unknown) => {
         if (controller.signal.aborted) return;
         setBusy(null);
         Dialog.alert(
-          kind === "save" ? "Could not save file" : "Could not add file to chat",
+          kind === "save"
+            ? translator.message("mobile.ui.couldNotSaveFile")
+            : translator.message("mobile.ui.couldNotAddFileToChat"),
           errorMessage(cause, "Please try again."),
         );
       },
@@ -764,7 +810,9 @@ function ZipEntryView(props: {
             ...(renderedMode
               ? [
                   {
-                    accessibilityLabel: rendered ? "Show source" : "Show preview",
+                    accessibilityLabel: rendered
+                      ? translator.message("mobile.ui.showSource")
+                      : translator.message("mobile.ui.showPreview"),
                     icon: rendered ? ("doc.text" as const) : ("eye" as const),
                     onPress: () => setRendered((value) => !value),
                   },
@@ -773,7 +821,7 @@ function ZipEntryView(props: {
             ...(canAddToChat
               ? [
                   {
-                    accessibilityLabel: "Add to chat",
+                    accessibilityLabel: translator.message("browser.files.addToChat"),
                     icon: "plus.bubble" as const,
                     onPress: addToChat,
                     disabled: busy !== null,
@@ -781,7 +829,7 @@ function ZipEntryView(props: {
                 ]
               : []),
             {
-              accessibilityLabel: "Save file",
+              accessibilityLabel: translator.message("mobile.ui.saveFile"),
               icon: "square.and.arrow.up",
               onPress: save,
               loading: busy === "save",
@@ -790,22 +838,27 @@ function ZipEntryView(props: {
         />
       ) : (
         <Toolbar placement="right">
-          <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+          <Toolbar.Menu
+            accessibilityLabel={translator.message("mobile.files.actions")}
+            icon="ellipsis"
+          >
             {renderedMode ? (
               <Toolbar.MenuAction
                 icon={rendered ? "doc.text" : "eye"}
                 onPress={() => setRendered((value) => !value)}
               >
-                {rendered ? "Show source" : "Show preview"}
+                {rendered
+                  ? translator.message("mobile.ui.showSource")
+                  : translator.message("mobile.ui.showPreview")}
               </Toolbar.MenuAction>
             ) : null}
             {canAddToChat ? (
               <Toolbar.MenuAction icon="plus.bubble" disabled={busy !== null} onPress={addToChat}>
-                Add to chat
+                {translator.message("browser.files.addToChat")}
               </Toolbar.MenuAction>
             ) : null}
             <Toolbar.MenuAction icon="square.and.arrow.up" disabled={busy !== null} onPress={save}>
-              Save file
+              {translator.message("mobile.ui.saveFile")}
             </Toolbar.MenuAction>
           </Toolbar.Menu>
         </Toolbar>
@@ -817,7 +870,12 @@ function ZipEntryView(props: {
             title={content.title}
             detail={content.message}
             action={
-              <Button tone="primary" label="Save file" loading={busy === "save"} onPress={save} />
+              <Button
+                tone="primary"
+                label={translator.message("mobile.ui.saveFile")}
+                loading={busy === "save"}
+                onPress={save}
+              />
             }
           />
         </ScrollView>
@@ -825,9 +883,9 @@ function ZipEntryView(props: {
         // Closing the viewer stays here so Save and Add to chat remain reachable.
         <View className="flex-1 items-center justify-center bg-sheet px-6">
           <EmptyState
-            title={viewerError ? "No preview for this file" : entry.name}
-            detail={viewerError ?? "Open it in the file viewer, save it, or add it to chat."}
-            actionLabel="Open in file viewer"
+            title={viewerError ? translator.message("mobile.ui.noPreviewForThisFile") : entry.name}
+            detail={viewerError ?? translator.message("mobile.ui.openItInTheFileViewerSave")}
+            actionLabel={translator.message("mobile.ui.openInFileViewer")}
             onAction={openViewer}
           />
         </View>

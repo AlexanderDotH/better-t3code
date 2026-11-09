@@ -1,6 +1,18 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "settings.composer.layout.label": [
+    "Composer layout",
+    "Composer-Layout",
+    "Disposition du composeur",
+  ],
+  "settings.composer.layout.description": [
+    "Choose the current or classic composer and model picker.",
+    "Wähle den aktuellen oder klassischen Composer mit der jeweiligen Modellauswahl.",
+    "Choisissez le composeur actuel ou classique et son sélecteur de modèle.",
+  ],
+  "settings.composer.layout.current": ["Current", "Aktuell", "Actuel"],
+  "settings.composer.layout.classic": ["Classic", "Klassisch", "Classique"],
   "settings.common.search": ["Search", "Suchen", "Rechercher"],
   "settings.common.clear": ["Clear", "Leeren", "Effacer"],
   "settings.common.cancel": ["Cancel", "Abbrechen", "Annuler"],

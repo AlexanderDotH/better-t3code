@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/model";
 
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -24,23 +25,39 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "approval-required",
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
+    get label() {
+      return currentInterfaceTranslator().message("chat.composer.access.supervised");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("chat.composer.access.supervisedDescription");
+    },
   },
   {
     mode: "auto-accept-edits",
-    label: "Ruled",
-    description: "Auto-approve edits, ask before other actions.",
+    get label() {
+      return currentInterfaceTranslator().message("chat.composer.access.autoAccept");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("chat.composer.access.autoAcceptDescription");
+    },
   },
   {
     mode: "auto",
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
+    get label() {
+      return currentInterfaceTranslator().message("chat.composer.access.auto");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("chat.composer.access.autoDescription");
+    },
   },
   {
     mode: "full-access",
-    label: "Full",
-    description: "Allow commands and edits without prompts.",
+    get label() {
+      return currentInterfaceTranslator().message("settings.betterT3.value.full");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("chat.composer.access.fullDescription");
+    },
   },
 ];
 
@@ -63,8 +80,10 @@ export function threadReasoningChoices(
     ? [
         {
           id: T3_AUTO_REASONING_OPTION_ID,
-          label: "Auto",
-          description: "Sets reasoning level based on your prompt input.",
+          label: currentInterfaceTranslator().message("chat.composer.access.auto"),
+          description: currentInterfaceTranslator().message(
+            "mobile.ui.setsReasoningLevelBasedOnYourPrompt",
+          ),
         },
         ...choices,
       ]

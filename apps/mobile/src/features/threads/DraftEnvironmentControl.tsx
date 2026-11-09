@@ -6,6 +6,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function DraftEnvironmentControl(props: {
   readonly label: string;
@@ -18,7 +19,15 @@ export function DraftEnvironmentControl(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Choose environment, ${props.label}, ${disconnected ? "Offline" : "Connected"}`}
+      accessibilityLabel={currentInterfaceTranslator().message(
+        "mobile.ui.chooseEnvironmentStatus",
+        {
+          label: props.label,
+          status: disconnected
+            ? currentInterfaceTranslator().message("chat.environment.status.offline")
+            : currentInterfaceTranslator().message("chat.environment.status.connected"),
+        },
+      )}
       disabled={props.disabled}
       onPress={props.onChooseEnvironment}
       className="flex-row items-center gap-1.5 rounded-xl px-3 py-2 active:opacity-65"

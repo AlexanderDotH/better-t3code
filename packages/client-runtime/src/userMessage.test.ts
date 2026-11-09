@@ -154,6 +154,23 @@ describe("resolveUserMessageFileCards", () => {
 });
 
 describe("resolveUserMessagePresentation", () => {
+  it("replaces the Deep Plan resume prompt with a short label", () => {
+    const message = {
+      id: "deep-plan:run-1:continue:initial:1:message",
+      role: "user" as const,
+      text: "Continue Deep Plan run-1, owned by thread t, from its durable state.",
+      createdBy: "agent" as const,
+      creationSource: "server" as const,
+    };
+    expect(resolveUserMessagePresentation(message)).toMatchObject({
+      text: "Continuing the Deep Plan",
+      attribution: "t3code",
+    });
+    expect(
+      resolveUserMessagePresentation(message, { deepPlanContinuation: "Wird fortgesetzt" }).text,
+    ).toBe("Wird fortgesetzt");
+  });
+
   const legacyText = "[Triggered by schedule task: Daily audit]\n\nCheck for crashes.\n";
 
   it("preserves user-written and assistant-quoted schedule headers", () => {

@@ -22,6 +22,8 @@ interface PreviewPanelShellProps {
   /** Use a distinct key per surface to keep remembered widths independent. */
   widthStorageKey?: string;
   defaultWidth?: number;
+  /** The window grows on this side as the panel opens, so the panel is revealed instead of widened. */
+  windowExpansionRevealDirection?: "left" | "right" | undefined;
   children: ReactNode;
 }
 
@@ -50,6 +52,8 @@ function PreviewPanelShellFrame(
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
   const maximized = props.maximized ?? false;
+  const windowExpansionRevealDirection =
+    isInline && open ? props.windowExpansionRevealDirection : undefined;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const returnedFocus = useRef(false);
   const { width, handlers, observeRow } = props.inlineSize;
@@ -129,8 +133,12 @@ function PreviewPanelShellFrame(
             : "shrink-0 border-l border-border"
           : "w-full",
         collapsible &&
+          !windowExpansionRevealDirection &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
-        collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
+        collapsible &&
+          open &&
+          !windowExpansionRevealDirection &&
+          "[[data-panel-animations=true]_&]:starting:w-0!",
         collapsible && !open && "pointer-events-none",
       )}
       style={
@@ -148,6 +156,7 @@ function PreviewPanelShellFrame(
       }
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
+      data-window-expansion-reveal={windowExpansionRevealDirection}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
       {/* Content stays pinned to the right edge, so closing uncovers the chat

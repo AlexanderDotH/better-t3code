@@ -478,7 +478,7 @@ function PoolBar({
                   pacingEnabled && pool.kind === "weekly" ? "h-7" : "h-5",
                 )}
               >
-                <span aria-hidden>,</span>
+                <span aria-hidden>–</span>
                 <span className="ms-2 hidden truncate @2xl/pool:inline">Not reported</span>
               </span>
               <span

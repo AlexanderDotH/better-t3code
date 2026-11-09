@@ -15,6 +15,7 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type InlineCommentParams = PullRequestParams & {
   readonly draftId?: string;
@@ -25,6 +26,7 @@ export type InlineCommentParams = PullRequestParams & {
   readonly code: string;
 };
 export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<InlineCommentParams>) {
+  const translator = useMobileInterfaceTranslator();
   const params = route.params;
   const navigation = useNavigation();
   const store = usePullRequestReviewDraft(params);
@@ -75,13 +77,21 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   return (
     <PullRequestSheetContent
       busy={busy}
-      title={saved ? "Edit review comment" : "Review comment"}
+      title={
+        saved
+          ? translator.message("mobile.ui.editReviewComment")
+          : translator.message("mobile.ui.reviewComment")
+      }
       subtitle={`#${params.number} · ${reviewPositionLabel(params.position)}`}
       footer={
         <Button
           fullWidth
           tone="contrast"
-          label={busy ? "Saving…" : "Save draft"}
+          label={
+            busy
+              ? translator.message("mobile.settings.agents.saving")
+              : translator.message("mobile.ui.saveDraft")
+          }
           loading={busy}
           disabled={
             !store.ready ||
@@ -105,8 +115,8 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         multiline
         editable={store.ready && !busy}
         autoFocus
-        accessibilityLabel="Inline review comment"
-        placeholder="Write feedback on this line…"
+        accessibilityLabel={translator.message("mobile.ui.inlineReviewComment")}
+        placeholder={translator.message("mobile.ui.writeFeedbackOnThisLine")}
         placeholderTextColorClassName="accent-foreground-muted"
         maxLength={65536}
         value={body}
@@ -115,11 +125,11 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         style={{ textAlignVertical: "top" }}
       />
       <Text className="text-xs text-foreground-muted">
-        Saved comments are private until you submit your review.
+        {translator.message("mobile.ui.savedCommentsArePrivateUntilYouSubmit")}
       </Text>
       {stale ? (
         <Text className="text-sm text-danger-foreground">
-          The branch changed. Return to the current diff and select the line again.
+          {translator.message("mobile.ui.theBranchChangedReturnToTheCurrent")}
         </Text>
       ) : null}
       {store.error || detail.error ? (
@@ -127,22 +137,29 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       ) : null}
       {saved ? (
         <Button
-          label="Delete draft"
+          label={translator.message("mobile.ui.deleteDraft")}
           onPress={() =>
-            Dialog.alert("Delete this draft?", "Your other review comments will be kept.", [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => {
-                  store.update((draft) => ({
-                    ...draft,
-                    comments: draft.comments.filter((comment) => comment.id !== saved.id),
-                  }));
-                  navigation.goBack();
+            Dialog.alert(
+              translator.message("mobile.ui.deleteThisDraft"),
+              translator.message("mobile.ui.yourOtherReviewCommentsWillBeKept"),
+              [
+                {
+                  text: translator.message("mobile.settings.projects.settings.cancel"),
+                  style: "cancel",
                 },
-              },
-            ])
+                {
+                  text: translator.message("mobile.git.delete"),
+                  style: "destructive",
+                  onPress: () => {
+                    store.update((draft) => ({
+                      ...draft,
+                      comments: draft.comments.filter((comment) => comment.id !== saved.id),
+                    }));
+                    navigation.goBack();
+                  },
+                },
+              ],
+            )
           }
         />
       ) : null}

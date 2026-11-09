@@ -27,6 +27,7 @@ import { environmentSession, useEnvironmentScope, readEnvironmentScope } from ".
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { useEnvironmentRecoveryNavigation } from "../connection/useEnvironmentRecoveryNavigation";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -38,6 +39,7 @@ import {
   supportsEnvironmentUpdate,
 } from "./environment-maintenance";
 import { environmentReleaseCheckAtom, releaseCheckValue } from "./environmentUpdateCheck";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsEnvironmentDetailRouteScreen({
   route,
@@ -53,9 +55,14 @@ export function SettingsEnvironmentDetailRouteScreen({
 }
 
 function EnvironmentDetail({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const connections = useRemoteConnections();
+  const recovery = useEnvironmentRecoveryNavigation({
+    pairingRoute: "SettingsEnvironmentNew",
+    onChangeConnectionPairingUrl: connections.onChangeConnectionPairingUrl,
+  });
   const environment = connections.connectedEnvironments.find(
     (entry) => entry.environmentId === environmentId,
   );
@@ -112,7 +119,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       setError(
-        cause instanceof Error ? cause.message : "The action could not be completed. Try again.",
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.theActionCouldNotBeCompletedTry"),
       );
     }
   }
@@ -125,9 +134,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       `Update ${environment?.environmentLabel ?? "environment"}?`,
       `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Running threads may be interrupted.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
         {
-          text: "Update",
+          text: translator.message("serverUpdate.action.update"),
           onPress: () =>
             void run("server", async () => {
               if (
@@ -172,7 +181,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   }
 
   return (
-    <SettingsScreen title={environment?.environmentLabel ?? "Environment"}>
+    <SettingsScreen
+      title={environment?.environmentLabel ?? translator.message("mobile.navigation.environment")}
+    >
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         className="flex-1"
@@ -181,11 +192,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       >
         {!environment ? (
           <Text className="text-base text-foreground-muted">
-            This environment is no longer saved on this device.
+            {translator.message("mobile.ui.thisEnvironmentIsNoLongerSavedOn")}
           </Text>
         ) : (
           <>
-            <SettingsSection title="Connection">
+            <SettingsSection title={translator.message("settings.mcp.store.connection")}>
               <ConnectionEnvironmentRow
                 environment={environment}
                 expanded={connectionExpanded}
@@ -194,6 +205,8 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onRemove={connections.onRemoveEnvironmentPress}
                 onSetEnabled={connections.onSetEnvironmentEnabled}
                 onUpdate={connections.onUpdateEnvironment}
+                onPairAgain={recovery.onPairAgain}
+                onSignIn={recovery.onSignIn}
               />
             </SettingsSection>
             <EnvironmentRoutesSection
@@ -210,7 +223,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
               />
             ) : !connected ? (
               <Text className="px-2 text-sm text-foreground-muted">
-                Connect this environment to manage it.
+                {translator.message("mobile.ui.connectThisEnvironmentToManageIt")}
               </Text>
             ) : !allowed ? (
               <Text className="px-2 text-sm text-foreground-muted">
@@ -221,7 +234,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       rejected:
                         !AsyncResult.isFailure(sessionResult) && session?.authenticated === false,
                     })
-                  : "This connection does not have permission to manage the environment."}
+                  : translator.message("mobile.ui.thisConnectionDoesNotHavePermissionTo")}
               </Text>
             ) : null}
             {error ? (
@@ -246,8 +259,8 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                     {running ? (
                       <Text className="text-sm text-foreground-muted">
                         {updateState.stage === "resuming"
-                          ? "Restarting and reconnecting…"
-                          : "Downloading update…"}
+                          ? translator.message("mobile.ui.restartingAndReconnecting")
+                          : translator.message("mobile.ui.downloadingUpdate")}
                       </Text>
                     ) : updateState.status === "failed" ? (
                       <Text selectable className="text-sm text-danger-foreground">
@@ -258,7 +271,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       <Text className="text-sm text-foreground-muted">
                         {checkedRelease.targetVersion
                           ? `Version ${checkedRelease.targetVersion} is available.`
-                          : "You are up to date."}
+                          : translator.message("mobile.ui.youAreUpToDate")}
                       </Text>
                     ) : null}
                     {checkedRelease?.targetVersion &&
@@ -266,8 +279,8 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                     !supportsEnvironmentUpdate(config.environment.capabilities) ? (
                       <Text className="text-sm text-foreground-muted">
                         {capabilities?.serverSelfUpdate === "desktop-managed"
-                          ? "Update the desktop app on this machine."
-                          : "Update and restart T3 Code on this machine."}
+                          ? translator.message("mobile.ui.updateTheDesktopAppOnThisMachine")
+                          : translator.message("mobile.ui.updateAndRestartT3CodeOnThis")}
                       </Text>
                     ) : null}
                   </View>
@@ -281,7 +294,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                   {updatesDenial ? null : (
                     <SettingsActionRow
                       icon="arrow.clockwise"
-                      label="Check for updates"
+                      label={translator.message("sidebar.update.check")}
                       disabled={disabled}
                       loading={pending === "check"}
                       onPress={() => {
@@ -307,10 +320,10 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                     />
                   ) : null}
                 </SettingsSection>
-                <SettingsSection title="Providers">
+                <SettingsSection title={translator.message("mobile.settings.agents.providers")}>
                   <SettingsActionRow
                     icon="arrow.clockwise"
-                    label="Refresh providers"
+                    label={translator.message("mobile.ui.refreshProviders")}
                     disabled={busy || !canRead}
                     loading={pending === "refresh"}
                     onPress={() => {
@@ -340,8 +353,8 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           </View>
                           <Text className="text-sm text-foreground-muted">
                             {provider.installed
-                              ? (provider.version ?? "Version unknown")
-                              : "Not installed"}
+                              ? (provider.version ?? translator.message("mobile.ui.versionUnknown"))
+                              : translator.message("settings.mcp.store.notInstalled")}
                             {provider.versionAdvisory?.latestVersion
                               ? ` · Latest ${provider.versionAdvisory.latestVersion}`
                               : ""}
@@ -372,7 +385,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           {provider.versionAdvisory?.status === "behind_latest" &&
                           !provider.versionAdvisory.canUpdate ? (
                             <Text className="text-sm text-foreground-muted">
-                              Update this provider on the environment's machine.
+                              {translator.message(
+                                "mobile.ui.updateThisProviderOnTheEnvironmentsMachine",
+                              )}
                             </Text>
                           ) : null}
                         </View>

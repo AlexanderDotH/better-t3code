@@ -18,8 +18,10 @@ import { pullRequestLabelColor } from "./pullRequestList";
 import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequestParams>) {
+  const translator = useMobileInterfaceTranslator();
   const target = pullRequestTarget(route.params);
   const pr = useEnvironmentQuery(composerPullRequests.detail(target)).data;
   const canWrite = useAtomValue(
@@ -66,15 +68,19 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     setPending(undefined);
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
-      setError(cause instanceof Error ? cause.message : "Couldn't update this label. Try again.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.couldntUpdateThisLabelTryAgain"),
+      );
     }
   };
   return (
     <PullRequestSearchSheet
-      title="Labels"
-      placeholder="Search labels"
-      closeAccessibilityLabel="Close labels"
-      clearAccessibilityLabel="Clear label search"
+      title={translator.message("pullRequest.labels")}
+      placeholder={translator.message("mobile.ui.searchLabels")}
+      closeAccessibilityLabel={translator.message("mobile.ui.closeLabels")}
+      clearAccessibilityLabel={translator.message("mobile.ui.clearLabelSearch")}
       searchTextChangeId="pr-label-search"
       query={query}
       onQueryChange={setQuery}
@@ -126,28 +132,29 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
                 <EmptyState
                   title={
                     result.error
-                      ? "Couldn't load labels"
+                      ? translator.message("mobile.ui.couldntLoadLabels")
                       : needle
-                        ? "No matching labels"
-                        : "This repository has no labels"
+                        ? translator.message("mobile.ui.noMatchingLabels")
+                        : translator.message("mobile.ui.thisRepositoryHasNoLabels")
                   }
                   detail={
                     result.error ??
                     (needle
-                      ? "Try another name."
-                      : "Create labels on the provider to use them here.")
+                      ? translator.message("mobile.ui.tryAnotherName")
+                      : translator.message("mobile.ui.createLabelsOnTheProviderToUse"))
                   }
                   variant="plain"
                 />
-                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? (
+                  <Button label={translator.message("common.retry")} onPress={result.refresh} />
+                ) : null}
               </View>
             )
           }
           ListFooterComponent={
             result.data?.truncated ? (
               <Text className="py-4 text-xs text-foreground-muted">
-                This repository has more labels than are listed here. Apply the rest on the
-                provider.
+                {translator.message("mobile.ui.thisRepositoryHasMoreLabelsThanAre")}
               </Text>
             ) : undefined
           }

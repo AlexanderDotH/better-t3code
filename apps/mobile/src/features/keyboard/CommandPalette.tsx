@@ -67,7 +67,12 @@ import {
   type CommandPaletteItem,
   type CommandPaletteResult,
 } from "./commandPaletteItems";
-import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
+import {
+  getRegisteredHardwareKeyboardCommands,
+  parseActiveThreadPath,
+  type HardwareKeyboardCommand,
+} from "./hardwareKeyboardCommands";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
@@ -98,6 +103,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   terminal: "terminal",
   review: PullRequestGlyph.pullRequest,
   copyThreadReference: "link",
+  cycleComposerMode: { ios: "list.bullet.clipboard", android: "auto_awesome" },
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
@@ -225,6 +231,8 @@ export function CommandPalette(props: {
   const { themeVariables } = useAppearancePreferences();
   const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
+  const translator = useMobileInterfaceTranslator();
+  const canCycleComposerMode = getRegisteredHardwareKeyboardCommands().has("cycleComposerMode");
   const projects = useProjects();
   const threads = useVisibleThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
@@ -293,65 +301,81 @@ export function CommandPalette(props: {
       {
         key: "newTask",
         kind: "action",
-        title: "New thread in…",
+        title: translator.message("ui.commandPalette.newThreadInMenu"),
         searchTerms: ["new task", "chat", "create", "project"],
         run: () => runCommand("newTask"),
       },
       {
         key: "addProject",
         kind: "action",
-        title: "Add project",
+        title: translator.message("mobile.project.add"),
         searchTerms: ["folder", "clone", "repository", "git"],
         run: () => navigation.navigate("AddProject"),
       },
       {
         key: "settings",
         kind: "action",
-        title: "Open settings",
+        title: translator.message("mobile.navigation.openSettings"),
         searchTerms: ["preferences", "configuration"],
         run: () => selectTab("settings"),
       },
       {
         key: "appearance",
         kind: "action",
-        title: "Appearance",
+        title: translator.message("mobile.settings.section.appearance"),
         searchTerms: ["theme", "colors", "dark", "light"],
         run: () => openSettings(navigation, "SettingsAppearance"),
       },
       {
         key: "environments",
         kind: "action",
-        title: "Manage environments",
+        title: translator.message("mobile.ui.manageEnvironments"),
         searchTerms: ["connections", "server", "remote"],
         run: () => openSettings(navigation, "SettingsEnvironments"),
       },
       {
         key: "scheduledTasks",
         kind: "action",
-        title: "Scheduled tasks",
+        title: translator.message("mobile.settings.scheduledTasks"),
         searchTerms: ["schedule", "automations", "recurring"],
         run: () => openSettings(navigation, "SettingsScheduledTasks"),
       },
       {
         key: "usage",
         kind: "action",
-        title: "Usage",
+        title: translator.message("mobile.settings.usage"),
         searchTerms: ["limits", "accounts", "quota"],
         run: () => openSettings(navigation, "SettingsUsage"),
       },
       {
         key: "archive",
         kind: "action",
-        title: "Archived threads",
+        title: translator.message("mobile.settings.archivedThreads"),
         searchTerms: ["restore", "history"],
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (canCycleComposerMode) {
+      actions.push({
+        key: "cycleComposerMode",
+        kind: "action",
+        title: translator.message("chat.deepPlan.modeLabel", {
+          mode: [
+            translator.message("chat.composer.interaction.build"),
+            translator.message("chat.composer.mode.plan"),
+            translator.message("chat.deepPlan.label"),
+            translator.message("chat.composer.mode.chat"),
+          ].join(" / "),
+        }),
+        searchTerms: ["chat", "plan", "deep plan", "build", "mode", "shift tab"],
+        run: () => runCommand("cycleComposerMode"),
+      });
+    }
     if (canTriage) {
       actions.push({
         key: "triage",
         kind: "action",
-        title: "Triage an issue",
+        title: translator.message("mobile.ui.triageAnIssue"),
         // Mobile has no triage hero, so name the machine before it starts.
         detail: `On ${savedConnectionsById[triageEnvironmentId]?.environmentLabel ?? "this machine"}`,
         searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
@@ -434,7 +458,7 @@ export function CommandPalette(props: {
         return {
           key: scopedThreadKey(thread.environmentId, thread.id),
           kind: "thread",
-          title: thread.title || "Untitled thread",
+          title: thread.title || translator.message("mobile.ui.untitledThread"),
           detail: [project?.title, environment].filter(Boolean).join(" · "),
           searchTerms: [],
           threadSearch: threadSearchSubject(
@@ -465,6 +489,7 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
+    canCycleComposerMode,
     canTriage,
     navigation,
     projects,
@@ -473,6 +498,7 @@ export function CommandPalette(props: {
     selectDetail,
     startTriage,
     threads,
+    translator,
     triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {
@@ -615,7 +641,7 @@ export function CommandPalette(props: {
           >
             <Pressable
               className="absolute inset-0 bg-backdrop"
-              accessibilityLabel="Close command palette"
+              accessibilityLabel={translator.message("mobile.ui.closeCommandPalette")}
               onPress={() => close()}
             />
             <GlassSurface
@@ -639,8 +665,10 @@ export function CommandPalette(props: {
                   />
                   <TextInput
                     ref={inputRef}
-                    accessibilityLabel="Search commands, projects, and threads"
-                    placeholder="Search commands, projects, and threads…"
+                    accessibilityLabel={translator.message(
+                      "mobile.ui.searchCommandsProjectsAndThreads",
+                    )}
+                    placeholder={translator.message("ui.commandPalette.searchAllPlaceholder")}
                     placeholderTextColorClassName="accent-placeholder"
                     autoCorrect={false}
                     autoCapitalize="none"
@@ -681,14 +709,16 @@ export function CommandPalette(props: {
                 contentContainerClassName="pb-2"
                 ListEmptyComponent={
                   <Text className="p-5 text-center text-foreground-muted">
-                    {search.isPending ? "Searching…" : "No results"}
+                    {search.isPending
+                      ? translator.message("browser.search.searching")
+                      : translator.message("mobile.home.noResults")}
                   </Text>
                 }
                 // Message results from slower environments may still arrive below.
                 ListFooterComponent={
                   results.length > 0 && search.isPending && !query.startsWith(">") ? (
                     <Text className="px-5 pt-2 text-xs text-foreground-muted">
-                      Searching messages…
+                      {translator.message("mobile.ui.searchingMessages")}
                     </Text>
                   ) : undefined
                 }
@@ -699,7 +729,7 @@ export function CommandPalette(props: {
                         className="px-5 pt-2 text-xs text-foreground-muted"
                         style={{ height: SECTION_LABEL_HEIGHT }}
                       >
-                        In messages
+                        {translator.message("mobile.ui.inMessages")}
                       </Text>
                     ) : null}
                     <PaletteRow

@@ -5,6 +5,7 @@ import { ScrollView, View } from "react-native";
 import { AppText as Text } from "./ui/AppText";
 import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -90,6 +91,7 @@ export function RenderFailureView(
     readonly exit?: { readonly label: string; readonly onPress: () => void };
   },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const title = props.title ?? "This screen couldn't be displayed";
   return (
     <ScrollView
@@ -103,15 +105,20 @@ export function RenderFailureView(
         {title}
       </Text>
       <Text className="text-center text-sm text-foreground-muted">
-        Try again. If it keeps happening, copy the details for a bug report.
+        {translator.message("mobile.ui.tryAgainIfItKeepsHappeningCopy")}
       </Text>
       <Text selectable className="text-center font-mono text-xs text-danger-foreground">
         {props.details.split("\n", 1)[0]?.slice(0, 300)}
       </Text>
       <View className="w-full max-w-xs gap-2">
-        <Button label="Try again" onPress={props.retry} tone="primary" fullWidth />
         <Button
-          label="Copy details"
+          label={translator.message("cloud.action.tryAgain")}
+          onPress={props.retry}
+          tone="primary"
+          fullWidth
+        />
+        <Button
+          label={translator.message("desktop.recovery.copyDetails")}
           onPress={() => copyTextWithHaptic(props.details, { target: "error details" })}
           fullWidth
         />

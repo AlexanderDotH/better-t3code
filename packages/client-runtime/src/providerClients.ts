@@ -21,6 +21,13 @@ import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
+import {
+  GEMINI_PROVIDER_ICON,
+  OPENAI_PROVIDER_ICON,
+  OPENROUTER_PROVIDER_ICON,
+  SELF_HOSTED_PROVIDER_ICON,
+} from "./providerClientIcons.ts";
+
 export const providerClients = makeProviderClientRegistry([
   {
     driverKind: ProviderDriverKind.make("codex"),
@@ -38,12 +45,14 @@ export const providerClients = makeProviderClientRegistry([
   },
   {
     driverKind: ProviderDriverKind.make("chatgpt"),
+    icon: OPENAI_PROVIDER_ICON,
     label: "ChatGPT Subscription",
     modelFamilies: ["GPT-", "GPT "],
     settingsSchema: ChatGptSettings,
   },
   {
     driverKind: ProviderDriverKind.make("openai"),
+    icon: OPENAI_PROVIDER_ICON,
     label: "OpenAI Responses",
     modelFamilies: ["GPT-", "GPT "],
     settingsSchema: OpenAiSettings,
@@ -51,6 +60,7 @@ export const providerClients = makeProviderClientRegistry([
   },
   {
     driverKind: ProviderDriverKind.make("openrouter"),
+    icon: OPENROUTER_PROVIDER_ICON,
     label: "OpenRouter",
     modelFamilies: [],
     settingsSchema: OpenRouterSettings,
@@ -58,18 +68,21 @@ export const providerClients = makeProviderClientRegistry([
   },
   {
     driverKind: ProviderDriverKind.make("openaiCompatible"),
+    icon: SELF_HOSTED_PROVIDER_ICON,
     label: "OpenAI Compatible",
     modelFamilies: [],
     settingsSchema: OpenAiCompatibleSettings,
   },
   {
     driverKind: ProviderDriverKind.make("lmstudio"),
+    icon: SELF_HOSTED_PROVIDER_ICON,
     label: "LM Studio",
     modelFamilies: [],
     settingsSchema: LmStudioSettings,
   },
   {
     driverKind: ProviderDriverKind.make("gemini"),
+    icon: GEMINI_PROVIDER_ICON,
     label: "Gemini",
     modelFamilies: ["Gemini "],
     settingsSchema: GeminiSettings,

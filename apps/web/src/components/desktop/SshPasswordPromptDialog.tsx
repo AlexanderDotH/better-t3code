@@ -28,11 +28,9 @@ function formatRemainingSeconds(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function getPromptErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "SSH verification prompt failed.";
-  return message.includes("expired") || message.includes("no longer pending")
-    ? "This SSH verification prompt expired. Try connecting again."
-    : message;
+function getPromptErrorMessage(error: unknown, fallback: string, expired: string): string {
+  const message = error instanceof Error ? error.message : fallback;
+  return message.includes("expired") || message.includes("no longer pending") ? expired : message;
 }
 
 let promptQueue: readonly DesktopSshPasswordPromptRequest[] = [];
@@ -104,7 +102,7 @@ function ActiveSshPasswordPrompt({
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
   const visibleResponseError = isExpired
-    ? "This SSH verification prompt expired. Try connecting again."
+    ? translator.message("sshPassword.expired")
     : responseError;
 
   const respond = async (nextPassword: string | null) => {
@@ -114,7 +112,7 @@ function ActiveSshPasswordPrompt({
 
     const requestId = request.requestId;
     if (nextPassword !== null && isExpired) {
-      setResponseError("This SSH verification prompt expired. Try connecting again.");
+      setResponseError(translator.message("sshPassword.expired"));
       return;
     }
 
@@ -127,7 +125,13 @@ function ActiveSshPasswordPrompt({
     if (AsyncResult.isSuccess(result) || nextPassword === null) {
       removeSshPasswordPrompt(requestId);
     } else {
-      setResponseError(getPromptErrorMessage(Cause.squash(result.cause)));
+      setResponseError(
+        getPromptErrorMessage(
+          Cause.squash(result.cause),
+          translator.message("sshPassword.failureFallback"),
+          translator.message("sshPassword.expired"),
+        ),
+      );
     }
     isRespondingRef.current = false;
     setIsResponding(false);
@@ -158,11 +162,9 @@ function ActiveSshPasswordPrompt({
     >
       <DialogPopup className="max-w-md" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>SSH verification required</DialogTitle>
+          <DialogTitle>{translator.message("sshPassword.title")}</DialogTitle>
           <DialogDescription>
-            Enter the password or verification code required by <code>{target}</code>. T3 Code
-            passes your response to the local SSH process and keeps it in memory to reuse for this
-            host. T3 Code does not write it to disk.
+            {translator.message("sshPassword.description", { target })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -203,8 +205,7 @@ function ActiveSshPasswordPrompt({
               <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                SSH keys may replace a password, but your server can still require a verification
-                code.
+                {translator.message("sshPassword.keysHint")}
               </p>
             )}
           </form>

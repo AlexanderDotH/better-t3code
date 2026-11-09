@@ -7,7 +7,13 @@ import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  createInterfaceTranslator,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
 import { isElectron } from "../../env";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { readInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
@@ -53,6 +59,60 @@ type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
 >[1];
 type SidebarUpdatePopoverHandle = ReturnType<typeof PopoverCreateHandle>;
+
+function localizedUpdateTooltip(
+  state: DesktopUpdateState,
+  translator: InterfaceTranslator,
+): string {
+  const notApplied =
+    state.notAppliedVersion !== undefined &&
+    (state.status === "available" || state.status === "downloaded") &&
+    getDesktopUpdateDownloadedVersion(state) === state.notAppliedVersion;
+  if (notApplied) return getDesktopUpdateButtonTooltip(state);
+  if (state.status === "available") {
+    return state.availableVersion
+      ? translator.message("sidebar.update.versionReadyToDownload", {
+          version: state.availableVersion,
+        })
+      : translator.message("sidebar.update.readyToDownload");
+  }
+  if (state.status === "downloading") {
+    return typeof state.downloadPercent === "number"
+      ? translator.message("sidebar.update.downloadingProgress", {
+          percent: Math.floor(state.downloadPercent),
+        })
+      : translator.message("sidebar.update.downloading");
+  }
+  if (state.status === "downloaded") {
+    return translator.message("sidebar.update.downloaded", {
+      version: state.downloadedVersion ?? state.availableVersion ?? "",
+    });
+  }
+  if (state.status === "error") {
+    if (state.errorContext === "download" && state.availableVersion) {
+      return translator.message("sidebar.update.downloadRetry", {
+        version: state.availableVersion,
+      });
+    }
+    if (state.errorContext === "install" && state.downloadedVersion) {
+      return translator.message("sidebar.update.installRetry", {
+        version: state.downloadedVersion,
+      });
+    }
+    if (state.downloadedVersion) {
+      return translator.message("sidebar.update.downloaded", {
+        version: state.downloadedVersion,
+      });
+    }
+    return state.message ?? translator.message("sidebar.update.failed");
+  }
+  return translator.message("sidebar.update.current");
+}
+
+// Update actions also run outside React, from the update-everything flow.
+function updateTranslator(): InterfaceTranslator {
+  return createInterfaceTranslator(readInterfaceLocaleRuntime());
+}
 
 function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
@@ -120,6 +180,7 @@ export function SidebarUpdateArchitectureWarning() {
 }
 
 function SidebarUpdateArchitectureWarningContent() {
+  const translator = useInterfaceTranslator();
   const state = useDesktopUpdateState();
   const visible = shouldShowArm64IntelBuildWarning(state);
   const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
@@ -129,7 +190,7 @@ function SidebarUpdateArchitectureWarningContent() {
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>{translator.message("sidebar.update.intelOnAppleSilicon")}</AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -154,12 +215,14 @@ export async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError)
+      reportError(updateTranslator().message("sidebar.update.downloadFailed"), actionError);
     return result.completed;
   } catch (error) {
+    const translator = updateTranslator();
     reportError(
-      "Could not start update download",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      translator.message("sidebar.update.downloadStartFailed"),
+      error instanceof Error ? error.message : translator.message("sidebar.error.unexpected"),
     );
     return false;
   }
@@ -180,12 +243,13 @@ export async function installLocalUpdate(
       ? getDesktopUpdateActionError(result)
       : null;
     if (!actionError) return true;
-    reportError("Could not install update", actionError);
+    reportError(updateTranslator().message("sidebar.update.installFailed"), actionError);
     return false;
   } catch (error) {
+    const translator = updateTranslator();
     reportError(
-      "Could not install update",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      translator.message("sidebar.update.installFailed"),
+      error instanceof Error ? error.message : translator.message("sidebar.error.unexpected"),
     );
     return false;
   }
@@ -196,6 +260,7 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
+  const translator = useInterfaceTranslator();
   const state = useDesktopUpdateState();
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
@@ -251,11 +316,13 @@ function SidebarUpdateControl() {
     ? everything.summary
     : showUpdateDetails
       ? state
-        ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
+        ? localizedUpdateTooltip(state, translator)
+        : translator.message("sidebar.update.available")
       : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+        ? translator.message("sidebar.update.checking")
+        : idleTooltip?.detail
+          ? idleTooltip.title
+          : translator.message("sidebar.update.check");
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -307,8 +374,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            title: translator.message("sidebar.update.confirmFailed"),
+            description:
+              error instanceof Error
+                ? error.message
+                : translator.message("sidebar.update.confirmationFailed"),
           }),
         );
         return;
@@ -332,11 +402,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
+            title: translator.message("sidebar.update.checkFailed"),
             description:
               updatesDenial ??
               result.state.message ??
-              "Automatic updates are not available in this build.",
+              translator.message("sidebar.update.downloadUnavailable"),
           }),
         );
       })
@@ -344,8 +414,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: translator.message("sidebar.update.checkFailed"),
+            description:
+              error instanceof Error
+                ? error.message
+                : translator.message("sidebar.update.checkError"),
           }),
         );
       })

@@ -112,6 +112,10 @@ export function useMessageReplies({
     if (!composerRef.current || composerRef.current.hasPendingAttachments()) return;
     const send = draft;
     const sendContext = composerRef.current.getSendContext();
+    if (sendContext.composerMode === "deep-plan") {
+      setError({ threadKey, message: translate("chat.deepPlan.replyUnavailable") });
+      return;
+    }
     const currentReply = messageReply ?? readThreadShell(threadRef)?.messageReply;
     const continuesTopic = replyTarget.replyTo.replyTopicId === replyTarget.replyTopicId;
     const existingChild = !continuesTopic

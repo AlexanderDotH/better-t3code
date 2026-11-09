@@ -1,4 +1,5 @@
-import type { SubagentId } from "@t3tools/contracts";
+import { EventId, MessageId, SubagentId } from "@t3tools/contracts";
+import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -9,6 +10,75 @@ import type {
 } from "@t3tools/contracts/legacy";
 
 const ACTIVE_STATUSES = new Set<OrchestrationSubagentStatus>(["starting", "running", "waiting"]);
+
+export function runtimeSubagentSummary(agent: RuntimeSubagent): OrchestrationSubagentSummary {
+  return {
+    id: SubagentId.make(agent.id),
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
+    providerThreadId: agent.childThreadId ?? agent.id,
+    parentId: agent.parentAgentId ? SubagentId.make(agent.parentAgentId) : null,
+    path: null,
+    name: agent.title,
+    nickname: agent.title,
+    role: agent.role,
+    task: agent.prompt ?? agent.title,
+    model: agent.model,
+    reasoningEffort: agent.effort,
+    depth: agent.parentAgentId ? 1 : 0,
+    status:
+      agent.status === "failed"
+        ? "error"
+        : agent.status === "cancelled"
+          ? "interrupted"
+          : agent.status === "pending"
+            ? "starting"
+            : agent.status === "idle"
+              ? "waiting"
+              : agent.status,
+    statusMessage: agent.error ?? agent.progress,
+    latestProgress: null,
+    latestTurn: null,
+    startedAt: agent.startedAt ?? agent.firstSeenAt,
+    updatedAt: agent.updatedAt,
+    completedAt: agent.completedAt,
+  };
+}
+
+export function runtimeSubagentTranscript(agent: RuntimeSubagent): OrchestrationSubagentDetail {
+  const summary = runtimeSubagentSummary(agent);
+  return {
+    ...summary,
+    messages: agent.result
+      ? [
+          {
+            id: MessageId.make(`${agent.id}:result`),
+            role: "assistant",
+            text: agent.result,
+            turnId: null,
+            streaming: false,
+            createdAt: agent.completedAt ?? agent.updatedAt,
+            updatedAt: agent.updatedAt,
+          },
+        ]
+      : [],
+    proposedPlans: [],
+    activities: agent.progress
+      ? [
+          {
+            id: EventId.make(`${agent.id}:progress`),
+            tone: "info",
+            kind: "subagent.progress",
+            summary: agent.progress,
+            payload: null,
+            turnId: null,
+            createdAt: agent.updatedAt,
+          },
+        ]
+      : [],
+  };
+}
 
 const STATUS_PRESENTATION = {
   starting: {

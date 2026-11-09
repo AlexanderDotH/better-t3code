@@ -17,8 +17,10 @@ import {
   GeneralSubagentCoordinatorLive,
 } from "../subagents/GeneralSubagentCoordinator.ts";
 import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as AutoReasoningPreparation from "./AutoReasoningPreparation.ts";
+import { compactThread } from "./BetterT3Runtime.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProjectStoreV2, layer as projectStoreLayer } from "./ProjectStore.ts";
 import { DecisionGeneration } from "../decisionGeneration/DecisionGeneration.ts";
@@ -39,6 +41,8 @@ import {
   DeepPlanValidationReactorLive,
 } from "../deepPlanning/DeepPlanValidationReactor.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
@@ -46,6 +50,8 @@ import {
   DeepPlanRunId,
   EventId,
   MessageId,
+  NodeId,
+  resolveResultlessRetryTarget,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -77,6 +83,11 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const alternateInstanceId = ProviderInstanceId.make("codex-alt");
 const alternateAdapter = { ...adapter, instanceId: alternateInstanceId };
+const compactionAdapters = ["opencode", "grok"].map((driver) => ({
+  ...adapter,
+  driver: ProviderDriverKind.make(driver),
+  instanceId: ProviderInstanceId.make(driver),
+}));
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerFor = (settings?: Parameters<typeof ServerSettings.layerTest>[0]) =>
   Layer.mergeAll(
@@ -86,7 +97,7 @@ const layerFor = (settings?: Parameters<typeof ServerSettings.layerTest>[0]) =>
     EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
     ProviderReplayHarness.layerWithRegistry(
       { name: "control-reads" },
-      ProviderAdapterRegistry.layerFromAdapters([adapter, alternateAdapter]),
+      ProviderAdapterRegistry.layerFromAdapters([adapter, alternateAdapter, ...compactionAdapters]),
       {
         databaseLayer: layerDatabase,
         runEffectWorker: false,
@@ -96,7 +107,10 @@ const layerFor = (settings?: Parameters<typeof ServerSettings.layerTest>[0]) =>
   );
 
 const layerTest = layerFor();
-const createThread = Effect.fn("BetterT3Commands.createThread")(function* (threadId: ThreadId) {
+const createThread = Effect.fn("BetterT3Commands.createThread")(function* (
+  threadId: ThreadId,
+  selection = modelSelection,
+) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
     type: "thread.create",
@@ -104,7 +118,7 @@ const createThread = Effect.fn("BetterT3Commands.createThread")(function* (threa
     threadId,
     projectId: ProjectId.make("better-project"),
     title: "Source",
-    modelSelection,
+    modelSelection: selection,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
@@ -168,6 +182,43 @@ const seedMessage = Effect.fn("BetterT3Commands.seedMessage")(function* (threadI
   });
   return messageId;
 });
+it.effect("queues native compaction through registered OpenCode and ACP providers", () =>
+  Effect.gen(function* () {
+    const orchestration = yield* Orchestrator.OrchestratorV2;
+    for (const provider of compactionAdapters) {
+      const threadId = ThreadId.make(`compact:${provider.driver}`);
+      yield* createThread(threadId, { instanceId: provider.instanceId, model: "test-model" });
+      yield* compactThread(threadId);
+      const projection = yield* orchestration.getThreadProjection(threadId);
+      assert.equal(projection.messages.at(-1)?.text, "/compact");
+      assert.equal(projection.runs.at(-1)?.modelSelection.instanceId, provider.instanceId);
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        ProviderAdapterRegistry.layerFromAdapters([adapter, ...compactionAdapters]),
+        ThreadManagement.layer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              layerTest,
+              ServerSettings.layerTest({
+                providerInstances: Object.fromEntries(
+                  compactionAdapters.map((provider) => [
+                    provider.instanceId,
+                    { driver: provider.driver, enabled: true, config: {} },
+                  ]),
+                ),
+              }),
+              CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase)),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect("persists DeepPlan revisions and command receipts in V2 without a provider run", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -268,6 +319,60 @@ it.effect(
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 0);
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
+      const topicThreadId = ThreadId.make("reply-child:1");
+      const topicAnswerId = MessageId.make("topic-answer");
+      yield* projections.apply({
+        id: EventId.make("topic-answer-item"),
+        type: "turn-item.updated",
+        threadId: topicThreadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("topic-answer-item"),
+          threadId: topicThreadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 10,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "assistant_message",
+          messageId: topicAnswerId,
+          text: "Option one keeps the cache warm",
+          streaming: false,
+        },
+      });
+      const nestedId = ThreadId.make("reply-child:nested");
+      yield* orchestrator.dispatch({
+        type: "message.reply.start",
+        commandId: CommandId.make("reply:nested"),
+        threadId,
+        targetThreadId: nestedId,
+        replyTopicId: SubagentId.make("topic:nested"),
+        messageId: MessageId.make("reply-message:nested"),
+        text: "Expand on that",
+        replyTo: {
+          messageId: MessageId.make("reply-message:1"),
+          replyTopicId: SubagentId.make("topic:1"),
+          role: "user",
+          text: "Discuss option 1",
+        },
+        attachments: [],
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const nestedContext =
+        (yield* orchestrator.getThreadProjection(nestedId)).runs[0]?.additionalContext ?? "";
+      assert.include(nestedContext, "This topic originally replied to:\nEdited requirement");
+      assert.include(nestedContext, "Option one keeps the cache warm");
       const assistantId = MessageId.make("editable-assistant");
       yield* projections.apply({
         id: EventId.make("editable-assistant-created"),
@@ -582,78 +687,149 @@ it.effect("forks an inherited proposed plan at its exact history boundary", () =
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("continues a durable plan through V2 and pauses it after a provider failure", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const events = yield* EventSinkV2;
-    const threadId = ThreadId.make("continuation-owner");
-    yield* createThread(threadId);
-    yield* orchestrator.dispatch({
-      type: "thread.interaction-mode.set",
-      commandId: CommandId.make("continuation-mode"),
-      threadId,
-      interactionMode: "plan",
-    });
-    const runId = DeepPlanRunId.make("continuation-plan");
-    const createdAt = DateTime.formatIso(yield* DateTime.now);
-    yield* orchestrator.dispatch({
-      type: "thread.deep-plan.start",
-      commandId: CommandId.make("continuation-start"),
-      threadId,
-      runId,
-      createdAt,
-    });
-    const feature = DeepPlanValidationReactorLive.pipe(
-      Layer.provideMerge(
-        DeepPlanWorkflowLive.pipe(
-          Layer.provide(Layer.mock(DeepPlanSources)({})),
-          Layer.provide(ProviderAdapterRegistry.layerFromAdapters([adapter])),
-        ),
-      ),
-      Layer.provide(
-        Layer.succeed(DeepPlanValidationDispatcher, {
-          dispatch: () => Effect.die("Final validation is not ready"),
-        }),
-      ),
-      Layer.provide(NodeServices.layer),
-    );
-    yield* Effect.gen(function* () {
-      const reactor = yield* DeepPlanValidationReactor;
-      yield* reactor.start();
-      const planning = yield* orchestrator.dispatch({
-        type: "thread.deep-plan.update",
-        commandId: CommandId.make("continuation-sources"),
+it.effect(
+  "continues a durable plan through V2 and a restart, and pauses it after a provider failure",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSinkV2;
+      const threadId = ThreadId.make("continuation-owner");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("continuation-mode"),
         threadId,
-        runId,
-        expectedRevision: 0,
-        operationId: "sources",
-        mutation: { type: "sources-set", sources: [] },
-        createdAt,
+        interactionMode: "plan",
       });
-      yield* reactor.drainThrough(planning.sequence);
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(projection.runs.length, 1);
-      const providerRun = projection.runs[0]!;
-      assert.equal(providerRun.deepPlanRunId, runId);
-      const now = yield* DateTime.now;
-      const failure = yield* events.write({
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("continuation-earlier-run"),
+        threadId,
+        messageId: MessageId.make("continuation-earlier-message"),
+        text: "Earlier request",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const earlierRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const failedAt = yield* DateTime.now;
+      yield* events.write({
         events: [
           {
-            id: EventId.make("continuation-provider-failed"),
+            id: EventId.make("continuation-earlier-failed"),
             type: "run.updated",
             threadId,
-            runId: providerRun.id,
-            occurredAt: now,
-            payload: { ...providerRun, status: "failed", completedAt: now },
+            runId: earlierRun.id,
+            occurredAt: failedAt,
+            payload: { ...earlierRun, status: "failed", completedAt: failedAt },
           },
         ],
       });
-      yield* reactor.drainThrough(failure.at(-1)!.sequence);
-      const paused = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(paused.thread.deepPlan?.phase, "paused");
-      assert.equal(paused.runs.length, 1);
-    }).pipe(Effect.provide(feature));
-  }).pipe(Effect.provide(layerTest)),
+      const runId = DeepPlanRunId.make("continuation-plan");
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* orchestrator.dispatch({
+        type: "thread.deep-plan.start",
+        commandId: CommandId.make("continuation-start"),
+        threadId,
+        runId,
+        createdAt,
+      });
+      const feature = DeepPlanValidationReactorLive.pipe(
+        Layer.provideMerge(
+          DeepPlanWorkflowLive.pipe(
+            Layer.provide(Layer.mock(DeepPlanSources)({})),
+            Layer.provide(ProviderAdapterRegistry.layerFromAdapters([adapter])),
+          ),
+        ),
+        Layer.provide(
+          Layer.succeed(DeepPlanValidationDispatcher, {
+            dispatch: () => Effect.die("Final validation is not ready"),
+          }),
+        ),
+        Layer.provide(NodeServices.layer),
+      );
+      const recovery = ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            IdAllocator.layer,
+            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const reactor = yield* DeepPlanValidationReactor;
+        yield* reactor.start();
+        const planning = yield* orchestrator.dispatch({
+          type: "thread.deep-plan.update",
+          commandId: CommandId.make("continuation-sources"),
+          threadId,
+          runId,
+          expectedRevision: 0,
+          operationId: "sources",
+          mutation: { type: "sources-set", sources: [] },
+          createdAt,
+        });
+        yield* reactor.drainThrough(planning.sequence);
+        const beforeRequest = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(beforeRequest.thread.deepPlan?.phase, "planning");
+        assert.equal(beforeRequest.runs.length, 1);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("continuation-request"),
+          threadId,
+          messageId: MessageId.make("continuation-request-message"),
+          text: "Plan the change.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          deepPlanRunId: runId,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.deepPlan?.phase, "planning");
+        assert.equal(projection.runs.length, 2);
+        assert.equal(projection.runs[1]?.deepPlanRunId, runId);
+        const shutdown = yield* recovery;
+        yield* shutdown.prepareForShutdown;
+        yield* shutdown.reconcile("shutdown");
+        yield* reactor.drainThrough(yield* events.latestSequence());
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(stopped.runs[1]?.status, "cancelled");
+        assert.equal(stopped.thread.deepPlan?.phase, "planning");
+      }).pipe(Effect.provide(feature));
+      yield* Effect.gen(function* () {
+        const reactor = yield* DeepPlanValidationReactor;
+        yield* reactor.start();
+        yield* reactor.drainThrough(yield* events.latestSequence());
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.deepPlan?.phase, "planning");
+        assert.equal(projection.runs.length, 3);
+        const providerRun = projection.runs[2]!;
+        assert.equal(providerRun.deepPlanRunId, runId);
+        assert.notInclude(
+          projection.messages.map((message) => message.text).join("\n"),
+          "Continue where you left off",
+        );
+        const now = yield* DateTime.now;
+        const failure = yield* events.write({
+          events: [
+            {
+              id: EventId.make("continuation-provider-failed"),
+              type: "run.updated",
+              threadId,
+              runId: providerRun.id,
+              occurredAt: now,
+              payload: { ...providerRun, status: "failed", completedAt: now },
+            },
+          ],
+        });
+        yield* reactor.drainThrough(failure.at(-1)!.sequence);
+        const paused = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(paused.thread.deepPlan?.phase, "paused");
+        assert.equal(paused.runs.length, 3);
+      }).pipe(Effect.provide(feature));
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect(
@@ -955,14 +1131,12 @@ it.effect(
         status: "ready" as const,
         auth: { status: "authenticated" as const },
         checkedAt: DateTime.formatIso(yield* DateTime.now),
-        models: [
-          {
-            slug: modelSelection.model,
-            name: modelSelection.model,
-            isCustom: false,
-            capabilities: null,
-          },
-        ],
+        models: [modelSelection.model, "deep-plan-model"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: null,
+        })),
         slashCommands: [],
         skills: [],
       };
@@ -975,7 +1149,9 @@ it.effect(
           Layer.mergeAll(
             Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
             Layer.mock(DeepPlanWorkflow)({}),
-            Layer.mock(ThreadManagementService)({ dispatch: orchestrator.dispatch }),
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              dispatch: orchestrator.dispatch,
+            }),
             NodeServices.layer,
           ),
         ),
@@ -993,6 +1169,7 @@ it.effect(
         assert.isNotNull(task.childThreadId);
         const child = yield* orchestrator.getThreadProjection(task.childThreadId!);
         assert.equal(child.thread.lineage.parentThreadId, threadId);
+        assert.equal(child.thread.generalSubagent, true);
         assert.equal(child.runs.length, 1);
         assert.equal(child.thread.title, "Inspect and implement a bounded change");
         assert.include(child.messages[0]?.text ?? "", "T3 GENERAL-PURPOSE SUBAGENT");
@@ -1023,6 +1200,28 @@ it.effect(
           })
           .pipe(Effect.flip);
         assert.equal(nested.reason, "nested-spawn-disabled");
+        const deepPlanRunId = DeepPlanRunId.make("general-parent-plan");
+        yield* orchestrator.dispatch({
+          type: "thread.deep-plan.start",
+          commandId: CommandId.make("general-parent-plan-start"),
+          threadId,
+          runId: deepPlanRunId,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        const planWorker = yield* agents.spawn({
+          parentThreadId: threadId,
+          callerProviderInstanceId: instanceId,
+          task: "Summarize a frozen source",
+          deepPlanExecution: {
+            runId: deepPlanRunId,
+            runThreadId: threadId,
+            approvedPlanVersion: null,
+            phase: "planning",
+            readOnly: true,
+            modelSelection: { instanceId, model: "deep-plan-model" },
+          },
+        });
+        assert.equal(planWorker.model, "deep-plan-model");
         yield* configuration.updateSettings({
           betterT3Environment: { flags: { "agent.generalSubagents": false } },
         });
@@ -1117,7 +1316,6 @@ it.effect("uses the destination project's text-generation model for automatic Fe
               }),
           }),
           ServerSettings.layerTest({
-            betterT3Environment: { flags: { "agent.fetch": true } },
             textGenerationModelSelection: { instanceId: fetchInstance, model: "environment-model" },
             fetchModelSelection: null,
             providerInstances: {
@@ -1427,4 +1625,293 @@ it.effect(
         ),
       ),
     ),
+);
+
+it.effect("retries a resultless user message without duplicating its history", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("retry-resultless");
+    yield* createThread(threadId);
+    const messageId = yield* seedMessage(threadId);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const seeded = yield* orchestrator.getThreadProjection(threadId);
+    const attachment = {
+      type: "file" as const,
+      id: ChatAttachmentId.make("retry-evidence"),
+      name: "evidence.txt",
+      mimeType: "text/plain",
+      sizeBytes: 14,
+    };
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("retry:attachment-message"),
+      type: "message.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...seeded.messages[0]!, attachments: [attachment] },
+    });
+    const seededItem = seeded.turnItems[0]!;
+    if (seededItem.type !== "user_message") return yield* Effect.die("Expected retry user item");
+    yield* projections.apply({
+      id: EventId.make("retry:attachment-item"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...seededItem, attachments: [attachment] },
+    });
+    const before = yield* orchestrator.getThreadProjection(threadId);
+    const command = {
+      type: "message.retry" as const,
+      commandId: CommandId.make("retry-resultless:start"),
+      threadId,
+      messageId,
+      runId: null,
+      fetchMode: "repository-exploration" as const,
+      modelSelection: { ...modelSelection, options: [{ id: "reasoningEffort", value: "high" }] },
+    };
+    const first = yield* orchestrator.dispatch(command);
+    const after = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(after.runs.length, 1);
+    assert.equal(after.messages.length, 1);
+    assert.equal(after.runs[0]?.userMessageId, messageId);
+    assert.deepEqual(after.runs[0]?.modelSelection, command.modelSelection);
+    assert.equal(after.messages[0]?.text, before.messages[0]?.text);
+    assert.deepEqual(after.messages[0]?.attachments, [attachment]);
+    assert.equal(after.thread.runtimeMode, before.thread.runtimeMode);
+    assert.equal(after.thread.interactionMode, before.thread.interactionMode);
+    assert.deepEqual(after.messages[0]?.createdAt, before.messages[0]?.createdAt);
+    assert.equal(after.messages[0]?.fetchMode, "repository-exploration");
+    assert.equal(after.turnItems.filter((item) => item.type === "user_message").length, 1);
+    assert.equal(after.turnItems[0]?.id, before.turnItems[0]?.id);
+    assert.equal(after.turnItems[0]?.ordinal, before.turnItems[0]?.ordinal);
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    yield* worker.drain();
+    const afterWorker = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(afterWorker.messages.length, 1);
+    assert.equal(afterWorker.messages[0]?.id, messageId);
+    assert.deepEqual(afterWorker.messages[0]?.attachments, [attachment]);
+    assert.equal(
+      afterWorker.turnItems.find((item) => item.type === "user_message")?.id,
+      seededItem.id,
+    );
+    const replay = yield* orchestrator.dispatch(command);
+    assert.isTrue(replay.replayed);
+    assert.equal(replay.sequence, first.sequence);
+    const freshRetry = yield* orchestrator
+      .dispatch({ ...command, commandId: CommandId.make("retry-resultless:stale") })
+      .pipe(Effect.flip);
+    assert.equal(freshRetry._tag, "OrchestratorDispatchError");
+    for (const status of ["interrupted", "failed"] as const) {
+      const previous = yield* orchestrator.getThreadProjection(threadId);
+      const run = previous.runs.at(-1)!;
+      yield* projections.apply({
+        id: EventId.make(`retry:${status}:run`),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          ...run,
+          status,
+          completedAt: now,
+          sourcePlanRef: { threadId, planId: PlanId.make("retry-plan") },
+        },
+      });
+      const node = previous.nodes.find((node) => node.id === run.rootNodeId)!;
+      yield* projections.apply({
+        id: EventId.make(`retry:${status}:node`),
+        type: "node.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...node, status, completedAt: now },
+      });
+      yield* projections.apply({
+        id: EventId.make(`retry:${status}:plan`),
+        type: "plan.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: PlanId.make("retry-plan"),
+          threadId,
+          runId: run.id,
+          nodeId: NodeId.make(node.id),
+          status: "completed",
+          kind: "proposed_plan",
+          markdown: "Original implementation plan",
+        },
+      });
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(resolveResultlessRetryTarget(stopped), { messageId, runId: run.id });
+      yield* orchestrator.dispatch({
+        ...command,
+        commandId: CommandId.make(`retry:${status}:start`),
+        runId: run.id,
+        fetchMode: null,
+      });
+      const resumed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(resumed.messages.length, 1);
+      assert.equal(resumed.messages[0]?.fetchMode, undefined);
+      assert.deepEqual(resumed.messages[0]?.attachments, [attachment]);
+      assert.deepEqual(resumed.runs.at(-1)?.sourcePlanRef, {
+        threadId,
+        planId: PlanId.make("retry-plan"),
+      });
+      assert.equal(
+        resumed.turnItems.find((item) => item.type === "user_message")?.id,
+        seededItem.id,
+      );
+    }
+    const latest = yield* orchestrator.getThreadProjection(threadId);
+    const latestRun = latest.runs.at(-1)!;
+    yield* projections.apply({
+      id: EventId.make("retry:partial:run"),
+      type: "run.updated",
+      threadId,
+      runId: latestRun.id,
+      occurredAt: now,
+      payload: { ...latestRun, status: "failed", completedAt: now },
+    });
+    const root = latest.nodes.find((node) => node.id === latestRun.rootNodeId)!;
+    yield* projections.apply({
+      id: EventId.make("retry:partial:node"),
+      type: "node.updated",
+      threadId,
+      runId: latestRun.id,
+      occurredAt: now,
+      payload: { ...root, status: "failed", completedAt: now },
+    });
+    const idle = yield* orchestrator.getThreadProjection(threadId);
+    assert.deepEqual(resolveResultlessRetryTarget(idle), { messageId, runId: latestRun.id });
+    assert.isNull(
+      resolveResultlessRetryTarget({ ...idle, thread: { ...idle.thread, archivedAt: now } }),
+    );
+    assert.isNull(
+      resolveResultlessRetryTarget({ ...idle, providerSessions: [{ status: "running" }] }),
+    );
+    assert.isNull(
+      resolveResultlessRetryTarget({ ...idle, runtimeRequests: [{ status: "pending" }] }),
+    );
+    assert.isNull(
+      resolveResultlessRetryTarget({
+        ...idle,
+        turnItems: [
+          ...idle.turnItems,
+          {
+            type: "user_message",
+            ordinal: 99999999,
+            runId: null,
+            messageId: MessageId.make("newer-queued"),
+            inputIntent: "queued_turn",
+          },
+        ],
+      }),
+    );
+    yield* projections.apply({
+      id: EventId.make("retry:partial:message"),
+      type: "message.updated",
+      threadId,
+      runId: latestRun.id,
+      occurredAt: now,
+      payload: {
+        ...idle.messages[0]!,
+        id: MessageId.make("partial-answer"),
+        role: "assistant",
+        runId: latestRun.id,
+        streaming: true,
+        text: "Partial",
+      },
+    });
+    const rejected = yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("retry:partial:refused"),
+        runId: latestRun.id,
+      })
+      .pipe(Effect.flip);
+    assert.equal(rejected._tag, "OrchestratorDispatchError");
+    yield* projections.apply({
+      id: EventId.make("retry:empty:message"),
+      type: "message.updated",
+      threadId,
+      runId: latestRun.id,
+      occurredAt: now,
+      payload: {
+        ...idle.messages[0]!,
+        id: MessageId.make("partial-answer"),
+        role: "assistant",
+        runId: latestRun.id,
+        streaming: false,
+        text: "",
+      },
+    });
+    const emptyRejected = yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("retry:empty:refused"),
+        runId: latestRun.id,
+      })
+      .pipe(Effect.flip);
+    assert.equal(emptyRejected._tag, "OrchestratorDispatchError");
+
+    const itemOnlyThreadId = ThreadId.make("retry-item-only");
+    yield* createThread(itemOnlyThreadId);
+    const itemOnlyMessageId = yield* seedMessage(itemOnlyThreadId);
+    const itemOnly = yield* orchestrator.getThreadProjection(itemOnlyThreadId);
+    yield* projections.apply({
+      id: EventId.make("retry:item-only:answer"),
+      type: "turn-item.updated",
+      threadId: itemOnlyThreadId,
+      occurredAt: now,
+      payload: {
+        ...seededItem,
+        threadId: itemOnlyThreadId,
+        id: TurnItemId.make("retry:empty-assistant-item"),
+        type: "assistant_message",
+        messageId: MessageId.make("retry:empty-assistant"),
+        ordinal: itemOnly.turnItems[0]!.ordinal + 1,
+        text: "",
+        streaming: true,
+      },
+    });
+    const itemOnlyRejected = yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("retry:item-only:refused"),
+        threadId: itemOnlyThreadId,
+        messageId: itemOnlyMessageId,
+      })
+      .pipe(Effect.flip);
+    assert.equal(itemOnlyRejected._tag, "OrchestratorDispatchError");
+    const queuedThreadId = ThreadId.make("retry-newer-queued");
+    yield* createThread(queuedThreadId);
+    const oldMessageId = yield* seedMessage(queuedThreadId);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("retry:newer-queued:message"),
+      threadId: queuedThreadId,
+      messageId: MessageId.make("retry:newer-input"),
+      text: "Newer queued request",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      dispatchMode: { type: "queue_after_active" },
+    });
+    const queueRejected = yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("retry:newer-queued:refused"),
+        threadId: queuedThreadId,
+        messageId: oldMessageId,
+      })
+      .pipe(Effect.flip);
+    assert.equal(queueRejected._tag, "OrchestratorDispatchError");
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const effects = yield* outbox.listByCommandId(command.commandId);
+    assert.equal(
+      effects.filter((effect) => effect.request.type === "provider-turn.start").length,
+      1,
+    );
+  }).pipe(Effect.provide(layerTest)),
 );

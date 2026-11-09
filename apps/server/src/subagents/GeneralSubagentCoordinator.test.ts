@@ -4,9 +4,9 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   assistantTextFromCompletedItem,
   buildGeneralSubagentPrompt,
-  generalSubagentApprovalAction,
   parseGeneralSubagentFinalResult,
 } from "./GeneralSubagentCoordinator.ts";
+import { delegatedWorkerRequestAction } from "./GeneralSubagentPolicy.ts";
 
 describe("general subagent policy", () => {
   it("gives implementation agents a focused mutation-capable contract", () => {
@@ -31,10 +31,11 @@ describe("general subagent policy", () => {
   });
 
   it("never bypasses an approval-required parent session", () => {
-    expect(generalSubagentApprovalAction("file_read_approval")).toBe("accept");
-    expect(generalSubagentApprovalAction("tool_user_input")).toBe("fail-agent");
-    expect(generalSubagentApprovalAction("file_change_approval")).toBe("decline");
-    expect(generalSubagentApprovalAction("command_execution_approval")).toBe("decline");
+    expect(delegatedWorkerRequestAction("file-read")).toBe("accept");
+    expect(delegatedWorkerRequestAction("user_input")).toBe("fail-agent");
+    expect(delegatedWorkerRequestAction("file-change")).toBe("decline");
+    expect(delegatedWorkerRequestAction("command")).toBe("decline");
+    expect(delegatedWorkerRequestAction("dynamic_tool_call")).toBe("ignore");
   });
 
   it("recovers terminal assistant text from detail and structured provider data", () => {

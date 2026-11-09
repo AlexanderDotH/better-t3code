@@ -1,5 +1,9 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  matchesOpenRouterModelFilters,
+  type OpenRouterModelFilter,
+} from "@t3tools/shared/modelCatalogFilters";
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
   return `${provider}:${model}`;
@@ -33,6 +37,17 @@ export function modelMatchesCatalogQuery(input: {
     input.model.selection.model,
     input.providerLabel,
   ].some((value) => value.toLocaleLowerCase().includes(query));
+}
+
+export function filterOpenRouterCatalogModels(input: {
+  readonly models: ReadonlyArray<ModelOption>;
+  readonly filters: ReadonlySet<OpenRouterModelFilter>;
+  /** Models that stay listed whatever the filters say, such as the current pick. */
+  readonly keep: (model: ModelOption) => boolean;
+}): ReadonlyArray<ModelOption> {
+  return input.models.filter(
+    (model) => input.keep(model) || matchesOpenRouterModelFilters(model, input.filters),
+  );
 }
 
 export function pendingModelAfterPress(input: {

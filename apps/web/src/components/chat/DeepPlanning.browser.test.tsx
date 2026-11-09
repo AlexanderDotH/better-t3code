@@ -2,6 +2,7 @@ import { act, render, fakeTimers } from "../../../test/render";
 
 import { StrictMode, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent, type Locator } from "vite-plus/test/browser";
 import {
   DeepPlanRunId,
   DeepPlanExportId,
@@ -36,9 +37,17 @@ import {
   type DeepPlanningApi,
 } from "@t3tools/client-runtime/deep-planning";
 import { DeepPlanReviewCard } from "./DeepPlanReviewCard";
+import { useDeepPlanChat } from "./useDeepPlanChat";
 
 vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <div>{text}</div> }));
-const planReview = vi.hoisted(() => ({ request: vi.fn() }));
+const planReview = vi.hoisted(() => ({ request: vi.fn(), approve: vi.fn(), command: vi.fn() }));
+vi.mock("../../state/use-orchestration-command", () => ({
+  useOrchestrationCommand: () => planReview.command,
+}));
+vi.mock("../../state/deepPlanning", () => ({
+  getWebDeepPlanningApi: () => null,
+  approveWebDeepPlan: (...args: unknown[]) => planReview.approve(...args),
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => planReview.request }));
 vi.mock("../../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../../hooks/useSettings")>()),
@@ -363,6 +372,71 @@ it("selects and removes extra archived chats without changing automatically incl
   );
   expect(container.textContent).toContain("Sources are fixed for this Deep Plan.");
   expect(button(container, "Remove Remote design").disabled).toBe(true);
+});
+
+it("plans from chosen project chats, or none, after project chats are excluded", async () => {
+  setup();
+  const archive = { environmentId, projectId, threadId: ThreadId.make("archive") };
+  const options: DeepPlanSourceOption[] = [
+    {
+      ref: { environmentId, projectId, threadId },
+      environmentLabel: "This Mac",
+      projectTitle: "Project",
+      title: "Current work",
+      archived: false,
+      available: true,
+    },
+    {
+      ref: archive,
+      environmentLabel: "This Mac",
+      projectTitle: "Project",
+      title: "Project archive",
+      archived: true,
+      available: true,
+    },
+  ];
+  const onChange = vi.fn();
+  function Sources() {
+    const [state, setState] = useState<{
+      refs: readonly DeepPlanSourceRef[];
+      include: boolean;
+    }>({ refs: [], include: true });
+    return (
+      <DeepPlanSourcePicker
+        currentProject={{ environmentId, projectId }}
+        projectSourceCount={2}
+        options={options}
+        selected={state.refs}
+        includeProjectChats={state.include}
+        loading={false}
+        error={null}
+        onOpen={() => {}}
+        onChange={(refs, include) => {
+          onChange(refs, include);
+          setState({ refs, include });
+        }}
+      />
+    );
+  }
+  await using screen = await render(<Sources />);
+  // The dialog's inert backdrop covers its content without the app stylesheet.
+  const clickInDialog = async (locator: Locator) => {
+    await expect.element(locator).toBeInTheDocument();
+    await act(() => (locator.element() as HTMLElement).click());
+  };
+  await userEvent.click(screen.getByRole("button", { name: "Add chats" }));
+  const includeAll = page.getByRole("switch", { name: "Include all chats from this project" });
+  await clickInDialog(includeAll);
+  expect(onChange).toHaveBeenLastCalledWith([], false);
+  await expect.element(page.getByRole("checkbox", { name: "Current work" })).not.toBeChecked();
+  await expect.element(screen.getByText("No project chats")).toBeInTheDocument();
+  await clickInDialog(page.getByRole("checkbox", { name: "Project archive" }));
+  expect(onChange).toHaveBeenLastCalledWith([archive], false);
+  await expect.element(screen.getByText("1 project chat")).toBeInTheDocument();
+  await clickInDialog(includeAll);
+  expect(onChange).toHaveBeenLastCalledWith([], true);
+  await expect.element(page.getByRole("checkbox", { name: "Current work" })).toBeChecked();
+  await expect.element(screen.getByText("2 project chats")).toBeInTheDocument();
 });
 
 it("keeps the unfinished source visible as reading advances to a saved summary", async () => {
@@ -866,6 +940,7 @@ it("analyzes a Deep Plan through the normal composer and offers the reviewed age
     input: {
       threadId,
       planId: plan.id,
+      deepPlan: { runId: run.id, planVersion: run.plan!.version },
       expectedPlanUpdatedAt: plan.updatedAt,
       implementationProviderInstanceId: implementationProvider.instanceId,
     },
@@ -891,6 +966,122 @@ it("analyzes a Deep Plan through the normal composer and offers the reviewed age
   const menu = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
   expect(menu).toContain("Implement normally");
   expect(menu.some((label) => label?.includes("new thread"))).toBe(true);
+});
+
+it("reviews the durable DeepPlan approval path before dispatching its recommended count", async () => {
+  setup();
+  const base = makeRun();
+  const run = {
+    ...base,
+    sources: base.sources.map((source) => ({
+      ...source,
+      origin: { ...source.origin, environmentId: EnvironmentId.make("remote") },
+    })),
+  };
+  const modelSelection = { instanceId: implementationProvider.instanceId, model: "implementation" };
+  let currentSelection = modelSelection;
+  let resolveReview!: (result: unknown) => void;
+  planReview.request.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveReview = resolve;
+    }),
+  );
+  planReview.approve.mockImplementation(async (input) => ({
+    ...run,
+    phase: "implementing",
+    approval: {
+      planVersion: run.plan!.version,
+      approvalKey: run.approvalKey,
+      implementationThreadId: threadId,
+      implementation: modelSelection,
+      requestedParallelism: input.requestedParallelism,
+      approvedAt: createdAt,
+    },
+  }));
+  function DurablePlan() {
+    const plan = useDeepPlanChat({
+      environmentId,
+      threadRef: { environmentId, threadId },
+      projectId,
+      workspaceRoot: "/workspace",
+      branch: "main",
+      worktreePath: null,
+      draftTarget: { environmentId, threadId },
+      mode: "deep-plan",
+      run,
+      supported: true,
+      parallelEnabled: true,
+      connected: true,
+      canOperate: true,
+      working: false,
+      latestRunId: null,
+      latestUserMessageId: null,
+      runtimeMode: "full-access",
+      providers: [implementationProvider],
+      modelSelection,
+      getModelSelection: () => currentSelection,
+      reviewerSelection,
+    });
+    return (
+      <>
+        <output data-frozen-sources>
+          {plan.sourceRefs.map((source) => `${source.environmentId}:${source.threadId}`).join(",")}
+        </output>
+        {plan.content}
+        {plan.review}
+      </>
+    );
+  }
+  await using screen = await render(<DurablePlan />);
+  const container = screen.container;
+  expect(container.querySelector("[data-frozen-sources]")?.textContent).toBe("remote:archive");
+  expect(button(container, "Analyzing plan…").disabled).toBe(true);
+  expect(planReview.approve).not.toHaveBeenCalled();
+  expect(planReview.command).not.toHaveBeenCalled();
+  expect(planReview.request).toHaveBeenCalledWith({
+    environmentId,
+    input: expect.objectContaining({
+      threadId,
+      deepPlan: { runId: run.id, planVersion: run.plan!.version },
+      expectedPlanUpdatedAt: run.updatedAt,
+    }),
+  });
+  const request = planReview.request.mock.calls[0]![0].input;
+  await act(() =>
+    resolveReview({
+      _tag: "Success",
+      value: {
+        planId: request.planId,
+        planUpdatedAt: run.updatedAt,
+        implementationProviderInstanceId: implementationProvider.instanceId,
+        recommendedSubagents: 4,
+      },
+    }),
+  );
+  expect(container.textContent).toContain("Deep Plan ready");
+  currentSelection = {
+    instanceId: ProviderInstanceId.make("missing-provider"),
+    model: "unavailable",
+  };
+  await act(() => button(container, "Implement plan").click());
+  expect(planReview.approve).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Parallel plan implementation is no longer available");
+  currentSelection = modelSelection;
+  await act(() => button(container, "Implement plan").click());
+  expect(planReview.approve).toHaveBeenCalledWith(
+    expect.objectContaining({ requestedParallelism: 4, implementation: modelSelection }),
+  );
+  expect(planReview.command).toHaveBeenCalledWith(
+    expect.objectContaining({
+      environmentId,
+      input: expect.objectContaining({
+        threadId,
+        deepPlanRunId: run.id,
+        modelSelection,
+        message: expect.objectContaining({ text: expect.stringContaining("EXACTLY 4 SUBAGENTS") }),
+      }),
+    }),
+  );
 });
 
 it("keeps Resume and retry errors in the checklist when collapsed", async () => {
@@ -1047,12 +1238,12 @@ it("selects Deep Plan from the compact menu and explains unsupported environment
   await act(() => container.querySelector("button")!.click());
   const disabledDeepPlan = [
     ...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
-  ].find((entry) => entry.textContent?.includes("Deep Plan"))!;
+  ].find((entry) => entry.getAttribute("aria-label") === "Deep Plan")!;
   expect(disabledDeepPlan.getAttribute("aria-disabled")).toBe("true");
   expect(disabledDeepPlan.textContent).toContain("This server needs an update.");
   await act(() => screen.rerender(<Modes reason={null} />));
   const deepPlan = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
-    (entry) => entry.textContent === "Deep Plan",
+    (entry) => entry.getAttribute("aria-label") === "Deep Plan",
   )!;
   await act(() => deepPlan.click());
   expect(container.querySelector("output")?.textContent).toBe("deep-plan");
@@ -1234,5 +1425,7 @@ function setup() {
         recommendedSubagents: 4,
       },
     }));
+  planReview.approve.mockReset();
+  planReview.command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   setInterfaceLocaleRuntime({ language: "en", locale: "en-US" });
 }

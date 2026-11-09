@@ -43,6 +43,7 @@ import {
   type ThreadDevicePreview,
 } from "./threadDevicePreviews";
 import { createShakeDetector } from "./shakeDetector";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const OVERLAY_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const OVERLAY_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
@@ -86,6 +87,7 @@ export function DevicePreviewScreen({
   readonly onMaximize?: (deviceKey: string | null) => void;
   readonly initialDeviceKey?: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const embedded = onMaximize !== undefined;
   const insets = useSafeAreaInsets();
   // NativeColumnContent already insets the sides, so only a book fold moves the reveal handle.
@@ -141,7 +143,10 @@ export function DevicePreviewScreen({
       },
     }).finally(() => setShuttingDown(false));
     if (result._tag === "Failure") {
-      Dialog.alert("Could not shut down device", String(Cause.squash(result.cause)));
+      Dialog.alert(
+        translator.message("mobile.ui.couldNotShutDownDevice"),
+        String(Cause.squash(result.cause)),
+      );
     }
   };
 
@@ -163,7 +168,7 @@ export function DevicePreviewScreen({
       ? [
           {
             id: "check-device-tools",
-            title: "Check device tool versions",
+            title: translator.message("mobile.ui.checkDeviceToolVersions"),
             icon: "arrow.clockwise" as const,
             onPress: () => {
               void retryHost({ environmentId, input: { inspectOnly: true } });
@@ -173,11 +178,11 @@ export function DevicePreviewScreen({
       : []),
     {
       id: "device-tools",
-      title: "Device tool versions",
+      title: translator.message("mobile.ui.deviceToolVersions"),
       icon: "info.circle",
       onPress: () =>
         Dialog.alert(
-          "Device tool versions",
+          translator.message("mobile.ui.deviceToolVersions"),
           deviceToolUpdateOwnership +
             "\n\n" +
             deviceToolUpdatePolicy(
@@ -196,7 +201,7 @@ export function DevicePreviewScreen({
     },
     {
       id: "reload",
-      title: "Reload stream",
+      title: translator.message("mobile.ui.reloadStream"),
       icon: "arrow.clockwise" as const,
       disabled: !preview || shuttingDown,
       onPress: () => {
@@ -208,7 +213,7 @@ export function DevicePreviewScreen({
       ? [
           {
             id: "back",
-            title: "Back",
+            title: translator.message("browser.files.back"),
             icon: "arrow.left",
             disabled: !inputConnected,
             onPress: () => streamRef.current?.back(),
@@ -217,7 +222,7 @@ export function DevicePreviewScreen({
       : []),
     {
       id: "app-switcher",
-      title: "App switcher",
+      title: translator.message("mobile.ui.appSwitcher"),
       icon: "square.on.square",
       disabled: !inputConnected,
       onPress: () => streamRef.current?.appSwitcher(),
@@ -226,7 +231,7 @@ export function DevicePreviewScreen({
       ? [
           {
             id: "rotate",
-            title: "Rotate device",
+            title: translator.message("mobile.ui.rotateDevice"),
             icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
@@ -235,7 +240,9 @@ export function DevicePreviewScreen({
       : []),
     {
       id: "shutdown",
-      title: shuttingDown ? "Shutting down…" : "Shut down device",
+      title: shuttingDown
+        ? translator.message("mobile.ui.shuttingDown")
+        : translator.message("mobile.ui.shutDownDevice"),
       icon: "power",
       disabled: !preview || shuttingDown,
       onPress: () => void shutDownDevice(),
@@ -247,7 +254,7 @@ export function DevicePreviewScreen({
       ? [
           {
             id: "devices",
-            title: "Devices",
+            title: translator.message("settings.providers.panel.devices"),
             inline: true,
             items: previews.map((device) => ({
               id: device.key,
@@ -269,12 +276,15 @@ export function DevicePreviewScreen({
           className="flex-row items-center gap-1 px-2 pb-2"
           style={{ paddingTop: Math.max(insets.top, 8) }}
         >
-          <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
+          <SheetCloseButton
+            accessibilityLabel={translator.message("mobile.ui.closeDevicePreview")}
+            onClose={onClose}
+          />
           <AppText numberOfLines={1} className="min-w-0 flex-1 font-t3-medium text-sm">
-            {preview?.name ?? "Devices"}
+            {preview?.name ?? translator.message("settings.providers.panel.devices")}
           </AppText>
           <ControlPill
-            accessibilityLabel="Maximize device"
+            accessibilityLabel={translator.message("mobile.ui.maximizeDevice")}
             icon="arrow.up.left.and.arrow.down.right"
             onPress={() => onMaximize(preview?.key ?? null)}
           />
@@ -296,7 +306,11 @@ export function DevicePreviewScreen({
                 {state.error}
               </AppText>
               <View className="items-center">
-                <Button label="Retry" tone="secondary" onPress={state.refresh} />
+                <Button
+                  label={translator.message("common.retry")}
+                  tone="secondary"
+                  onPress={state.refresh}
+                />
               </View>
             </>
           ) : focused && foreground ? (
@@ -310,7 +324,7 @@ export function DevicePreviewScreen({
           style={{ paddingBottom: Math.max(insets.bottom, 8) }}
         >
           <ControlPill
-            accessibilityLabel="Home"
+            accessibilityLabel={translator.message("mobile.ui.home")}
             icon="house"
             disabled={!inputConnected}
             onPress={pressHome}
@@ -326,19 +340,22 @@ export function DevicePreviewScreen({
         >
           {inputConnected ? (
             <Pressable
-              accessibilityLabel="Hide device controls"
+              accessibilityLabel={translator.message("mobile.ui.hideDeviceControls")}
               className="absolute inset-0 bg-black/30"
               onPress={() => setControlsVisible(false)}
             />
           ) : null}
           <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
             <GlassSurface className="flex-row items-center gap-1 p-1">
-              <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
+              <SheetCloseButton
+                accessibilityLabel={translator.message("mobile.ui.closeDevicePreview")}
+                onClose={onClose}
+              />
               <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
-                {preview?.name ?? "Devices"}
+                {preview?.name ?? translator.message("settings.providers.panel.devices")}
               </AppText>
               <ControlPill
-                accessibilityLabel="Home"
+                accessibilityLabel={translator.message("mobile.ui.home")}
                 icon="house"
                 disabled={!inputConnected}
                 onPress={pressHome}
@@ -350,8 +367,8 @@ export function DevicePreviewScreen({
       ) : (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Show device controls"
-          accessibilityHint="Shaking the phone also shows them"
+          accessibilityLabel={translator.message("mobile.ui.showDeviceControls")}
+          accessibilityHint={translator.message("mobile.ui.shakingThePhoneAlsoShowsThem")}
           hitSlop={12}
           className="absolute h-11 w-16 items-center justify-center self-center"
           style={{
@@ -368,18 +385,19 @@ export function DevicePreviewScreen({
 }
 
 function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenuItem> }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Menu
       actions={androidHeaderMenuActions(items)}
       isAnchoredToRight
-      title="Device options"
+      title={translator.message("mobile.ui.deviceOptions")}
       onPressAction={({ nativeEvent }) => {
         const action = findHeaderMenuAction(items, nativeEvent.event);
         if (action && !action.disabled) action.onPress();
       }}
     >
       <Pressable
-        accessibilityLabel="Device options"
+        accessibilityLabel={translator.message("mobile.ui.deviceOptions")}
         accessibilityRole="button"
         className="size-11 items-center justify-center rounded-full bg-subtle"
       >
@@ -400,6 +418,7 @@ function OpenDevicePreview({
   readonly streamRef: RefObject<DeviceStreamRef | null>;
   readonly onInputConnected: (connected: boolean) => Promise<void>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { session } = preview;
   const { themeVariables } = useAppearancePreferences();
   const [viewer] = useState(uuidv4);
@@ -431,13 +450,15 @@ function OpenDevicePreview({
             {error}
           </AppText>
           <View className="items-center">
-            <Button label="Retry" tone="secondary" onPress={refresh} />
+            <Button label={translator.message("common.retry")} tone="secondary" onPress={refresh} />
           </View>
         </>
       ) : (
         <>
           <AppActivityIndicator color={themeVariables["--color-icon"]} />
-          <AppText className="text-sm text-foreground-muted">Connecting to device...</AppText>
+          <AppText className="text-sm text-foreground-muted">
+            {translator.message("mobile.ui.connectingToDevice")}
+          </AppText>
         </>
       )}
     </View>

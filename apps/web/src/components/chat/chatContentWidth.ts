@@ -1,4 +1,5 @@
-const DEFAULT_CHAT_CONTENT_WIDTH_REM = 48;
+// Matches the Comfortable preset's --chat-content-max-width in index.css.
+const DEFAULT_CHAT_CONTENT_WIDTH_REM = 46;
 const NARROWEST_CHAT_CONTENT_WIDTH_REM = DEFAULT_CHAT_CONTENT_WIDTH_REM / 2;
 export const DEFAULT_CHAT_PREVIEW_WIDTH_PERCENT = 60;
 const NARROWEST_CHAT_PREVIEW_WIDTH_PERCENT = DEFAULT_CHAT_PREVIEW_WIDTH_PERCENT / 2;
@@ -7,14 +8,16 @@ function formatRemValue(value: number): string {
   return Number(value.toFixed(2)).toString();
 }
 
-/** Maps the signed adjustment onto half-default → default → full available width. */
+/**
+ * Maps the signed adjustment onto half-default → default → full available width.
+ * Null leaves the chat width preset in charge.
+ */
 export function resolveChatContentMaxWidth(
   customizationEnabled: boolean,
   adjustmentPercent: number,
-): string {
-  if (!customizationEnabled || adjustmentPercent === 0) {
-    return `${DEFAULT_CHAT_CONTENT_WIDTH_REM}rem`;
-  }
+): string | null {
+  if (!customizationEnabled) return null;
+  if (adjustmentPercent === 0) return `${DEFAULT_CHAT_CONTENT_WIDTH_REM}rem`;
 
   if (adjustmentPercent < 0) {
     const widthRem =

@@ -1,3 +1,4 @@
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
 export interface FloatingStatusAction {
@@ -47,12 +48,14 @@ export type FloatingWorkingStatus =
     };
 
 export function connectionFloatingStatus(input: {
+  readonly translator: InterfaceTranslator;
   readonly connectionError: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly environmentLabel: string | null;
   readonly onReconnect: () => void;
 }): FloatingWorkingStatus | null {
-  const environmentLabel = input.environmentLabel ?? "Environment";
+  const environment = input.environmentLabel ?? "Environment";
+  const { translator } = input;
   const unavailable = (label: string): FloatingWorkingStatus => ({
     kind: "connection",
     tone: "unavailable",
@@ -68,8 +71,8 @@ export function connectionFloatingStatus(input: {
         tone: "reconnecting",
         label:
           input.connectionError === null
-            ? `Reconnecting to ${environmentLabel}...`
-            : `Failed to connect. Retrying ${environmentLabel}...`,
+            ? translator.message("mobile.thread.reconnecting", { environment })
+            : translator.message("mobile.thread.reconnectingAfterFailure", { environment }),
         onPress: input.onReconnect,
       };
     case "offline":
@@ -79,11 +82,14 @@ export function connectionFloatingStatus(input: {
     case "error":
       return unavailable(
         input.connectionError
-          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
-          : `Failed to connect to ${environmentLabel}`,
+          ? translator.message("mobile.thread.connectionFailedWithError", {
+              environment,
+              error: input.connectionError,
+            })
+          : translator.message("mobile.thread.connectionFailed", { environment }),
       );
     case "available":
-      return unavailable(`${environmentLabel} is not connected`);
+      return unavailable(translator.message("mobile.thread.notConnected", { environment }));
     case "connected":
       return null;
   }

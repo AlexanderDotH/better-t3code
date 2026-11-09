@@ -2,6 +2,7 @@ import {
   DeepPlanError,
   DeepPlanSourceError,
   DeepPlanSourceCoverage,
+  type DeepPlanInitializeSourcesInput,
   type DeepPlanRunId,
   type ThreadId,
   type ThreadDeepPlanStartCommand,
@@ -67,17 +68,21 @@ const make = Effect.gen(function* () {
 
   const syncCoverage = Effect.fn("DeepPlanApplication.syncCoverage")(function* (
     input: SourceRunInput,
-    initialize = false,
+    initialization?: DeepPlanInitializeSourcesInput,
   ) {
     let run = yield* requireRun(input);
     const actual = yield* sources.listSources(input);
-    if (initialize && run.phase === "collecting") {
+    if (initialization && run.phase === "collecting") {
       run = yield* workflow
         .update({
           ...input,
           expectedRevision: run.revision,
           operationId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
-          mutation: { type: "sources-set", sources: actual.sources },
+          mutation: {
+            type: "sources-set",
+            sources: actual.sources,
+            includeProjectChats: initialization.includeProjectChats !== false,
+          },
         })
         .pipe(
           Effect.mapError(
@@ -104,7 +109,7 @@ const make = Effect.gen(function* () {
   const withSources = <A>(
     input: SourceRunInput,
     operation: Effect.Effect<A, DeepPlanSourceError>,
-    initialize = false,
+    initialization?: DeepPlanInitializeSourcesInput,
     readOnly = false,
   ) =>
     workflow.withRunLock(
@@ -122,7 +127,7 @@ const make = Effect.gen(function* () {
           });
         }
         const result = yield* operation;
-        if (planning) yield* syncCoverage(input, initialize);
+        if (planning) yield* syncCoverage(input, initialization);
         return result;
       }),
     );
@@ -193,13 +198,13 @@ const make = Effect.gen(function* () {
       Effect.andThen(requireRun(input), sources.listSources(input)),
     ),
     initializeSources: Effect.fn("DeepPlanApplication.initializeSources")((input) =>
-      withSources(input, sources.initializeSources(input), true),
+      withSources(input, sources.initializeSources(input), input),
     ),
     importSourceChunk: Effect.fn("DeepPlanApplication.importSourceChunk")((input) =>
       withSources(input, sources.importSourceChunk(input)),
     ),
     readSourceChunk: Effect.fn("DeepPlanApplication.readSourceChunk")((input) =>
-      withSources(input, sources.readSourceChunk(input), false, true),
+      withSources(input, sources.readSourceChunk(input), undefined, true),
     ),
     summarizeSource: Effect.fn("DeepPlanApplication.summarizeSource")(() =>
       Effect.fail(

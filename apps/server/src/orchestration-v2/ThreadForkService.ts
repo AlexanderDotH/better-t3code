@@ -119,6 +119,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         contextCompaction: undefined,
         deepPlanExecution: undefined,
         fetchWorker: undefined,
+        generalSubagent: undefined,
         pendingHistoryEdit: input.sourceProjection.thread.pendingHistoryEdit,
         forkHistoryItemCount: undefined,
         harnessSync: null,

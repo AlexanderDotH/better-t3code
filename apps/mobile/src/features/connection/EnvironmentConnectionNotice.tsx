@@ -1,3 +1,4 @@
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
@@ -9,46 +10,32 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import {
+  connectionNoticeDetail,
+  connectionNoticeSupportsRetryNow,
+  type ConnectionNoticePresentation,
+} from "./environmentRecoveryPresentation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
-function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
-  switch (phase) {
-    case "offline":
-      return "You are offline";
-    case "connecting":
-      return `Connecting to ${environmentLabel}...`;
-    case "reconnecting":
-      return `Reconnecting to ${environmentLabel}...`;
-    case "unsupported":
-      return "Client not supported";
-    case "error":
-      return `${environmentLabel} is unavailable`;
-    case "available":
-      return `${environmentLabel} is disconnected`;
-    case "connected":
-      return "";
-  }
-}
-
-function noticeDetail(
+function noticeTitle(
   phase: EnvironmentConnectionPhase,
-  resourceName: string,
-  error: string | null,
+  environmentLabel: string,
+  translator: InterfaceTranslator,
 ): string {
-  if (error) {
-    return phase === "reconnecting" ? `The app will keep retrying automatically. ${error}` : error;
-  }
-
+  const environment = environmentLabel;
   switch (phase) {
     case "offline":
-      return `Cached data remains available. The ${resourceName} will load when your connection returns.`;
+      return translator.message("mobile.connection.offlineTitle");
     case "connecting":
+      return translator.message("mobile.connection.connectingTitle", { environment });
     case "reconnecting":
-      return `The ${resourceName} will load as soon as the environment is ready.`;
+      return translator.message("mobile.connection.reconnectingTitle", { environment });
     case "unsupported":
-      return "Use compatible versions of the app and server to connect.";
-    case "available":
+      return translator.message("cloud.connection.unsupported");
     case "error":
-      return `Reconnect the environment to load the ${resourceName}.`;
+      return translator.message("mobile.connection.unavailableTitle", { environment });
+    case "available":
+      return translator.message("mobile.connection.disconnectedTitle", { environment });
     case "connected":
       return "";
   }
@@ -56,10 +43,12 @@ function noticeDetail(
 
 export function EnvironmentConnectionNotice(props: {
   readonly environmentLabel: string;
-  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error" | "traceId">;
+  readonly connection: ConnectionNoticePresentation &
+    Pick<EnvironmentConnectionPresentation, "traceId">;
   readonly resourceName: string;
   readonly onRetry: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const isRetrying =
     props.connection.phase === "connecting" || props.connection.phase === "reconnecting";
 
@@ -78,18 +67,22 @@ export function EnvironmentConnectionNotice(props: {
         )}
 
         <Text className="text-center text-lg font-t3-bold text-foreground">
-          {noticeTitle(props.connection.phase, props.environmentLabel)}
+          {noticeTitle(props.connection.phase, props.environmentLabel, translator)}
         </Text>
         <Text className="text-center text-sm leading-normal text-foreground-muted">
-          {noticeDetail(props.connection.phase, props.resourceName, props.connection.error)}
+          {connectionNoticeDetail(props.connection, props.resourceName)}
           {props.connection.traceId ? (
             <ConnectionTraceId traceId={props.connection.traceId} />
           ) : null}
         </Text>
 
-        {props.connection.phase !== "offline" && props.connection.phase !== "unsupported" ? (
+        {connectionNoticeSupportsRetryNow(props.connection) ? (
           <View className="mt-1">
-            <Button label="Retry now" tone="secondary" onPress={props.onRetry} />
+            <Button
+              label={translator.message("mobile.connection.retryNow")}
+              tone="secondary"
+              onPress={props.onRetry}
+            />
           </View>
         ) : null}
       </View>

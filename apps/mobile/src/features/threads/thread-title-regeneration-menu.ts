@@ -1,4 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function buildThreadTitleRegenerationMenuItems(input: {
   readonly supported: boolean;
@@ -9,7 +10,9 @@ export function buildThreadTitleRegenerationMenuItems(input: {
   return [
     {
       id: "regenerate-title",
-      title: input.isRegenerating ? "Regenerating…" : "Regenerate title",
+      title: input.isRegenerating
+        ? currentInterfaceTranslator().message("sidebar.thread.menu.regenerating")
+        : currentInterfaceTranslator().message("sidebar.thread.menu.regenerate"),
       image: "arrow.clockwise",
       ...(input.isRegenerating ? { attributes: { disabled: true } } : {}),
     },

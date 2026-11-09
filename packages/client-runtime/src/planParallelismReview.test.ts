@@ -1,4 +1,4 @@
-import { PlanId } from "@t3tools/contracts";
+import { DeepPlanRunId, PlanId } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -153,6 +153,16 @@ describe("createPlanParallelismReviewRequest", () => {
       expectedPlanUpdatedAt: "2026-07-31T12:00:00.000Z",
       implementationProviderInstanceId,
     });
+    const deepPlan = { runId: DeepPlanRunId.make("deep-run"), planVersion: 2 };
+    expect(createPlanParallelismReviewRequest({ ...descriptor, deepPlan })).toMatchObject({
+      deepPlan,
+    });
+    expect(buildPlanParallelismReviewCacheKey({ ...descriptor, deepPlan })).not.toBe(
+      buildPlanParallelismReviewCacheKey({
+        ...descriptor,
+        deepPlan: { ...deepPlan, planVersion: 3 },
+      }),
+    );
   });
 });
 

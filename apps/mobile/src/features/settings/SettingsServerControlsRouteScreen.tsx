@@ -46,15 +46,17 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
-const PAGE_TITLES: Record<SettingsPage, string> = {
-  threads: "Threads",
-  "source-control": "Source control",
-  worktrees: "Worktrees",
-  maintenance: "Maintenance",
-};
+const PAGE_TITLE_KEYS = {
+  threads: "mobile.settings.section.threads",
+  "source-control": "settings.application.title.sourceControl",
+  worktrees: "mobile.settings.worktrees",
+  maintenance: "mobile.settings.maintenance",
+} as const satisfies Record<SettingsPage, string>;
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   threads: [
@@ -83,16 +85,42 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or initialize recursively.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.inherit");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.useTheRepositorysT3JsonOrInitialize");
+    },
   },
-  { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
+  {
+    mode: "recursive",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.recursive");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.initializeNestedSubmodulesToo");
+    },
+  },
   {
     mode: "top-level",
-    label: "Top level only",
-    description: "Skip submodules declared inside other submodules.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.topLevelOnly");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.ui.skipSubmodulesDeclaredInsideOtherSubmodules",
+      );
+    },
   },
-  { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
+  {
+    mode: "none",
+    get label() {
+      return currentInterfaceTranslator().message("git.operation.skip");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.leaveSubmodulesEmptyForASetupScript");
+    },
+  },
 ];
 
 const WORKSPACE_CHOICES: ReadonlyArray<{
@@ -102,18 +130,34 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or the current checkout.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.inherit");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.useTheRepositorysT3JsonOrThe");
+    },
   },
   {
     mode: "local",
-    label: "Current checkout",
-    description: "Start new threads in the existing workspace.",
+    get label() {
+      return currentInterfaceTranslator().message(
+        "settings.projects.detail.workspace.currentCheckout",
+      );
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.ui.startNewThreadsInTheExistingWorkspace",
+      );
+    },
   },
   {
     mode: "worktree",
-    label: "New worktree",
-    description: "Give each new thread a separate checkout.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.settings.projects.settings.newWorktree");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.giveEachNewThreadASeparateCheckout");
+    },
   },
 ];
 
@@ -124,13 +168,21 @@ const STREAMING_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "turn",
-    label: "After the turn",
-    description: "Show the answer when the agent finishes.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.afterTheTurn");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.showTheAnswerWhenTheAgentFinishes");
+    },
   },
   {
     mode: "paragraph",
-    label: "Finished paragraphs",
-    description: "Show each paragraph or code block as it completes.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.finishedParagraphs");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.showEachParagraphOrCodeBlockAs");
+    },
   },
 ];
 
@@ -177,6 +229,7 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
@@ -286,7 +339,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     <>
       <SettingsEnvironmentFilterHeader />
       <SettingsScreen
-        title={PAGE_TITLES[props.page]}
+        title={translator.message(PAGE_TITLE_KEYS[props.page])}
         trailing={<AndroidSettingsEnvironmentFilter />}
       >
         <ScrollView
@@ -299,15 +352,18 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
           {!hasConnectedSelection || reference === null ? (
             <Text className="px-2 text-base text-foreground-muted">
               {projectSelected
-                ? "Select a project with a checkout on a connected environment."
-                : "Use the filter above to select a connected environment."}
+                ? translator.message("mobile.ui.selectAProjectWithACheckoutOn")
+                : translator.message("mobile.ui.useTheFilterAboveToSelectA")}
             </Text>
           ) : (
             <>
               <ManagedPolicyNotice targets={targets} />
               {projectSelected ? (
                 <SettingsProjectOverridesSection
-                  projectLabel={selectedProject?.label ?? "Unavailable project"}
+                  projectLabel={
+                    selectedProject?.label ??
+                    translator.message("settings.application.scope.unavailableProject")
+                  }
                   hasOverrides={targets.some((target) =>
                     PAGE_PROJECT_KEYS[props.page].some((key) => target.sources[key] === "project"),
                   )}
@@ -319,7 +375,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "threads" ? (
                 <>
                   <SettingsSection
-                    title="Default workspace"
+                    title={translator.message("mobile.ui.defaultWorkspace")}
                     footer={managed("defaultThreadEnvMode")}
                     trailing={
                       pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
@@ -345,7 +401,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     ))}
                   </SettingsSection>
                   <SettingsSection
-                    title="Default permissions"
+                    title={translator.message("mobile.ui.defaultPermissions")}
                     footer={managed("defaultRuntimeMode")}
                     trailing={
                       pendingWrites === 0 && uniform("defaultRuntimeMode") === null ? (
@@ -368,7 +424,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     ))}
                   </SettingsSection>
                   <SettingsSection
-                    title="Response streaming"
+                    title={translator.message("mobile.ui.responseStreaming")}
                     footer={managed("responseStreamingMode")}
                     trailing={
                       pendingWrites === 0 && uniform("responseStreamingMode") === null ? (
@@ -388,13 +444,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
-                  <SettingsSection title="Preview browser">
+                  <SettingsSection title={translator.message("mobile.ui.previewBrowser")}>
                     <SettingsSwitchRow
                       icon="globe"
-                      label="Agent browser access"
+                      label={translator.message("settings.application.title.agentBrowserAccess")}
                       subtitle={managedSubtitle(
                         "enableAgentBrowserAccess",
-                        "Allow agents to use the in-app preview browser.",
+                        translator.message("mobile.ui.allowAgentsToUseTheInApp"),
                       )}
                       value={uniform("enableAgentBrowserAccess")}
                       disabled={disabledFor("enableAgentBrowserAccess")}
@@ -413,26 +469,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       canWrite={(environmentId) => writableEnvironments.has(environmentId)}
                     />
                   )}
-                  <SettingsSection title="Pull requests">
+                  <SettingsSection title={translator.message("mobile.ui.pullRequests")}>
                     <SettingsSwitchRow
                       icon={PullRequestGlyph.merged}
-                      label="Remove agent credits when merging"
+                      label={translator.message("mobile.ui.removeAgentCreditsWhenMerging")}
                       subtitle={managedSubtitle(
                         "removeAgentCreditsOnMerge",
-                        "Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
+                        translator.message("mobile.ui.removeRecognizedAgentCreditsFromMergeAnd"),
                       )}
                       value={uniform("removeAgentCreditsOnMerge")}
                       disabled={disabledFor("removeAgentCreditsOnMerge")}
                       onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
                     />
                   </SettingsSection>
-                  <SettingsSection title="Default branch">
+                  <SettingsSection title={translator.message("mobile.git.defaultBranch")}>
                     <SettingsSwitchRow
                       icon="arrow.down.circle"
-                      label="Automatically pull"
+                      label={translator.message("mobile.ui.automaticallyPull")}
                       subtitle={managedSubtitle(
                         "defaultAutoPull",
-                        "Keep the default branch current when there are no local changes.",
+                        translator.message("mobile.ui.keepTheDefaultBranchCurrentWhenThere"),
                       )}
                       value={uniform("defaultAutoPull")}
                       disabled={disabledFor("defaultAutoPull")}
@@ -444,13 +500,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "worktrees" ? (
                 <>
-                  <SettingsSection title="New worktrees">
+                  <SettingsSection title={translator.message("mobile.ui.newWorktrees")}>
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
-                      label="Start from remote"
+                      label={translator.message("mobile.ui.startFromRemote")}
                       subtitle={managedSubtitle(
                         "newWorktreesStartFromOrigin",
-                        "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
+                        translator.message("mobile.ui.usesTheLatestCommitOfTheBase"),
                       )}
                       value={uniform("newWorktreesStartFromOrigin")}
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
@@ -458,7 +514,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   </SettingsSection>
                   <SettingsSection
-                    title="Worktree submodules"
+                    title={translator.message("mobile.ui.worktreeSubmodules")}
                     footer={managed("worktreeSubmodules")}
                     trailing={
                       pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
@@ -509,13 +565,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   ) : null}
                   {!projectSelected ? (
-                    <SettingsSection title="Manage environments">
+                    <SettingsSection title={translator.message("mobile.ui.manageEnvironments")}>
                       {selectedTargets.map((target) => (
                         <SettingsRow
                           key={target.environmentId}
                           icon="server.rack"
                           label={target.label}
-                          value="Server and provider updates"
+                          value={translator.message("mobile.ui.serverAndProviderUpdates")}
                           onPress={() =>
                             navigation.navigate("SettingsEnvironmentDetail", {
                               environmentId: target.environmentId,
@@ -525,15 +581,19 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ))}
                     </SettingsSection>
                   ) : null}
-                  <SettingsSection title="Updates">
+                  <SettingsSection title={translator.message("mobile.ui.updates")}>
                     <SettingsSwitchRow
                       icon="arrow.clockwise"
-                      label="Check provider updates"
+                      label={translator.message("mobile.ui.checkProviderUpdates")}
                       subtitle={managedSubtitle(
                         "enableProviderUpdateChecks",
                         projectSelected
-                          ? "Environment-wide setting. Select All projects to change it."
-                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                          ? translator.message(
+                              "mobile.ui.environmentWideSettingSelectAllProjectsTo",
+                            )
+                          : translator.message(
+                              "mobile.ui.checkInstalledProviderClisForNewerVersions",
+                            ),
                       )}
                       value={uniform("enableProviderUpdateChecks")}
                       disabled={disabledFor("enableProviderUpdateChecks")}
@@ -542,10 +602,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
                         icon="arrow.uturn.forward"
-                        label="Continue after restart"
+                        label={translator.message("mobile.ui.continueAfterRestart")}
                         subtitle={managedSubtitle(
                           "continueThreadsAfterServerUpdate",
-                          "Resume interrupted threads after an update or restart.",
+                          translator.message("mobile.ui.resumeInterruptedThreadsAfterAnUpdateOr"),
                         )}
                         value={uniform("continueThreadsAfterServerUpdate")}
                         disabled={disabledFor("continueThreadsAfterServerUpdate")}
@@ -566,16 +626,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 }
 
 function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Text
       accessibilityLabel={
         props.projectSelected
-          ? "Selected project checkouts use different values"
-          : "Selected environments use different values"
+          ? translator.message("mobile.ui.selectedProjectCheckoutsUseDifferentValues")
+          : translator.message("mobile.ui.selectedEnvironmentsUseDifferentValues")
       }
       className="px-2 text-sm text-foreground-muted android:px-4"
     >
-      Mixed
+      {translator.message("git.operation.mixed")}
     </Text>
   );
 }

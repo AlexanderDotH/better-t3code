@@ -30,12 +30,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   CheckIcon,
   ChevronDownIcon,
   CloudDownloadIcon,
   CloudUploadIcon,
+  FileDiffIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -63,11 +64,21 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
+  resolveChangesTotals,
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
+import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+} from "./chat/threadDetailsPanelStyles";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
 import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Button } from "~/components/ui/button";
@@ -106,7 +117,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/state/sourceControlActions";
-import { useThreadShell } from "~/state/entities";
+import { useQuietThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -122,11 +133,25 @@ import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 type TranslateMessage = InterfaceTranslator["message"];
+export interface GitActionsPanelHost {
+  readonly element: HTMLDivElement;
+  readonly threadRef: ScopedThreadRef;
+  readonly compact: boolean;
+  readonly showActions: boolean;
+  readonly showChanges: boolean;
+}
+
 interface GitActionsControlProps {
-  presentation?: "toolbar" | "menu";
+  presentation?: "toolbar" | "menu" | "panel";
+  /** A null outlet hides controls while the workspace's command runner stays mounted. */
+  controlsHost?: HTMLElement | null;
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
+  compact?: boolean;
+  showActions?: boolean;
+  showChanges?: boolean;
+  onOpenChanges?: (() => void) | undefined;
   /**
    * Opens the thread's own change request beside it. Absent when the thread has no project to
    * place it against, in which case it still opens in the browser.
@@ -929,12 +954,18 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 }
 export default function GitActionsControl({
   presentation = "toolbar",
+  controlsHost,
   gitCwd,
   activeThreadRef,
   draftId,
+  compact = false,
+  showActions = true,
+  showChanges = true,
+  onOpenChanges,
   onOpenPullRequest,
 }: GitActionsControlProps) {
   const translate = useInterfaceTranslator().message;
+  const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -957,7 +988,7 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
-  const activeServerThread = useThreadShell(activeThreadRef);
+  const activeServerThread = useQuietThreadShell(activeThreadRef);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1105,6 +1136,18 @@ export default function GitActionsControl({
     : quickAction.disabled
       ? (quickAction.hint ?? translate("git.actions.currentUnavailable"))
       : null;
+  const changesTotals = resolveChangesTotals(gitStatusForActions) ?? {
+    insertions: 0,
+    deletions: 0,
+  };
+  // A fresh draft or a thread with no turns hides commit, push, and diff rows until there is work.
+  const quietEmptyDraft =
+    (draftId !== undefined || activeServerThread?.latestRun === null) &&
+    !isGitActionRunning &&
+    !gitStatusError &&
+    quickAction.disabled &&
+    !changesTotals.insertions &&
+    !changesTotals.deletions;
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -1750,7 +1793,14 @@ export default function GitActionsControl({
               <PopoverTrigger
                 openOnHover
                 nativeButton={false}
-                render={<span className="block w-max cursor-not-allowed" />}
+                render={
+                  <span
+                    className={cn(
+                      "block cursor-not-allowed",
+                      presentation === "panel" ? "w-full" : "w-max",
+                    )}
+                  />
+                }
               >
                 <MenuItem
                   density={presentation === "menu" ? "touch" : "default"}
@@ -1809,9 +1859,143 @@ export default function GitActionsControl({
     </>
   );
   if (!gitCwd) return null;
-  return (
+  const controls = (
     <>
-      {presentation === "menu" ? (
+      {presentation === "panel" ? (
+        <>
+          {!showActions ? null : !isRepo ? (
+            <ThreadDetailsControl
+              size="xs"
+              variant="ghost"
+              part="row"
+              panel
+              disabled={initAction.isPending || !initAction.isAllowed}
+              onClick={initializeGit}
+            >
+              <GitBranchPlusIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                {initAction.isPending ? "Initializing..." : translate("git.actions.initialize")}
+              </span>
+            </ThreadDetailsControl>
+          ) : quietEmptyDraft || compact ? null : (
+            <div
+              role="group"
+              aria-label={translate("git.actions.label")}
+              ref={panelAnchorRef}
+              className={cn("shrink-0", THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS)}
+            >
+              {quickActionDisabledReason ? (
+                <Popover>
+                  <PopoverTrigger
+                    openOnHover
+                    render={
+                      <ThreadDetailsControl
+                        aria-disabled="true"
+                        part="primary"
+                        panel
+                        size="xs"
+                        variant="ghost"
+                      />
+                    }
+                  >
+                    <GitQuickActionIcon
+                      quickAction={quickAction}
+                      SourceControlIcon={SourceControlIcon}
+                      className={THREAD_DETAILS_PANEL_ICON_CLASS}
+                    />
+                    <span className={cn("truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                      {quickAction.label}
+                    </span>
+                  </PopoverTrigger>
+                  <PopoverPopup tooltipStyle side="bottom" align="start">
+                    {quickActionDisabledReason}
+                  </PopoverPopup>
+                </Popover>
+              ) : (
+                <ThreadDetailsControl
+                  variant="ghost"
+                  size="xs"
+                  part="primary"
+                  panel
+                  disabled={isGitActionRunning || quickAction.disabled}
+                  onClick={runQuickAction}
+                >
+                  <GitQuickActionIcon
+                    quickAction={quickAction}
+                    SourceControlIcon={SourceControlIcon}
+                    className={THREAD_DETAILS_PANEL_ICON_CLASS}
+                  />
+                  <span className={cn("truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                    {quickAction.label}
+                  </span>
+                </ThreadDetailsControl>
+              )}
+              <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+              <Menu
+                onOpenChange={(open) => {
+                  if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                }}
+              >
+                <MenuTrigger
+                  render={
+                    <ThreadDetailsControl
+                      aria-label={translate("git.actions.options")}
+                      size="sm"
+                      variant="ghost"
+                      part="secondary"
+                      panel
+                    />
+                  }
+                  disabled={isGitActionRunning}
+                >
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
+                  />
+                </MenuTrigger>
+                <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
+                  {gitItems}
+                </MenuPopup>
+              </Menu>
+            </div>
+          )}
+          {showChanges && isRepo && !quietEmptyDraft ? (
+            <ThreadDetailsControl
+              type="button"
+              variant="ghost"
+              size="sm"
+              part="row"
+              disabled={!onOpenChanges}
+              onClick={onOpenChanges}
+            >
+              <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                {translate("git.workbench.tab.changes")}
+              </span>
+              <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+                <span
+                  className={
+                    changesTotals.insertions
+                      ? "text-diff-addition-foreground"
+                      : "text-muted-foreground"
+                  }
+                >
+                  +{formatDiffCount(changesTotals.insertions)}
+                </span>
+                <span
+                  className={
+                    changesTotals.deletions
+                      ? "text-diff-deletion-foreground"
+                      : "text-muted-foreground"
+                  }
+                >
+                  -{formatDiffCount(changesTotals.deletions)}
+                </span>
+              </span>
+            </ThreadDetailsControl>
+          ) : null}
+        </>
+      ) : presentation === "menu" ? (
         !isRepo ? (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
@@ -1924,6 +2108,15 @@ export default function GitActionsControl({
           </Menu>
         </Group>
       )}
+    </>
+  );
+  return (
+    <>
+      {controlsHost === undefined
+        ? controls
+        : controlsHost
+          ? createPortal(controls, controlsHost)
+          : null}
 
       <Dialog
         open={isCommitDialogOpen}
@@ -2103,13 +2296,16 @@ export default function GitActionsControl({
         </DialogPopup>
       </Dialog>
 
-      <PublishRepositoryDialog
-        open={isPublishDialogOpen}
-        onOpenChange={setIsPublishDialogOpen}
-        environmentId={activeEnvironmentId}
-        threadRef={activeThreadRef}
-        gitCwd={gitCwd}
-      />
+      {/* Closing Details must not dismiss an active publish wizard. */}
+      {showActions || isPublishDialogOpen ? (
+        <PublishRepositoryDialog
+          open={isPublishDialogOpen}
+          onOpenChange={setIsPublishDialogOpen}
+          environmentId={activeEnvironmentId}
+          threadRef={activeThreadRef}
+          gitCwd={gitCwd}
+        />
+      ) : null}
 
       <Dialog
         open={pendingDefaultBranchAction !== null}

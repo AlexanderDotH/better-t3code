@@ -199,7 +199,7 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
   }
 }
 
-function useMarkThreadUnread() {
+export function useMarkThreadUnread() {
   const markThreadUnreadMutation = useAtomCommand(threadEnvironment.markUnread, {
     reportFailure: false,
   });

@@ -7,6 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { createContext, memo, type ReactNode, useRef, useState } from "react";
+import { MicIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -16,7 +17,11 @@ import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
-import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
+import {
+  ComposerControl,
+  ComposerControlChevron,
+  type ComposerControlSize,
+} from "./ComposerControl";
 import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 
@@ -89,6 +94,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   instanceIndicatorBackground?: string;
   size?: ComposerControlSize;
+  layout?: "current" | "classic";
   compact?: boolean;
   isComposerOwned?: boolean;
   disabled?: boolean;
@@ -128,7 +134,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
   const size = props.size ?? "sm";
-  const docked = props.effortColumn !== undefined;
+  const classic = props.layout === "classic";
+  const docked = !classic && props.effortColumn !== undefined;
 
   const activeEntry =
     props.instanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null;
@@ -303,6 +310,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ) : null;
   const picker = (
     <ModelPickerContent
+      layout={props.layout ?? "current"}
       searchInputRef={searchInputRef}
       environmentId={props.environmentId}
       modelSelectionPurpose={props.modelSelectionPurpose ?? "agent"}
@@ -400,7 +408,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span
           className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
         >
-          {selectedEntries && props.triggerLabel === undefined ? (
+          {classic && props.selectedAuxiliaryModel ? (
+            <MicIcon className="size-4 shrink-0" aria-hidden="true" />
+          ) : selectedEntries && props.triggerLabel === undefined ? (
             <span
               data-chat-provider-model-picker-icon
               className="flex shrink-0 items-center -space-x-1"
@@ -451,7 +461,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               />
             </span>
           ) : null}
-          {props.isComposerOwned ? (
+          {props.isComposerOwned && !classic ? (
             <span {...triggerTextProps}>{triggerText}</span>
           ) : (
             <Tooltip>
@@ -459,13 +469,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
             </Tooltip>
           )}
-          {props.triggerSuffix}
+          {classic ? null : props.triggerSuffix}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
               Unavailable
             </Badge>
           ) : null}
         </span>
+        {classic ? (
+          <span aria-hidden="true" className="flex items-center">
+            <ComposerControlChevron size={size} />
+          </span>
+        ) : null}
       </PopoverTrigger>
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
@@ -488,7 +503,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         padding="none"
         touchBackdrop
       >
-        {props.effortColumn ? (
+        {docked ? (
           <DockedPickerContext value={{ modelLabel: triggerTitle }}>
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short

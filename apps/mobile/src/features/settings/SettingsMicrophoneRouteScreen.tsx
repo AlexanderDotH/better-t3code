@@ -25,6 +25,8 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
@@ -64,27 +66,41 @@ const KINDS: Record<
   }
 > = {
   wired: {
-    label: "Wired",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.wired");
+    },
     row: "Other wired",
-    rowDescription: "Headsets and USB microphones not listed",
+    get rowDescription() {
+      return currentInterfaceTranslator().message("mobile.ui.headsetsAndUsbMicrophonesNotListed");
+    },
     icon: "cable.connector",
   },
   bluetooth: {
-    label: "Bluetooth",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.bluetooth");
+    },
     row: "Other Bluetooth",
-    rowDescription: "AirPods, headsets, and cars not listed",
+    get rowDescription() {
+      return currentInterfaceTranslator().message("mobile.ui.airpodsHeadsetsAndCarsNotListed");
+    },
     icon: "headphones",
   },
   builtIn: {
-    label: "Built-in",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.builtIn");
+    },
     row: "Built-in microphone",
-    rowDescription: "The microphone on this device",
+    get rowDescription() {
+      return currentInterfaceTranslator().message("mobile.ui.theMicrophoneOnThisDevice");
+    },
     icon: "iphone",
   },
   carPlay: {
     label: "CarPlay",
     row: "CarPlay",
-    rowDescription: "The car’s microphone",
+    get rowDescription() {
+      return currentInterfaceTranslator().message("mobile.ui.theCarsMicrophone");
+    },
     icon: "car",
   },
 };
@@ -94,6 +110,7 @@ export function SettingsMicrophoneRouteScreen() {
 }
 
 function VoiceInputUnavailable() {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -104,14 +121,14 @@ function VoiceInputUnavailable() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Voice input">
-          <ListRowLayout icon="mic" label="Not available on this device" />
+        <SettingsSection title={translator.message("settings.voice.title")}>
+          <ListRowLayout
+            icon="mic"
+            label={translator.message("mobile.ui.notAvailableOnThisDevice")}
+          />
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          T3 Code's voice input uses Apple's on-device speech transcription, which needs iOS 26 or
-          later on a device that supports it. Without it, the composer has no microphone button, and
-          allowing microphone access won't add one. Apple keyboard dictation is separate and isn't
-          affected.
+          {translator.message("mobile.ui.t3CodesVoiceInputUsesApplesOn")}
         </Text>
       </ScrollView>
     </View>
@@ -119,6 +136,7 @@ function VoiceInputUnavailable() {
 }
 
 function MicrophoneSettings() {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -176,10 +194,14 @@ function MicrophoneSettings() {
       >
         {permission === "ask" || permission === "denied" ? (
           <>
-            <SettingsSection title="Microphone access">
+            <SettingsSection title={translator.message("mobile.ui.microphoneAccess")}>
               <SettingsActionRow
                 icon="mic"
-                label={permission === "ask" ? "Allow microphone access" : "Open Settings"}
+                label={
+                  permission === "ask"
+                    ? translator.message("mobile.ui.allowMicrophoneAccess")
+                    : translator.message("mobile.settings.notifications.openSettings")
+                }
                 onPress={
                   permission === "ask" ? requestPermission : () => void Linking.openSettings()
                 }
@@ -187,12 +209,12 @@ function MicrophoneSettings() {
             </SettingsSection>
             <Text className="px-2 text-sm text-foreground-muted">
               {permission === "ask"
-                ? "Voice input needs microphone access before it can record or list your microphones."
-                : "Microphone access is off for T3 Code. Turn it on in Settings to use voice input."}
+                ? translator.message("mobile.ui.voiceInputNeedsMicrophoneAccessBeforeIt")
+                : translator.message("mobile.ui.microphoneAccessIsOffForT3Code")}
             </Text>
           </>
         ) : null}
-        <SettingsSection title="Preferred order">
+        <SettingsSection title={translator.message("mobile.ui.preferredOrder")}>
           {entries.map((entry, index) => {
             const key = microphoneEntryKey(entry);
             const shift =
@@ -227,9 +249,7 @@ function MicrophoneSettings() {
           })}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Voice input records from the first connected microphone in this list. Wired and Bluetooth
-          devices are added by name after you use voice input with them connected; until then, the
-          Other row ranks them. Swipe a device left to forget it.
+          {translator.message("mobile.ui.voiceInputRecordsFromTheFirstConnected")}
         </Text>
       </ScrollView>
     </View>
@@ -250,6 +270,7 @@ function MicrophoneRow(props: {
   readonly onStep: (direction: "up" | "down") => void;
   readonly onForget: (() => void) | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { lifted, offset, entry, onForget } = props;
   const kind = KINDS[entry.kind];
   const title = isMicrophoneDevice(entry) ? entry.name : kind.row;
@@ -270,7 +291,9 @@ function MicrophoneRow(props: {
       <View
         accessible
         accessibilityLabel={`${title}, ${kind.label}, ${props.position} of ${props.count}`}
-        accessibilityActions={onForget ? [{ name: "forget", label: "Forget" }] : undefined}
+        accessibilityActions={
+          onForget ? [{ name: "forget", label: translator.message("mobile.ui.forget") }] : undefined
+        }
         onAccessibilityAction={({ nativeEvent }) => {
           if (nativeEvent.actionName === "forget") onForget?.();
         }}
@@ -314,7 +337,7 @@ function MicrophoneRow(props: {
             accessibilityLabel: `Forget ${title}`,
             destructive: true,
             icon: "trash",
-            label: "Forget",
+            label: translator.message("mobile.ui.forget"),
             onPress: onForget,
           }}
           secondaryAction={null}

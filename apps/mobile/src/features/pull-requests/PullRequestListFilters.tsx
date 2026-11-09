@@ -10,22 +10,83 @@ import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
-const STATES = { open: "Open", closed: "Closed", merged: "Merged", all: "All states" } as const;
-const INVOLVEMENT = { all: "All PRs", reviewing: "Your review", authored: "By you" } as const;
-const DRAFTS = { all: "All drafts", only: "Drafts only", hide: "Hide drafts" } as const;
-const REVIEWS = {
-  all: "All reviews",
-  approved: "Approved",
-  "changes-requested": "Changes requested",
-  "review-required": "Review required",
-  none: "No reviews",
+const STATES = {
+  get open() {
+    return currentInterfaceTranslator().message("pullRequest.state.open");
+  },
+  get closed() {
+    return currentInterfaceTranslator().message("pullRequest.state.closed");
+  },
+  get merged() {
+    return currentInterfaceTranslator().message("pullRequest.state.merged");
+  },
+  get all() {
+    return currentInterfaceTranslator().message("mobile.ui.allStates");
+  },
 } as const;
-const CHECKS = { all: "All checks", passing: "Passing", failing: "Failing" } as const;
+const INVOLVEMENT = {
+  get all() {
+    return currentInterfaceTranslator().message("mobile.ui.allPRs");
+  },
+  get reviewing() {
+    return currentInterfaceTranslator().message("mobile.ui.yourReview");
+  },
+  get authored() {
+    return currentInterfaceTranslator().message("mobile.ui.byYou");
+  },
+} as const;
+const DRAFTS = {
+  get all() {
+    return currentInterfaceTranslator().message("mobile.ui.allDrafts");
+  },
+  get only() {
+    return currentInterfaceTranslator().message("pullRequest.filter.draft.only");
+  },
+  get hide() {
+    return currentInterfaceTranslator().message("pullRequest.filter.draft.hide");
+  },
+} as const;
+const REVIEWS = {
+  get all() {
+    return currentInterfaceTranslator().message("mobile.ui.allReviews");
+  },
+  get approved() {
+    return currentInterfaceTranslator().message("pullRequest.reviewOutcome.approved");
+  },
+  get "changes-requested"() {
+    return currentInterfaceTranslator().message("pullRequest.review.changesRequested");
+  },
+  get "review-required"() {
+    return currentInterfaceTranslator().message("pullRequest.filter.review.required");
+  },
+  get none() {
+    return currentInterfaceTranslator().message("pullRequest.filter.review.none");
+  },
+} as const;
+const CHECKS = {
+  get all() {
+    return currentInterfaceTranslator().message("mobile.ui.allChecks");
+  },
+  get passing() {
+    return currentInterfaceTranslator().message("pullRequest.filter.checks.passing");
+  },
+  get failing() {
+    return currentInterfaceTranslator().message("pullRequest.filter.checks.failing");
+  },
+} as const;
 const SORTS = {
-  updated: "Recently updated",
-  created: "Newest created",
-  oldest: "Oldest updated",
+  get updated() {
+    return currentInterfaceTranslator().message("settings.betterT3.value.updated");
+  },
+  get created() {
+    return currentInterfaceTranslator().message("mobile.ui.newestCreated");
+  },
+  get oldest() {
+    return currentInterfaceTranslator().message("mobile.ui.oldestUpdated");
+  },
 } as const;
 // A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.
 const ROW_STYLE =
@@ -106,6 +167,7 @@ export function usePullRequestListFilters(props: {
   /** Opens a picker that searches the host, for a label or author no loaded row carries. */
   readonly onSearch: (kind: "labels" | "authors") => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
   const selectedLabels = value.filters.labels?.flat() ?? [];
@@ -223,17 +285,27 @@ export function usePullRequestListFilters(props: {
   const more: MenuProps["actions"] = [
     {
       id: "drafts",
-      title: value.filters.draft ? DRAFTS[value.filters.draft] : "Drafts",
+      title: value.filters.draft
+        ? DRAFTS[value.filters.draft]
+        : translator.message("mobile.ui.drafts"),
       subactions: choices("draft", DRAFTS, value.filters.draft ?? "all"),
     },
     {
       id: "reviews",
-      title: value.filters.review ? REVIEWS[value.filters.review] : "Reviews",
+      title: value.filters.review
+        ? REVIEWS[value.filters.review]
+        : translator.message("mobile.ui.reviews"),
       subactions: choices("review", REVIEWS, value.filters.review ?? "all"),
     },
     {
       id: "checks",
-      title: value.filters.checks ? `${CHECKS[value.filters.checks]} checks` : "Checks",
+      title: value.filters.checks
+        ? translator.message(
+            value.filters.checks === "passing"
+              ? "mobile.ui.passingChecks"
+              : "mobile.ui.failingChecks",
+          )
+        : translator.message("pullRequest.filter.checks"),
       subactions: choices("checks", CHECKS, value.filters.checks ?? "all"),
     },
     {
@@ -242,11 +314,11 @@ export function usePullRequestListFilters(props: {
         projects.find(
           (project) =>
             project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
-        )?.title ?? "Project",
+        )?.title ?? translator.message("mobile.navigation.project"),
       subactions: choices(
         "project",
         Object.fromEntries([
-          ["", "All projects"],
+          ["", translator.message("mobile.navigation.allProjects")],
           ...projects.map((project) => [
             JSON.stringify([project.environmentId, project.id]),
             project.title,
@@ -259,7 +331,7 @@ export function usePullRequestListFilters(props: {
   ];
   const reset = (withEnvironment: boolean): MenuProps["actions"][number] => ({
     id: id("reset", withEnvironment ? "environment" : ""),
-    title: "Reset filters",
+    title: translator.message("chat.catalog.resetFilters"),
     attributes: {
       disabled:
         count === 0 &&
@@ -274,7 +346,7 @@ export function usePullRequestListFilters(props: {
   const environmentActions = choices(
     "environment",
     Object.fromEntries([
-      ["", "All environments"],
+      ["", translator.message("mobile.navigation.allEnvironments")],
       ...props.environments.map((environment) => [environment.id, environment.label]),
     ]),
     props.environmentId ?? "",
@@ -282,8 +354,16 @@ export function usePullRequestListFilters(props: {
   const stateActions = choices("state", STATES, value.state);
   const involvementActions = choices("involvement", INVOLVEMENT, value.involvement);
   const labelActions: MenuProps["actions"] = [
-    { id: id("search", "labels"), title: "Search labels…", image: "magnifyingglass" },
-    { id: id("labels", ""), title: "All labels", state: selectedLabels.length ? "off" : "on" },
+    {
+      id: id("search", "labels"),
+      title: translator.message("mobile.ui.searchLabels2"),
+      image: "magnifyingglass",
+    },
+    {
+      id: id("labels", ""),
+      title: translator.message("mobile.ui.allLabels"),
+      state: selectedLabels.length ? "off" : "on",
+    },
     ...labels.map((label) => {
       const color = props.labelColors[label.toLowerCase()];
       return {
@@ -295,12 +375,16 @@ export function usePullRequestListFilters(props: {
     }),
   ];
   const authorActions: MenuProps["actions"] = [
-    { id: id("search", "authors"), title: "Search authors…", image: "magnifyingglass" },
+    {
+      id: id("search", "authors"),
+      title: translator.message("mobile.ui.searchAuthors"),
+      image: "magnifyingglass",
+    },
     ...choices(
       "author",
       Object.fromEntries([
-        ["", "All authors"],
-        ["me", "Me"],
+        ["", translator.message("mobile.ui.allAuthors")],
+        ["me", translator.message("mobile.ui.me")],
         ...authors.map((login) => [login, login]),
       ]),
       author ?? "",
@@ -312,11 +396,31 @@ export function usePullRequestListFilters(props: {
     Platform.OS === "android"
       ? {
           actions: [
-            { id: "environment", title: "Environment", subactions: environmentActions },
-            { id: "state", title: "State", subactions: stateActions },
-            { id: "involvement", title: "Involvement", subactions: involvementActions },
-            { id: "labels", title: "Labels", subactions: labelActions },
-            { id: "author", title: "Author", subactions: authorActions },
+            {
+              id: "environment",
+              title: translator.message("mobile.navigation.environment"),
+              subactions: environmentActions,
+            },
+            {
+              id: "state",
+              title: translator.message("pullRequest.filter.stateGroup"),
+              subactions: stateActions,
+            },
+            {
+              id: "involvement",
+              title: translator.message("pullRequest.filter.involvementGroup"),
+              subactions: involvementActions,
+            },
+            {
+              id: "labels",
+              title: translator.message("pullRequest.labels"),
+              subactions: labelActions,
+            },
+            {
+              id: "author",
+              title: translator.message("mobile.ui.author"),
+              subactions: authorActions,
+            },
             ...more,
             reset(true),
           ],
@@ -333,7 +437,7 @@ export function usePullRequestListFilters(props: {
     environmentLabel:
       props.environments.length > 1
         ? (props.environments.find((environment) => environment.id === props.environmentId)
-            ?.label ?? "All environments")
+            ?.label ?? translator.message("mobile.navigation.allEnvironments"))
         : null,
     environmentActions,
     state: value.state,
@@ -352,6 +456,7 @@ export function PullRequestListFilters(props: {
   readonly sidebar?: boolean;
   readonly filters: ReturnType<typeof usePullRequestListFilters>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { count, more, reset, select, author, selectedLabelCount } = props.filters;
   return (
     <ScrollView
@@ -367,10 +472,14 @@ export function PullRequestListFilters(props: {
     >
       {Platform.OS === "android" ? null : (
         <ListFilterMenu
-          label={count ? String(count) : "Filters"}
+          label={count ? String(count) : translator.message("mobile.ui.filters")}
           icon
           active={count > 0}
-          accessibilityLabel={count ? `Filters, ${count} active` : "More filters"}
+          accessibilityLabel={
+            count
+              ? translator.message("mobile.ui.filtersCountActive", { count })
+              : translator.message("mobile.ui.moreFilters")
+          }
           actions={[...more, reset(false)]}
           onSelect={select}
         />
@@ -378,7 +487,7 @@ export function PullRequestListFilters(props: {
       {props.filters.environmentLabel !== null ? (
         <ListFilterMenu
           label={props.filters.environmentLabel}
-          accessibilityLabel="Choose pull request environment"
+          accessibilityLabel={translator.message("mobile.ui.choosePullRequestEnvironment")}
           actions={props.filters.environmentActions}
           onSelect={select}
         />
@@ -386,28 +495,36 @@ export function PullRequestListFilters(props: {
       <ListFilterMenu
         label={STATES[props.filters.state]}
         active={props.filters.state !== "open"}
-        accessibilityLabel="Filter by state"
+        accessibilityLabel={translator.message("pullRequest.filter.state")}
         actions={props.filters.stateActions}
         onSelect={select}
       />
       <ListFilterMenu
         label={INVOLVEMENT[props.filters.involvement]}
         active={props.filters.involvement !== "all"}
-        accessibilityLabel="Filter by involvement"
+        accessibilityLabel={translator.message("pullRequest.filter.involvement")}
         actions={props.filters.involvementActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={selectedLabelCount ? `Labels ${selectedLabelCount}` : "Labels"}
+        label={
+          selectedLabelCount
+            ? translator.message("mobile.ui.labelsCount", { count: selectedLabelCount })
+            : translator.message("pullRequest.labels")
+        }
         active={selectedLabelCount > 0}
-        accessibilityLabel="Filter by label"
+        accessibilityLabel={translator.message("mobile.ui.filterByLabel")}
         actions={props.filters.labelActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={author === "me" ? "By you" : (author ?? "Author")}
+        label={
+          author === "me"
+            ? translator.message("mobile.ui.byYou")
+            : (author ?? translator.message("mobile.ui.author"))
+        }
         active={Boolean(author)}
-        accessibilityLabel="Filter by author"
+        accessibilityLabel={translator.message("mobile.ui.filterByAuthor")}
         actions={props.filters.authorActions}
         onSelect={select}
       />

@@ -119,6 +119,7 @@ it("requires matching saved native state for an unfinished root run", () => {
       ],
     },
     { ...projection, providerTurns: [] },
+    { ...projection, runs: [{ ...projection.runs[0]!, deepPlanRunId: "deep-plan:restart" }] },
     ...[
       "queued",
       "preparing",

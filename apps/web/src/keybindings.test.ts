@@ -426,20 +426,22 @@ describe("model picker navigation helpers", () => {
 });
 
 describe("chat/editor shortcuts", () => {
-  it("toggles the thread panel by default without taking terminal keystrokes", () => {
+  it.each([
+    { command: "threadPanel.toggle", key: "b", shiftKey: true, altKey: false },
+    { command: "composer.voiceInput", key: "m", shiftKey: false, altKey: true },
+  ] as const)("runs $command without taking terminal keystrokes", ({ command, ...keys }) => {
     for (const platform of ["MacIntel", "Win32", "Linux"]) {
       const input = event({
-        key: "b",
+        ...keys,
         metaKey: platform === "MacIntel",
         ctrlKey: platform !== "MacIntel",
-        shiftKey: true,
       });
       assert.strictEqual(
         resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
           platform,
           context: { terminalFocus: false, editableFocus: true },
         }),
-        "threadPanel.toggle",
+        command,
       );
       assert.isNull(
         resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
@@ -707,6 +709,17 @@ describe("resolveShortcutCommand", () => {
         { platform: "MacIntel" },
       ),
       "rightPanel.toggle",
+    );
+    const microphoneKey = event({ key: "µ", code: "KeyM", metaKey: true, altKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(microphoneKey, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "composer.voiceInput",
+    );
+    assert.isNull(
+      resolveShortcutCommand(microphoneKey, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { previewFocus: true },
+      }),
     );
   });
 

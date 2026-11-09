@@ -31,6 +31,7 @@ import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { environmentStatusText } from "./environmentStatusText";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
@@ -68,6 +69,7 @@ function ConnectedOnlyCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
 function CloudEnvironmentRowsContent(
   props: CloudEnvironmentRowsProps & { readonly discoveryAvailable?: boolean },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const controller = useConnectionController();
   const discoveryAvailable = props.discoveryAvailable ?? true;
   const availableCloudEnvironments = discoveryAvailable
@@ -137,13 +139,13 @@ function CloudEnvironmentRowsContent(
         <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-grouped-card p-6">
           <AppActivityIndicator colorClassName={"accent-icon"} />
           <Text className="text-center text-sm leading-normal text-foreground-muted">
-            Loading linked cloud environments.
+            {translator.message("mobile.connection.loadingCloud")}
           </Text>
         </View>
       ) : controller.relayDiscovery.error ? null : (
         <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
           <Text className="text-sm leading-normal text-foreground-muted">
-            No additional linked cloud environments.
+            {translator.message("mobile.connection.noAdditionalCloud")}
           </Text>
         </View>
       )}
@@ -153,14 +155,14 @@ function CloudEnvironmentRowsContent(
       !controller.relayDiscovery.isRefreshing ? (
         <View collapsable={false} className="gap-3 rounded-[24px] bg-grouped-card p-5">
           <Text className="text-base font-t3-bold text-foreground">
-            Could not load T3 Connect environments
+            {translator.message("mobile.connection.cloudLoadFailed")}
           </Text>
           <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
           {controller.relayDiscovery.errorTraceId ? (
             <CopyTraceIdButton traceId={controller.relayDiscovery.errorTraceId} />
           ) : null}
           <Button
-            label="Try again"
+            label={translator.message("cloud.action.tryAgain")}
             tone="secondary"
             onPress={() => {
               void controller.refreshRelayEnvironments();
@@ -181,6 +183,7 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onOpen?: (() => void) | undefined;
   readonly onToggleError: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
@@ -215,7 +218,7 @@ function ConnectedCloudEnvironmentRow(props: {
         ? diagnosis
           ? { statusText: diagnosis.headline }
           : {}
-        : { statusText: "Off" })}
+        : { statusText: translator.message("settings.common.off") })}
       value={enabled}
     />
   );
@@ -278,6 +281,7 @@ function CloudEnvironmentRowShell(props: {
   readonly statusText?: string;
   readonly value: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const isRetrying =
     props.connectionState === "connecting" || props.connectionState === "reconnecting";
   const shouldPulse = isRetrying;
@@ -321,7 +325,11 @@ function CloudEnvironmentRowShell(props: {
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <ContentContainer
         className="min-w-0 flex-1 gap-0.5"
-        accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
+        accessibilityHint={
+          props.onRemove
+            ? translator.message("mobile.ui.longPressToRemoveFromThisDevice")
+            : undefined
+        }
         accessibilityRole={props.onOpen ? "button" : undefined}
         accessibilityLabel={
           props.onOpen
@@ -410,7 +418,11 @@ function CloudEnvironmentRowShell(props: {
                 ? `Remove ${props.label} from this device`
                 : undefined
           }
-          accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
+          accessibilityHint={
+            props.onRemove
+              ? translator.message("mobile.ui.longPressToRemoveFromThisDevice")
+              : undefined
+          }
           onPress={props.onOpen}
           onLongPress={props.onRemove}
           style={{
@@ -429,9 +441,10 @@ function CloudEnvironmentRowShell(props: {
 }
 
 function CopyTraceIdButton(props: { readonly traceId: string }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Button
-      label="Copy trace ID"
+      label={translator.message("mobile.connection.copyTrace")}
       tone="secondary"
       onPress={() => {
         copyTextWithHaptic(props.traceId, { target: "connection-trace-id" });

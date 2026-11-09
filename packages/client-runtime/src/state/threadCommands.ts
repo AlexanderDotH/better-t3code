@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -37,6 +38,7 @@ import {
   promoteQueuedRun,
   resumeThreadQueue,
   retryWorkspacePreparation,
+  retryThreadTurn,
   linkThreadPullRequest,
   respondToThreadApproval,
   respondToThreadUserInput,
@@ -275,6 +277,13 @@ export function createThreadEnvironmentAtoms<R, E>(
     editMessage: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:edit-message",
       execute: editThreadMessage,
+      scheduler,
+      concurrency,
+    }),
+    retryTurn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:retry-turn",
+      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      execute: retryThreadTurn,
       scheduler,
       concurrency,
     }),

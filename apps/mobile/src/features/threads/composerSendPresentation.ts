@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export interface ComposerSendPresentation {
   readonly label: string;
@@ -19,9 +20,15 @@ export interface ComposerSendPresentation {
 }
 
 const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
-  queue: "Queue",
-  steer: "Steer",
-  restart: "Restart",
+  get queue() {
+    return currentInterfaceTranslator().message("mobile.ui.queueLabel");
+  },
+  get steer() {
+    return currentInterfaceTranslator().message("mobile.ui.steerLabel");
+  },
+  get restart() {
+    return currentInterfaceTranslator().message("mobile.ui.restart");
+  },
 };
 
 export function resolveComposerSendPresentation(input: {
@@ -33,7 +40,7 @@ export function resolveComposerSendPresentation(input: {
 }): ComposerSendPresentation {
   if (input.editingQueuedMessage) {
     return {
-      label: "Update queued message",
+      label: currentInterfaceTranslator().message("mobile.ui.updateQueuedMessage"),
       icon: "checkmark",
       action: null,
       alternate: null,
@@ -42,7 +49,9 @@ export function resolveComposerSendPresentation(input: {
   }
   if (!input.running) {
     return {
-      label: input.deliveryDeferred ? "Queue" : "Send",
+      label: input.deliveryDeferred
+        ? currentInterfaceTranslator().message("mobile.ui.queue")
+        : currentInterfaceTranslator().message("mobile.ui.send"),
       icon: input.deliveryDeferred ? "tray.and.arrow.up" : "arrow.up",
       action: null,
       alternate: null,

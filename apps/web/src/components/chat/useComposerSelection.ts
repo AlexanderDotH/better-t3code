@@ -46,6 +46,7 @@ interface ComposerSelectionInput {
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
   readonly lockedProvider: ReturnType<typeof deriveLockedProvider>;
   readonly supportsProviderSwitchingViaHandoff: boolean;
+  readonly supportsProjectChatSettings: boolean;
   readonly multipleModelSelections: ReadonlyArray<ModelSelection> | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -79,6 +80,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     providerStatuses,
     lockedProvider,
     supportsProviderSwitchingViaHandoff,
+    supportsProjectChatSettings,
     multipleModelSelections,
     runtimeMode,
     composerMode,
@@ -93,6 +95,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const navigate = useNavigate();
   const rememberProjectSettings = useAtomCommand(serverEnvironment.rememberProjectChatSettings);
   const rememberSettings = (changes: Partial<ResolvedProjectChatSettings>) => {
+    if (!supportsProjectChatSettings) return;
     const projectId = activeThread?.projectId ?? draftThread?.projectId;
     const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     const selectedModel = draft?.activeProvider
@@ -117,6 +120,17 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+
+  const handleManualModelSelectionChange = (modelSelection: ModelSelection) => {
+    setComposerDraftModelSelection(composerDraftTarget, modelSelection, {
+      explicit: true,
+      replaceOptions: true,
+    });
+    rememberSettings({ modelSelection });
+  };
+  const handleManualModelSelectionChangeStable = useStableCallback(
+    handleManualModelSelectionChange,
+  );
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
@@ -293,6 +307,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   };
   return {
     getModelDisabledReason,
+    handleManualModelSelectionChangeStable,
     handleInteractionModeChange,
     handleInteractionModeChangeStable,
     handleRuntimeModeChangeStable,

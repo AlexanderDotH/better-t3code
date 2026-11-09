@@ -149,7 +149,7 @@ export function HardwareKeyboardCommandProvider({
               : {
                   phase: "error",
                   label: copyTarget.failureTitle,
-                  description: "Try again.",
+                  description: translator.message("settings.panels.tryAgain"),
                 },
           );
         });
@@ -184,7 +184,7 @@ export function HardwareKeyboardCommandProvider({
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [copyTarget, navigation, pathname, showCopyFeedback],
+    [copyTarget, navigation, pathname, showCopyFeedback, translator],
   );
 
   const palette = useMemo(

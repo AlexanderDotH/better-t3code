@@ -47,6 +47,7 @@ import {
 } from "../../components/AndroidScreenScaffold";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { useEnvironments } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -200,8 +201,8 @@ function BetterT3ChoiceModal<T extends BetterT3ChoiceValue>(props: {
 function BetterT3ActionRow(props: {
   readonly control: MobileBetterT3Control;
   readonly label: string;
-  readonly description: string;
-  readonly status: string;
+  readonly description?: string;
+  readonly status?: string;
   readonly onPress: () => void;
 }) {
   const interactive = props.control.controlKind !== "status-only";
@@ -209,33 +210,31 @@ function BetterT3ActionRow(props: {
   return (
     <Pressable
       accessibilityHint={props.description}
-      accessibilityLabel={`${props.label}, ${props.status}`}
+      accessibilityLabel={props.status ? `${props.label}, ${props.status}` : props.label}
       accessibilityRole={interactive ? "button" : "text"}
       accessibilityState={interactive ? { disabled: unavailable } : undefined}
-      className={`flex-row items-center gap-3 border-t border-border-subtle p-4 first:border-t-0 ${unavailable ? "opacity-45" : ""}`}
       disabled={!interactive || unavailable}
       onPress={props.onPress}
     >
-      <SymbolView
-        name={SECTION_ICONS[props.control.descriptor.section]}
-        size={21}
-        tintColorClassName="accent-icon"
-        type="monochrome"
+      <ListRowLayout
+        icon={SECTION_ICONS[props.control.descriptor.section]}
+        label={props.label}
+        description={props.description}
+        detail={props.status}
+        detailPlacement={(props.status?.length ?? 0) > 16 ? "below" : "auto"}
+        disabled={unavailable}
+        accessory={
+          interactive ? (
+            <SymbolView
+              name="chevron.right"
+              size={15}
+              tintColorClassName="accent-icon"
+              type="monochrome"
+              weight="semibold"
+            />
+          ) : undefined
+        }
       />
-      <View className="min-w-0 flex-1 gap-1">
-        <Text className="text-lg text-foreground">{props.label}</Text>
-        <Text className="text-sm leading-normal text-foreground-muted">{props.description}</Text>
-      </View>
-      <Text className="max-w-[112px] text-right text-xs text-foreground-muted">{props.status}</Text>
-      {props.control.controlKind !== "status-only" ? (
-        <SymbolView
-          name="chevron.right"
-          size={15}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-          weight="semibold"
-        />
-      ) : null}
     </Pressable>
   );
 }
@@ -715,7 +714,6 @@ export function SettingsBetterT3RouteScreen() {
         <View key={control.id}>
           <BetterT3ActionRow
             control={control}
-            description={description}
             label={translator.message("settings.betterT3.value.projectSort")}
             onPress={() => setActiveChoice("project-sort")}
             status={translator.message(
@@ -726,7 +724,6 @@ export function SettingsBetterT3RouteScreen() {
           />
           <BetterT3ActionRow
             control={control}
-            description={description}
             label={translator.message("settings.betterT3.value.threadSort")}
             onPress={() => setActiveChoice("thread-sort")}
             status={translator.message(
@@ -748,7 +745,7 @@ export function SettingsBetterT3RouteScreen() {
         description={description}
         label={label}
         onPress={() => navigateToControl(control.id)}
-        status={preparedStatusLabel ?? status}
+        status={preparedStatusLabel ?? (available ? undefined : status)}
       />
     );
   };
@@ -763,7 +760,7 @@ export function SettingsBetterT3RouteScreen() {
           {translator.message("settings.betterT3.description")}
         </Text>
 
-        <SettingsSection card title="Usage limits and pacing">
+        <SettingsSection card title={translator.message("mobile.ui.usageLimitsAndPacing")}>
           <BetterT3SettingsSubgroup
             title={translator.message(
               getBetterT3SettingsSubgroupForTarget("usage-pacing")?.titleMessageId ??
@@ -773,8 +770,8 @@ export function SettingsBetterT3RouteScreen() {
           >
             <SettingsSwitchRow
               icon="clock"
-              label="Show usage pace"
-              subtitle="Daily quota allowance and pace guidance, saved on this device."
+              label={translator.message("mobile.ui.showUsagePace")}
+              subtitle={translator.message("mobile.ui.dailyQuotaAllowanceAndPaceGuidanceSaved")}
               disabled={!deviceAvailable}
               value={devicePreferences?.usagePacingEnabled ?? true}
               onValueChange={(usagePacingEnabled) => savePreferences({ usagePacingEnabled })}
@@ -789,8 +786,8 @@ export function SettingsBetterT3RouteScreen() {
           >
             <SettingsSwitchRow
               icon="lock"
-              label="Hard daily budget"
-              subtitle="Stop requests at the daily allowance, including catch-up. Uses the selected environment's calendar day and applies to all its clients. Blocks requests if weekly usage cannot be verified. Provider reporting can delay the stop."
+              label={translator.message("mobile.ui.hardDailyBudget")}
+              subtitle={translator.message("mobile.ui.stopRequestsAtTheDailyAllowanceIncluding")}
               disabled={!environmentAvailable}
               value={serverConfig?.settings.usageHardBudgetEnabled ?? false}
               onValueChange={(usageHardBudgetEnabled) => {
@@ -808,7 +805,7 @@ export function SettingsBetterT3RouteScreen() {
             <SettingsSwitchRow
               icon="clock"
               label="8-hour workday"
-              subtitle="Starts with first observed usage each day. Turn off for a full 24-hour calendar day. Weekends are included."
+              subtitle={translator.message("mobile.ui.startsWithFirstObservedUsageEachDay")}
               disabled={!deviceAvailable || devicePreferences?.usagePacingEnabled === false}
               value={(devicePreferences?.usagePacingWorkdayHours ?? 8) === 8}
               onValueChange={(enabled) =>

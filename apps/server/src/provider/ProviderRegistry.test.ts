@@ -1161,6 +1161,93 @@ it.layer(
       );
     });
 
+    it.effect("advertises Deep Planning from each adapter's capabilities", () =>
+      Effect.gen(function* () {
+        const makeInstance = (id: string, deepPlan: { supported: boolean }) => {
+          const provider = {
+            instanceId: ProviderInstanceId.make(id),
+            driver: ProviderDriverKind.make("codex"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-09-04T19:00:00.000Z",
+            version: "0.153.3",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as unknown as ServerProvider;
+          return {
+            instanceId: provider.instanceId,
+            driverKind: provider.driver,
+            continuationIdentity: {
+              driverKind: provider.driver,
+              continuationKey: `codex:instance:${id}`,
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: provider.driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {
+              getCapabilities: () => Effect.succeed({ deepPlan }),
+            } as unknown as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+        };
+        const supported = makeInstance("codex-supported", { supported: true });
+        const unsupported = makeInstance("codex-unsupported", { supported: false });
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (id) =>
+              Effect.succeed([supported, unsupported].find((item) => item.instanceId === id)),
+            listInstances: Effect.succeed([supported, unsupported]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const providers = yield* registry.getProviders;
+          assert.deepStrictEqual(
+            providers.find((item) => item.instanceId === supported.instanceId)?.deepPlanning,
+            { version: 1, structuredPlans: true, durableExecution: true },
+          );
+          assert.strictEqual(
+            providers.find((item) => item.instanceId === unsupported.instanceId)?.deepPlanning,
+            undefined,
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(layerInstanceRegistry),
+              Layer.provide(layerUnusedMutator),
+            ),
+          ),
+          Effect.scoped,
+        );
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-deep-planning-",
+          }).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      ),
+    );
+
     describe("Codex model inventories", () => {
       const cachedProvider = {
         instanceId: ProviderInstanceId.make("codex-personal"),

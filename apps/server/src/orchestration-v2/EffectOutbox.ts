@@ -1,5 +1,10 @@
 import {
   CheckpointId,
+  ProjectId,
+  PositiveInt,
+  ProjectAgentMessageId,
+  ProjectAgentMessageKind,
+  IsoDateTime,
   CheckpointScopeId,
   CommandId,
   MessageId,
@@ -30,6 +35,19 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { forkParked } from "../serverActivation.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("project-agent.message.deliver"),
+    projectId: ProjectId,
+    messageId: ProjectAgentMessageId,
+    senderThreadId: ThreadId,
+    senderTitle: Schema.String,
+    kind: ProjectAgentMessageKind,
+    body: Schema.String,
+    sentAt: IsoDateTime,
+    direction: Schema.Literals(["sent", "received"]),
+    recipientCount: PositiveInt,
+    wake: Schema.optional(Schema.Struct({ latestRunId: Schema.NullOr(RunId) })),
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
@@ -119,10 +137,16 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("delegated-tasks.stop"),
     reason: Schema.optional(Schema.String),
   }),
+  Schema.Struct({
+    type: Schema.Literal("general-subagent.deadline"),
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
+  "project-agent.message.deliver",
   "provider-runtime.continue",
   "provider-session.detach",
   "provider-thread.rollback",
@@ -133,6 +157,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "attachment.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",
+  "general-subagent.deadline",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
@@ -141,6 +166,12 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.steer",
   "provider-turn.restart",
   "runtime-request.respond",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+/** A deadline waits for minutes, so the thread's ordered effects must not queue behind it. */
+const UNORDERED_EFFECT_TYPES = [
+  "thread-title.generate",
+  "general-subagent.deadline",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const OrchestrationEffectStatusV2 = Schema.Literals([
@@ -340,13 +371,13 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             )
             AND (
               (
-                candidate.effect_type = 'thread-title.generate'
-                AND active.effect_type = 'thread-title.generate'
+                candidate.effect_type IN ${sql.in(UNORDERED_EFFECT_TYPES)}
+                AND active.effect_type = candidate.effect_type
               )
               OR
               (
-                candidate.effect_type != 'thread-title.generate'
-                AND active.effect_type != 'thread-title.generate'
+                candidate.effect_type NOT IN ${sql.in(UNORDERED_EFFECT_TYPES)}
+                AND active.effect_type NOT IN ${sql.in(UNORDERED_EFFECT_TYPES)}
               )
             )
         )

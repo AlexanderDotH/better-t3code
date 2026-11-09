@@ -163,14 +163,14 @@ export function PullRequestsColumn({
       {...contentArea}
       inert={maximizedAway}
       className={cn(
-        "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-background",
+        "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden window-surface bg-background",
         maximizedAway ? "w-0 flex-none" : "flex-1",
       )}
     >
       <WorkspacePageHeader
         electron={isElectron}
         reserveNativeControls={!rightPanelOpen}
-        className="relative bg-background"
+        className="relative window-surface bg-background"
       >
         {titlebarControls}
         {condensed ? (

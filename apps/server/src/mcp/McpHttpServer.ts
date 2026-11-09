@@ -36,6 +36,7 @@ import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effec
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
+  resolveBetterT3FeatureFlag,
   OrchestratorMcpFailure,
   PreviewAutomationError,
   ProviderInteractionMode,
@@ -219,9 +220,23 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
+  const featureAvailability = serverSettings.getSettings.pipe(
+    Effect.map((settings) => ({
+      linkedEnvironments: settings.linkedEnvironmentsEnabled,
+      generalSubagentsEnabled: resolveBetterT3FeatureFlag(
+        settings.betterT3Environment,
+        "agent.generalSubagents",
+      ),
+      projectCoordinationEnabled: resolveBetterT3FeatureFlag(
+        settings.betterT3Environment,
+        "agent.projectCoordination",
+      ),
+    })),
+    Effect.orElseSucceed(() => ({
+      linkedEnvironments: false,
+      generalSubagentsEnabled: false,
+      projectCoordinationEnabled: false,
+    })),
   );
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -252,12 +267,18 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const linkedEnvironments = yield* linksEnabled;
-    if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    const features = yield* featureAvailability;
+    if (limited.client?.linked === true && !features.linkedEnvironments)
+      return linkedEnvironmentsOff;
+    const capabilities =
+      !features.generalSubagentsEnabled && !features.projectCoordinationEnabled
+        ? new Set([...limited.capabilities].filter((capability) => capability !== "coordination"))
+        : limited.capabilities;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
-        linkedEnvironments,
+        ...features,
+        capabilities,
       }),
       Effect.map(normalizeMcpHttpResponse),
     );

@@ -1,3 +1,4 @@
+import * as ProjectAgentMessageDelivery from "../projectAgent/ProjectAgentMessageDelivery.ts";
 import { assert, it } from "@effect/vitest";
 import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -84,6 +85,7 @@ it.effect.each([
     Layer.provide(
       Layer.mergeAll(
         finalization,
+        Layer.mock(ProjectAgentMessageDelivery.ProjectAgentMessageDelivery)({}),
         Layer.mock(ProviderSessions.ProviderSessionManagerV2)({}),
         Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
         Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),

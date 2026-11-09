@@ -11,11 +11,13 @@ import { MediaImagePreview } from "./MediaImagePreview";
 import { PdfPreview } from "./PdfPreview";
 import { ControlPill } from "./ui/ControlPill";
 import { AppText as Text } from "./ui/AppText";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 function PdfDocumentPreview(props: {
   readonly source: ResolvedFilePreviewSource;
   readonly onRequestClose: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   return (
     <Modal
@@ -32,7 +34,11 @@ function PdfDocumentPreview(props: {
           <Text className="flex-1 font-t3-semibold text-foreground" numberOfLines={1}>
             {props.source.name ?? "PDF"}
           </Text>
-          <ControlPill label="Close" variant="pill" onPress={props.onRequestClose} />
+          <ControlPill
+            label={translator.message("common.close")}
+            variant="pill"
+            onPress={props.onRequestClose}
+          />
         </View>
         <PdfPreview uri={props.source.uri} />
       </View>
@@ -45,14 +51,15 @@ function DocumentPreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { uri, name } = props.source;
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else
       Dialog.alert(
-        "Could not open document",
-        "A compatible viewer must be installed. Check your connection and try again.",
+        translator.message("mobile.ui.couldNotOpenDocument"),
+        translator.message("mobile.ui.aCompatibleViewerMustBeInstalledCheck"),
       );
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the attachment in an external viewer and aborts the open on cleanup
@@ -82,12 +89,18 @@ function DocumentPreview(props: {
     <Modal transparent animationType="fade" onRequestClose={props.onRequestClose}>
       <View className="flex-1 items-center justify-center bg-backdrop p-6">
         <View className="w-full max-w-sm gap-4 rounded-2xl bg-sheet-solid p-6">
-          <Text className="font-t3-semibold text-foreground">Opening document…</Text>
+          <Text className="font-t3-semibold text-foreground">
+            {translator.message("mobile.ui.openingDocument")}
+          </Text>
           <Text className="text-foreground-muted" numberOfLines={2}>
-            {name ?? "Document"}
+            {name ?? translator.message("mobile.ui.document")}
           </Text>
           <View className="items-end">
-            <Button label="Cancel" tone="text" onPress={props.onRequestClose} />
+            <Button
+              label={translator.message("mobile.settings.projects.settings.cancel")}
+              tone="text"
+              onPress={props.onRequestClose}
+            />
           </View>
         </View>
       </View>

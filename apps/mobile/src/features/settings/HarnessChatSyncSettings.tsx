@@ -107,13 +107,14 @@ function HarnessChatRow(props: {
   readonly projectsById: ReadonlyMap<ProjectId, EnvironmentProject>;
   readonly onToggle: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const status = harnessChatStatusState(props.chat);
   const detailParts = [
     `${props.chat.messageCount} messages`,
-    status.activeElsewhere ? "Active elsewhere" : null,
+    status.activeElsewhere ? translator.message("settings.harness.activeElsewhere") : null,
     status.linkedThreadId !== null ? `Already linked: ${status.linkedThreadId}` : null,
-    status.changesAvailable ? "Changes available" : null,
-    status.archived ? "Archived" : null,
+    status.changesAvailable ? translator.message("mobile.ui.changesAvailable") : null,
+    status.archived ? translator.message("chat.deepPlan.archived") : null,
   ].filter((part): part is string => part !== null);
 
   return (
@@ -144,7 +145,7 @@ function HarnessChatRow(props: {
           </Text>
         ) : null}
         <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-          {props.chat.cwd ?? "No working directory"}
+          {props.chat.cwd ?? translator.message("settings.harness.noWorkingDirectory")}
         </Text>
         <Text className="text-xs text-foreground-muted">{detailParts.join(" · ")}</Text>
         <Text
@@ -321,7 +322,9 @@ function SupportedHarnessChatSource(props: {
       setLoadingMore(false);
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
-          setError(failureMessage(result, "Could not load harness chats."));
+          setError(
+            failureMessage(result, translator.message("mobile.ui.couldNotLoadHarnessChats")),
+          );
         }
         return;
       }
@@ -333,7 +336,7 @@ function SupportedHarnessChatSource(props: {
       setChangedMatching(result.value.changedMatching);
       setCountsAreComplete(result.value.countsAreComplete ?? true);
     },
-    [includeArchived, listChats, props.environmentId, props.source.id, query],
+    [includeArchived, listChats, props.environmentId, props.source.id, query, translator],
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load provider chats while this source is active and invalidate pending replies when it closes.
@@ -387,7 +390,9 @@ function SupportedHarnessChatSource(props: {
     setRefreshingStatus(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setError(failureMessage(result, "Could not refresh harness chat status."));
+        setError(
+          failureMessage(result, translator.message("mobile.ui.couldNotRefreshHarnessChatStatus")),
+        );
       }
       return;
     }
@@ -404,7 +409,7 @@ function SupportedHarnessChatSource(props: {
         };
       }),
     );
-  }, [chats, props.environmentId, props.source.id, refreshStatus, refreshingStatus]);
+  }, [chats, props.environmentId, props.source.id, refreshStatus, refreshingStatus, translator]);
 
   const performSync = async (
     resolutions: ReadonlyMap<HarnessChatSessionId, ProjectId>,
@@ -429,9 +434,12 @@ function SupportedHarnessChatSource(props: {
     setSyncing(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        const message = failureMessage(result, "Could not sync harness chats.");
+        const message = failureMessage(
+          result,
+          translator.message("mobile.ui.couldNotSyncHarnessChats"),
+        );
         setError(message);
-        Alert.alert("Could not sync chats", message);
+        Alert.alert(translator.message("mobile.ui.couldNotSyncChats"), message);
       }
       return;
     }
@@ -446,8 +454,8 @@ function SupportedHarnessChatSource(props: {
     if (unresolved) {
       if (props.projects.length === 0) {
         Alert.alert(
-          "Project required",
-          "Add a project in this environment before syncing chats whose workspace is missing.",
+          translator.message("mobile.ui.projectRequired"),
+          translator.message("mobile.ui.addAProjectInThisEnvironmentBefore"),
         );
         return;
       }
@@ -463,6 +471,7 @@ function SupportedHarnessChatSource(props: {
     syncing,
     targetResolutions,
     unresolvedTargetProjectId,
+    translator,
   ]);
 
   const resolveTarget = useCallback(
@@ -536,7 +545,7 @@ function SupportedHarnessChatSource(props: {
             }}
             className="rounded-xl bg-foreground px-3 py-2"
           >
-            <Text className="font-t3-medium text-background">
+            <Text className="font-t3-medium text-screen">
               {translator.message("common.search")}
             </Text>
           </Pressable>
@@ -625,7 +634,7 @@ function SupportedHarnessChatSource(props: {
             onPress={startSync}
             className="flex-1 rounded-xl bg-foreground px-3 py-2 disabled:opacity-40"
           >
-            <Text className="text-center font-t3-medium text-background">
+            <Text className="text-center font-t3-medium text-screen">
               {syncing
                 ? translator.message("mobile.settings.harness.syncing")
                 : translator.message("mobile.settings.harness.syncSelected")}
@@ -651,7 +660,9 @@ function SupportedHarnessChatSource(props: {
               className="text-xs leading-normal text-danger-foreground"
             >
               {failure.message}
-              {failure.retryable ? " Retry after fixing the source or project." : ""}
+              {failure.retryable
+                ? translator.message("mobile.ui.retryAfterFixingTheSourceOrProject")
+                : ""}
             </Text>
           ))}
         </View>
@@ -683,6 +694,7 @@ function HarnessChatSourceCard(props: {
   readonly onSynced: () => void;
   readonly active: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   if (props.source.status.kind === "supported") {
     return <SupportedHarnessChatSource {...props} />;
   }
@@ -691,7 +703,9 @@ function HarnessChatSourceCard(props: {
     <SettingsSection card title={`${props.source.label} · ${props.source.driver}`}>
       <View className="gap-1 p-4">
         <Text className="text-base font-t3-medium text-foreground">
-          {props.source.status.kind === "already-local" ? "Already local" : "Unavailable"}
+          {props.source.status.kind === "already-local"
+            ? translator.message("mobile.ui.alreadyLocal")
+            : translator.message("mobile.settings.projects.settings.unavailable")}
         </Text>
         <Text className="text-sm leading-normal text-foreground-muted">
           {props.source.status.reason}
@@ -736,12 +750,17 @@ export function HarnessChatSyncEnvironment(props: {
     setLoading(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setError(failureMessage(result, "Could not discover harness chat sources."));
+        setError(
+          failureMessage(
+            result,
+            translator.message("mobile.ui.couldNotDiscoverHarnessChatSources"),
+          ),
+        );
       }
       return;
     }
     setSources(result.value.sources);
-  }, [discoverSources, props.environmentId, supported]);
+  }, [discoverSources, props.environmentId, supported, translator]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Discover provider chat sources for this environment and invalidate the request on unmount.
   useEffect(() => {
@@ -809,7 +828,7 @@ export function HarnessChatSyncEnvironment(props: {
                   <Text
                     numberOfLines={1}
                     className={
-                      active ? "font-t3-medium text-background" : "font-t3-medium text-foreground"
+                      active ? "font-t3-medium text-screen" : "font-t3-medium text-foreground"
                     }
                   >
                     {source.label}

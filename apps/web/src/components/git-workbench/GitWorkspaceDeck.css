@@ -12,11 +12,9 @@
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   border-radius: 1.375rem;
-  background: color-mix(in srgb, var(--card) var(--glass-opacity), transparent);
+  background: var(--background);
   padding: 0.75rem;
   box-shadow: 0 12px 28px -18px rgb(0 0 0 / 42%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 }
 
 .git-compact-card[data-expanded="true"] {
@@ -336,16 +334,12 @@
 @utility git-workbench-drawer--embedded {
   border-block-start: 0;
   border-radius: inherit;
-  background: transparent;
+  background: var(--background);
   box-shadow: none;
 }
 
 .git-workbench-drawer--embedded .git-workbench-drawer__content {
   overflow: hidden;
-}
-
-.git-workbench-drawer--embedded [data-git-workbench] {
-  background: transparent;
 }
 
 @utility git-workbench-drawer__header {
@@ -438,12 +432,6 @@
 
   .git-workbench-drawer__tabs button {
     padding-inline: 0.625rem;
-  }
-}
-
-@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .git-compact-card {
-    background: var(--card);
   }
 }
 

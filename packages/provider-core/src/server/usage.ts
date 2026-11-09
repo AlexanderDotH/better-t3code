@@ -58,12 +58,12 @@ export function parseTimestampMs(value: unknown): number | null {
 
 export type SelectedFields = { readonly [key: string]: true | SelectedFields };
 
-export interface TranscriptUsageFormat<State> {
+export interface TranscriptUsageFormat<State, Row = UsageRecord> {
   readonly selectFields: SelectedFields;
   /** ASCII markers must match every relevant line, including state-only updates. */
   readonly usageMarkers: readonly [string, ...string[]];
-  parseLine(line: string, state: State): readonly UsageRecord[];
-  parseProjected(projected: unknown, state: State): readonly UsageRecord[];
+  parseLine(line: string, state: State): readonly Row[];
+  parseProjected(projected: unknown, state: State): readonly Row[];
   /** Cumulative malformed or inconsistent usage records, including skipped records. */
   readMalformedRecords?(state: State): number;
   /**

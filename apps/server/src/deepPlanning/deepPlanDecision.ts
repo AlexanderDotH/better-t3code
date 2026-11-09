@@ -105,7 +105,10 @@ function hasCurrentApproval(run: DeepPlanRun): boolean {
 }
 
 function resumedPhase(run: DeepPlanRun): DeepPlanRun["phase"] {
-  if (run.plan === null) return run.sources.length > 0 ? "planning" : "collecting";
+  if (run.plan === null)
+    return run.sources.length > 0 || run.includeProjectChats !== undefined
+      ? "planning"
+      : "collecting";
   if (!hasCurrentApproval(run)) return "awaitingApproval";
   return run.stepStates.every((step) => step.status === "verified") ? "validating" : "implementing";
 }
@@ -237,7 +240,11 @@ export const updateDeepPlanRun = Effect.fn("updateDeepPlanRun")(function* (
       if (run.plan !== null || (run.phase !== "collecting" && run.phase !== "planning")) {
         return yield* invalid(command, "Deep Plan sources cannot change after planning.");
       }
-      if (run.sources.length > 0 && fingerprint(run.sources) !== fingerprint(mutation.sources)) {
+      const includeProjectChats = mutation.includeProjectChats ?? true;
+      if (
+        (run.sources.length > 0 && fingerprint(run.sources) !== fingerprint(mutation.sources)) ||
+        (run.includeProjectChats !== undefined && run.includeProjectChats !== includeProjectChats)
+      ) {
         return yield* invalid(
           command,
           "Deep Plan source snapshots are immutable; start a new run to change sources.",
@@ -248,7 +255,7 @@ export const updateDeepPlanRun = Effect.fn("updateDeepPlanRun")(function* (
       ) {
         return yield* invalid(command, "Deep Plan source IDs must be unique.");
       }
-      next = { ...run, sources: mutation.sources, phase: "planning" };
+      next = { ...run, sources: mutation.sources, includeProjectChats, phase: "planning" };
       break;
     }
     case "source-coverage": {

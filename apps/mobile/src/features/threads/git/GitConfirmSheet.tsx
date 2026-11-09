@@ -17,6 +17,7 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { SheetActionButton } from "./gitSheetComponents";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 type GitConfirmSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -29,6 +30,7 @@ type GitConfirmSheetProps = StaticScreenProps<{
 }>;
 
 export function GitConfirmSheet(props: GitConfirmSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -131,7 +133,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       ) : null}
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Confirm action"
+          title={translator.message("mobile.git.confirmAction")}
           onBack={() => navigation.goBack()}
           hideBottomBorder
         />
@@ -154,14 +156,14 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           <View className="android:gap-2 android:rounded-[20px] android:bg-card android:p-3 ios:items-center ios:gap-1 ios:px-5 ios:pb-3 ios:pt-4">
             {Platform.OS !== "android" ? (
               <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-                Confirm
+                {translator.message("mobile.git.confirm")}
               </Text>
             ) : null}
             <Text className="android:text-xl android:font-t3-medium ios:text-center ios:text-3xl ios:font-t3-bold">
-              {copy?.title ?? "Run action on default branch?"}
+              {copy?.title ?? translator.message("mobile.git.defaultBranchQuestion")}
             </Text>
             <Text className="text-foreground-secondary leading-normal android:text-base ios:text-center ios:text-sm ios:font-medium">
-              {copy?.description ?? "Choose how to continue."}
+              {copy?.description ?? translator.message("mobile.git.chooseContinue")}
             </Text>
           </View>
 
@@ -175,13 +177,13 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           >
             <SheetActionButton
               icon="arrow.right.circle"
-              label={copy?.continueLabel ?? "Continue"}
+              label={copy?.continueLabel ?? translator.message("mobile.settings.connect.continue")}
               disabled={!canWriteSourceControl}
               onPress={() => void continuePendingAction()}
             />
             <SheetActionButton
               icon="arrow.branch"
-              label="Feature branch & continue"
+              label={translator.message("mobile.git.featureBranchContinue")}
               disabled={!canChangeThreadBranch}
               tone="primary"
               onPress={() => void movePendingActionToFeatureBranch()}

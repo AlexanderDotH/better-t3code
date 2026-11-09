@@ -387,6 +387,7 @@ export interface ComposerDraft {
   readonly interactionMode?: ProviderInteractionMode;
   readonly composerMode?: ComposerMode;
   readonly deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
+  readonly deepPlanIncludeProjectChats?: boolean;
   readonly fetchMode?: "repository-exploration";
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
   readonly project?: ComposerDraftProject;
@@ -427,6 +428,7 @@ export type ComposerDraftSettingsUpdate = Pick<
   | "interactionMode"
   | "composerMode"
   | "deepPlanSourceRefs"
+  | "deepPlanIncludeProjectChats"
   | "fetchMode"
   | "workspaceSelection"
   | "project"
@@ -467,6 +469,7 @@ const ComposerDraftSchema = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   composerMode: Schema.optional(ComposerModeSchema),
   deepPlanSourceRefs: Schema.optional(Schema.Array(DeepPlanSourceRefSchema)),
+  deepPlanIncludeProjectChats: Schema.optional(Schema.Boolean),
   fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
@@ -649,6 +652,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.interactionMode === undefined &&
     draft.composerMode === undefined &&
     (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
+    draft.deepPlanIncludeProjectChats !== false &&
     draft.fetchMode === undefined &&
     draft.messageReply === undefined &&
     draft.workspaceSelection === undefined
@@ -1204,6 +1208,7 @@ export async function removeDeliveredCloudQueuedMessage(
         archived.interactionMode,
         archived.composerMode,
         archived.deepPlanSourceRefs,
+        archived.deepPlanIncludeProjectChats,
         archived.fetchMode,
         archived.improvePromptBeforeSend,
         archived.turnModelSelection,
@@ -1216,6 +1221,7 @@ export async function removeDeliveredCloudQueuedMessage(
         message.interactionMode,
         message.composerMode,
         message.deepPlanSourceRefs,
+        message.deepPlanIncludeProjectChats,
         message.fetchMode,
         message.improvePromptBeforeSend,
         message.turnModelSelection,
@@ -1238,6 +1244,8 @@ export async function removeDeliveredCloudQueuedMessage(
         (editor.composerMode !== undefined && editor.composerMode !== message.composerMode) ||
         JSON.stringify(editor.deepPlanSourceRefs ?? []) !==
           JSON.stringify(message.deepPlanSourceRefs ?? []) ||
+        (editor.deepPlanIncludeProjectChats !== false) !==
+          (message.deepPlanIncludeProjectChats !== false) ||
         editor.fetchMode !== message.fetchMode ||
         (editor.workspaceSelection !== undefined &&
           (editor.workspaceSelection.mode !== message.creation?.workspaceMode ||
@@ -1860,6 +1868,7 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.interactionMode === b.interactionMode &&
     a.composerMode === b.composerMode &&
     a.deepPlanSourceRefs === b.deepPlanSourceRefs &&
+    a.deepPlanIncludeProjectChats === b.deepPlanIncludeProjectChats &&
     a.fetchMode === b.fetchMode &&
     a.workspaceSelection === b.workspaceSelection
   );
@@ -1892,6 +1901,7 @@ export function undoComposerDraftMergeState(
       | "interactionMode"
       | "composerMode"
       | "deepPlanSourceRefs"
+      | "deepPlanIncludeProjectChats"
       | "fetchMode"
       | "workspaceSelection",
   >(
@@ -1919,6 +1929,7 @@ export function undoComposerDraftMergeState(
     interactionMode: undoSetting("interactionMode"),
     composerMode: undoSetting("composerMode"),
     deepPlanSourceRefs: undoSetting("deepPlanSourceRefs"),
+    deepPlanIncludeProjectChats: undoSetting("deepPlanIncludeProjectChats"),
     fetchMode: undoSetting("fetchMode"),
     workspaceSelection: undoSetting("workspaceSelection"),
   };

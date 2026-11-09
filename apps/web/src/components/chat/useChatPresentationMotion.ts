@@ -1,4 +1,3 @@
-import { useStableCallback } from "../../hooks/useStableCallback";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { animate } from "motion/mini";
 import { spring } from "motion";
@@ -15,6 +14,7 @@ import {
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 const MESSAGE_MOUNT_GRACE_MS = 600;
+const EMPTY_CONTENTS: readonly ChatPresentationContent[] = [];
 
 function startPresentationAnimation(
   element: HTMLElement,
@@ -172,6 +172,12 @@ export function useChatPresentationMotion({
   viewport: HTMLElement | null;
 }) {
   const stateRef = useRef<ChatPresentationMotionState | null>(null);
+  const [committed, setCommitted] = useState<{
+    state: ChatPresentationMotionState;
+    visibilityGeneration: number;
+    textMotion: boolean;
+  } | null>(null);
+  const [visibilityGeneration, setVisibilityGeneration] = useState(0);
   const animationsRef = useRef(
     new Map<HTMLElement, ReturnType<typeof startPresentationAnimation>>(),
   );
@@ -180,31 +186,44 @@ export function useChatPresentationMotion({
   );
   const arrivalRef = useRef<ReturnType<typeof createChatMessageArrival> | null>(null);
   const textMotionRef = useRef(textMotion);
-  const visibilityResetRef = useRef(false);
   const [projectContents] = useState(createContentsProjection);
-  const streamingMotionReady = mode === "better-t3" && textMotion && connected;
-  const canAnimateInitialText = useStableCallback((id: string) => {
-    if (!textMotion || !stateRef.current?.active || !motionVisible()) return false;
+  const contents =
+    mode === "better-t3" && (enabled || textMotion)
+      ? projectContents(entries, rows)
+      : EMPTY_CONTENTS;
+  const visibilityReset = committed?.visibilityGeneration !== visibilityGeneration;
+  const next = advanceChatPresentationMotion(visibilityReset ? null : (committed?.state ?? null), {
+    identity,
+    mode,
+    enabled: mode === "better-t3" && (enabled || textMotion),
+    visible: motionVisible(),
+    connected,
+    contents,
+  });
+  const streamingMotionReady =
+    mode === "better-t3" &&
+    textMotion &&
+    connected &&
+    !visibilityReset &&
+    committed?.textMotion === textMotion &&
+    committed?.state.identity === identity &&
+    committed.state.mode === mode &&
+    committed.state.active &&
+    next.state.active;
+  const canAnimateInitialText = (id: string) => {
+    if (!streamingMotionReady || !motionVisible()) return false;
+    if (next.admitted.some((content) => content.id === id && content.kind === "assistant"))
+      return true;
     const pending = pendingRef.current.get(id);
     return pending?.content.kind === "assistant" && performance.now() < pending.expiresAt;
-  });
+  };
 
   useCommitEffect(() => {
-    const contents =
-      mode === "better-t3" && (enabled || textMotion) ? projectContents(entries, rows) : [];
-    const visibilityReset = visibilityResetRef.current;
     const previous = stateRef.current;
-    const next = advanceChatPresentationMotion(visibilityReset ? null : previous, {
-      identity,
-      mode,
-      enabled: mode === "better-t3" && (enabled || textMotion),
-      visible: motionVisible(),
-      connected,
-      contents,
-    });
     const fresh = previous !== next.state;
-    visibilityResetRef.current = false;
     stateRef.current = next.state;
+    if (fresh || visibilityReset || committed?.textMotion !== textMotion)
+      setCommitted({ state: next.state, visibilityGeneration, textMotion });
     const reset =
       !next.state.active ||
       previous?.identity !== identity ||
@@ -339,25 +358,40 @@ export function useChatPresentationMotion({
       observer.disconnect();
       clearTimeout(timeout);
     };
-  }, [identity, mode, enabled, textMotion, entries, rows, viewport, connected, projectContents]);
+  }, [
+    next,
+    identity,
+    mode,
+    enabled,
+    textMotion,
+    entries,
+    rows,
+    viewport,
+    visibilityReset,
+    visibilityGeneration,
+    committed,
+  ]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own and release the viewport animation resources and visibility listeners.
   useEffect(() => {
     const animations = animationsRef.current;
     const cancel = () => {
-      visibilityResetRef.current = true;
       pendingRef.current.clear();
       for (const animation of animations.values()) animation.cancel();
       animations.clear();
       arrivalRef.current?.stop();
     };
+    const invalidate = () => {
+      cancel();
+      setVisibilityGeneration((generation) => generation + 1);
+    };
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    document.addEventListener("visibilitychange", cancel);
-    reducedMotion?.addEventListener?.("change", cancel);
+    document.addEventListener("visibilitychange", invalidate);
+    reducedMotion?.addEventListener?.("change", invalidate);
     return () => {
       cancel();
-      document.removeEventListener("visibilitychange", cancel);
-      reducedMotion?.removeEventListener?.("change", cancel);
+      document.removeEventListener("visibilitychange", invalidate);
+      reducedMotion?.removeEventListener?.("change", invalidate);
     };
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own and release the viewport animation resources and visibility listeners.

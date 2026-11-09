@@ -1,3 +1,4 @@
+import * as ProjectAgentMessageDelivery from "../../projectAgent/ProjectAgentMessageDelivery.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -530,6 +531,11 @@ export function layerWithRegistry<Error>(
         layerProviderTurnStartServiceProvided,
         layerRuntimeRequestServiceProvided,
         layerThreadTitleRegenerationTest,
+        ProjectAgentMessageDelivery.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(layerOrchestratorProvided, layerEventSinkProvided, layerServerSettings),
+          ),
+        ),
         layerServerSettings,
         layerThreadManagementProvided,
       ),

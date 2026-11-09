@@ -10,6 +10,7 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -33,6 +34,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const translator = useInterfaceTranslator();
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
       .trim()
@@ -51,7 +53,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: "Unsent draft",
+    statusLabel: translator.message("sidebar.thread.unsentDraft"),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -112,7 +114,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                   render={
                     <button
                       type="button"
-                      aria-label="Discard draft"
+                      aria-label={translator.message("sidebar.thread.discardDraft")}
                       onClick={handleDiscard}
                       className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
                     >
@@ -120,7 +122,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                     </button>
                   }
                 />
-                <TooltipPopup side="top">Discard draft</TooltipPopup>
+                <TooltipPopup side="top">
+                  {translator.message("sidebar.thread.discardDraft")}
+                </TooltipPopup>
               </Tooltip>
             </span>
           </div>

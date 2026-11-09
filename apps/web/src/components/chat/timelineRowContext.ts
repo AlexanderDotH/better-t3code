@@ -25,7 +25,11 @@ import type { PendingApproval } from "../../session-logic";
 import { type ChatFileAttachment } from "../../types";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
-import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./MessagesTimeline.logic";
+import {
+  type MessagesTimelineRow,
+  type TimelineReplyTopicSummary,
+  type WorkGroupScrollAnchor,
+} from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
@@ -57,13 +61,32 @@ export interface TimelineRowSharedState {
     | undefined;
   chatVisualMode?: import("@t3tools/contracts").ChatVisualMode;
   presentationMotion?: boolean;
+  /** Off in Better T3 until presentation motion admits text, so a reconnect does not replay it. */
+  streamingMotionEnabled?: boolean;
+  canAnimateInitialText?: (rowId: string) => boolean;
+  /** The row after which a fork's own history begins. */
+  forkDividerAfterRowId?: string | null;
+  replyTopicsByMessageId?: ReadonlyMap<MessageId, TimelineReplyTopicSummary>;
+  onOpenReplyTopic?: ((threadId: ThreadId) => void) | undefined;
+  /** False when the source is not in this thread's history. */
+  onJumpToReplySource?: ((messageId: MessageId) => boolean) | undefined;
   onForkBoundary?:
     | ((boundary: import("@t3tools/contracts").ThreadForkBoundary) => void)
     | undefined;
-  forkPending?: boolean;
+  forkAvailable?: boolean;
+  forkPendingBoundary?: import("@t3tools/contracts").ThreadForkBoundary | null;
+  /** Unset where no Agents panel can open, such as an embedded side chat or the guest view. */
+  onOpenAgents?: (() => void) | undefined;
+  retryAction?: {
+    readonly messageId: MessageId;
+    readonly available: boolean;
+    readonly pending: boolean;
+    readonly onRetry: (messageId: MessageId) => void;
+  } | null;
   replySourceThreadId?: ThreadId | undefined;
   onReplyMessage?: ((message: import("../../types").ChatMessage) => void) | undefined;
   onEditMessage?: ((message: import("../../types").ChatMessage) => void) | undefined;
+  editAvailable?: boolean;
   editingMessage?: { readonly messageId: MessageId; readonly content: ReactNode } | null;
 
   pendingApprovals: ReadonlyMap<RuntimeRequestId, PendingApproval>;
@@ -85,6 +108,7 @@ export interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  onVisualizationAction?: ((prompt: string) => void) | undefined;
   onSendAppMessage: ((text: string) => Promise<void>) | undefined;
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;

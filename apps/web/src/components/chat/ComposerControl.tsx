@@ -2,6 +2,7 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
 import type { ComponentType, SVGProps } from "react";
+import { ChevronDownIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -87,8 +88,22 @@ export function ComposerSelectControl({
 
 export function ComposerControlChevron({ size = "sm" }: { size?: ComposerControlSize }) {
   return (
-    <span aria-hidden className={size === "xs" ? "text-3xs" : "text-xs"}>
-      ⌄
-    </span>
+    <ChevronDownIcon
+      aria-hidden="true"
+      data-composer-control-chevron
+      className={cn("mx-0! shrink-0", size === "xs" ? "size-2.5" : "size-3")}
+    />
+  );
+}
+
+export function ComposerControlSeparator({ size = "sm" }: { size?: ComposerControlSize }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "mx-0.5 hidden w-px shrink-0 bg-border sm:block",
+        size === "xs" ? "h-3.5" : "h-4",
+      )}
+    />
   );
 }

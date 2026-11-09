@@ -33,6 +33,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function ReviewerScrollView(props: ScrollViewProps) {
   return (
@@ -43,6 +44,7 @@ function ReviewerScrollView(props: ScrollViewProps) {
 }
 
 export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequestParams>) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<PullRequestReviewerCandidate>>(null);
@@ -114,7 +116,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       setError(
-        cause instanceof Error ? cause.message : "Couldn't update this review request. Try again.",
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.couldntUpdateThisReviewRequestTryAgain"),
       );
       return;
     }
@@ -125,7 +129,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
   const searchOptions = {
-    placeholder: "Search reviewers",
+    placeholder: translator.message("mobile.ui.searchReviewers"),
     autoCapitalize: "none" as const,
     onChangeText: (event: { nativeEvent: { text: string } }) => search(event.nativeEvent.text),
     onCancelButtonPress: () => search(""),
@@ -138,10 +142,10 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   return (
     <View className="flex-1 bg-sheet">
       <SheetHeader
-        title="Request review"
+        title={translator.message("mobile.ui.requestReview")}
         subtitle={`#${route.params.number} · ${route.params.repository}`}
         onClose={() => navigation.goBack()}
-        accessibilityLabel="Close request review"
+        accessibilityLabel={translator.message("mobile.ui.closeRequestReview")}
       />
       <NativeStackScreenOptions
         options={{
@@ -150,7 +154,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             listCandidates && integratedSearch
               ? [
                   createNativeMailSearchToolbarItem({
-                    placeholder: "Search reviewers",
+                    placeholder: translator.message("mobile.ui.searchReviewers"),
                     onSearchTextChange: search,
                     showsSearchDismissButton: true,
                     searchTextChangeId: "pr-reviewer-search",
@@ -175,12 +179,12 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ListHeaderComponent={
             <View className="gap-3 px-4 py-4">
               <Text className="text-xs text-foreground-muted">
-                Tap someone to request a review. Tap a requested reviewer to remove the request.
+                {translator.message("mobile.ui.tapSomeoneToRequestAReviewTap")}
               </Text>
               {Platform.OS === "android" ? (
                 <TextInput
-                  accessibilityLabel="Search reviewers"
-                  placeholder="Search reviewers"
+                  accessibilityLabel={translator.message("mobile.ui.searchReviewers")}
+                  placeholder={translator.message("mobile.ui.searchReviewers")}
                   placeholderTextColorClassName="accent-foreground-muted"
                   value={query}
                   onChangeText={search}
@@ -225,7 +229,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   <AppActivityIndicator />
                 ) : item.isRequested ? (
                   <View className="flex-row items-center gap-1.5">
-                    <Text className="text-xs text-foreground-muted">Requested</Text>
+                    <Text className="text-xs text-foreground-muted">
+                      {translator.message("mobile.ui.requested")}
+                    </Text>
                     <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />
                   </View>
                 ) : (
@@ -242,23 +248,26 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 <EmptyState
                   title={
                     result.error
-                      ? "Couldn't load reviewers"
+                      ? translator.message("mobile.ui.couldntLoadReviewers")
                       : query.trim()
-                        ? "No matching reviewers"
-                        : "No reviewers available"
+                        ? translator.message("mobile.ui.noMatchingReviewers")
+                        : translator.message("mobile.ui.noReviewersAvailable")
                   }
-                  detail={result.error ?? "Search people and teams with access to this repository."}
+                  detail={
+                    result.error ?? translator.message("mobile.ui.searchPeopleAndTeamsWithAccessTo")
+                  }
                   variant="plain"
                 />
-                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? (
+                  <Button label={translator.message("common.retry")} onPress={result.refresh} />
+                ) : null}
               </View>
             )
           }
           ListFooterComponent={
             result.data?.truncated ? (
               <Text className="px-4 py-4 text-xs text-foreground-muted">
-                The provider has more reviewers than it returned. Find additional reviewers on the
-                provider.
+                {translator.message("mobile.ui.theProviderHasMoreReviewersThanIt")}
               </Text>
             ) : undefined
           }
@@ -281,11 +290,11 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ) : (
             <>
               <Text className="text-sm text-foreground-muted">
-                This provider accepts a reviewer ID but cannot list candidates.
+                {translator.message("mobile.ui.thisProviderAcceptsAReviewerIdBut")}
               </Text>
               <TextInput
-                accessibilityLabel="Reviewer ID"
-                placeholder="Reviewer login or ID"
+                accessibilityLabel={translator.message("mobile.ui.reviewerId")}
+                placeholder={translator.message("mobile.ui.reviewerLoginOrId")}
                 placeholderTextColorClassName="accent-foreground-muted"
                 value={query}
                 onChangeText={search}
@@ -294,13 +303,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
               />
               <Button
-                label="Request review"
+                label={translator.message("mobile.ui.requestReview")}
                 fullWidth
                 disabled={!allowed || !query.trim() || pending !== null}
                 onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
               />
               <Button
-                label="Remove review request"
+                label={translator.message("mobile.ui.removeReviewRequest")}
                 fullWidth
                 tone="text"
                 disabled={!allowed || !query.trim() || pending !== null}
