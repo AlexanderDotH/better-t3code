@@ -460,11 +460,14 @@ running; choose **Stop** first if you want to interrupt that work.
 ## Create a deep plan
 
 Choose **Deep Plan** in the composer’s mode menu or use `/deep-plan` to plan from
-your project’s conversations. All chats in the current project are included,
-including archived chats. Sources are analyzed in parallel batches, with progress
-saved after each chat. Other tools follow the permission mode selected in the
+your project’s conversations. By default, all chats in the current project are
+included, including archived chats. Sources are analyzed in parallel batches, with
+progress saved after each chat. Other tools follow the permission mode selected in the
 composer; planning itself stays read-only. Use **Add chats** to include conversations
-from other projects or connected environments. Sources stay fixed once analysis starts.
+from other projects or connected environments. To use only some of this project’s chats,
+turn off **Include all chats from this project** there and select the ones you want.
+With no chats selected, Deep Plan works from your request and the codebase. Sources stay
+fixed once analysis starts.
 
 Wait for source analysis, then review the plan and its requirements. Deep Plans use
 the same composer actions as other plans: type feedback to refine, or choose
