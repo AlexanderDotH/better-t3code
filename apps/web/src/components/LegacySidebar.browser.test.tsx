@@ -81,6 +81,10 @@ it("clears Completed after visiting and leaving a chat despite an older local wa
   row
     .element()
     .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  // status() pins the row's text when built, so wait for the menu action before building it.
+  await vi.waitFor(() => {
+    expect(row.element().closest("[data-thread-item]")?.textContent).toContain("Completed");
+  });
   await expect.element(status()).toBeVisible();
   await row.click();
   await expect.element(page.getByText("Answer 0 for completed.")).toBeVisible();
