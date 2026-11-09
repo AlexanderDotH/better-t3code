@@ -771,6 +771,21 @@ it.effect(
           createdAt,
         });
         yield* reactor.drainThrough(planning.sequence);
+        const beforeRequest = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(beforeRequest.thread.deepPlan?.phase, "planning");
+        assert.equal(beforeRequest.runs.length, 1);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("continuation-request"),
+          threadId,
+          messageId: MessageId.make("continuation-request-message"),
+          text: "Plan the change.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          deepPlanRunId: runId,
+          dispatchMode: { type: "start_immediately" },
+        });
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(projection.thread.deepPlan?.phase, "planning");
         assert.equal(projection.runs.length, 2);

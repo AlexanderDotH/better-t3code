@@ -69,17 +69,19 @@ export type ThreadLaunchWorkspaceStrategy =
     };
 
 export interface ThreadLaunchInitialMessage {
-  readonly messageId?: MessageId;
+  readonly messageId?: MessageId | undefined;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
-  readonly deepPlanRunId?: import("@t3tools/contracts").DeepPlanRunId;
-  readonly replyTo?: import("@t3tools/contracts").MessageReplyReference;
-  readonly replyTopicId?: import("@t3tools/contracts").SubagentId;
-  readonly fetchMode?: "repository-exploration";
-  readonly idleGuard?: Extract<
-    import("@t3tools/contracts").OrchestrationV2Command,
-    { type: "message.dispatch" }
-  >["idleGuard"];
+  readonly deepPlanRunId?: import("@t3tools/contracts").DeepPlanRunId | undefined;
+  readonly replyTo?: import("@t3tools/contracts").MessageReplyReference | undefined;
+  readonly replyTopicId?: import("@t3tools/contracts").SubagentId | undefined;
+  readonly fetchMode?: "repository-exploration" | undefined;
+  readonly idleGuard?:
+    | Extract<
+        import("@t3tools/contracts").OrchestrationV2Command,
+        { type: "message.dispatch" }
+      >["idleGuard"]
+    | undefined;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;

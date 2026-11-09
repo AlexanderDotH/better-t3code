@@ -100,6 +100,11 @@ const make = Effect.gen(function* () {
         !canContinueDeepPlan(run, target.interactionMode)
       )
         return;
+      // A new plan's first turn is the user's request, which arrives after its sources are set.
+      if (run.approval === null) {
+        const records = yield* engine.getThreadRecords(target.id, ["runs"]);
+        if (!records.runs.some((candidate) => candidate.deepPlanRunId === run.id)) return;
+      }
       const commandId = CommandId.make(
         `deep-plan:${run.id}:continue:${target.latestRunId ?? "initial"}:${run.revision}`,
       );
