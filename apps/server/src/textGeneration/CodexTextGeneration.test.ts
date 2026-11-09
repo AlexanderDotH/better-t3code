@@ -1,3 +1,4 @@
+import * as TestClock from "effect/testing/TestClock";
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProviderDriverKind,
@@ -486,6 +487,8 @@ it.effect.each([
   { exhausted: true, hardBudget: true },
 ])("text generation preflight: %j", ({ exhausted, hardBudget }) =>
   Effect.gen(function* () {
+    // Midday keeps the last reading inside the local calendar day in every CI timezone.
+    yield* TestClock.setTime(Date.UTC(1970, 0, 1, 12));
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
     const selection = {
@@ -523,7 +526,7 @@ it.effect.each([
               resetsAt: "1970-01-08T00:00:00Z",
               usageHistory: [
                 { at: "1969-12-31T00:00:00Z", usedPercent: 0 },
-                { at: "1970-01-01T00:00:00Z", usedPercent: 20 },
+                { at: "1970-01-01T11:59:00Z", usedPercent: 20 },
               ],
             },
           ],

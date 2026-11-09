@@ -1,10 +1,5 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import {
-  CommandId,
-  resolveBetterT3FeatureFlag,
-  type RunId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { CommandId, type RunId, type ThreadId } from "@t3tools/contracts";
 import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/shared/fetchMode";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
@@ -47,57 +42,54 @@ export const layer = Layer.effectDiscard(
         projection.thread.projectId,
       ).settings;
       let context = "";
-      if (resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.fetch")) {
-        const available = yield* providers.getProviders;
-        const selection = resolveFetchModelSelection({
-          providers: available,
-          fetchModelSelection: current.fetchModelSelection,
-          textGenerationModelSelection: current.textGenerationModelSelection,
-        });
-        if (selection.status === "resolved") {
-          const luna =
-            selection.source === "auto-spark" ? resolveFetchLunaFallback(available) : undefined;
-          const project = yield* projects.get(projection.thread.projectId);
-          const cwd = projection.thread.worktreePath ?? Option.getOrNull(project)?.workspaceRoot;
-          if (cwd !== undefined) {
-            const result = yield* workers
-              .run({
-                threadId,
-                cwd,
-                userRequest: message.text,
-                modelSelection: selection.selection,
-                providerDriver: selection.provider.driver,
-                maxRecommendedWorkers: selection.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
-                commandExecutionPolicy: "deny",
-                ...(luna?.status === "resolved"
-                  ? {
-                      lunaFallback: {
-                        modelSelection: luna.selection,
-                        providerDriver: luna.provider.driver,
-                        maxRecommendedWorkers:
-                          luna.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
-                        commandExecutionPolicy: "deny" as const,
-                      },
-                    }
-                  : {}),
-              })
-              .pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Repository exploration failed", {
-                    threadId,
-                    runId,
-                    cause,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
-            context =
-              result === null
-                ? "Repository exploration was unavailable. Continue without preloaded findings."
-                : [...result.warnings, result.context]
-                    .filter((value) => value !== undefined && value.length > 0)
-                    .join("\n\n")
-                    .slice(0, 64_000);
-          }
+      const available = yield* providers.getProviders;
+      const selection = resolveFetchModelSelection({
+        providers: available,
+        fetchModelSelection: current.fetchModelSelection,
+        textGenerationModelSelection: current.textGenerationModelSelection,
+      });
+      if (selection.status === "resolved") {
+        const luna =
+          selection.source === "auto-spark" ? resolveFetchLunaFallback(available) : undefined;
+        const project = yield* projects.get(projection.thread.projectId);
+        const cwd = projection.thread.worktreePath ?? Option.getOrNull(project)?.workspaceRoot;
+        if (cwd !== undefined) {
+          const result = yield* workers
+            .run({
+              threadId,
+              cwd,
+              userRequest: message.text,
+              modelSelection: selection.selection,
+              providerDriver: selection.provider.driver,
+              maxRecommendedWorkers: selection.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
+              commandExecutionPolicy: "deny",
+              ...(luna?.status === "resolved"
+                ? {
+                    lunaFallback: {
+                      modelSelection: luna.selection,
+                      providerDriver: luna.provider.driver,
+                      maxRecommendedWorkers: luna.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
+                      commandExecutionPolicy: "deny" as const,
+                    },
+                  }
+                : {}),
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Repository exploration failed", {
+                  threadId,
+                  runId,
+                  cause,
+                }).pipe(Effect.as(null)),
+              ),
+            );
+          context =
+            result === null
+              ? "Repository exploration was unavailable. Continue without preloaded findings."
+              : [...result.warnings, result.context]
+                  .filter((value) => value !== undefined && value.length > 0)
+                  .join("\n\n")
+                  .slice(0, 64_000);
         }
       }
       yield* orchestration.dispatch({

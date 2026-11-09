@@ -298,8 +298,12 @@ export const layer: Layer.Layer<
         input: ProviderEventIngestInput,
         providerTurnId: ProviderTurnId,
         threadId = input.threadId,
+        // A stopped turn can no longer act on an approval, so it must not stay answerable.
+        includeApprovals = false,
       ) {
-        const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
+        const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId, {
+          includeApprovals,
+        });
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
         for (const request of pending.runtimeRequests) {
@@ -527,6 +531,7 @@ export const layer: Layer.Layer<
                       input,
                       input.event.providerTurn.id,
                       input.event.threadId,
+                      input.event.providerTurn.status !== "completed",
                     )
                   : []),
                 yield* makeDomainEvent(input, {
@@ -622,7 +627,12 @@ export const layer: Layer.Layer<
               // Live output is routed to the command output hub before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+              const dismissed = yield* dismissNativeUserInputs(
+                input,
+                input.event.providerTurnId,
+                input.threadId,
+                input.event.status !== "completed",
+              );
               if (input.event.status !== "failed") {
                 return dismissed;
               }

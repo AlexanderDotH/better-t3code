@@ -1301,7 +1301,6 @@ it.effect("uses the destination project's text-generation model for automatic Fe
               }),
           }),
           ServerSettings.layerTest({
-            betterT3Environment: { flags: { "agent.fetch": true } },
             textGenerationModelSelection: { instanceId: fetchInstance, model: "environment-model" },
             fetchModelSelection: null,
             providerInstances: {

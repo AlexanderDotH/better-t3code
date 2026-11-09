@@ -2912,6 +2912,9 @@ export const layerWsRpc = (
                             ...(input.initialMessage.context === undefined
                               ? {}
                               : { context: input.initialMessage.context }),
+                            ...(input.initialMessage.fetchMode === undefined
+                              ? {}
+                              : { fetchMode: input.initialMessage.fetchMode }),
                           },
                         }),
                     createdBy: "user",
