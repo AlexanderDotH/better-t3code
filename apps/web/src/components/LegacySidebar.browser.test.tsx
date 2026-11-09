@@ -6,6 +6,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
+// The chat route is code-split. Importing it here keeps its cold transform out of the test timeout.
+import "~/components/ThreadRouteView";
 import { AppRoot } from "~/AppRoot";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
