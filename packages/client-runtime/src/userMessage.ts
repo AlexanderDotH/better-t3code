@@ -58,15 +58,20 @@ export function resolveUserMessageFileCards(message: {
   return remaining.trim() === "" ? files : null;
 }
 
-export function resolveUserMessagePresentation(message: {
-  readonly id?: string;
-  readonly role: string;
-  readonly text: string;
-  readonly createdBy?: OrchestrationV2Actor;
-  readonly creationSource?: OrchestrationV2CreationSource;
-  readonly scheduledTaskId?: ScheduledTaskId | undefined;
-  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
-}): {
+const DEEP_PLAN_CONTINUATION_ID = /^deep-plan:[^:]+:continue:/;
+
+export function resolveUserMessagePresentation(
+  message: {
+    readonly id?: string;
+    readonly role: string;
+    readonly text: string;
+    readonly createdBy?: OrchestrationV2Actor;
+    readonly creationSource?: OrchestrationV2CreationSource;
+    readonly scheduledTaskId?: ScheduledTaskId | undefined;
+    readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+  },
+  labels?: { readonly deepPlanContinuation?: string },
+): {
   readonly text: string;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
@@ -75,6 +80,14 @@ export function resolveUserMessagePresentation(message: {
 } {
   if (message.role !== "user") {
     return { text: message.text, attribution: null, scheduledTaskId: undefined };
+  }
+  // The prompt tells the agent how to resume; people only need to know that it did.
+  if (message.createdBy === "agent" && DEEP_PLAN_CONTINUATION_ID.test(message.id ?? "")) {
+    return {
+      text: labels?.deepPlanContinuation ?? "Continuing the Deep Plan",
+      attribution: "t3code",
+      scheduledTaskId: undefined,
+    };
   }
   // The stored text names the guest for the agent; people see the guest's own words.
   const guest = message.context?.guest;

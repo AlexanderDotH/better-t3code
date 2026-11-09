@@ -1,3 +1,4 @@
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { TimelineMessageQuote } from "./TimelineMessageQuote";
 import { ContextChipFileAppearanceContext } from "../ContextChip";
 import { MessageAttachmentFiles } from "./MessageAttachmentFiles";
@@ -484,7 +485,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const userMessage = resolveUserMessagePresentation(row.message);
+  const translator = useInterfaceTranslator();
+  const userMessage = resolveUserMessagePresentation(row.message, {
+    deepPlanContinuation: translator.message("chat.deepPlan.continuing"),
+  });
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
   // Better T3 keeps attachments inside the bubble, under the text, instead of around it.

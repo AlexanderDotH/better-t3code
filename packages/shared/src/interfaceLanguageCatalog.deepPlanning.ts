@@ -1,6 +1,11 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.deepPlan.continuing": [
+    "Continuing the Deep Plan",
+    "Deep Plan wird fortgesetzt",
+    "Reprise du Deep Plan",
+  ],
   "chat.deepPlan.label": ["Deep Plan", "Deep Plan", "Deep Plan"],
   "chat.deepPlan.ready": ["Deep Plan ready", "Deep Plan bereit", "Deep Plan prêt"],
   "chat.deepPlan.sources": ["Sources", "Quellen", "Sources"],
