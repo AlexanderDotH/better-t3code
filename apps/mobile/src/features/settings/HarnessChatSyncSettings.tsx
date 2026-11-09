@@ -536,7 +536,7 @@ function SupportedHarnessChatSource(props: {
             }}
             className="rounded-xl bg-foreground px-3 py-2"
           >
-            <Text className="font-t3-medium text-background">
+            <Text className="font-t3-medium text-screen">
               {translator.message("common.search")}
             </Text>
           </Pressable>
@@ -625,7 +625,7 @@ function SupportedHarnessChatSource(props: {
             onPress={startSync}
             className="flex-1 rounded-xl bg-foreground px-3 py-2 disabled:opacity-40"
           >
-            <Text className="text-center font-t3-medium text-background">
+            <Text className="text-center font-t3-medium text-screen">
               {syncing
                 ? translator.message("mobile.settings.harness.syncing")
                 : translator.message("mobile.settings.harness.syncSelected")}
@@ -809,7 +809,7 @@ export function HarnessChatSyncEnvironment(props: {
                   <Text
                     numberOfLines={1}
                     className={
-                      active ? "font-t3-medium text-background" : "font-t3-medium text-foreground"
+                      active ? "font-t3-medium text-screen" : "font-t3-medium text-foreground"
                     }
                   >
                     {source.label}

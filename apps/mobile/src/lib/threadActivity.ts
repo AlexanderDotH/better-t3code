@@ -191,6 +191,8 @@ type RawThreadFeedEntry =
       readonly app: McpAppReference;
     };
 
+export type ThreadFeedRunFoldKind = "worked" | "stopped" | "earlier";
+
 export type ThreadFeedEntry = ThreadFeedEntryContent & {
   readonly continuesWorkLog?: boolean;
   readonly checkpointSummary?: ThreadCheckpointSummary;
@@ -230,6 +232,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId;
       readonly label: string;
+      readonly foldKind: ThreadFeedRunFoldKind;
+      readonly duration: string | null;
       readonly expanded: boolean;
     }
   | {
@@ -1016,6 +1020,8 @@ interface ThreadFeedRunFold {
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
+  readonly foldKind: ThreadFeedRunFoldKind;
+  readonly duration: string | null;
 }
 
 export function failedFeedRunIds(
@@ -1224,6 +1230,8 @@ function deriveThreadFeedRunFolds(
         : duration
           ? `Worked for ${duration}`
           : "Worked",
+      foldKind: interrupted ? "stopped" : "worked",
+      duration,
     });
   }
   const covered = new Set(
@@ -1240,6 +1248,8 @@ function deriveThreadFeedRunFolds(
       createdAt: entry.createdAt,
       hiddenEntryIds: new Set([entry.id]),
       label: "Earlier work",
+      foldKind: "earlier",
+      duration: null,
       deferredWorkItemIds,
     });
   }
@@ -1468,6 +1478,8 @@ export function deriveThreadFeedPresentation(
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,
+          foldKind: fold.foldKind,
+          duration: fold.duration,
           expanded,
         };
         runFoldRowsCache.set(entry, row);

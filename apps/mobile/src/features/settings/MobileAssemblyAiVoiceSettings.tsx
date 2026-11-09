@@ -464,7 +464,7 @@ function MobileVoiceSettingsForm({
           onPress={() => void save()}
           className="rounded-xl bg-foreground px-4 py-3 disabled:opacity-40"
         >
-          <Text className="text-center font-t3-medium text-background">
+          <Text className="text-center font-t3-medium text-screen">
             {translate(busy ? "settings.voice.options.saving" : "settings.voice.options.save")}
           </Text>
         </Pressable>

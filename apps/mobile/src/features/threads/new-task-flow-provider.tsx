@@ -791,6 +791,7 @@ export function NewTaskFlowProvider(
             draft.interactionMode,
           ),
       deepPlanSourceRefs: draft.deepPlanSourceRefs,
+      deepPlanIncludeProjectChats: draft.deepPlanIncludeProjectChats,
       context: draft.context,
       modelSelection: draftModelSelection,
       runtimeMode: resolveNewThreadRuntimeMode(

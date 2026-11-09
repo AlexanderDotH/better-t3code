@@ -351,6 +351,13 @@ describe("mobile Deep Planning outbox", () => {
     ).toEqual(sources.map((snapshot) => `Complete history of ${snapshot.threadTitle}`));
   });
 
+  it("imports only the chosen chats when the queued message excludes project chats", async () => {
+    const harness = deliveryHarness();
+    await harness.prepare(persistedMessage(queuedMessage({ deepPlanIncludeProjectChats: false })));
+    expect(harness.state().run?.sources).toEqual([remoteSource]);
+    expect(harness.state().importedRecords).toHaveLength(1);
+  });
+
   it("resumes delivery after owner creation without creating another run or recapturing complete sources", async () => {
     const harness = deliveryHarness();
     await harness.prepare();

@@ -27,6 +27,7 @@ import { environmentSession, useEnvironmentScope, readEnvironmentScope } from ".
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { useEnvironmentRecoveryNavigation } from "../connection/useEnvironmentRecoveryNavigation";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -56,6 +57,10 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const connections = useRemoteConnections();
+  const recovery = useEnvironmentRecoveryNavigation({
+    pairingRoute: "SettingsEnvironmentNew",
+    onChangeConnectionPairingUrl: connections.onChangeConnectionPairingUrl,
+  });
   const environment = connections.connectedEnvironments.find(
     (entry) => entry.environmentId === environmentId,
   );
@@ -194,6 +199,8 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onRemove={connections.onRemoveEnvironmentPress}
                 onSetEnabled={connections.onSetEnvironmentEnabled}
                 onUpdate={connections.onUpdateEnvironment}
+                onPairAgain={recovery.onPairAgain}
+                onSignIn={recovery.onSignIn}
               />
             </SettingsSection>
             <EnvironmentRoutesSection

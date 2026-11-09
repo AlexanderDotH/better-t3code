@@ -2864,18 +2864,25 @@ describe("DeepPlan mobile draft persistence", () => {
           composerMode: "deep-plan",
           interactionMode: "plan",
           deepPlanSourceRefs: refs,
+          deepPlanIncludeProjectChats: false,
         },
+        "choice:thread": { text: "Inspect", attachments: [], deepPlanIncludeProjectChats: false },
         "remote:thread": { text: "Other task", attachments: [], interactionMode: "default" },
       },
     }).drafts;
-    const cleared = clearComposerDraftContentState(restored, "local:thread");
+    const cleared = clearComposerDraftContentState(
+      clearComposerDraftContentState(restored, "local:thread"),
+      "choice:thread",
+    );
     const reloaded = decodePersistedComposerState({ schemaVersion: 1, drafts: cleared }).drafts;
     expect(reloaded["local:thread"]).toMatchObject({
       text: "",
       composerMode: "deep-plan",
       interactionMode: "plan",
       deepPlanSourceRefs: refs,
+      deepPlanIncludeProjectChats: false,
     });
+    expect(reloaded["choice:thread"]?.deepPlanIncludeProjectChats).toBe(false);
     expect(reloaded["remote:thread"]?.deepPlanSourceRefs).toBeUndefined();
     expect(reloaded["remote:thread"]?.interactionMode).toBe("default");
   });

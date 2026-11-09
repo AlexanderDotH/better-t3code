@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   SubagentId,
   ThreadId,
+  type OrchestrationV2MessageReply,
   type ServerConfig,
 } from "@t3tools/contracts";
 import type { ComposerDraft } from "./use-composer-drafts";
@@ -14,6 +15,12 @@ import type { ComposerDraft } from "./use-composer-drafts";
 const fixture = vi.hoisted(() => ({
   draft: { text: "", attachments: [] } as ComposerDraft,
   dispatch: vi.fn<(...args: unknown[]) => Promise<{ _tag: "Success" | "Failure" }>>(),
+  startTurn: vi.fn<(...args: unknown[]) => Promise<{ _tag: "Success" | "Failure" }>>(),
+  shells: [] as ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ThreadId;
+    readonly messageReply?: OrchestrationV2MessageReply;
+  }>,
   alert: vi.fn(),
   prepare: vi.fn(),
 }));
@@ -44,8 +51,15 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => {
         : actual.squashAtomCommandFailure(result),
   };
 });
-vi.mock("./threads", () => ({ threadEnvironment: { startReply: "startReply" } }));
-vi.mock("./use-atom-command", () => ({ useAtomCommand: () => fixture.dispatch }));
+vi.mock("./threads", () => ({
+  threadEnvironment: { startReply: "startReply", startTurn: "startTurn" },
+  environmentThreadShells: { threadShellsAtom: "threadShells" },
+}));
+vi.mock("./atom-registry", () => ({ appAtomRegistry: { get: () => fixture.shells } }));
+vi.mock("./use-atom-command", () => ({
+  useAtomCommand: (command: string) =>
+    command === "startTurn" ? fixture.startTurn : fixture.dispatch,
+}));
 vi.mock("./use-composer-drafts", () => ({
   getComposerDraftSnapshot: () => fixture.draft,
   setComposerDraftMessageReply: (_key: string, messageReply: ComposerDraft["messageReply"]) => {
@@ -65,7 +79,9 @@ const config = {
   environment: { capabilities: { messageReplies: true, inlineMessageContext: true } },
 } as unknown as ServerConfig;
 
-async function replies() {
+async function replies(
+  thread: { readonly id?: ThreadId; readonly messageReply?: OrchestrationV2MessageReply } = {},
+) {
   let result: ReturnType<typeof useThreadMessageReplies> | undefined;
   function Probe() {
     const actions = useThreadMessageReplies({
@@ -75,6 +91,7 @@ async function replies() {
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
+        ...thread,
       },
       connected: true,
       serverConfig: config,
@@ -105,6 +122,9 @@ beforeEach(() => {
   };
   fixture.dispatch.mockReset();
   fixture.dispatch.mockResolvedValue({ _tag: "Success" });
+  fixture.startTurn.mockReset();
+  fixture.startTurn.mockResolvedValue({ _tag: "Success" });
+  fixture.shells = [];
   fixture.prepare.mockReset();
   fixture.prepare.mockResolvedValue({
     status: "ready",
@@ -188,9 +208,86 @@ describe("mobile reply submission", () => {
         modelSelection: { instanceId: "codex", model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
+        creationSource: "mobile",
       },
     });
     expect(fixture.draft).toEqual({ text: "", attachments: [] });
+  });
+  it("continues a topic inside its reply thread instead of starting a nested one", async () => {
+    const topic = SubagentId.make("topic");
+    const replyThreadId = ThreadId.make("reply:topic");
+    const actions = await replies({
+      id: replyThreadId,
+      messageReply: {
+        replyTopicId: topic,
+        sourceThreadId: threadId,
+        messageId: MessageId.make("source"),
+      },
+    });
+    actions.selectReply({
+      id: MessageId.make("topic-answer"),
+      role: "assistant",
+      text: "Topic answer",
+    });
+    const replyTo = {
+      messageId: MessageId.make("topic-answer"),
+      role: "assistant",
+      text: "Topic answer",
+      authorLabel: "chat.reply.assistant",
+      replyTopicId: topic,
+    };
+    expect(fixture.draft.messageReply).toEqual({ replyTo, replyTopicId: topic });
+    expect(await actions.sendReply(fixture.draft)).toBe(MessageId.make("sent"));
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(fixture.startTurn).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        threadId: replyThreadId,
+        commandId: "command",
+        message: { messageId: "sent", role: "user", text: "Explain this", attachments: [] },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        replyTo,
+        replyTopicId: topic,
+      },
+    });
+  });
+  it("continues a topic another client started and refuses one whose thread is missing", async () => {
+    const topic = SubagentId.make("web-topic");
+    fixture.draft = {
+      ...fixture.draft,
+      messageReply: {
+        replyTo: {
+          messageId: MessageId.make("topic-answer"),
+          role: "assistant",
+          text: "Topic answer",
+          replyTopicId: topic,
+        },
+        replyTopicId: topic,
+      },
+    };
+    const actions = await replies();
+    expect(await actions.sendReply(fixture.draft)).toBeNull();
+    expect(fixture.alert).toHaveBeenCalledWith("chat.reply.sendFailed", "chat.reply.unavailable");
+    fixture.shells = [
+      {
+        environmentId,
+        id: ThreadId.make("web-child"),
+        messageReply: {
+          replyTopicId: topic,
+          sourceThreadId: threadId,
+          messageId: MessageId.make("source"),
+        },
+      },
+    ];
+    expect(await actions.sendReply(fixture.draft)).toBe(MessageId.make("sent"));
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(fixture.startTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ threadId: "web-child", replyTopicId: topic }),
+      }),
+    );
   });
   it("preserves replacement sources and prevents duplicate sends while acceptance is pending", async () => {
     let release!: () => void;

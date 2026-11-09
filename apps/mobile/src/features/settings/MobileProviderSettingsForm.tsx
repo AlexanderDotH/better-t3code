@@ -228,7 +228,7 @@ function MobileTextField(props: {
         </Text>
       ) : null}
       {invalid ? (
-        <Text className="text-xs text-destructive">
+        <Text className="text-xs text-danger-foreground">
           {translator.message("mobile.settings.provider.finiteNumber")}
           {props.field.min === undefined
             ? ""

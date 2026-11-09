@@ -1,3 +1,4 @@
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
@@ -94,6 +95,8 @@ import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShare
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { resolveComposerSendWorkflow } from "@t3tools/client-runtime/composer-send-workflow";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
@@ -153,6 +156,7 @@ export function NewTaskDraftScreen(props: {
   readonly draftId?: string;
   readonly incomingShareId?: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
   const flow = useNewTaskFlow();
@@ -645,12 +649,27 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
 
-    const message = flow.buildPendingTaskMessage(creationMetadata, {
+    const pendingMessage = flow.buildPendingTaskMessage(creationMetadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
-    if (!message) {
+    if (!pendingMessage) {
       return null;
     }
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const message = {
+      ...pendingMessage,
+      ...resolveComposerSendWorkflow({
+        prompt: pendingMessage.text,
+        composerMode: pendingMessage.composerMode ?? "default",
+        supportsAgentWorkflow:
+          selectedEnvironmentServerConfig?.environment.capabilities.agentWorkflowVersion !==
+          undefined,
+        experimentalFetch:
+          AsyncResult.isSuccess(preferences) && preferences.value.experimentalFetch === true,
+        improvePromptBeforeSend:
+          AsyncResult.isSuccess(preferences) && preferences.value.improvePromptBeforeSend === true,
+      }),
+    };
     // Persist locally before clearing or leaving the draft; server setup runs on the thread.
     flow.setSubmitting(true);
     const queued = await settlePromise(() => enqueueThreadOutboxMessage(message));
@@ -875,7 +894,7 @@ export function NewTaskDraftScreen(props: {
             draftKey={flow.draftKey}
             value={flow.prompt}
             onChangeText={flow.setPrompt}
-            placeholder="Ask anything"
+            placeholder={translator.message("mobile.thread.askAnything")}
             multiline
             style={{ minHeight: 64 }}
           />

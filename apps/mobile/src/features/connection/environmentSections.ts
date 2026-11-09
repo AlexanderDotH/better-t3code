@@ -44,6 +44,23 @@ export function environmentRecoveryAction(
   return { kind: "retry", label: "Retry now" };
 }
 
+export function environmentSummaryRecoveryAction(
+  environment: ConnectedEnvironmentSummary,
+): EnvironmentRecoveryAction | null {
+  if (!environment.isEnabled) return null;
+  const connection = environment.connection;
+  return environmentRecoveryAction({
+    phase: environment.connectionState,
+    isRelayManaged: environment.isRelayManaged,
+    retry:
+      connection?.retry ??
+      (environment.connectionState === "available" || environment.connectionState === "error"
+        ? { mode: "manual", at: null }
+        : { mode: "none", at: null }),
+    failureReason: connection?.failure?.reason ?? null,
+  });
+}
+
 export function environmentPairingPrefill(
   environment: Pick<ConnectedEnvironmentSummary, "displayUrl" | "isRelayManaged">,
 ): string | null {

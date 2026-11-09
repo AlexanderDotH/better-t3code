@@ -51,6 +51,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { CopyTextButton } from "./CopyTextButton";
+import { ThreadForkButton } from "./ThreadForkButton";
+import { useThreadForkAction } from "./use-thread-fork-action";
 
 export function ProposedPlanCard(props: {
   readonly environmentId: EnvironmentId;
@@ -72,6 +74,10 @@ export function ProposedPlanCard(props: {
     props.plan.deepPlan ??
     projection?.projection.plans.find((plan) => plan.id === props.plan.planId)?.deepPlan;
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const forkAction = useThreadForkAction({
+    environmentId: props.environmentId,
+    threadId: props.plan.threadId,
+  });
   const available = thread !== null && canOperate && !threadRuntimeIsActive(thread.runtime);
   const parallelEnabled =
     AsyncResult.isSuccess(preferences) &&
@@ -237,6 +243,14 @@ export function ProposedPlanCard(props: {
           {proposedPlanTitle(props.markdown) ?? "Proposed plan"}
         </Text>
         <CopyTextButton accessibilityLabel="Copy plan" text={contents} />
+        {forkAction ? (
+          <ThreadForkButton
+            boundary={{ kind: "proposed-plan", planId: PlanId.make(props.plan.planId) }}
+            action={forkAction}
+            buttonSize={28}
+            iconSize={13}
+          />
+        ) : null}
       </View>
       {props.renderMarkdown(stripDisplayedPlanMarkdown(props.markdown))}
       <View className="flex-row flex-wrap gap-2">

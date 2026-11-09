@@ -12,13 +12,15 @@ import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
 
   return (
     <SheetCloseButton
-      accessibilityLabel="Close legal document"
+      accessibilityLabel={translator.message("mobile.settings.legal.closeDocument")}
       onClose={() => navigation.goBack()}
     />
   );
@@ -29,11 +31,12 @@ export function SettingsLegalDocumentExternalHeaderButton({
 }: {
   readonly externalUrl?: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
 
   return (
     <IconButton
-      accessibilityLabel="Open legal documents in external browser"
+      accessibilityLabel={translator.message("mobile.settings.legal.openExternal")}
       icon="safari"
       onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
     />
@@ -53,6 +56,7 @@ export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -90,7 +94,7 @@ export function SettingsLegalDocumentRouteScreen({
         </View>
         <View className="w-full max-w-[320px] gap-2">
           <Button
-            label="Try Again"
+            label={translator.message("mobile.settings.legal.tryAgain")}
             tone="contrast"
             fullWidth
             onPress={() => {
@@ -103,7 +107,9 @@ export function SettingsLegalDocumentRouteScreen({
             onPress={() => openExternalUrl(documentUrl)}
             className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
           >
-            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
+            <Text className="font-t3-medium text-base text-foreground-muted">
+              {translator.message("mobile.settings.legal.openBrowser")}
+            </Text>
           </Pressable>
         </View>
       </View>

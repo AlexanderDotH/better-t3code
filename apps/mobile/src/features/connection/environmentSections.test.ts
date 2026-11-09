@@ -6,6 +6,7 @@ import {
   environmentPairingPrefill,
   environmentRecoveryAction,
   environmentLastSyncedText,
+  environmentSummaryRecoveryAction,
   relayManagedEnvironmentIds,
   splitEnvironmentSections,
 } from "./environmentSections";
@@ -116,6 +117,59 @@ describe("environmentRecoveryAction", () => {
         retry: { mode: "none", at: null },
         failureReason: null,
       }),
+    ).toBeNull();
+  });
+});
+
+describe("environmentSummaryRecoveryAction", () => {
+  const blocked = (reason: "authentication" | "configuration") => ({
+    phase: "error" as const,
+    network: "online" as const,
+    stage: null,
+    attempt: 1,
+    failure: { kind: "blocked" as const, reason, detail: "Denied", traceId: null },
+    retry: { mode: "manual" as const, at: null },
+    error: "Denied",
+    traceId: null,
+  });
+
+  it("reads the live failure so a rejected pairing asks to pair or sign in again", () => {
+    expect(
+      environmentSummaryRecoveryAction({
+        ...connectedEnvironment({ environmentId: "direct", isRelayManaged: false }),
+        connectionState: "error",
+        connection: blocked("authentication"),
+      }),
+    ).toEqual({ kind: "pair", label: "Pair again" });
+    expect(
+      environmentSummaryRecoveryAction({
+        ...connectedEnvironment({ environmentId: "cloud", isRelayManaged: true }),
+        connectionState: "error",
+        connection: blocked("authentication"),
+      }),
+    ).toEqual({ kind: "sign-in", label: "Sign in again" });
+  });
+
+  it("offers nothing while switched off or without live failure details", () => {
+    expect(
+      environmentSummaryRecoveryAction(
+        connectedEnvironment({
+          environmentId: "off",
+          isRelayManaged: false,
+          isEnabled: false,
+          connectionState: "available",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      environmentSummaryRecoveryAction(
+        connectedEnvironment({
+          environmentId: "failed",
+          isRelayManaged: false,
+          connectionState: "error",
+          connectionError: "Unreachable",
+        }),
+      ),
     ).toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { AsyncResult } from "effect/reactivity";
 import { useAtomSet } from "@effect/atom-react";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -65,6 +66,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
+  ThreadListV2OlderProjectsShelfHeader,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -93,6 +95,7 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -151,20 +154,21 @@ const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
   readonly projectCount: number;
+  readonly translator: InterfaceTranslator;
 }): { readonly title: string; readonly detail: string; readonly loading: boolean } {
-  const { catalogState } = props;
+  const { catalogState, translator } = props;
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      title: translator.message("mobile.home.loadingEnvironments"),
+      detail: translator.message("mobile.home.checkingEnvironments"),
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment to load projects and start coding sessions.",
+      title: translator.message("mobile.home.noEnvironments"),
+      detail: translator.message("mobile.home.addEnvironmentDescription"),
       loading: false,
     };
   }
@@ -179,11 +183,9 @@ function deriveEmptyState(props: {
     return {
       title:
         catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
-      detail:
-        catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+          ? translator.message("cloud.connection.unsupported")
+          : translator.message("mobile.home.environmentUnavailable"),
+      detail: catalogState.connectionError ?? translator.message("mobile.home.environmentOffline"),
       loading: false,
     };
   }
@@ -194,23 +196,23 @@ function deriveEmptyState(props: {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects and threads from the saved environment.",
+      title: translator.message("mobile.home.connectingEnvironment"),
+      detail: translator.message("mobile.home.loadingProjectsThreads"),
       loading: true,
     };
   }
 
   if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
     return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
+      title: translator.message("mobile.home.noProjects"),
+      detail: translator.message("mobile.home.noProjectsDescription"),
       loading: false,
     };
   }
 
   return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding runtime in one of your connected projects.",
+    title: translator.message("mobile.home.noThreads"),
+    detail: translator.message("mobile.home.createTask"),
     loading: false,
   };
 }
@@ -247,6 +249,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
 }
 
 export function HomeScreen(props: HomeScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const preferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -444,10 +447,12 @@ export function HomeScreen(props: HomeScreenProps) {
     setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT);
   const {
     loaded: shelfPreferencesLoaded,
+    olderProjectsExpanded,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    toggleOlderProjects,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -493,6 +498,9 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfExpanded,
     snoozedShelfExpanded: classic || snoozedShelfExpanded,
     settledShelfExpanded: classic || settledShelfExpanded,
+    // Classic project groups already separate idle projects; a project filter shows one on purpose.
+    olderProjectGroups: classic || v2ScopedProjectGroup !== null ? null : projectScopes,
+    olderProjectsExpanded,
     selectedThreadKey,
   });
   const classicGroups = new Map<
@@ -628,6 +636,16 @@ export function HomeScreen(props: HomeScreenProps) {
           onSwipeableWillOpen={handleSwipeableWillOpen}
           simultaneousSwipeGesture={homeScrollGesture}
           activationKey={item.key}
+        />
+      );
+    }
+    if (item.type === "v2-older-projects-shelf") {
+      return (
+        <ThreadListV2OlderProjectsShelfHeader
+          count={item.count}
+          disabled={item.disabled}
+          expanded={item.expanded}
+          onToggle={toggleOlderProjects}
         />
       );
     }
@@ -818,6 +836,7 @@ export function HomeScreen(props: HomeScreenProps) {
       : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
         "this environment");
   const emptyState = deriveEmptyState({
+    translator,
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
@@ -842,12 +861,16 @@ export function HomeScreen(props: HomeScreenProps) {
             <EmptyState
               title={emptyState.title}
               detail={emptyState.detail}
-              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
+              actionLabel={
+                !props.catalogState.hasReadyEnvironment
+                  ? translator.message("mobile.home.addEnvironment")
+                  : undefined
+              }
               onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
               action={
                 Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
                   <FloatingActionButton
-                    label="Add environment"
+                    label={translator.message("mobile.home.addEnvironment")}
                     icon="plus"
                     variant="extended"
                     tone="primary"
@@ -893,26 +916,26 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
       <EmptyState
-        title="No results"
+        title={translator.message("mobile.home.noResults")}
         detail={`No threads matching "${props.searchQuery}".`}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        detail={translator.message("mobile.home.chooseProject")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
         title={`No threads in ${selectedEnvironmentLabel}`}
-        detail="Choose another environment or create a new task."
+        detail={translator.message("mobile.home.chooseEnvironment")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
       <EmptyState
-        title="No threads yet"
-        detail="Create a task to start a new coding session."
+        title={translator.message("mobile.home.noThreads")}
+        detail={translator.message("mobile.home.createTask")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     );

@@ -67,7 +67,12 @@ import {
   type CommandPaletteItem,
   type CommandPaletteResult,
 } from "./commandPaletteItems";
-import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
+import {
+  getRegisteredHardwareKeyboardCommands,
+  parseActiveThreadPath,
+  type HardwareKeyboardCommand,
+} from "./hardwareKeyboardCommands";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
@@ -98,6 +103,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   terminal: "terminal",
   review: PullRequestGlyph.pullRequest,
   copyThreadReference: "link",
+  cycleComposerMode: { ios: "list.bullet.clipboard", android: "auto_awesome" },
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
@@ -225,6 +231,8 @@ export function CommandPalette(props: {
   const { themeVariables } = useAppearancePreferences();
   const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
+  const translator = useMobileInterfaceTranslator();
+  const canCycleComposerMode = getRegisteredHardwareKeyboardCommands().has("cycleComposerMode");
   const projects = useProjects();
   const threads = useVisibleThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
@@ -347,6 +355,22 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (canCycleComposerMode) {
+      actions.push({
+        key: "cycleComposerMode",
+        kind: "action",
+        title: translator.message("chat.deepPlan.modeLabel", {
+          mode: [
+            translator.message("chat.composer.interaction.build"),
+            translator.message("chat.composer.mode.plan"),
+            translator.message("chat.deepPlan.label"),
+            translator.message("chat.composer.mode.chat"),
+          ].join(" / "),
+        }),
+        searchTerms: ["chat", "plan", "deep plan", "build", "mode", "shift tab"],
+        run: () => runCommand("cycleComposerMode"),
+      });
+    }
     if (canTriage) {
       actions.push({
         key: "triage",
@@ -465,6 +489,7 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
+    canCycleComposerMode,
     canTriage,
     navigation,
     projects,
@@ -473,6 +498,7 @@ export function CommandPalette(props: {
     selectDetail,
     startTriage,
     threads,
+    translator,
     triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {

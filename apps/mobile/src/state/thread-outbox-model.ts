@@ -65,6 +65,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
   composerMode: Schema.optional(ComposerMode),
   deepPlanSourceRefs: Schema.optional(Schema.Array(DeepPlanSourceRef)),
+  deepPlanIncludeProjectChats: Schema.optional(Schema.Boolean),
   sourceProposedPlan: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
@@ -109,6 +110,7 @@ export interface QueuedThreadMessage {
   readonly interactionMode?: ProviderInteractionModeType;
   readonly composerMode?: ComposerMode;
   readonly deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
+  readonly deepPlanIncludeProjectChats?: boolean;
   readonly sourceProposedPlan?: {
     readonly threadId: ThreadId;
     readonly planId: typeof PlanId.Type;

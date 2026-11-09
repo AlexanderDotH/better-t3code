@@ -1,3 +1,4 @@
+import { activeMobileHarnessSession } from "./active-harness-session";
 import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import {
   getProviderInteractionMode,
@@ -41,6 +42,7 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { resolveComposerSendWorkflow } from "@t3tools/client-runtime/composer-send-workflow";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
@@ -533,6 +535,15 @@ export function useThreadComposerState() {
     const draft = getComposerDraftSnapshot(threadKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
     const thread = selectedThreadShell;
+    if (
+      activeMobileHarnessSession(thread.id, selectedThreadProjection?.projection.thread, thread)
+    ) {
+      setThreadComposerError(
+        threadKey,
+        "Sending is paused while the original provider session is active elsewhere.",
+      );
+      return null;
+    }
     const command = parseDeepPlanComposerCommand(draft.text.trim());
     if (command) {
       updateComposerDraftSettings(threadKey, {
@@ -679,6 +690,12 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    const sendComposerMode = command
+      ? "deep-plan"
+      : resolveComposerMode(draft.composerMode, draft.interactionMode ?? thread.interactionMode);
+    const devicePreferences = AsyncResult.isSuccess(preferencesResult)
+      ? preferencesResult.value
+      : null;
     clearThreadComposerError(threadKey);
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
@@ -690,19 +707,17 @@ export function useThreadComposerState() {
       context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      composerMode: command
-        ? "deep-plan"
-        : resolveComposerMode(draft.composerMode, draft.interactionMode ?? thread.interactionMode),
+      composerMode: sendComposerMode,
       deepPlanSourceRefs: draft.deepPlanSourceRefs,
-      fetchMode:
-        AsyncResult.isSuccess(preferencesResult) &&
-        preferencesResult.value.experimentalFetch === true &&
-        serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined
-          ? "repository-exploration"
-          : undefined,
-      improvePromptBeforeSend:
-        AsyncResult.isSuccess(preferencesResult) &&
-        preferencesResult.value.improvePromptBeforeSend === true,
+      deepPlanIncludeProjectChats: draft.deepPlanIncludeProjectChats,
+      ...resolveComposerSendWorkflow({
+        prompt: command?.prompt ?? draft.text,
+        composerMode: sendComposerMode,
+        supportsAgentWorkflow:
+          serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined,
+        experimentalFetch: devicePreferences?.experimentalFetch === true,
+        improvePromptBeforeSend: devicePreferences?.improvePromptBeforeSend === true,
+      }),
       interactionMode: resolveProviderInteractionMode(
         provider,
         getProviderInteractionMode(
@@ -717,12 +732,7 @@ export function useThreadComposerState() {
       {
         modelSelection,
         runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-        composerMode: command
-          ? "deep-plan"
-          : resolveComposerMode(
-              draft.composerMode,
-              draft.interactionMode ?? thread.interactionMode,
-            ),
+        composerMode: sendComposerMode,
       },
     );
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });

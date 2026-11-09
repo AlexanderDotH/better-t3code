@@ -10,6 +10,7 @@ export interface ListRowContentProps {
   readonly label: string;
   readonly description?: string;
   readonly detail?: string;
+  readonly detailPlacement?: "auto" | "below";
   readonly disabled?: boolean;
 }
 
@@ -18,12 +19,13 @@ export function ListRowLayout({
   label,
   description,
   detail,
+  detailPlacement = "auto",
   disabled,
   accessory,
   tone = "default",
 }: ListRowContentProps & { readonly accessory?: ReactNode; readonly tone?: "default" | "danger" }) {
   const { fontScale } = useWindowDimensions();
-  const stackDetail = fontScale >= 1.5;
+  const stackDetail = detailPlacement === "below" || fontScale >= 1.5;
   return (
     <View
       className={cn(

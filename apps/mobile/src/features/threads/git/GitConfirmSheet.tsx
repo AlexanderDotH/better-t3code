@@ -17,6 +17,7 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { SheetActionButton } from "./gitSheetComponents";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 type GitConfirmSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -29,6 +30,7 @@ type GitConfirmSheetProps = StaticScreenProps<{
 }>;
 
 export function GitConfirmSheet(props: GitConfirmSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -131,7 +133,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       ) : null}
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Confirm action"
+          title={translator.message("mobile.git.confirmAction")}
           onBack={() => navigation.goBack()}
           hideBottomBorder
         />
@@ -181,7 +183,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
             />
             <SheetActionButton
               icon="arrow.branch"
-              label="Feature branch & continue"
+              label={translator.message("mobile.git.featureBranchContinue")}
               disabled={!canChangeThreadBranch}
               tone="primary"
               onPress={() => void movePendingActionToFeatureBranch()}

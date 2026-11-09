@@ -11,19 +11,21 @@ import {
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
+import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
 export function TextAppearanceSection() {
+  const translator = useMobileInterfaceTranslator();
   const { isReady, appearance, setBaseFontSize, mathRenderingEnabled, setMathRenderingEnabled } =
     useAppearancePreferences();
 
   return (
-    <SettingsSection title="Text">
+    <SettingsSection title={translator.message("mobile.appearance.text")}>
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"
-        label="Text size"
+        label={translator.message("mobile.appearance.textSize")}
         max={MAX_BASE_FONT_SIZE}
         min={MIN_BASE_FONT_SIZE}
         onChange={setBaseFontSize}

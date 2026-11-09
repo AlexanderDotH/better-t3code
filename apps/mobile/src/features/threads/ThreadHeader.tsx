@@ -49,16 +49,24 @@ export function ThreadHeader(
         onPress: () => onOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: props.onOpenGitInspector,
-    });
-    if (onMergeBack) {
+    if (props.gitControls.gitEnabled !== false)
+      actions.push({
+        accessibilityLabel: "Open git controls",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: props.onOpenGitInspector,
+      });
+    if (props.gitControls.gitEnabled !== false && onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
         icon: PullRequestGlyph.merged,
         onPress: onMergeBack,
+      });
+    }
+    if (props.gitControls.knowledgeGraphControl) {
+      actions.push({
+        accessibilityLabel: props.gitControls.knowledgeGraphControl.accessibilityLabel,
+        icon: "point.3.connected.trianglepath.dotted",
+        onPress: props.gitControls.knowledgeGraphControl.onPress,
       });
     }
     return actions;
@@ -74,6 +82,8 @@ export function ThreadHeader(
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
+    props.gitControls.gitEnabled,
+    props.gitControls.knowledgeGraphControl,
   ]);
 
   return (

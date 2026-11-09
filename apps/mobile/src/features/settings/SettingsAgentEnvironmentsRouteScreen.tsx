@@ -286,7 +286,7 @@ function ProviderSettings(props: {
                   }
                   className="py-2 disabled:opacity-40"
                 >
-                  <Text className="font-t3-medium text-destructive">
+                  <Text className="font-t3-medium text-danger-foreground">
                     {translator.message("mobile.settings.agents.remove")}
                   </Text>
                 </Pressable>
@@ -507,7 +507,7 @@ function MobileProviderAuthentication(props: {
             onPress={() => void saveCredential()}
             className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
           >
-            <Text className="font-t3-medium text-background">
+            <Text className="font-t3-medium text-screen">
               {busy
                 ? translator.message("mobile.settings.agents.saving")
                 : (presentation.credentialActionLabel ?? presentation.actionLabel)}
@@ -557,7 +557,7 @@ function MobileProviderAuthentication(props: {
           onPress={() => void connect()}
           className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
         >
-          <Text className="font-t3-medium text-background">
+          <Text className="font-t3-medium text-screen">
             {busy
               ? translator.message("mobile.settings.agents.connecting")
               : presentation.actionLabel}
@@ -597,7 +597,7 @@ function MobileProviderAuthentication(props: {
               }
               className="self-start rounded-xl bg-foreground px-4 py-3"
             >
-              <Text className="font-t3-medium text-background">
+              <Text className="font-t3-medium text-screen">
                 {translator.message("mobile.settings.agents.openAuthorization")}
               </Text>
             </Pressable>
@@ -619,7 +619,7 @@ function MobileProviderAuthentication(props: {
                 }
                 className="self-start rounded-xl bg-foreground px-4 py-3"
               >
-                <Text className="font-t3-medium text-background">
+                <Text className="font-t3-medium text-screen">
                   {translator.message("mobile.settings.agents.openVerification")}
                 </Text>
               </Pressable>
@@ -631,7 +631,7 @@ function MobileProviderAuthentication(props: {
               onPress={() => void connect()}
               className="self-start rounded-xl bg-foreground px-4 py-3"
             >
-              <Text className="font-t3-medium text-background">
+              <Text className="font-t3-medium text-screen">
                 {translator.message("common.retry")}
               </Text>
             </Pressable>
@@ -1077,7 +1077,7 @@ function EnvironmentAgentSettings(props: {
               }}
               className="rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
             >
-              <Text className="font-t3-medium text-background">
+              <Text className="font-t3-medium text-screen">
                 {translator.message("mobile.settings.agents.saveKey")}
               </Text>
             </Pressable>

@@ -1,3 +1,4 @@
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
@@ -9,7 +10,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
-import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
@@ -59,7 +61,7 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { useDeadlinePassed } from "../../lib/clock";
+import { useDeadlinePassed, useNowMinuteMs } from "../../lib/clock";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
@@ -81,6 +83,7 @@ import * as Haptics from "expo-haptics";
 import {
   useCallback,
   useContext,
+  useMemo,
   useEffect,
   useEffectEvent,
   useRef,
@@ -382,6 +385,7 @@ function ThreadDetailBody(
     >;
   },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
@@ -543,7 +547,7 @@ function ThreadDetailBody(
       case "cached":
       case "synchronizing":
         if (contentPresentationKind === "ready") {
-          return "Syncing messages...";
+          return translator.message("mobile.thread.syncingMessages");
         }
         return contentPresentationKind === "loading" ? "Loading messages..." : null;
       default:
@@ -714,6 +718,7 @@ function ThreadDetailBody(
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
+      translator,
       connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
       environmentLabel: props.environmentLabel,
@@ -913,46 +918,37 @@ function ThreadDetailBody(
   const pendingMessageEditBlocked =
     queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
     null;
-  const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
-    readonly key: string;
-    readonly threadKey: string;
-    readonly now: number;
-  } | null>(null);
-  // Approval/question identity invalidates quota: answering on any client resumes spending.
-  const usageLimitsKey = [
-    selectedThreadKey,
-    props.selectedThread.modelSelection.instanceId,
-    props.selectedThread.latestRun?.runId ?? "",
-    props.activePendingApproval?.requestId ?? props.activePendingUserInput?.requestId ?? "",
-  ].join(":");
-  if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
-    setUsageLimitsPanel(null);
-  }
-  const usageLimitsReport =
-    usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
-      ? collectProviderUsageLimits(
-          props.selectedThread.modelSelection.instanceId,
-          props.serverConfig?.providers ?? [],
-          props.serverConfig?.usageLimitSources ?? [],
-          usageLimitsPanel.now,
-        )
-      : null;
-  const showUsageLimits = (report: UsageLimitsReport | null) =>
-    setUsageLimitsPanel(
-      report === null
-        ? null
-        : {
-            key: usageLimitsKey,
-            threadKey: selectedThreadKey,
-            now: Date.parse(report.createdAt),
-          },
-    );
-  const dismissUsageLimits = () => setUsageLimitsPanel(null);
-  // Late sends clear only their originating thread's limits panel.
-  const clearUsageLimitsFor = (threadKey: string) =>
-    setUsageLimitsPanel((current) =>
-      current !== null && current.threadKey === threadKey ? null : current,
-    );
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const usageLimitsVisible =
+    AsyncResult.isSuccess(preferences) && preferences.value.composerUsageLimitsVisible === true;
+  const usageLimitsNow = useNowMinuteMs();
+  const usageLimitsReport = useMemo(
+    () =>
+      usageLimitsVisible
+        ? collectProviderUsageLimits(
+            props.selectedThread.modelSelection.instanceId,
+            props.serverConfig?.providers ?? [],
+            props.serverConfig?.usageLimitSources ?? [],
+            usageLimitsNow,
+          )
+        : null,
+    [
+      props.selectedThread.modelSelection.instanceId,
+      props.serverConfig,
+      usageLimitsVisible,
+      usageLimitsNow,
+    ],
+  );
+  const showUsageLimits = (report: UsageLimitsReport | null) => {
+    if (report === null) return;
+    savePreferences({
+      transform: (current) => ({
+        composerUsageLimitsVisible: current.composerUsageLimitsVisible !== true,
+      }),
+    });
+  };
+  const dismissUsageLimits = () => savePreferences({ composerUsageLimitsVisible: false });
   const userInputToggled =
     userInputToggle !== null && userInputToggle.requestId === activeUserInputRequestId;
   const userInputCollapsed = userInputToggled && userInputToggle.collapsed;
@@ -1224,7 +1220,6 @@ function ThreadDetailBody(
     stillSendable?: () => boolean,
   ) => {
     const scope = threadScope.current.signal;
-    const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
     );
@@ -1268,8 +1263,6 @@ function ThreadDetailBody(
     if (messageId === null || scope.aborted) {
       return messageId;
     }
-
-    clearUsageLimitsFor(targetThreadKey);
 
     const nextAnchorMessageId = resolveThreadFeedSubmissionAnchor({
       currentAnchorMessageId: anchorMessageId,
@@ -1751,9 +1744,9 @@ function ThreadDetailBody(
                         placeholder={
                           props.activePendingApproval
                             ? props.activePendingApproval.supportsFeedback
-                              ? "Send feedback to decline this request"
-                              : "Send a message to decline and redirect the agent"
-                            : "Ask anything"
+                              ? translator.message("mobile.thread.declineWithFeedback")
+                              : translator.message("mobile.thread.declineAndRedirect")
+                            : translator.message("mobile.thread.askAnything")
                         }
                         contentMaxWidth={contentMaxWidth}
                         draftControls={props.draftMode?.controls}

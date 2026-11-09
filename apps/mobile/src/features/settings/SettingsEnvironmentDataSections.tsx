@@ -154,7 +154,7 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
                   onPress={() => void runImport(source)}
                   className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
                 >
-                  <Text className="font-t3-medium text-background">
+                  <Text className="font-t3-medium text-screen">
                     {importing
                       ? translator.message("mobile.settings.data.importing")
                       : translator.message("mobile.settings.data.importChats")}
@@ -418,7 +418,7 @@ export function EnvironmentSpeechProfileSettings(props: {
                         onPress={() => void runAction(project, "index")}
                         className="rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
                       >
-                        <Text className="font-t3-medium text-background">
+                        <Text className="font-t3-medium text-screen">
                           {busyAction === "index"
                             ? translator.message(
                                 profile?.source === "indexed"

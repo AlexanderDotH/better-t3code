@@ -1,4 +1,6 @@
+import { mobileGitWorkbenchCanActivate } from "../../state/git-workbench-availability";
 import { useEnvironmentQuery } from "../../state/query";
+import { useMobileGitWorkbenchAvailability } from "../../state/use-git-workbench-availability";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -28,10 +30,16 @@ export function useReviewHeaderPresentation(props: {
   readonly onRefresh: () => Promise<void>;
 }): ReviewHeaderPresentation {
   const { selectedThread } = useThreadSelection();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
+  const gitEnabled = mobileGitWorkbenchCanActivate(
+    useMobileGitWorkbenchAvailability({
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+    }),
+  );
+  const gitState = useSelectedThreadGitState(gitEnabled);
+  const gitActions = useSelectedThreadGitActions(gitEnabled);
   const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && props.selectedThreadCwd !== null
+    gitEnabled && selectedThread !== null && props.selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: props.selectedThreadCwd },
@@ -40,8 +48,9 @@ export function useReviewHeaderPresentation(props: {
   );
   // Selection-based git hooks apply only to reviews of the selected thread.
   const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(props.threadId);
+    gitEnabled && selectedThread !== null && String(selectedThread.id) === String(props.threadId);
   const gitMenu = useThreadGitMenuDefinition({
+    gitEnabled,
     environmentId: props.environmentId,
     threadId: props.threadId,
     currentBranch: selectedThread?.branch ?? null,

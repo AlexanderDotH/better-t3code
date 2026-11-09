@@ -18,6 +18,10 @@ vi.mock("expo-audio", () => ({
   setAudioModeAsync: audio.setMode,
   setIsAudioActiveAsync: audio.setActive,
 }));
+vi.mock("../../native/voiceRecordingAudio", () => ({
+  configureMusicFriendlyVoiceRecording: async () => {},
+  clearVoiceRecordingInput: async () => {},
+}));
 
 import {
   createVoiceInputTarget,

@@ -84,6 +84,10 @@ vi.mock("expo-audio", () => ({
   setAudioModeAsync: audio.setAudioMode,
   setIsAudioActiveAsync: audio.setActive,
 }));
+vi.mock("../native/voiceRecordingAudio", () => ({
+  configureMusicFriendlyVoiceRecording: async () => {},
+  clearVoiceRecordingInput: async () => {},
+}));
 vi.mock("@react-navigation/native", () => ({
   useIsFocused: () => true,
   useNavigation: () => ({ navigate: audio.navigate }),
@@ -198,6 +202,21 @@ vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
   useEnvironmentServerConfig: () => null,
+  useQuietThreadShell: () => null,
+}));
+vi.mock("../state/use-remote-environment-registry", () => ({
+  useRemoteEnvironmentRuntime: () => null,
+}));
+vi.mock("../features/threads/use-chat-presentation-motion", () => ({
+  useNativeChatPresentationMotion: () => ({
+    motion: { betterT3: false, enabled: false, claim: () => null },
+    disclose: () => undefined,
+    discardPending: () => undefined,
+  }),
+}));
+vi.mock("../features/threads/use-thread-fork-action", () => ({ useThreadForkAction: () => null }));
+vi.mock("../features/threads/use-thread-retry-action", () => ({
+  useThreadRetryAction: () => null,
 }));
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
@@ -1188,7 +1207,7 @@ describe("ThreadInlineFilePreview playback", () => {
       await activateAudioSession(recording);
       expect(audio.setAudioMode).toHaveBeenLastCalledWith({
         allowsRecording: true,
-        interruptionMode: "doNotMix",
+        interruptionMode: "mixWithOthers",
         playsInSilentMode: true,
         shouldPlayInBackground: false,
       });

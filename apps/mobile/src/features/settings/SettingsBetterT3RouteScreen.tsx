@@ -47,6 +47,7 @@ import {
 } from "../../components/AndroidScreenScaffold";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { useEnvironments } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -200,8 +201,8 @@ function BetterT3ChoiceModal<T extends BetterT3ChoiceValue>(props: {
 function BetterT3ActionRow(props: {
   readonly control: MobileBetterT3Control;
   readonly label: string;
-  readonly description: string;
-  readonly status: string;
+  readonly description?: string;
+  readonly status?: string;
   readonly onPress: () => void;
 }) {
   const interactive = props.control.controlKind !== "status-only";
@@ -209,33 +210,31 @@ function BetterT3ActionRow(props: {
   return (
     <Pressable
       accessibilityHint={props.description}
-      accessibilityLabel={`${props.label}, ${props.status}`}
+      accessibilityLabel={props.status ? `${props.label}, ${props.status}` : props.label}
       accessibilityRole={interactive ? "button" : "text"}
       accessibilityState={interactive ? { disabled: unavailable } : undefined}
-      className={`flex-row items-center gap-3 border-t border-border-subtle p-4 first:border-t-0 ${unavailable ? "opacity-45" : ""}`}
       disabled={!interactive || unavailable}
       onPress={props.onPress}
     >
-      <SymbolView
-        name={SECTION_ICONS[props.control.descriptor.section]}
-        size={21}
-        tintColorClassName="accent-icon"
-        type="monochrome"
+      <ListRowLayout
+        icon={SECTION_ICONS[props.control.descriptor.section]}
+        label={props.label}
+        description={props.description}
+        detail={props.status}
+        detailPlacement={(props.status?.length ?? 0) > 16 ? "below" : "auto"}
+        disabled={unavailable}
+        accessory={
+          interactive ? (
+            <SymbolView
+              name="chevron.right"
+              size={15}
+              tintColorClassName="accent-icon"
+              type="monochrome"
+              weight="semibold"
+            />
+          ) : undefined
+        }
       />
-      <View className="min-w-0 flex-1 gap-1">
-        <Text className="text-lg text-foreground">{props.label}</Text>
-        <Text className="text-sm leading-normal text-foreground-muted">{props.description}</Text>
-      </View>
-      <Text className="max-w-[112px] text-right text-xs text-foreground-muted">{props.status}</Text>
-      {props.control.controlKind !== "status-only" ? (
-        <SymbolView
-          name="chevron.right"
-          size={15}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-          weight="semibold"
-        />
-      ) : null}
     </Pressable>
   );
 }
@@ -715,7 +714,6 @@ export function SettingsBetterT3RouteScreen() {
         <View key={control.id}>
           <BetterT3ActionRow
             control={control}
-            description={description}
             label={translator.message("settings.betterT3.value.projectSort")}
             onPress={() => setActiveChoice("project-sort")}
             status={translator.message(
@@ -726,7 +724,6 @@ export function SettingsBetterT3RouteScreen() {
           />
           <BetterT3ActionRow
             control={control}
-            description={description}
             label={translator.message("settings.betterT3.value.threadSort")}
             onPress={() => setActiveChoice("thread-sort")}
             status={translator.message(
@@ -748,7 +745,7 @@ export function SettingsBetterT3RouteScreen() {
         description={description}
         label={label}
         onPress={() => navigateToControl(control.id)}
-        status={preparedStatusLabel ?? status}
+        status={preparedStatusLabel ?? (available ? undefined : status)}
       />
     );
   };

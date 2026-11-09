@@ -1,3 +1,4 @@
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -54,6 +55,7 @@ import {
 } from "../../state/pending-new-tasks-model";
 import { useBranches } from "../../state/queries";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   resolveThreadPrBadgeAction,
   type ThreadPrPresentation,
@@ -83,57 +85,57 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 interface StatusLabel {
-  readonly label: string;
+  readonly labelKey: InterfaceMessageKey;
   readonly icon: AppSymbolName;
   readonly className: string;
   readonly iconTintClassName: string;
 }
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
-    label: "Approval",
+    labelKey: "mobile.thread.approval",
     icon: "exclamationmark.shield",
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
   input: {
-    label: "Input",
+    labelKey: "mobile.thread.input",
     icon: "questionmark.bubble",
     className: "text-adaptive-indigo-600-300",
     iconTintClassName: "accent-adaptive-indigo-600-300",
   },
   request: {
-    label: "Request",
+    labelKey: "mobile.thread.request",
     icon: "person.crop.circle",
     className: "text-adaptive-fuchsia-600-300",
     iconTintClassName: "accent-adaptive-fuchsia-600-300",
   },
   working: {
-    label: "Working",
+    labelKey: "mobile.thread.working",
     icon: "circle.dashed",
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
   },
   waiting: {
-    label: "Waiting",
+    labelKey: "mobile.thread.waiting",
     icon: "circle.dashed.inset.filled",
     className: "text-foreground-muted",
     iconTintClassName: "accent-foreground-muted",
   },
   failed: {
-    label: "Failed",
+    labelKey: "mobile.thread.failed",
     icon: "exclamationmark.circle",
     className: "text-danger-foreground",
     iconTintClassName: "accent-danger-foreground",
   },
   limited: {
-    label: "Limited",
+    labelKey: "mobile.thread.limited",
     icon: "exclamationmark.circle",
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
 };
 const DONE_STATUS_LABEL: StatusLabel = {
-  label: "Done",
+  labelKey: "sidebar.status.done",
   icon: "checkmark.circle",
   className: "text-adaptive-emerald-700-300",
   iconTintClassName: "accent-adaptive-emerald-700-300",
@@ -258,12 +260,17 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
+const SHELF_LABEL = {
+  working: "mobile.thread.working",
+  snoozed: "mobile.thread.snoozed",
+  settled: "mobile.thread.settled",
+} as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
 ) {
-  const label = SHELF_LABEL[props.kind];
+  const translator = useMobileInterfaceTranslator();
+  const label = translator.message(SHELF_LABEL[props.kind]);
   return (
     <ThreadListV2Section
       label={props.expanded ? label : `${label} (${props.count})`}
@@ -291,6 +298,28 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
 });
+
+export const ThreadListV2OlderProjectsShelfHeader = memo(
+  function ThreadListV2OlderProjectsShelfHeader(props: ThreadListV2ShelfHeaderProps) {
+    const translator = useMobileInterfaceTranslator();
+    const label = translator.message("sidebar.olderProjects.label");
+    return (
+      <ThreadListV2Section
+        label={props.expanded ? label : `${label} (${props.count})`}
+        pane={props.pane}
+        disclosure={{
+          expanded: props.expanded,
+          disabled: props.disabled,
+          onToggle: props.onToggle,
+          accessibilityLabel: translator.message("sidebar.olderProjects.count", {
+            count: props.count,
+          }),
+          accessibilityHint: translator.message("sidebar.olderProjects.tooltip"),
+        }}
+      />
+    );
+  },
+);
 
 export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
@@ -676,6 +705,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
   const metadataTypography = useScaledTextRole("label");
@@ -741,7 +771,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
-      ? { ...workingLabel, label: "Goal" }
+      ? { ...workingLabel, labelKey: "mobile.thread.goal" as const }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
@@ -913,10 +943,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
-      { id: "settle", title: "Settle", image: "checkmark" },
+      { id: "settle", title: translator.message("mobile.thread.settle"), image: "checkmark" },
       {
         id: "snooze",
-        title: "Snooze",
+        title: translator.message("mobile.thread.snooze"),
         image: "clock",
         subactions: snoozePresetActions,
       },
@@ -924,9 +954,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...titleMenuItems,
       ...autoSettleMenuItems,
       LEGACY_MENU_ACTIONS[0]!,
-      { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [arrangementMenuItems, autoSettleMenuItems, snoozePresetActions, titleMenuItems],
+    [arrangementMenuItems, autoSettleMenuItems, snoozePresetActions, titleMenuItems, translator],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -1046,7 +1081,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       return {
         accessibilityLabel: `Archive ${thread.title}`,
         icon: "archivebox" as const,
-        label: "Archive",
+        label: translator.message("mobile.thread.archive"),
         onPress: handleArchive,
       };
     }
@@ -1054,7 +1089,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       return {
         accessibilityLabel: `Wake ${thread.title} now`,
         icon: "clock" as const,
-        label: "Wake",
+        label: translator.message("mobile.thread.wakeShort"),
         onPress: handleUnsnooze,
       };
     }
@@ -1062,16 +1097,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? {
           accessibilityLabel: `Un-settle ${thread.title}`,
           icon: "arrow.uturn.backward" as const,
-          label: "Un-settle",
+          label: translator.message("mobile.thread.unsettle"),
           onPress: handleUnsettle,
         }
       : {
           accessibilityLabel: `Settle ${thread.title}`,
           icon: "checkmark" as const,
-          label: "Settle",
+          label: translator.message("mobile.thread.settle"),
           onPress: handleSettle,
         };
   }, [
+    translator,
     handleArchive,
     handleSettle,
     handleUnsettle,
@@ -1085,16 +1121,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ? {
             accessibilityLabel: `Choose when to snooze ${thread.title}`,
             icon: "clock" as const,
-            label: "Snooze",
+            label: translator.message("mobile.thread.snooze"),
             menu: {
               actions: snoozePresetActions,
               onPressAction: handleMenuAction,
-              title: "Snooze until",
+              title: translator.message("mobile.thread.snoozeUntil"),
             },
             onPress: () => undefined,
           }
         : null,
-    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
+    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title, translator],
   );
   const swipeAccessibilityHint = !canOperateThread
     ? "Opens the thread"
@@ -1200,7 +1236,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
-                {statusLabel.label}
+                {translator.message(statusLabel.labelKey)}
                 {status === "working" ? (
                   <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
                 ) : status === "waiting" ? (
@@ -1496,8 +1532,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     },
                   ]
                 : []),
-              { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
-              { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              {
+                id: "copy-thread",
+                title: translator.message("mobile.thread.copyThread"),
+                image: "text.bubble",
+              },
+              {
+                id: "copy-thread-id",
+                title: translator.message("mobile.thread.copyThreadId"),
+                image: "doc.on.doc",
+              },
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported

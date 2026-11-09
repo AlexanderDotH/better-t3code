@@ -28,6 +28,7 @@ import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCo
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { changeTone, DiffTokenText, ReviewChangeBar } from "./reviewDiffRendering";
 import { highlightReviewSelectedLines } from "./highlightReviewSelectedLines";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const REVIEW_COMMENT_PREVIEW_MAX_LINES = 5;
 const NO_LINES: ReturnType<typeof getSelectedReviewCommentLines> = [];
@@ -39,6 +40,7 @@ type ReviewCommentComposerSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const isAndroid = Platform.OS === "android";
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -150,16 +152,20 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
               />
             </Pressable>
 
-            <Text className="text-lg font-t3-bold text-foreground">Add Comment</Text>
+            <Text className="text-lg font-t3-bold text-foreground">
+              {translator.message("mobile.review.addComment")}
+            </Text>
 
             <View className="h-12 w-12" />
           </View>
 
           {!target ? (
             <View className="rounded-[22px] border border-border bg-card px-4 py-5">
-              <Text className="text-base font-t3-bold text-foreground">No selection</Text>
+              <Text className="text-base font-t3-bold text-foreground">
+                {translator.message("mobile.review.noSelection")}
+              </Text>
               <Text className="mt-1 text-sm leading-normal text-foreground-muted">
-                Select a diff line or range first.
+                {translator.message("mobile.review.selectRange")}
               </Text>
             </View>
           ) : (
@@ -226,7 +232,9 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
               </View>
 
               <View className="min-h-0 flex-1 gap-2">
-                <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
+                <Text className="text-sm font-t3-bold text-foreground">
+                  {translator.message("mobile.review.comment")}
+                </Text>
                 <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
                   <View className="min-h-0 flex-1 px-4 pt-3.5">
                     <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>
@@ -266,15 +274,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         {!isAndroid && target ? (
           <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
             <ControlPill
-              accessibilityLabel="Add image"
+              accessibilityLabel={translator.message("mobile.review.addImage")}
               icon="plus"
               onPress={() => void handlePickImages()}
             />
             <View className="flex-1" />
             <ControlPill
-              accessibilityLabel="Comment"
+              accessibilityLabel={translator.message("mobile.review.comment")}
               icon="arrow.up"
-              label="Comment"
+              label={translator.message("mobile.review.comment")}
               variant="primary"
               disabled={!canSubmit}
               onPress={handleSubmit}
@@ -292,15 +300,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
             style={{ paddingBottom: Math.max(insets.bottom, 10) }}
           >
             <ControlPill
-              accessibilityLabel="Add image"
+              accessibilityLabel={translator.message("mobile.review.addImage")}
               icon="plus"
               onPress={() => void handlePickImages()}
             />
             <View className="flex-1" />
             <ControlPill
-              accessibilityLabel="Comment"
+              accessibilityLabel={translator.message("mobile.review.comment")}
               icon="arrow.up"
-              label="Comment"
+              label={translator.message("mobile.review.comment")}
               variant="primary"
               disabled={!canSubmit}
               onPress={handleSubmit}

@@ -830,6 +830,55 @@ describe("buildThreadListV2ListItems", () => {
     expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("settled");
     expect(threadJumpTarget(items, "thread.jump.3")).toBeNull();
   });
+
+  it("folds active rows of idle projects under an Older projects shelf that keeps the open row", () => {
+    const idle = ProjectId.make("idle");
+    const idleThreads = ["idle-a", "idle-b"].map((id) =>
+      makeThread({ id: ThreadId.make(id), title: id, projectId: idle }),
+    );
+    const build = (olderProjectsExpanded: boolean, selectedThreadKey: string | null = null) => {
+      const olderLayout = buildThreadListV2Items({
+        threads: [
+          makeThread({ id: ThreadId.make("recent"), title: "recent" }),
+          ...idleThreads,
+          makeThread({
+            id: ThreadId.make("idle-pinned"),
+            title: "idle-pinned",
+            projectId: idle,
+            pinnedAt: NOW,
+          }),
+        ],
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        olderProjectGroupByMemberKey: new Map([[`${environmentId}:${idle}`, "idle-group"]]),
+        olderProjectsExpanded,
+        selectedThreadKey,
+      });
+      return buildThreadListV2ListItems({
+        items: olderLayout.items,
+        pendingTasks: [],
+        olderProjectCount: olderLayout.olderProjectCount,
+        olderProjectsExpanded,
+        olderProjectsShelfHeaderIndex: olderLayout.olderProjectsShelfHeaderIndex,
+      }).map((item) =>
+        item.type === "v2-thread"
+          ? item.item.thread.id
+          : item.type === "v2-older-projects-shelf"
+            ? `older:${item.count}:${item.expanded}`
+            : item.type,
+      );
+    };
+
+    expect(build(true)).toEqual(["idle-pinned", "recent", "older:1:true", "idle-a", "idle-b"]);
+    expect(build(false)).toEqual(["idle-pinned", "recent", "older:1:false"]);
+    expect(build(false, `${environmentId}:idle-b`)).toEqual([
+      "idle-pinned",
+      "recent",
+      "older:1:false",
+      "idle-b",
+    ]);
+  });
 });
 
 describe("pending mobile thread moves", () => {

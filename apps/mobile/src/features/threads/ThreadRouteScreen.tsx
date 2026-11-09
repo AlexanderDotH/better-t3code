@@ -19,6 +19,7 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
+  resolveBetterT3FeatureFlag,
   EnvironmentId,
   MessageId,
   ThreadId,
@@ -80,6 +81,10 @@ import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
+import { useMobileGitWorkbenchAvailability } from "../../state/use-git-workbench-availability";
+import { mobileGitWorkbenchCanActivate } from "../../state/git-workbench-availability";
+import { mobileKnowledgeGraphThreadEntryTarget } from "../knowledge-graph/mobile-knowledge-graph";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
@@ -152,10 +157,11 @@ function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
 }
 
 function OpeningThreadLoadingScreen() {
+  const translator = useMobileInterfaceTranslator();
   return (
     <ThreadRouteFallbackLayout>
       <LoadingScreen
-        message="Opening thread…"
+        message={translator.message("mobile.thread.opening")}
         messagePlacement="above-spinner"
         embedded={Platform.OS === "android"}
       />
@@ -181,6 +187,7 @@ function ThreadUnavailableScreen(props: {
   readonly actionLabel: string;
   readonly onAction: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <ThreadRouteFallbackLayout>
       <ScrollView
@@ -194,8 +201,8 @@ function ThreadUnavailableScreen(props: {
         className="bg-screen flex-1 android:bg-transparent"
       >
         <EmptyState
-          title="Thread unavailable"
-          detail="This thread is not available in the current mobile snapshot."
+          title={translator.message("mobile.thread.unavailable")}
+          detail={translator.message("mobile.thread.unavailableDetail")}
           actionLabel={props.actionLabel}
           onAction={props.onAction}
         />
@@ -287,6 +294,15 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       {content}
     </>
   );
+
+  if (environmentId !== null && threadIdRaw === null) {
+    return withInspectorHeader(
+      <ThreadUnavailableScreen
+        actionLabel="Manage environments"
+        onAction={() => openSettings(navigation, "SettingsEnvironments")}
+      />,
+    );
+  }
 
   if (environmentId === null || threadIdRaw === null) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
@@ -381,8 +397,14 @@ function ThreadRouteContent(
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
+  const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(
+    useMobileGitWorkbenchAvailability({
+      environmentId: selectedThread?.environmentId ?? null,
+      threadId: selectedThread?.id ?? null,
+    }),
+  );
+  const gitState = useSelectedThreadGitState(gitWorkbenchEnabled);
+  const gitActions = useSelectedThreadGitActions(gitWorkbenchEnabled);
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
@@ -485,6 +507,7 @@ function ThreadRouteContent(
         : chosenInspectorMode === null || chosenInspectorMode === "route"
           ? "route"
           : chosenInspectorMode;
+    if (mode === "git" && !gitWorkbenchEnabled) return selectedThreadCwd ? "files" : null;
     return mode === "files" && selectedThreadCwd === null ? null : mode;
   })();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the workspace navigator's auxiliary pane when the thread has no cwd for the file inspector
@@ -513,6 +536,22 @@ function ThreadRouteContent(
     if (previewTarget) revealPreview();
   }, [previewTarget]);
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const translator = useMobileInterfaceTranslator();
+  const knowledgeGraphTarget =
+    selectedThread && serverConfig
+      ? mobileKnowledgeGraphThreadEntryTarget({
+          knowledgeGraphVersion: serverConfig.environment.capabilities.knowledgeGraphVersion,
+          projectIndexingVersion: serverConfig.environment.capabilities.projectIndexingVersion,
+          enabled: resolveBetterT3FeatureFlag(
+            serverConfig.settings.betterT3Environment,
+            "knowledge.graph",
+          ),
+          environmentId: selectedThread.environmentId,
+          projectId: selectedThread.projectId,
+          threadId: selectedThread.id,
+        })
+      : null;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -546,7 +585,7 @@ function ThreadRouteContent(
     .filter(Boolean)
     .join(" · ");
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    gitWorkbenchEnabled && selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -576,6 +615,7 @@ function ThreadRouteContent(
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
   const handleOpenGitInspector = () => {
+    if (!gitWorkbenchEnabled) return;
     if (!fileInspector.supported) {
       if (selectedThread === null) {
         return;
@@ -672,7 +712,7 @@ function ThreadRouteContent(
       <ThreadInspectorContentStack
         renderPreview={renderPreviewInspector}
         renderFiles={renderFilesInspector}
-        renderGit={renderGitInspector}
+        renderGit={gitWorkbenchEnabled ? renderGitInspector : undefined}
         mode={inspectorMode}
         resetKeys={[routeThreadIdentity, selectedThreadCwd]}
         renderRoute={props.renderInspector ? renderRouteInspector : undefined}
@@ -821,16 +861,27 @@ function ThreadRouteContent(
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
+    gitEnabled: gitWorkbenchEnabled,
+    ...(knowledgeGraphTarget
+      ? {
+          knowledgeGraphControl: {
+            accessibilityLabel: translator.message("knowledgeGraph.title"),
+            onPress: () =>
+              navigation.navigate(knowledgeGraphTarget.screen, knowledgeGraphTarget.params),
+          },
+        }
+      : {}),
     auxiliaryPaneControl:
       !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
         ? {
-            accessibilityLabel: "Toggle inspector",
+            accessibilityLabel: translator.message("mobile.thread.toggleInspector"),
             onPress: handleToggleInspector,
           }
         : undefined,
     onOpenFilesInspector:
       fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
+    onOpenGitInspector:
+      fileInspector.supported && gitWorkbenchEnabled ? handleOpenGitInspector : undefined,
     onMergeBack:
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
@@ -996,14 +1047,15 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
-      <GitActionProgressOverlay
-        progress={gitActionProgress}
-        onDismiss={dismissGitActionResult}
-        onOpenPullRequest={openPullRequest}
-      />
+      {gitWorkbenchEnabled ? (
+        <GitActionProgressOverlay
+          progress={gitActionProgress}
+          onDismiss={dismissGitActionResult}
+          onOpenPullRequest={openPullRequest}
+        />
+      ) : null}
 
       <>
         <ThreadScreenBinding

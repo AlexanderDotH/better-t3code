@@ -12,6 +12,7 @@ import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
+import { useEnvironmentRecoveryNavigation } from "../connection/useEnvironmentRecoveryNavigation";
 import { PullRequestRoutingSettings } from "../connection/PullRequestRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -24,18 +25,25 @@ import {
   SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
   SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS,
 } from "../showcase/showcaseEnvironmentRows";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 export function SettingsEnvironmentsRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const {
     connectedEnvironments,
+    onChangeConnectionPairingUrl,
     onReconnectEnvironment,
     onRemoveEnvironmentPress,
     onSetEnvironmentEnabled,
     onUpdateEnvironment,
   } = useRemoteConnections();
   const navigation = useNavigation();
+  const recovery = useEnvironmentRecoveryNavigation({
+    pairingRoute: "SettingsEnvironmentNew",
+    onChangeConnectionPairingUrl,
+  });
   const insets = useSafeAreaInsets();
   const environmentSections = splitEnvironmentSections({
     connectedEnvironments,
@@ -93,7 +101,7 @@ export function SettingsEnvironmentsRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Environments"
+      title={translator.message("mobile.settings.environments")}
       trailing={
         Platform.OS === "android" && relaySession ? (
           <AndroidAnchoredMenu
@@ -121,7 +129,7 @@ export function SettingsEnvironmentsRouteScreen() {
       }
       actions={[
         {
-          accessibilityLabel: "Add environment",
+          accessibilityLabel: translator.message("mobile.connection.addEnvironment"),
           icon: "plus",
           tintColor: headerIconColor,
           onPress: () => navigation.navigate("SettingsEnvironmentNew"),
@@ -155,6 +163,7 @@ export function SettingsEnvironmentsRouteScreen() {
           onRemove={onRemoveEnvironmentPress}
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={handleUpdateEnvironment}
+          onPairAgain={recovery.onPairAgain}
         />
 
         {/* Keep connected relays visible and removable without cloud config or sign-in; this component gates discovery. */}

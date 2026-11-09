@@ -55,6 +55,7 @@ import {
   useConnectionDiagnosis,
 } from "../connection/ConnectionDiagnosisDetails";
 import { environmentStatusText } from "../connection/environmentStatusText";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
@@ -183,6 +184,7 @@ function PickerSurface(props: { readonly children: ReactNode }) {
 }
 
 export function NewTaskEnvironmentPickerRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -191,12 +193,12 @@ export function NewTaskEnvironmentPickerRouteScreen() {
       <NativeStackScreenOptions
         options={{
           headerShown: Platform.OS !== "android",
-          title: "Environment",
+          title: translator.message("mobile.navigation.environment"),
         }}
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Environment"
+          title={translator.message("mobile.navigation.environment")}
           hideBottomBorder
           onBack={() => navigation.goBack()}
         />
@@ -236,6 +238,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
 }
 
 export function NewTaskBranchPickerRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const flow = useNewTaskFlow();
   const canWriteSourceControl = useEnvironmentScope(
     flow.selectedProject?.environmentId ?? null,
@@ -318,7 +321,11 @@ export function NewTaskBranchPickerRouteScreen() {
 
   return (
     <BranchPickerScreen
-      title={flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}
+      title={
+        flow.workspaceMode === "worktree"
+          ? translator.message("mobile.thread.baseBranch")
+          : translator.message("mobile.thread.branch")
+      }
       project={flow.selectedProject}
       branches={filterNewTaskBranches(branchState.refs, branchQuery)}
       selectedBranchName={
@@ -369,6 +376,7 @@ export function BranchPickerScreen(props: {
     readonly onChangeStartFromOrigin: (value: boolean) => void;
   };
 }) {
+  const translator = useMobileInterfaceTranslator();
   const searchRef = useRef<import("react-native").TextInputInstance>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -437,12 +445,12 @@ export function BranchPickerScreen(props: {
           {props.loading ? <AppActivityIndicator /> : null}
           <Text className="text-center text-sm text-foreground-muted">
             {props.loading
-              ? "Loading branches…"
+              ? translator.message("mobile.thread.loadingBranches")
               : props.error
                 ? props.error
                 : props.query
-                  ? "No matching branches"
-                  : "No branches available"}
+                  ? translator.message("mobile.thread.noMatchingBranches")
+                  : translator.message("mobile.thread.noBranches")}
           </Text>
           {!props.loading && props.error ? (
             <View className="self-center">
@@ -494,10 +502,10 @@ export function BranchPickerScreen(props: {
           <SearchField
             inputRef={searchRef}
             autoFocus={false}
-            accessibilityLabel="Find a branch"
+            accessibilityLabel={translator.message("mobile.thread.findBranch")}
             clearAccessibilityLabel="Clear branch search"
             onChangeText={props.onQueryChange}
-            placeholder="Find a branch"
+            placeholder={translator.message("mobile.thread.findBranch")}
             value={props.query}
           />
         </View>
@@ -516,7 +524,7 @@ export function BranchPickerScreen(props: {
             ? () => [
                 createNativeMailSearchToolbarItem({
                   onSearchTextChange: props.onQueryChange,
-                  placeholder: "Find a branch",
+                  placeholder: translator.message("mobile.thread.findBranch"),
                   searchTextChangeId: "new-task-branch-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -529,7 +537,7 @@ export function BranchPickerScreen(props: {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Find a branch",
+                placeholder: translator.message("mobile.thread.findBranch"),
                 onChangeText: (event) => {
                   props.onQueryChange(event.nativeEvent.text);
                 },

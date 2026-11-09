@@ -92,7 +92,7 @@ export function UsageLimitRecoveryCard({
         </View>
       ) : null}
       {error ? (
-        <Text accessibilityRole="alert" className="text-sm text-destructive">
+        <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
           {error}
         </Text>
       ) : null}

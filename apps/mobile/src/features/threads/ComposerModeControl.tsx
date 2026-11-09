@@ -9,6 +9,8 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 export function ComposerModeControl(props: {
   readonly mode: ComposerMode;
   readonly disabled?: boolean;
+  readonly iconOnly?: boolean;
+  readonly size?: "regular" | "large";
   readonly onChange: (mode: ComposerMode) => void;
 }) {
   const { mode, disabled, onChange } = props;
@@ -45,11 +47,15 @@ export function ComposerModeControl(props: {
           ? { ios: "bubble.left.and.bubble.right", android: "chat_bubble" }
           : props.mode === "default"
             ? { ios: "hammer", android: "construction" }
-            : { ios: "list.bullet.clipboard", android: "auto_awesome" }
+            : props.mode === "deep-plan"
+              ? { ios: "list.bullet.clipboard.fill", android: "auto_awesome" }
+              : { ios: "list.bullet.clipboard", android: "auto_awesome" }
       }
+      iconOnly={props.iconOnly}
       label={labelForMode(props.mode)}
       onPress={cycleMode}
       showChevron={false}
+      size={props.size}
     />
   );
 }

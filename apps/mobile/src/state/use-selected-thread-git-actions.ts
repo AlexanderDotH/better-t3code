@@ -52,7 +52,7 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
     ),
 });
 
-export function useSelectedThreadGitActions() {
+export function useSelectedThreadGitActions(enabled = true) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -71,7 +71,7 @@ export function useSelectedThreadGitActions() {
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
+  const canChangeThreadBranch = enabled && canWriteSourceControl && canOperateThread;
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
@@ -84,7 +84,7 @@ export function useSelectedThreadGitActions() {
   const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
   const branchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadGitRootCwd,
+    cwd: enabled ? selectedThreadGitRootCwd : null,
     query: null,
   };
   const branchState = useBranches(branchTarget);
@@ -119,7 +119,7 @@ export function useSelectedThreadGitActions() {
     readonly quiet?: boolean;
     readonly cwd?: string | null;
   }) => {
-    if (!selectedThread || !selectedThreadProject) {
+    if (!enabled || !selectedThread || !selectedThreadProject) {
       return null;
     }
 
@@ -155,7 +155,7 @@ export function useSelectedThreadGitActions() {
 
   useAtomMount(
     selectedThreadStatusRevalidation(
-      selectedThread && selectedThreadProject && selectedThreadCwd
+      enabled && selectedThread && selectedThreadProject && selectedThreadCwd
         ? { environmentId: selectedThread.environmentId, cwd: selectedThreadCwd }
         : null,
     ),
@@ -172,6 +172,7 @@ export function useSelectedThreadGitActions() {
     options?: { readonly managedExternally?: boolean; readonly changesThreadBranch?: boolean },
   ): Promise<T | null> => {
     if (
+      !enabled ||
       !selectedThread ||
       !selectedThreadProject ||
       !selectedThreadCwd ||

@@ -459,7 +459,7 @@ export function MobileAiEndpointSetup(props: {
             </Text>
           </View>
           {error ? (
-            <Text accessibilityRole="alert" className="text-sm text-destructive">
+            <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
               {error}
             </Text>
           ) : null}
@@ -469,7 +469,7 @@ export function MobileAiEndpointSetup(props: {
             onPress={() => void save(false)}
             className="items-center rounded-2xl bg-foreground px-4 py-3 disabled:opacity-40"
           >
-            <Text className="font-t3-medium text-background">
+            <Text className="font-t3-medium text-screen">
               {translator.message(
                 saving
                   ? "mobile.settings.agents.saving"

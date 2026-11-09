@@ -58,7 +58,7 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
         />
       )}
       {status === "copy-failed" || status === "open-failed" ? (
-        <Text accessibilityRole="alert" className="text-xs text-destructive">
+        <Text accessibilityRole="alert" className="text-xs text-danger-foreground">
           {status === "copy-failed"
             ? "Could not copy the request. Try again."
             : "Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."}

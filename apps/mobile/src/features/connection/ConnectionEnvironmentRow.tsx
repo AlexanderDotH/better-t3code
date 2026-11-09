@@ -1,4 +1,8 @@
-import { environmentLastSyncedText } from "./environmentSections";
+import {
+  environmentLastSyncedText,
+  environmentSummaryRecoveryAction,
+  type EnvironmentRecoveryAction,
+} from "./environmentSections";
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -25,6 +29,7 @@ import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./Connection
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { environmentStatusText } from "./environmentStatusText";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -45,11 +50,14 @@ export function ConnectionEnvironmentRow(props: {
   readonly onReconnect: (environmentId: EnvironmentId) => void;
   readonly onRemove: (environmentId: EnvironmentId) => void;
   readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
+  readonly onPairAgain?: (environment: ConnectedEnvironmentSummary) => void;
+  readonly onSignIn?: () => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
     updates: { readonly label: string; readonly displayUrl: string },
   ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
   const serverConfig = useAtomValue(
@@ -79,6 +87,16 @@ export function ConnectionEnvironmentRow(props: {
     enabled &&
     (props.environment.connectionState === "connecting" ||
       props.environment.connectionState === "reconnecting");
+  const recovery = environmentSummaryRecoveryAction(props.environment);
+  const recoveryHandlers: Record<EnvironmentRecoveryAction["kind"], (() => void) | undefined> = {
+    retry: () => props.onReconnect(props.environment.environmentId),
+    edit: () => {
+      if (!props.expanded) props.onToggle();
+    },
+    pair: props.onPairAgain && (() => props.onPairAgain?.(props.environment)),
+    "sign-in": props.onSignIn,
+  };
+  const runRecovery = recovery ? recoveryHandlers[recovery.kind] : undefined;
   const handleSave = async () => {
     const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
@@ -181,6 +199,16 @@ export function ConnectionEnvironmentRow(props: {
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
           value={enabled}
         />
+        {recovery && runRecovery ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${recovery.label} for ${props.environment.environmentLabel}`}
+            className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
+            onPress={runRecovery}
+          >
+            <Text className="text-xs font-t3-bold text-foreground">{recovery.label}</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
@@ -225,16 +253,16 @@ export function ConnectionEnvironmentRow(props: {
           ) : (
             <>
               <ConnectionFormField
-                label="Label"
+                label={translator.message("mobile.connection.label")}
                 autoCapitalize="words"
                 autoCorrect={false}
-                placeholder="My MacBook"
+                placeholder={translator.message("mobile.connection.labelPlaceholder")}
                 value={label}
                 onChangeText={setLabel}
               />
 
               <ConnectionFormField
-                label="URL"
+                label={translator.message("mobile.connection.url")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
@@ -250,7 +278,7 @@ export function ConnectionEnvironmentRow(props: {
               {props.environment.isRelayManaged ? null : (
                 <View className="flex-1">
                   <Button
-                    label="Save"
+                    label={translator.message("mobile.connection.save")}
                     tone="primary"
                     fullWidth
                     onPress={() => {
@@ -287,7 +315,7 @@ export function ConnectionEnvironmentRow(props: {
                     type="monochrome"
                   />
                   <Text className="text-xs font-t3-bold tracking-[0.8px] uppercase text-primary-foreground">
-                    Save
+                    {translator.message("mobile.connection.save")}
                   </Text>
                 </Pressable>
               )}

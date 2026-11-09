@@ -44,6 +44,8 @@ import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { mobileUsageCallMessageKey, visibleMobileContextDiagnostics } from "./usage-presentation";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -57,10 +59,10 @@ import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usagePro
 
 type UsageView = UsageChartMetric | "limits";
 const VIEW_OPTIONS = [
-  { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
-  { value: "limits", label: "Limits" },
-] as const satisfies readonly { value: UsageView; label: string }[];
+  { value: "cost", labelKey: "mobile.usage.cost" },
+  { value: "tokens", labelKey: "mobile.usage.tokens" },
+  { value: "limits", labelKey: "mobile.usage.limits" },
+] as const satisfies readonly { value: UsageView; labelKey: string }[];
 
 const WINDOW_OPTIONS = [
   { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
@@ -86,6 +88,11 @@ function UsageScreen(props: {
   readonly workspace?: boolean;
   readonly tabParam: string | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
+  const viewOptions = VIEW_OPTIONS.map(({ value, labelKey }) => ({
+    value,
+    label: translator.message(labelKey),
+  }));
   const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState(() => ({
     params: props.tabParam,
@@ -248,7 +255,11 @@ function UsageScreen(props: {
   ) : null;
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
+    <SettingsScreen
+      title={translator.message("usage.title")}
+      trailing={environmentFilter}
+      workspaceRoot={props.workspace}
+    >
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
@@ -309,7 +320,7 @@ function UsageScreen(props: {
                 />
               )}
               <SegmentedControl
-                options={VIEW_OPTIONS}
+                options={viewOptions}
                 selected={view}
                 onSelect={setView}
                 size="compact"
@@ -318,12 +329,7 @@ function UsageScreen(props: {
               />
             </View>
           ) : (
-            <SegmentedControl
-              options={VIEW_OPTIONS}
-              selected={view}
-              onSelect={setView}
-              role="tab"
-            />
+            <SegmentedControl options={viewOptions} selected={view} onSelect={setView} role="tab" />
           )}
           <Animated.View
             key={showingLimits ? "limits" : "usage"}
@@ -421,6 +427,8 @@ function UsageScreen(props: {
                         columns={width >= 900 ? 6 : wide ? 3 : 2}
                       />
                       <CostSection merged={merged} wide={wide} />
+                      <CallsSection merged={merged} columns={wide ? 3 : 2} />
+                      <ContextDiagnosticsSection merged={merged} columns={wide ? 3 : 2} />
                       <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
                     </UsageUpdating>
                   </>
@@ -932,15 +940,65 @@ function ShareBar(props: {
 function MetricCell(props: {
   readonly label: string;
   readonly value: string;
-  readonly detail: string;
+  readonly detail?: string;
   readonly columns: number;
 }) {
   return (
     <View className="gap-0.5 p-4" style={{ width: `${100 / props.columns}%` }}>
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
-      <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      {props.detail ? (
+        <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      ) : null}
     </View>
+  );
+}
+
+function CallsSection(props: { readonly merged: MergedUsage; readonly columns: number }) {
+  const translator = useMobileInterfaceTranslator();
+  const calls = props.merged.calls.filter(
+    (call) => call.kind !== "unknown" || call.records > 0 || call.totalTokens > 0,
+  );
+  if (!calls.some((call) => call.records > 0 || call.totalTokens > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.calls")}>
+      <View className="flex-row flex-wrap">
+        {calls.map((call) => (
+          <MetricCell
+            key={call.kind}
+            columns={props.columns}
+            label={translator.message(mobileUsageCallMessageKey(call.kind))}
+            value={formatTokens(call.totalTokens)}
+            detail={translator.message("mobile.usage.callCount", { count: call.records })}
+          />
+        ))}
+      </View>
+    </SettingsSection>
+  );
+}
+
+function ContextDiagnosticsSection(props: {
+  readonly merged: MergedUsage;
+  readonly columns: number;
+}) {
+  const translator = useMobileInterfaceTranslator();
+  const diagnostics = props.merged.contextDiagnostics;
+  if (!Object.values(diagnostics).some((value) => value > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.contextDiagnostics")}>
+      <View className="flex-row flex-wrap">
+        {visibleMobileContextDiagnostics(diagnostics).map((row) => (
+          <MetricCell
+            key={row.key}
+            columns={props.columns}
+            label={translator.message(row.messageKey)}
+            value={row.tokens ? formatTokens(row.value) : translator.number(row.value)}
+          />
+        ))}
+      </View>
+    </SettingsSection>
   );
 }
 

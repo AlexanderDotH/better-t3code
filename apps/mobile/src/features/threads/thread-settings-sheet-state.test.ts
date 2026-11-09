@@ -3,6 +3,10 @@ import { vi } from "vite-plus/test";
 
 import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
 import { getProviderOptionDescriptors } from "@t3tools/shared/model";
+import {
+  DEFAULT_OPENROUTER_MODEL_FILTERS,
+  type OpenRouterModelFilter,
+} from "@t3tools/shared/modelCatalogFilters";
 
 import type { ModelOption } from "../../lib/modelOptions";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -11,7 +15,11 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { canCommitPendingModel, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  filterOpenRouterCatalogModels,
+  pendingModelAfterPress,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -157,5 +165,32 @@ describe("thread settings sheet state", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("narrows the OpenRouter catalog by capability without hiding the current pick", () => {
+    const withCapabilities = (model: string, capabilities: ModelOption["capabilities"]) => ({
+      ...modelOption(model),
+      capabilities,
+    });
+    const agent = withCapabilities("agent", {
+      optionDescriptors: [],
+      toolSupport: { tools: true, parallelToolCalls: false, toolChoice: false },
+      outputModalities: ["text"],
+    });
+    const chatOnly = withCapabilities("chat-only", {
+      optionDescriptors: [],
+      outputModalities: ["text"],
+    });
+    const models = [agent, chatOnly];
+    const run = (filters: ReadonlySet<OpenRouterModelFilter>, keep: ModelOption | null = null) =>
+      filterOpenRouterCatalogModels({
+        models,
+        filters,
+        keep: (model) => model.key === keep?.key,
+      }).map((model) => model.selection.model);
+
+    expect(run(DEFAULT_OPENROUTER_MODEL_FILTERS)).toEqual(["agent"]);
+    expect(run(new Set())).toEqual(["agent", "chat-only"]);
+    expect(run(DEFAULT_OPENROUTER_MODEL_FILTERS, chatOnly)).toEqual(["agent", "chat-only"]);
   });
 });

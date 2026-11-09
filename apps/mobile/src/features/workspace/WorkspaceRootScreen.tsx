@@ -1,5 +1,6 @@
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
-import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
+import { useEnabledNavigationTabs, useWorkspaceTabLabels } from "./navigation-tabs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { SettingsRouteScreen } from "../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
@@ -47,19 +48,19 @@ import {
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
-const TAB_TITLES = WORKSPACE_TAB_LABELS;
-
 function WorkspaceRootTitle(props: {
   readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
   const { state, settingsOpen } = useWorkspaceTabs()!;
+  const tabTitles = useWorkspaceTabLabels();
+  const translator = useMobileInterfaceTranslator();
   const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
   const enabled = useEnabledNavigationTabs();
   const tabTitle = settingsOpen
-    ? "Settings"
+    ? translator.message("mobile.settings.title")
     : enabled.length
-      ? TAB_TITLES[state.selectedTab]
+      ? tabTitles[state.selectedTab]
       : "Navigation";
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
@@ -73,6 +74,8 @@ function WorkspaceRootTitle(props: {
 }
 
 function WorkspaceRootContent() {
+  const tabTitles = useWorkspaceTabLabels();
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const selectTab = useSelectWorkspaceTab();
   const { width: windowWidth } = useWindowDimensions();
@@ -141,9 +144,9 @@ function WorkspaceRootContent() {
             ]}
             options={{
               title: settingsOpen
-                ? "Settings"
+                ? translator.message("mobile.settings.title")
                 : enabled.length
-                  ? TAB_TITLES[state.selectedTab]
+                  ? tabTitles[state.selectedTab]
                   : "Navigation",
               headerShown: true,
               headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,

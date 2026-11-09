@@ -32,6 +32,7 @@ import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
 import { splitEnvironmentSections } from "./environmentSections";
 import { leaveSettingsPage } from "../settings/settings-navigation";
 import { workspaceHasColumns } from "../workspace/workspace-selection-store";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -63,6 +64,7 @@ function PairingForm({
   readonly routePairingUrl: string;
   readonly routeFor: EnvironmentId | undefined;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
     useRemoteConnections();
   const navigation = useNavigation();
@@ -118,8 +120,11 @@ function PairingForm({
       "Camera access needed",
       "Camera access was denied for this app. Open Settings to enable it.",
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: translator.message("common.cancel"), style: "cancel" },
+        {
+          text: translator.message("mobile.settings.notifications.openSettings"),
+          onPress: () => void Linking.openSettings(),
+        },
       ],
     );
   };
@@ -179,10 +184,12 @@ function PairingForm({
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
-      title="Add environment"
+      title={translator.message("mobile.connection.addEnvironment")}
       actions={[
         {
-          accessibilityLabel: connecting ? "Connecting" : "Add environment",
+          accessibilityLabel: connecting
+            ? "Connecting"
+            : translator.message("mobile.connection.addEnvironment"),
           loading: connecting,
           icon: "checkmark",
           tintColor: headerIconColor,
@@ -233,7 +240,7 @@ function PairingForm({
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
                 label="Code"
-                placeholder="Pairing code"
+                placeholder={translator.message("mobile.connection.pairingCode")}
                 returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}
@@ -271,11 +278,14 @@ function PairingScanCard(props: {
   readonly onScan: (result: { readonly data: string }) => void;
   readonly onScanPress: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const light = useAppearancePreferences().themeAppearance === "light";
   return (
     <Pressable
       accessibilityRole={props.cameraActive ? undefined : "button"}
-      accessibilityLabel={props.cameraActive ? undefined : "Scan QR code"}
+      accessibilityLabel={
+        props.cameraActive ? undefined : translator.message("mobile.connection.scanQr")
+      }
       disabled={props.cameraActive}
       onPress={props.onScanPress}
       className={cn(

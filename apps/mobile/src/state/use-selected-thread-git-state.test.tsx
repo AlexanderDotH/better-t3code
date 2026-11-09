@@ -9,6 +9,7 @@ import { expect, it, vi } from "vite-plus/test";
 const harness = vi.hoisted(() => ({
   root: "",
   cwd: "",
+  discoveryReads: 0,
 }));
 
 vi.mock("./use-thread-selection", () => ({
@@ -24,27 +25,35 @@ vi.mock("./use-vcs-action-state", () => ({
   useVcsActionState: () => ({ currentLabel: null }),
 }));
 vi.mock("./sourceControl", () => ({
-  sourceControlEnvironment: { discovery: () => null },
+  sourceControlEnvironment: {
+    discovery: () => {
+      harness.discoveryReads += 1;
+      return null;
+    },
+  },
 }));
 vi.mock("./query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("./queries", () => ({
-  useBranches: ({ cwd }: { cwd: string }) => ({
+  useBranches: ({ cwd }: { cwd: string | null }) => ({
     data: {
-      refs: NodeChildProcess.execFileSync(
-        "git",
-        ["for-each-ref", "--format=%(refname:short) %(HEAD)", "refs/heads"],
-        {
-          cwd,
-          encoding: "utf8",
-        },
-      )
-        .trim()
-        .split("\n")
-        .map((line) => ({
-          name: line.split(" ")[0],
-          current: line.endsWith("*"),
-          isRemote: false,
-        })),
+      refs:
+        cwd === null
+          ? []
+          : NodeChildProcess.execFileSync(
+              "git",
+              ["for-each-ref", "--format=%(refname:short) %(HEAD)", "refs/heads"],
+              {
+                cwd,
+                encoding: "utf8",
+              },
+            )
+              .trim()
+              .split("\n")
+              .map((line) => ({
+                name: line.split(" ")[0],
+                current: line.endsWith("*"),
+                isRemote: false,
+              })),
     },
     isPending: false,
   }),
@@ -63,8 +72,8 @@ it("marks the selected checkout's branch current when switching threads in one p
   const root = createRoot(document.createElement("div"));
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   let currentBranches: string[] = [];
-  function Consumer() {
-    const { selectedThreadBranches } = useSelectedThreadGitState();
+  function Consumer({ enabled = true }: { enabled?: boolean }) {
+    const { selectedThreadBranches } = useSelectedThreadGitState(enabled);
     useLayoutEffect(() => {
       currentBranches = selectedThreadBranches
         .filter((branch) => branch.current)
@@ -87,6 +96,7 @@ it("marks the selected checkout's branch current when switching threads in one p
     );
     const worktree = NodePath.join(directory, "linked");
     git("worktree", "add", "-b", "feature/mobile", worktree);
+    harness.discoveryReads = 0;
     harness.root = directory;
     harness.cwd = directory;
     act(() => root.render(<Consumer />));
@@ -98,6 +108,13 @@ it("marks the selected checkout's branch current when switching threads in one p
 
     harness.cwd = directory;
     act(() => root.render(<Consumer />));
+    expect(currentBranches).toEqual(["main"]);
+
+    const discoveryReads = harness.discoveryReads;
+    act(() => root.render(<Consumer enabled={false} />));
+    expect(currentBranches).toEqual([]);
+    expect(harness.discoveryReads).toBe(discoveryReads);
+    act(() => root.render(<Consumer enabled />));
     expect(currentBranches).toEqual(["main"]);
   } finally {
     act(() => root.unmount());

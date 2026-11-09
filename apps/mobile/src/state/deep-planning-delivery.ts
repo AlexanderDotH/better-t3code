@@ -61,6 +61,7 @@ export async function prepareQueuedDeepPlan(input: {
     projectId: input.projectId,
     threadId: input.message.threadId,
     additionalSourceRefs: input.message.deepPlanSourceRefs,
+    includeProjectChats: input.message.deepPlanIncludeProjectChats,
     apiForEnvironment,
     createId,
   });

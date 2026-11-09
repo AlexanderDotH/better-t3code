@@ -5,6 +5,8 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/state/use-thread-message-replies.test.tsx",
+  "src/features/threads/use-thread-fork-action.test.tsx",
+  "src/features/threads/use-thread-retry-action.test.tsx",
   "src/features/threads/use-chat-presentation-motion.test.tsx",
   "src/features/threads/ResponseMetricsDetails.test.tsx",
   "src/features/threads/DeepPlanChecklist.visibility.test.tsx",
@@ -23,6 +25,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestEnvironmentFallback.test.tsx",
   "src/lib/filePreview.test.ts",
   "src/features/threads/thread-inspector-navigation.test.tsx",
+  "src/features/threads/ThreadGitControls.test.tsx",
   "src/features/diffs/nativeReviewDiffSurface.test.tsx",
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ProjectFavicon.test.tsx",

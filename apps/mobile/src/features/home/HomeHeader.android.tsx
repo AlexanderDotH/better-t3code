@@ -2,6 +2,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { ThreadListToolbar } from "./ThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -10,16 +11,17 @@ function checkedMenuState(checked: boolean) {
 }
 
 export function HomeHeader(props: HomeHeaderProps) {
+  const translator = useMobileInterfaceTranslator();
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
   const menuActions: MenuAction[] = [
     {
       id: "environment",
-      title: "Environment",
+      title: translator.message("mobile.navigation.environment"),
       subactions: [
         {
           id: "environment:all",
-          title: "All environments",
+          title: translator.message("mobile.navigation.allEnvironments"),
           state: checkedMenuState(props.selectedEnvironmentId === null),
         },
         ...props.environments.map((environment) => ({
@@ -34,11 +36,11 @@ export function HomeHeader(props: HomeHeaderProps) {
       : ([
           {
             id: "project",
-            title: "Project",
+            title: translator.message("mobile.navigation.project"),
             subactions: [
               {
                 id: "project:all",
-                title: "All projects",
+                title: translator.message("mobile.navigation.allProjects"),
                 state: checkedMenuState(props.selectedProjectKey === null),
               },
               ...props.projects.map((project) => ({

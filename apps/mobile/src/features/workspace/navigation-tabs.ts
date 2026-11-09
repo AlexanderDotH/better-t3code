@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { Platform } from "react-native";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
-  NAVIGATION_TAB_LABELS,
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
   enabledNavigationTabs,
@@ -13,10 +13,15 @@ import { mobilePreferencesAtom } from "../../state/preferences";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
-export const WORKSPACE_TAB_LABELS = {
-  ...NAVIGATION_TAB_LABELS,
-  ...(Platform.OS === "ios" ? { threads: "Chats", pullRequests: "PRs" } : {}),
-};
+export function useWorkspaceTabLabels(): Readonly<Record<NavigationTab, string>> {
+  const translator = useMobileInterfaceTranslator();
+  const ios = Platform.OS === "ios";
+  return {
+    threads: translator.message(ios ? "mobile.navigation.chats" : "mobile.navigation.threads"),
+    pullRequests: translator.message(ios ? "mobile.navigation.prs" : "mobile.navigation.pulls"),
+    usage: translator.message("sidebar.navigation.usage"),
+  };
+}
 
 export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",

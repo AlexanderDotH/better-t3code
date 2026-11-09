@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { getMobileDeepPlanningApi } from "../../state/deep-planning";
@@ -36,9 +37,13 @@ export function DeepPlanSourceSheet(props: {
   readonly projectId: ProjectId;
   readonly sources: ReadonlyArray<SourceOption>;
   readonly selected: ReadonlyArray<DeepPlanSourceRef>;
+  readonly includeProjectChats?: boolean;
   readonly loading: boolean;
   readonly error: string | null;
-  readonly onChange: (sources: ReadonlyArray<DeepPlanSourceRef>) => void;
+  readonly onChange: (
+    sources: ReadonlyArray<DeepPlanSourceRef>,
+    includeProjectChats: boolean,
+  ) => void;
   readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
@@ -47,6 +52,9 @@ export function DeepPlanSourceSheet(props: {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  const includeProjectChats = props.includeProjectChats !== false;
+  const belongsToCurrentProject = (ref: DeepPlanSourceRef) =>
+    ref.environmentId === props.environmentId && ref.projectId === props.projectId;
   const selectedKeys = new Set(props.selected.map(deepPlanSourceRefKey));
   const sources = props.sources.filter((source) =>
     [source.threadTitle, source.projectTitle, source.environmentLabel ?? ""]
@@ -95,8 +103,29 @@ export function DeepPlanSourceSheet(props: {
             </Pressable>
           </View>
           <Text className="px-5 pb-3 pt-4 text-sm text-foreground-muted">
-            {translator.message("chat.deepPlan.selectionHint")}
+            {translator.message(
+              includeProjectChats
+                ? "chat.deepPlan.selectionHint"
+                : "chat.deepPlan.manualSelectionHint",
+            )}
           </Text>
+          <View className="mx-5 mb-3 min-h-11 flex-row items-center justify-between gap-3">
+            <Text className="min-w-0 flex-1 text-sm text-foreground">
+              {translator.message("chat.deepPlan.includeProjectChats")}
+            </Text>
+            <ThemedSwitch
+              accessibilityLabel={translator.message("chat.deepPlan.includeProjectChats")}
+              value={includeProjectChats}
+              onValueChange={(include) =>
+                props.onChange(
+                  include
+                    ? props.selected.filter((ref) => !belongsToCurrentProject(ref))
+                    : props.selected,
+                  include,
+                )
+              }
+            />
+          </View>
           <TextInput
             accessibilityLabel={translator.message("chat.deepPlan.searchSources")}
             placeholder={translator.message("chat.deepPlan.searchSources")}
@@ -142,9 +171,7 @@ export function DeepPlanSourceSheet(props: {
             }
             renderItem={({ item: source }) => {
               const key = deepPlanSourceRefKey(source.origin);
-              const automatic =
-                source.origin.environmentId === props.environmentId &&
-                source.origin.projectId === props.projectId;
+              const automatic = includeProjectChats && belongsToCurrentProject(source.origin);
               const checked = automatic || selectedKeys.has(key);
               return (
                 <Pressable
@@ -164,6 +191,7 @@ export function DeepPlanSourceSheet(props: {
                       checked
                         ? props.selected.filter((ref) => deepPlanSourceRefKey(ref) !== key)
                         : [...props.selected, source.origin],
+                      includeProjectChats,
                     )
                   }
                 >
@@ -205,8 +233,12 @@ export function DeepPlanSources(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly selected: ReadonlyArray<DeepPlanSourceRef>;
+  readonly includeProjectChats: boolean;
   readonly disabled?: boolean;
-  readonly onChange: (sources: ReadonlyArray<DeepPlanSourceRef>) => void;
+  readonly onChange: (
+    sources: ReadonlyArray<DeepPlanSourceRef>,
+    includeProjectChats: boolean,
+  ) => void;
 }) {
   const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
@@ -306,18 +338,27 @@ export function DeepPlanSources(props: {
   const currentProjectAvailable = targets.some(
     (project) => project.environmentId === props.environmentId && project.id === props.projectId,
   );
+  const chosenProjectCount = props.selected.filter(
+    (ref) => ref.environmentId === props.environmentId && ref.projectId === props.projectId,
+  ).length;
   return (
     <View className="gap-1 px-3 pb-2">
       <View className="min-h-11 flex-row items-center gap-2">
         <Text
-          accessibilityHint={translator.message("chat.deepPlan.allProjectChats")}
+          {...(props.includeProjectChats
+            ? { accessibilityHint: translator.message("chat.deepPlan.allProjectChats") }
+            : {})}
           className="min-w-0 flex-1 text-xs text-foreground-muted"
         >
-          {!currentProjectAvailable
-            ? translator.message("chat.deepPlan.sourceUnavailable")
-            : loading
-              ? translator.message("chat.deepPlan.preparing")
-              : translator.message("chat.deepPlan.projectSources", { count: projectCount })}
+          {!props.includeProjectChats
+            ? chosenProjectCount === 0
+              ? translator.message("chat.deepPlan.noProjectChats")
+              : translator.message("chat.deepPlan.projectSources", { count: chosenProjectCount })
+            : !currentProjectAvailable
+              ? translator.message("chat.deepPlan.sourceUnavailable")
+              : loading
+                ? translator.message("chat.deepPlan.preparing")
+                : translator.message("chat.deepPlan.projectSources", { count: projectCount })}
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -351,6 +392,7 @@ export function DeepPlanSources(props: {
                 onPress={() =>
                   props.onChange(
                     props.selected.filter((source) => deepPlanSourceRefKey(source) !== key),
+                    props.includeProjectChats,
                   )
                 }
               >
@@ -374,6 +416,7 @@ export function DeepPlanSources(props: {
           projectId={props.projectId}
           sources={sources}
           selected={props.selected}
+          includeProjectChats={props.includeProjectChats}
           loading={loading}
           error={error}
           onChange={props.onChange}
