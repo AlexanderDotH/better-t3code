@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import "~/index.css";
-import { applyAppearanceFontVariables } from "./appearanceFonts";
+import { applyAppearanceFontVariables, resolveSeparateFontPreference } from "./appearanceFonts";
 
 function renderedFontSize(style: (probe: HTMLElement) => void): string {
   const probe = document.createElement("div");
@@ -50,6 +51,21 @@ describe("applyAppearanceFontVariables", () => {
     } finally {
       if (style === null) root.removeAttribute("style");
       else root.setAttribute("style", style);
+    }
+  });
+
+  it("retains pre-migration independent fonts unless separate fonts were explicitly disabled", () => {
+    expect(resolveSeparateFontPreference(null, DEFAULT_CLIENT_SETTINGS)).toBe(false);
+    for (const customization of [
+      { fontFamilyComposer: "Georgia" },
+      { fontFamilyTerminal: "Fira Code" },
+      { fontSizePrompt: 18 },
+      { fontSizeTerminal: 16 },
+    ]) {
+      const settings = { ...DEFAULT_CLIENT_SETTINGS, ...customization };
+      expect(resolveSeparateFontPreference(null, settings)).toBe(true);
+      expect(resolveSeparateFontPreference(false, settings)).toBe(false);
+      expect(resolveSeparateFontPreference(true, settings)).toBe(true);
     }
   });
 });

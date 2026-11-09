@@ -5,41 +5,62 @@ import { shouldUseCompactComposerControls } from "../composerFooterLayout";
 
 const base = {
   matchesDefault: true,
-  planModeUiEnabled: false,
   collapsed: false,
   measuredHiddenBlockCount: 0,
 };
 
 describe("resolveComposerControlsOwnership", () => {
-  it("moves non-default permissions into overflow when expanded controls are disabled", () => {
-    const ownership = (expandedControlsEnabled: boolean, inContextStrip = false) =>
+  it("moves secondary controls into overflow when expanded controls are disabled", () => {
+    const ownership = (
+      expandedControlsEnabled: boolean,
+      inContextStrip = false,
+      hasContextWindowControl = false,
+    ) =>
       resolveComposerControlsOwnership({
         ...base,
         matchesDefault: false,
-        measuredHiddenBlockCount: shouldUseCompactComposerControls({
+        hasContextWindowControl,
+        compact: shouldUseCompactComposerControls({
           expandedControlsEnabled,
           inContextStrip,
-        })
-          ? 1
-          : 0,
+        }),
       });
-    expect(ownership(false)).toMatchObject({
-      hiddenBlockIds: ["mode"],
-      overflowShowsPermissions: true,
+    expect(ownership(false)).toMatchObject({ hiddenBlockIds: ["mode"] });
+    expect(ownership(false, false, true)).toMatchObject({
+      hiddenBlockIds: ["context", "mode"],
+      hiddenBlockCount: 2,
     });
-    expect(ownership(true)).toMatchObject({ hiddenBlockIds: [], overflowShowsPermissions: false });
-    expect(ownership(false, true)).toMatchObject({
-      hiddenBlockIds: [],
-      overflowShowsPermissions: false,
+    expect(ownership(true)).toMatchObject({ hiddenBlockIds: [] });
+    expect(ownership(true, false, true)).toMatchObject({ hiddenBlockIds: [] });
+    expect(ownership(false, true)).toMatchObject({ hiddenBlockIds: [] });
+    expect(ownership(false, true, true)).toMatchObject({ hiddenBlockIds: [] });
+    expect(
+      resolveComposerControlsOwnership({
+        ...base,
+        layout: "classic",
+        hasTraitsControl: true,
+        hasContextWindowControl: true,
+        compact: true,
+      }),
+    ).toMatchObject({
+      accessDisplay: "label",
+      hiddenBlockIds: ["traits", "mode"],
+      hiddenBlockCount: 2,
+      pickerOwnsModeShortcut: false,
     });
   });
+
   it("hides the chip at the default and lets the model picker answer composer.mode", () => {
     const result = resolveComposerControlsOwnership(base);
     expect(result).toMatchObject({
       accessDisplay: "hidden",
-      showModeBlock: false,
       hiddenBlockIds: [],
       pickerOwnsModeShortcut: true,
+    });
+    expect(resolveComposerControlsOwnership({ ...base, layout: "classic" })).toMatchObject({
+      accessDisplay: "label",
+      hiddenBlockIds: [],
+      pickerOwnsModeShortcut: false,
     });
   });
 
@@ -47,45 +68,32 @@ describe("resolveComposerControlsOwnership", () => {
     const result = resolveComposerControlsOwnership({ ...base, matchesDefault: false });
     expect(result).toMatchObject({
       accessDisplay: "label",
-      showModeBlock: true,
       pickerOwnsModeShortcut: false,
     });
   });
 
-  it("gives an overflowed chip's Permissions to the overflow menu when it has no Plan toggle", () => {
+  it("leaves Permissions with the picker when the mode block overflows", () => {
     const result = resolveComposerControlsOwnership({
       ...base,
       matchesDefault: false,
       measuredHiddenBlockCount: 1,
     });
     expect(result.hiddenBlockIds).toEqual(["mode"]);
-    expect(result.overflowShowsPermissions).toBe(true);
-    expect(result.pickerOwnsModeShortcut).toBe(false);
-  });
-
-  it("keeps the Plan toggle block at the default and leaves Permissions with the picker", () => {
-    const result = resolveComposerControlsOwnership({
-      ...base,
-      planModeUiEnabled: true,
-      measuredHiddenBlockCount: 1,
-    });
-    expect(result.showModeBlock).toBe(true);
-    expect(result.hiddenBlockIds).toEqual(["mode"]);
-    expect(result.overflowShowsPermissions).toBe(false);
     expect(result.pickerOwnsModeShortcut).toBe(true);
-  });
-
-  it("overflows only the chip when the Plan toggle gives the overflow menu content", () => {
-    const result = resolveComposerControlsOwnership({
-      ...base,
-      matchesDefault: false,
-      planModeUiEnabled: true,
-      measuredHiddenBlockCount: 1,
-    });
-    expect(result.hiddenBlockIds).toEqual(["mode"]);
-    // Permissions stay in the model picker, which now answers composer.mode.
-    expect(result.overflowShowsPermissions).toBe(false);
-    expect(result.pickerOwnsModeShortcut).toBe(true);
+    expect(
+      resolveComposerControlsOwnership({
+        ...base,
+        hasContextWindowControl: true,
+        measuredHiddenBlockCount: 1,
+      }).hiddenBlockIds,
+    ).toEqual(["mode"]);
+    expect(
+      resolveComposerControlsOwnership({
+        ...base,
+        hasContextWindowControl: true,
+        measuredHiddenBlockCount: 2,
+      }).hiddenBlockIds,
+    ).toEqual(["context", "mode"]);
   });
 
   it("shows the non-default chip as an icon in the compacted row", () => {

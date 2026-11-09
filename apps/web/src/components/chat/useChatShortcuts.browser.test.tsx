@@ -141,6 +141,7 @@ const ctrlShift = (key: string, command: KeybindingCommand) => ({
 const sideChatKeybindings: ResolvedKeybindingsConfig = [
   ctrlShift("m", "modelPicker.toggle"),
   ctrlShift("x", "thread.stop"),
+  ctrlShift("v", "composer.voiceInput"),
 ];
 
 // A side chat in the main chat's panel: no window listeners, only its composer's own chords.
@@ -157,6 +158,7 @@ function SideChat(props: { toggles: string[]; stops: string[] }) {
     composerRef: {
       current: {
         toggleModelPicker: () => props.toggles.push("model"),
+        openControl: (command) => props.toggles.push(command),
       } as Partial<ChatComposerHandle> as ChatComposerHandle,
     },
     branchToolbarRef: { current: null },
@@ -180,10 +182,23 @@ it("runs a side chat's composer chords only from its composer, and never thread 
   await using screen = await render(<SideChat toggles={toggles} stops={stops} />, options);
 
   await userEvent.click(screen.getByLabelText("Side chat composer"));
-  await userEvent.keyboard("{Control>}{Shift>}MX{/Shift}{/Control}");
+  await userEvent.keyboard("{Control>}{Shift>}MVX{/Shift}{/Control}");
+  screen
+    .getByLabelText("Side chat composer")
+    .element()
+    .dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "v",
+        ctrlKey: true,
+        shiftKey: true,
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
   await userEvent.click(screen.getByLabelText("Main composer"));
-  await userEvent.keyboard("{Control>}{Shift>}M{/Shift}{/Control}");
+  await userEvent.keyboard("{Control>}{Shift>}MV{/Shift}{/Control}");
 
-  expect(toggles).toEqual(["model"]);
+  expect(toggles).toEqual(["model", "composer.voiceInput"]);
   expect(stops).toEqual([]);
 });

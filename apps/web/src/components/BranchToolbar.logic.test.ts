@@ -10,7 +10,29 @@ import {
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  shouldShowComposerContextStrip,
 } from "./BranchToolbar.logic";
+
+it("keeps collapsed Classic controls reachable without a persistent workspace strip", () => {
+  const expanded = {
+    isDraftHeroState: false,
+    persistInActiveThreads: false,
+    hasActiveProject: true,
+    isGitRepo: false,
+    showEnvironmentIndicator: false,
+    showRestingControls: false,
+  };
+  expect(shouldShowComposerContextStrip(expanded)).toBe(false);
+  expect(shouldShowComposerContextStrip({ ...expanded, showRestingControls: true })).toBe(true);
+  expect(
+    shouldShowComposerContextStrip({
+      ...expanded,
+      showRestingControls: true,
+      hasActiveProject: false,
+    }),
+  ).toBe(false);
+  expect(shouldShowComposerContextStrip(expanded)).toBe(false);
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {

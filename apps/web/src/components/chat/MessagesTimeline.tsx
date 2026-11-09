@@ -10,13 +10,26 @@ import {
 import { TimelineComposerSpacer } from "./TimelineComposerSpacer";
 import { useChatVisualMode } from "../../chatVisualModeSync";
 import { useBetterT3DeviceFeature } from "../../hooks/useBetterT3Feature";
-import { ButtonAppearanceContext } from "../ui/button";
+import { Button, ButtonAppearanceContext } from "../ui/button";
 import { InlineMessageEditor } from "./InlineMessageEditor";
+import { useWorkingReasoningDialogAvailable } from "./WorkingReasoningDialog";
 import { appendVoiceFileContext, extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { MessageReplyGesture } from "./MessageReplyGesture";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { ChatStatusSurface, type ChatStatusTone } from "./ChatStatusSurface";
+import { timelineMessageCanReply } from "./TimelineMessageActions";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { useChildThreadInputs, useQuietThreadShell } from "../../state/entities";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironment } from "../../state/environments";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
@@ -34,6 +47,7 @@ import {
   type RunAttemptId,
   type ServerProviderSkill,
   type RunId,
+  CommandId,
   ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -67,19 +81,28 @@ import {
   type LegendListRef,
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
-import { type PendingApproval, type TimelineEntry } from "../../session-logic";
+import {
+  type PendingApproval,
+  type TimelineEntry,
+  workEntryDisplayIndicatesToolFailure,
+} from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
 import {
   ArrowRightIcon,
   BotIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
+  GitForkIcon,
   MessagesSquareIcon,
   Minimize2Icon,
+  RotateCcwIcon,
+  SquareIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Skeleton } from "../ui/skeleton";
+import { toastManager } from "../ui/toast";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
@@ -103,7 +126,10 @@ import {
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
+  deriveTimelineReplyTopics,
+  resolveForkDividerAfterRowId,
   type MessagesTimelineRow,
+  type TimelineReplyTopicSummary,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
@@ -112,7 +138,7 @@ import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
@@ -133,6 +159,7 @@ import {
   WorkingTimelineRow,
   ThinkingTimelineRow,
   LiveWorkEntryTimelineRow,
+  WorkGroupDetailsPanel,
   WorkGroupToggleTimelineRow,
 } from "./TimelineWorkGroupRows";
 import { UserMessageRow } from "./TimelineUserMessageRow";
@@ -237,12 +264,23 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  /** The composer already shows the working status, so the timeline omits its own row. */
+  composerWorkingStatusVisible?: boolean;
+  /** The composer bubble shows this run's task list, so the timeline omits its task rows. */
+  composerPlanRunId?: RunId | null;
+  /** Better T3 holds streamed-text motion while the environment is disconnected. */
+  presentationConnected?: boolean;
+  /** Bumps on reconnect, so text that streamed while away does not replay its motion. */
+  presentationConnectionGeneration?: number;
   composerOverflowInset?: number;
   onContentOverflowChange?: ((overflows: boolean) => void) | undefined;
   deepPlanReview?: TimelineRowSharedState["deepPlanReview"];
   replySourceThreadId?: ThreadId | undefined;
   onForkBoundary?: TimelineRowSharedState["onForkBoundary"];
-  forkPending?: boolean;
+  forkAvailable?: boolean;
+  forkPendingBoundary?: TimelineRowSharedState["forkPendingBoundary"];
+  onOpenAgents?: TimelineRowSharedState["onOpenAgents"];
+  retryAction?: TimelineRowSharedState["retryAction"];
   responseMetrics?: TimelineRowSharedState["responseMetrics"];
   composerInsetTransitionDurationMs?: number;
   onReplyMessage?: TimelineRowSharedState["onReplyMessage"];
@@ -316,6 +354,7 @@ interface MessagesTimelineProps {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
+  onVisualizationAction?: (prompt: string) => void;
   onRunShellCommand?: (command: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -364,9 +403,16 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 }
 
 const ConversationTimeline = memo(function ConversationTimeline({
+  composerWorkingStatusVisible = false,
+  composerPlanRunId = null,
+  presentationConnected = true,
+  presentationConnectionGeneration = 0,
   onReplyMessage,
   onForkBoundary,
-  forkPending = false,
+  forkAvailable = true,
+  forkPendingBoundary = null,
+  onOpenAgents,
+  retryAction = null,
   replySourceThreadId,
   messageEditingEnabled = false,
   responseMetrics,
@@ -425,6 +471,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onSendAppMessage,
+  onVisualizationAction,
   onRunShellCommand,
   isRevertingCheckpoint,
   onImageExpand,
@@ -451,13 +498,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
 }: MessagesTimelineProps) {
   const chatVisualMode = useChatVisualMode();
-  const presentationMotion = useBetterT3DeviceFeature("chat.presentationMotion");
+  const presentationMotionPreference = useBetterT3DeviceFeature("chat.presentationMotion");
+  const characterStreamingMotion = useBetterT3DeviceFeature("chat.characterStreamingMotion");
   const nativeSubagentPreference = useBetterT3DeviceFeature("agent.nativeSubagentDisplay");
   const nativeSubagentDisplay = turnItemSource !== undefined || nativeSubagentPreference;
   const reasoningEnabled = useClientSettings((settings) => settings.showReasoning);
   const workingReasoningPreference = useBetterT3DeviceFeature("agent.reasoningWorkingOverlay");
   const inlineReasoningPreference = useBetterT3DeviceFeature("agent.reasoningInMessage");
-  const showWorkingReasoning = reasoningEnabled && workingReasoningPreference && canOperateThread;
+  const workingReasoningDialogAvailable = useWorkingReasoningDialogAvailable();
+  const showWorkingReasoning =
+    reasoningEnabled && workingReasoningPreference && workingReasoningDialogAvailable;
   const showReasoning = reasoningEnabled && !showWorkingReasoning;
   const showMessageReasoning = showReasoning && inlineReasoningPreference;
   const editMessage = useAtomCommand(threadEnvironment.editMessage, { reportFailure: false });
@@ -490,6 +540,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const presentationMotion =
+    chatVisualMode === "better-t3" && presentationMotionPreference && !prefersReducedMotion;
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   const [playingAudioRows, setPlayingAudioRows] = useState<ReadonlyMap<HTMLAudioElement, string>>(
     () => new Map(),
@@ -526,6 +578,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  const endBandGrowthRef = useRef(0);
+  const endBandFollowFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -703,6 +757,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
         timelineEntries,
+        showReasoning,
+        showWorkingReasoning,
         latestRun,
         runningRunId,
         isWorking,
@@ -744,6 +800,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       findFoldRunIds ??
       timelineTurnFoldRunIdsByEntryId({
         timelineEntries,
+        showReasoning,
+        showWorkingReasoning,
         latestRun,
         runningRunId,
         isWorking,
@@ -796,7 +854,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     showReasoning,
     showWorkingReasoning,
     showMessageReasoning,
-    hideWorkingIndicator: showWorkingReasoning,
+    hideWorkingIndicator:
+      chatVisualMode === "better-t3" &&
+      composerWorkingStatusVisible &&
+      !isCompacting &&
+      !isPreparingWorktree &&
+      worktreeSetup?.phase !== "running",
+    composerPlanRunId,
     timelineEntries,
     pendingApprovalRequestIds,
     latestRun,
@@ -816,7 +880,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const rowMotion = useChatRowPresence(
     rawRows,
     listIdentityKey,
-    chatVisualMode === "better-t3" && presentationMotion && !prefersReducedMotion,
+    presentationMotion,
     visibleExpandedRunIds,
   );
   const rows = useStableRows(rowMotion.rows, listIdentityKey);
@@ -893,21 +957,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
-  useChatPresentationMotion({
-    identity: listIdentityKey,
+  const { streamingMotionReady, canAnimateInitialText } = useChatPresentationMotion({
+    identity: `${listIdentityKey}:${presentationConnectionGeneration}`,
     mode: chatVisualMode,
-    enabled: presentationMotion && !prefersReducedMotion,
-    textMotion: false,
-    connected: true,
+    enabled: presentationMotion,
+    textMotion: characterStreamingMotion && !prefersReducedMotion,
+    // Text that arrives while history loads or the reader is scrolled away is not new to them.
+    connected: presentationConnected && historyControls?.loading !== true && liveFollowEnabled,
     entries: timelineEntries,
     rows,
     viewport: timelineViewportElement,
   });
-  useChatInteractionMotion(
-    timelineViewportElement,
-    chatVisualMode === "better-t3" && presentationMotion && !prefersReducedMotion,
-    listIdentityKey,
-  );
+  useChatInteractionMotion(timelineViewportElement, presentationMotion, listIdentityKey);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -1112,12 +1173,39 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scheduleMinimapRefresh();
   };
 
-  const handleItemSizeChanged = () => {
+  const endScrollMaintained = !(
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null ||
+    disclosureToggleSettling
+  );
+  // LegendList follows only within one viewport of the end, so a block landing all at once would
+  // strand a following reader. Content the reader opened in place stays put: it grows nothing here.
+  const followGrowthPastEndBand = useStableCallback(() => {
+    endBandFollowFrameRef.current = null;
+    const growth = endBandGrowthRef.current;
+    endBandGrowthRef.current = 0;
+    const list = listRef.current;
+    const viewport = list?.getScrollableNode();
+    if (!list || !viewport || !endScrollMaintained || restoringThreadPosition) return;
+    const distance = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    if (distance > viewport.clientHeight && distance - growth <= viewport.clientHeight) {
+      void list.scrollToEnd({ animated: false });
+    }
+  });
+
+  const handleItemSizeChanged = (info: { readonly previous: number; readonly size: number }) => {
     reportContentOverflow();
     if (disclosureAnchorKeyRef.current !== null) {
       scheduleDisclosureSettle();
     }
     scheduleMinimapRefresh();
+    endBandGrowthRef.current += info.size - info.previous;
+    if (endBandFollowFrameRef.current === null) {
+      endBandFollowFrameRef.current = requestAnimationFrame(followGrowthPastEndBand);
+    }
   };
 
   const measureTimelineGutter = (viewportElement: HTMLElement) => {
@@ -1171,6 +1259,99 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   };
 
+  const threadShell = useQuietThreadShell(citationThreadRef);
+  const forkedFrom =
+    threadShell?.forkedFrom?.type === "run" && threadShell.lineage.sideChat !== true
+      ? threadShell.forkedFrom
+      : null;
+  const forkSourceShell = useQuietThreadShell(
+    forkedFrom ? scopeThreadRef(activeThreadEnvironmentId, forkedFrom.threadId) : null,
+  );
+  const childThreads = useChildThreadInputs(citationThreadRef);
+  const translate = useInterfaceTranslator().message;
+  // A reply's source can sit in a closed turn or in history not loaded yet.
+  const [replySourceRequest, setReplySourceRequest] = useState<{
+    readonly identity: string;
+    readonly messageId: MessageId;
+    readonly loadedThroughCount: number | null;
+  } | null>(null);
+  const scrollToReplySource = (
+    messageId: MessageId,
+    timelineRows: ReadonlyArray<MessagesTimelineRow>,
+  ) => {
+    const index = timelineRows.findIndex(
+      (row) => row.kind === "message" && row.message.id === messageId,
+    );
+    if (index < 0) return false;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index,
+      animated: !prefersReducedMotion,
+      viewPosition: 0.25,
+    });
+    return true;
+  };
+  const onJumpToReplySource = useStableCallback((messageId: MessageId) => {
+    if (scrollToReplySource(messageId, rows)) return true;
+    const loaded = timelineEntries.some(
+      (entry) => entry.kind === "message" && entry.message.id === messageId,
+    );
+    if (!loaded && historyControls?.hasMoreHistory !== true) return false;
+    setReplySourceRequest({ identity: listIdentityKey, messageId, loadedThroughCount: null });
+    return true;
+  });
+  const pendingReplySource =
+    replySourceRequest?.identity === listIdentityKey ? replySourceRequest : null;
+  const advanceReplySource = useEffectEvent(
+    (
+      request: NonNullable<typeof replySourceRequest>,
+      timelineRows: ReadonlyArray<MessagesTimelineRow>,
+      entries: ReadonlyArray<TimelineEntry>,
+      historyLoading: boolean,
+    ) => {
+      const finish = (found: boolean) => {
+        setReplySourceRequest(null);
+        if (!found)
+          toastManager.add({ type: "info", title: translate("chat.reply.sourceUnavailable") });
+      };
+      if (scrollToReplySource(request.messageId, timelineRows)) return finish(true);
+      const entry = entries.find(
+        (candidate) => candidate.kind === "message" && candidate.message.id === request.messageId,
+      );
+      if (entry) {
+        const runId = timelineTurnFoldRunIdsByEntryId({
+          timelineEntries: entries,
+          showReasoning,
+          showWorkingReasoning,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        }).get(entry.id);
+        if (runId && !expandedRunIds.has(runId)) {
+          setExpandedRunIds((previous) => new Set(previous).add(runId));
+          return;
+        }
+        return finish(false);
+      }
+      if (historyLoading) return;
+      // One page per growth of the history, so a failed load cannot loop.
+      if (historyControls?.hasMoreHistory && request.loadedThroughCount !== entries.length) {
+        setReplySourceRequest({ ...request, loadedThroughCount: entries.length });
+        historyControls.onLoadEarlier();
+        return;
+      }
+      finish(false);
+    },
+  );
+  const historyLoading = historyControls?.loading === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the source's turn or pages history until the requested reply source mounts, then scrolls the list to it
+  useEffect(() => {
+    if (!pendingReplySource) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- the request ends once the list scrolled to its source or history ran out
+    advanceReplySource(pendingReplySource, rows, timelineEntries, historyLoading);
+  }, [pendingReplySource, rows, timelineEntries, historyLoading]);
+
   // Built from props after the last hook so the compiler can memoize the row context; a map
   // made before a hook would rebuild it, and re-render every row, on each streamed update.
   const pendingApprovalsByRequestId = new Map(
@@ -1178,8 +1359,24 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .filter(isVisiblePendingApproval)
       .map((approval) => [approval.requestId, approval]),
   );
+  const forkDividerAfterRowId = forkedFrom ? resolveForkDividerAfterRowId(rows) : null;
+  // Shell updates stream in; the rows re-render only when a summary changes.
+  const replyTopicsKey = JSON.stringify(
+    deriveTimelineReplyTopics(childThreads, citationThreadRef?.threadId),
+  );
+  const replyTopicsByMessageId = replyTopicsFromKey(replyTopicsKey);
+  const editAvailable =
+    messageEditingEnabled && canOperateThread && presentationConnected && !isWorking;
   const sharedState: TimelineRowSharedState = {
     chatVisualMode,
+    streamingMotionEnabled: chatVisualMode !== "better-t3" || streamingMotionReady,
+    canAnimateInitialText,
+    forkDividerAfterRowId,
+    replyTopicsByMessageId,
+    onJumpToReplySource,
+    onOpenReplyTopic: citationThreadRef
+      ? (threadId) => useRightPanelStore.getState().openSideChat(citationThreadRef, threadId)
+      : undefined,
     expandedWorkGroupIds,
     showWorkingReasoning,
     responseMetrics,
@@ -1187,10 +1384,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     presentationMotion,
     onReplyMessage,
     onForkBoundary,
-    forkPending,
+    forkAvailable,
+    forkPendingBoundary,
+    onOpenAgents,
+    retryAction,
     replySourceThreadId,
+    editAvailable,
     onEditMessage:
-      messageEditingEnabled && canOperateThread && !isWorking
+      messageEditingEnabled && canOperateThread
         ? (message) =>
             setEditing({
               threadKey: routeThreadKey,
@@ -1205,7 +1406,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             content: (
               <InlineMessageEditor
                 draftRef={editing.draftRef}
-                available={messageEditingEnabled && canOperateThread && !isWorking}
+                available={editAvailable}
                 onClose={() => setEditing(null)}
                 onSave={async (text) => {
                   const result = await editMessage({
@@ -1249,6 +1450,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFileOpen,
     onUseArtifactTemplate,
     onSendAppMessage,
+    onVisualizationAction,
     onAppFullscreenChange,
     onFileDownload,
     openPullRequest,
@@ -1340,11 +1542,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
         </div>
       </div>
     );
+  const forkSourceThreadId = forkedFrom?.threadId;
   const listHeader = (
     <>
       {parentThreadLink === null ? listHeaderLeadingContent : null}
       {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
       {parentThreadLink !== null ? listHeaderLeadingContent : null}
+      {forkSourceThreadId ? (
+        <div className="messages-timeline-row-frame" data-fork-provenance="true">
+          <div className="chat-content-lane">
+            <TimelineSystemDivider
+              label={translate("chat.timeline.forkedFrom")}
+              detail={forkSourceShell?.title ?? "another thread"}
+              icon={GitForkIcon}
+              actionLabel="Open source thread"
+              onAction={() => onOpenThread(forkSourceThreadId)}
+            />
+          </div>
+        </div>
+      ) : null}
     </>
   );
 
@@ -1514,7 +1730,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return (
         <>
           {activityAnnouncer}
-          <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />
+          <div
+            className="h-full min-h-0 window-surface bg-background"
+            data-timeline-loading="true"
+          />
         </>
       );
     }
@@ -1552,6 +1771,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
               className="relative h-full min-h-0"
               data-chat-presentation={chatVisualMode}
               data-presentation-motion={presentationMotion}
+              data-reply-gutter={
+                onReplyMessage !== undefined && chatVisualMode !== "better-t3" ? true : undefined
+              }
               data-assistant-citation-viewport="true"
             >
               {onCiteAssistantText && citationThreadRef ? (
@@ -1579,12 +1801,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
                 contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
                 maintainScrollAtEnd={
-                  citationPositioning ||
-                  (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                  anchoredEndSpace ||
-                  !liveFollowEnabled ||
-                  fullscreenAppRowId !== null ||
-                  disclosureToggleSettling
+                  !endScrollMaintained
                     ? false
                     : isWorking && !prefersReducedMotion && settlingListIdentity === null
                       ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
@@ -1663,6 +1880,11 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
   );
 }
 
+function replyTopicsFromKey(key: string) {
+  const topics: ReturnType<typeof deriveTimelineReplyTopics> = JSON.parse(key);
+  return new Map(topics.map((topic) => [topic.messageId, topic]));
+}
+
 function isMessageRow(row: MessagesTimelineRow) {
   return row.kind === "message" && row.message.role !== "system";
 }
@@ -1678,16 +1900,57 @@ function getItemType(item: MessagesTimelineRow) {
   return `message:${item.message.role}:${lengthBucket}`;
 }
 
+function betterT3RowSpacing(row: TimelineRow): string {
+  if (row.kind === "message" && row.message.role === "user") return "pb-7 sm:pb-8";
+  if (row.kind === "message" && row.message.role === "assistant") {
+    return row.showAssistantMeta ? "pb-7" : "pb-4";
+  }
+  if (row.kind === "assistant-meta" || row.kind === "proposed-plan") return "pb-6";
+  return row.kind === "work" && row.isExpandedToolGroup ? "pb-1" : "pb-2.5";
+}
+
+function classicRowSpacing(row: TimelineRow): string {
+  return (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
+    row.kind === "work" ||
+    row.kind === "work-toggle" ||
+    row.kind === "activity-group"
+    ? "pb-2"
+    : "pb-4";
+}
+
+function workGroupTone(row: TimelineRow): ChatStatusTone | undefined {
+  if (row.kind === "work-toggle") return row.hasFailure ? "error" : "success";
+  if (row.kind !== "work-live") return undefined;
+  return workEntryDisplayIndicatesToolFailure(row.entry)
+    ? "error"
+    : row.active
+      ? "info"
+      : "success";
+}
+
+function worktreeSetupTone(row: Extract<TimelineRow, { kind: "worktree-setup" }>): ChatStatusTone {
+  const { phase } = row.snapshot;
+  return phase === "failed"
+    ? "error"
+    : phase === "cancelled"
+      ? "warning"
+      : phase === "done"
+        ? "success"
+        : "info";
+}
+
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const ctx = use(TimelineRowCtx);
+  const { chatVisualMode } = ctx;
+  const better = chatVisualMode === "better-t3";
   const onReply =
-    row.kind === "message" && ctx.onReplyMessage
+    row.kind === "message" && timelineMessageCanReply(ctx, row.message)
       ? () => ctx.onReplyMessage?.(row.message)
       : undefined;
+  const replyTopic =
+    row.kind === "message" ? ctx.replyTopicsByMessageId?.get(row.message.id) : undefined;
   const messageContent =
-    row.kind !== "message" ? null : ctx.editingMessage?.messageId === row.message.id ? (
-      ctx.editingMessage.content
-    ) : row.message.role === "user" ? (
+    row.kind !== "message" ? null : row.message.role === "user" ? (
       <UserMessageRow row={row} />
     ) : row.message.role === "assistant" ? (
       <AssistantTimelineRow row={row} />
@@ -1703,31 +1966,68 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
     row.expanded === true;
+  const tone = better ? workGroupTone(row) : undefined;
+  const workRows = (
+    <>
+      {row.kind === "work" ? (
+        <WorkGroupSection
+          anchorKey={row.id}
+          groupedEntries={row.groupedEntries}
+          isExpandedToolGroup={row.isExpandedToolGroup}
+          displayLabel={row.displayLabel}
+        />
+      ) : null}
+      {row.kind === "work-live" ? (
+        <ChatStatusSurface enabled={better} tone={tone} compact>
+          <LiveWorkEntryTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
+      {row.kind === "work-toggle" ? (
+        <ChatStatusSurface enabled={better} tone={tone} compact>
+          <WorkGroupToggleTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
+      {better && (row.kind === "work-live" || row.kind === "work-toggle") ? (
+        <WorkGroupDetailsPanel row={row} />
+      ) : null}
+      {row.kind === "thinking" ? (
+        <ChatStatusSurface enabled={better} compact>
+          <ThinkingTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
+    </>
+  );
 
   return (
     <div
       className={cn(
-        isWorkLogRow || isSubagentGroup
-          ? undefined
-          : row.kind === "turn-fold" || row.kind === "working"
-            ? "pb-1.5"
-            : row.kind === "message" && row.groupedWithNext
-              ? "pb-1"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "worktree-setup" ||
-                  row.kind === "event" ||
-                  row.kind === "attempt-fold" ||
-                  row.kind === "html-render" ||
-                  row.kind === "mcp-app"
-                ? "pb-2"
-                : "pb-4",
+        better
+          ? betterT3RowSpacing(row)
+          : chatVisualMode === "classic"
+            ? classicRowSpacing(row)
+            : isWorkLogRow || isSubagentGroup
+              ? undefined
+              : row.kind === "turn-fold" || row.kind === "working"
+                ? "pb-1.5"
+                : row.kind === "message" && row.groupedWithNext
+                  ? "pb-1"
+                  : (row.kind === "message" &&
+                        row.message.role === "assistant" &&
+                        !row.showAssistantMeta) ||
+                      row.kind === "worktree-setup" ||
+                      row.kind === "event" ||
+                      row.kind === "attempt-fold" ||
+                      row.kind === "html-render" ||
+                      row.kind === "mcp-app"
+                    ? "pb-2"
+                    : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
+        tone && "better-chat-work-group",
       )}
+      data-chat-tone={tone}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={
@@ -1736,52 +2036,176 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
       {isWorkLogRow ? (
-        <WorkLogBlock
-          continues={row.continuesWorkLog}
-          layout={
-            isExpandedToolGroup
-              ? "group-content"
-              : isExpandedToolGroupHeader
-                ? "group-header"
-                : "standalone"
-          }
-        >
-          {row.kind === "work" ? (
-            <WorkGroupSection
-              anchorKey={row.id}
-              groupedEntries={row.groupedEntries}
-              isExpandedToolGroup={row.isExpandedToolGroup}
-              displayLabel={row.displayLabel}
-            />
-          ) : null}
-          {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
-          {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-          {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
-        </WorkLogBlock>
+        !better && chatVisualMode !== "classic" ? (
+          <WorkLogBlock
+            continues={row.continuesWorkLog}
+            layout={
+              isExpandedToolGroup
+                ? "group-content"
+                : isExpandedToolGroupHeader
+                  ? "group-header"
+                  : "standalone"
+            }
+          >
+            {workRows}
+          </WorkLogBlock>
+        ) : (
+          workRows
+        )
       ) : null}
       {row.kind === "activity-group" ? <TimelineReasoningGroup row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
-      {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+      {row.kind === "context-compaction" ? (
+        <ChatStatusSurface enabled={better} tone={row.failed ? "error" : "info"} compact>
+          <ContextCompactionTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
       {row.kind === "message" ? (
         onReply && row.message.role !== "system" ? (
-          <MessageReplyGesture role={row.message.role} onReply={onReply}>
+          <MessageReplyGesture role={row.message.role} onReply={onReply} showAction={!better}>
             {messageContent}
           </MessageReplyGesture>
         ) : (
           messageContent
         )
       ) : null}
+      {replyTopic && ctx.onOpenReplyTopic ? (
+        <ReplyTopicChip
+          topic={replyTopic}
+          align={row.kind === "message" && row.message.role === "user" ? "end" : "start"}
+          onOpen={ctx.onOpenReplyTopic}
+        />
+      ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
-      {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
-      {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
+      {row.kind === "working" ? (
+        <ChatStatusSurface enabled={better} tone="info" compact>
+          <WorkingTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
+      {row.kind === "worktree-setup" ? (
+        <ChatStatusSurface enabled={better} tone={worktreeSetupTone(row)}>
+          <WorktreeSetupTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
+      {ctx.forkDividerAfterRowId === row.id ? <ForkStartDivider /> : null}
     </div>
   );
 });
+
+function ForkStartDivider() {
+  const translate = useInterfaceTranslator().message;
+  return (
+    <div data-fork-start-divider="true">
+      <TimelineSystemDivider label={translate("chat.timeline.forkStartsHere")} icon={GitForkIcon} />
+    </div>
+  );
+}
+
+function ReplyTopicChip({
+  topic,
+  align,
+  onOpen,
+}: {
+  topic: TimelineReplyTopicSummary;
+  align: "start" | "end";
+  onOpen: (threadId: ThreadId) => void;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const translate = useInterfaceTranslator().message;
+  const environmentId = ctx.activeThreadEnvironmentId;
+  const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn, { reportFailure: false });
+  const retryTurn = useAtomCommand(threadEnvironment.retryTurn, { reportFailure: false });
+  const retryPermitted = useAtomValue(threadEnvironment.retryTurn.permissionAtom(environmentId));
+  const retrySupported =
+    useEnvironment(environmentId)?.serverConfig?.environment.capabilities.threadRetry === true;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (command: () => Promise<AtomCommandResult<unknown, unknown>>) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await command();
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : translate("chat.reply.actionFailed"));
+    }
+    setBusy(false);
+  };
+  const { status, retry } = topic;
+  const count = translate("chat.reply.count", { count: topic.count });
+  const label = status === null ? count : `${count} · ${translate(`chat.reply.status.${status}`)}`;
+  const active = status === "pending" || status === "running" || status === "waiting";
+  const alert = error ?? topic.statusMessage;
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-1 pt-1",
+        align === "end" ? "items-end pe-1" : "items-start ps-1",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-1">
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          data-reply-topic-thread-id={topic.threadId}
+          aria-label={`${label}. ${translate("chat.reply.openSideChat")}`}
+          onClick={() => onOpen(topic.threadId)}
+        >
+          <MessagesSquareIcon />
+          {label}
+          <ChevronRightIcon />
+        </Button>
+        {active ? (
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={!ctx.canOperateThread || busy}
+            onClick={() =>
+              void run(() => interruptTurn({ environmentId, input: { threadId: topic.threadId } }))
+            }
+          >
+            <SquareIcon />
+            {translate("chat.reply.stop")}
+          </Button>
+        ) : null}
+        {retry !== null && retrySupported ? (
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={!retryPermitted || busy}
+            onClick={() =>
+              void run(() =>
+                retryTurn({
+                  environmentId,
+                  input: {
+                    type: "message.retry",
+                    commandId: CommandId.make(randomUUID()),
+                    threadId: topic.threadId,
+                    messageId: retry.messageId,
+                    runId: retry.runId,
+                  },
+                }),
+              )
+            }
+          >
+            <RotateCcwIcon />
+            {translate("chat.reply.retry")}
+          </Button>
+        ) : null}
+      </div>
+      {alert ? (
+        <p role="alert" className="text-xs text-destructive">
+          {alert}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 function WorktreeSetupTimelineRow({
   row,
@@ -1914,32 +2338,60 @@ function WorkHistorySkeleton() {
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const better = ctx.chatVisualMode === "better-t3";
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleTurnFold(row.runId),
   );
+  const timestamp = (
+    <TimelineRowTimestamp
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      className={better ? "better-chat-turn-timestamp" : "ms-auto"}
+      pill={better}
+    />
+  );
 
   return (
-    <div className="group/timeline-row border-b border-border/60 pb-2 pe-0.5 pt-1">
-      <div className="relative flex items-center gap-1">
+    <div
+      className={
+        better ? undefined : "group/timeline-row border-b border-border/60 pb-2 pe-0.5 pt-1"
+      }
+    >
+      {/* Better T3 centers the fold as a pill between two fading rules. */}
+      <div
+        className={cn(
+          "relative flex items-center gap-1",
+          better && "better-chat-turn-divider group/timeline-row",
+        )}
+      >
         <button
           type="button"
           aria-expanded={row.expanded}
           data-scroll-anchor-ignore
           onClick={toggle}
           aria-busy={loading}
-          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring/70"
+          className={cn(
+            "flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            ctx.chatVisualMode === "classic" ? "text-xs" : "text-sm leading-relaxed",
+          )}
         >
-          <span>
+          <span className={better ? "min-w-0 truncate" : undefined}>
             {row.label}
             {error ? ` · ${error}` : ""}
           </span>
-          <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+          {better ? (
+            <>
+              {timestamp}
+              <ChevronRightIcon
+                aria-hidden
+                className={cn("better-chat-chevron size-3.5 shrink-0", row.expanded && "rotate-90")}
+              />
+            </>
+          ) : (
+            <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+          )}
         </button>
-        <TimelineRowTimestamp
-          createdAt={row.createdAt}
-          timestampFormat={ctx.timestampFormat}
-          className="ms-auto"
-        />
+        {better ? null : timestamp}
       </div>
       {loading ? <WorkHistorySkeleton /> : null}
     </div>

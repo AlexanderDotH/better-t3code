@@ -6,18 +6,18 @@ import {
 } from "./chatContentWidth";
 
 describe("resolveChatContentMaxWidth", () => {
-  it("preserves the T3 Code default until customization changes it", () => {
-    expect(resolveChatContentMaxWidth(false, 100)).toBe("48rem");
-    expect(resolveChatContentMaxWidth(true, 0)).toBe("48rem");
+  it("leaves the width preset in charge until customization is on, then starts at its default", () => {
+    expect(resolveChatContentMaxWidth(false, 100)).toBeNull();
+    expect(resolveChatContentMaxWidth(true, 0)).toBe("46rem");
   });
 
   it("maps the signed endpoints to half width and the full chat area", () => {
-    expect(resolveChatContentMaxWidth(true, -100)).toBe("24rem");
+    expect(resolveChatContentMaxWidth(true, -100)).toBe("23rem");
     expect(resolveChatContentMaxWidth(true, 100)).toBe("100%");
   });
 
   it("interpolates wider values from the default width toward the available area", () => {
-    expect(resolveChatContentMaxWidth(true, 50)).toBe("calc(24rem + 50%)");
+    expect(resolveChatContentMaxWidth(true, 50)).toBe("calc(23rem + 50%)");
   });
 });
 

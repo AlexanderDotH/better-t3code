@@ -34,6 +34,10 @@ const WorkingReasoningDialogContext = createContext<
   ((selection: ReasoningSelection) => void) | null
 >(null);
 
+export function useWorkingReasoningDialogAvailable() {
+  return use(WorkingReasoningDialogContext) !== null;
+}
+
 type MarkdownOptions = Pick<
   ComponentProps<typeof ChatMarkdown>,
   | "cwd"

@@ -15,14 +15,12 @@ import { createModelSelection } from "@t3tools/shared/model";
 
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
-import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { runtimeModeConfig } from "./runtimeModeConfig";
@@ -39,6 +37,7 @@ const supervisedRuntimeModeOption: RuntimeModeOption = {
 export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
   composerMode?: ComposerMode | undefined;
+  deepPlanningDisabledReason?: string | null | undefined;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
@@ -49,6 +48,9 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   /** Draw the icon in the label color, not muted (the mode differs from the user's default). */
   emphasized?: boolean;
   onToggleInteractionMode: () => void;
+  onComposerModeChange?: ((mode: ComposerMode) => void) | undefined;
+  planningEnabled?: boolean | undefined;
+  planningDisabledReason?: string | null | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const size = props.size ?? "sm";
@@ -60,13 +62,18 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
     supervisedRuntimeModeOption;
   const RuntimeModeIcon = runtimeModeOption.icon;
-  const interactionModeToggle = (
+  const interactionModeToggle = props.showInteractionModeToggle ? (
     <ComposerInteractionModeButton
       mode={props.composerMode ?? props.interactionMode}
       size={size}
+      disabledReason={props.deepPlanningDisabledReason}
       onCycle={props.onToggleInteractionMode}
+      onModeChange={props.onComposerModeChange}
+      planningEnabled={props.planningEnabled}
+      planningDisabledReason={props.planningDisabledReason}
+      hidden={props.hidden}
     />
-  );
+  ) : null;
 
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
   const permissionsTooltip = `Permissions: ${runtimeModeOption.label}. ${runtimeModeOption.description}`;
@@ -220,9 +227,6 @@ export function ComposerPermissionsSection(props: {
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   canOperateThread: boolean;
-  activeContextWindow: ContextWindowSnapshot | null;
-  reserveContextWindowMeter: boolean;
-  activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -254,59 +258,43 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
-  onCompactContext?: (() => void) | undefined;
-  compactDisabled: boolean;
-  compactDisabledReason: string | null;
   compactBeforeSendTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
 }) {
   return (
-    <>
-      {props.activeContextWindow ? (
-        <ContextWindowMeter
-          usage={props.activeContextWindow}
-          modelDisplayName={props.activeThreadModelDisplayName}
-          onCompact={props.onCompactContext}
-          compactDisabled={props.compactDisabled}
-          compactDisabledReason={props.compactDisabledReason}
-        />
-      ) : props.reserveContextWindowMeter ? (
-        <ContextWindowMeterPlaceholder />
-      ) : null}
-      <ComposerPrimaryActions
-        compact={props.compact}
-        canOperateThread={props.canOperateThread}
-        pendingAction={props.pendingAction}
-        isRunning={props.isRunning}
-        canInterrupt={props.canInterrupt}
-        followUpBehavior={props.followUpBehavior}
-        canSteer={props.canSteer}
-        alternateShortcutLabel={props.alternateShortcutLabel}
-        showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
-        showPlanImplementationActions={props.showPlanImplementationActions ?? false}
-        planImplementationSuggestion={props.planImplementationSuggestion ?? null}
-        planParallelismReviewStatus={props.planParallelismReviewStatus ?? "idle"}
-        {...(props.onImplementPlan ? { onImplementPlan: props.onImplementPlan } : {})}
-        promptHasText={props.promptHasText}
-        isSendBusy={props.isSendBusy}
-        sendDisabledReason={props.sendDisabledReason}
-        isEnvironmentUnavailable={props.isEnvironmentUnavailable}
-        isPreparingWorktree={props.isPreparingWorktree}
-        hasSendableContent={props.hasSendableContent}
-        canResume={props.canResume}
-        preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
-        isEditingQueuedMessage={props.isEditingQueuedMessage}
-        onSubmitMessage={props.onSubmitMessage}
-        onResume={props.onResume}
-        onPreviousPendingQuestion={props.onPreviousPendingQuestion}
-        onInterrupt={props.onInterrupt}
-        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
-        compactBeforeSendTokens={props.compactBeforeSendTokens}
-        keepFullHistory={props.keepFullHistory}
-        onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-      />
-    </>
+    <ComposerPrimaryActions
+      compact={props.compact}
+      canOperateThread={props.canOperateThread}
+      pendingAction={props.pendingAction}
+      isRunning={props.isRunning}
+      canInterrupt={props.canInterrupt}
+      followUpBehavior={props.followUpBehavior}
+      canSteer={props.canSteer}
+      alternateShortcutLabel={props.alternateShortcutLabel}
+      showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
+      showPlanImplementationActions={props.showPlanImplementationActions ?? false}
+      planImplementationSuggestion={props.planImplementationSuggestion ?? null}
+      planParallelismReviewStatus={props.planParallelismReviewStatus ?? "idle"}
+      {...(props.onImplementPlan ? { onImplementPlan: props.onImplementPlan } : {})}
+      promptHasText={props.promptHasText}
+      isSendBusy={props.isSendBusy}
+      sendDisabledReason={props.sendDisabledReason}
+      isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+      isPreparingWorktree={props.isPreparingWorktree}
+      hasSendableContent={props.hasSendableContent}
+      canResume={props.canResume}
+      preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
+      isEditingQueuedMessage={props.isEditingQueuedMessage}
+      onSubmitMessage={props.onSubmitMessage}
+      onResume={props.onResume}
+      onPreviousPendingQuestion={props.onPreviousPendingQuestion}
+      onInterrupt={props.onInterrupt}
+      onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+      compactBeforeSendTokens={props.compactBeforeSendTokens}
+      keepFullHistory={props.keepFullHistory}
+      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+    />
   );
 });
 

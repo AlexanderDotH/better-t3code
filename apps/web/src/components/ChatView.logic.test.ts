@@ -41,6 +41,7 @@ import type { Thread } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   getAntigravitySendBlockReason,
+  resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
@@ -618,6 +619,20 @@ describe("resolveComposerProviderSelection", () => {
       ).toBeUndefined();
     },
   );
+
+  it.each([
+    ["the provider cannot plan", true, false],
+    ["planning is turned off", false, true],
+  ])("keeps a chat draft in chat mode when %s", (_case, planModeEnabled, toggle) => {
+    const provider = entry("opencode", "opencode", { showInteractionModeToggle: toggle }).snapshot;
+
+    expect(
+      resolveComposerInteractionMode({ provider, planModeEnabled, interactionMode: "chat" }),
+    ).toEqual({ enabled: false, interactionMode: "chat" });
+    expect(
+      resolveComposerInteractionMode({ provider, planModeEnabled, interactionMode: "plan" }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+  });
 
   it("keeps a signed-out selection instead of silently switching providers", () => {
     const signedOutEntry = entry("antigravity", "google_work", {

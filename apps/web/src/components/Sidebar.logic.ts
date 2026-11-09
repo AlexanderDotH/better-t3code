@@ -1,5 +1,6 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { resolveProjectThreadPreview } from "@t3tools/client-runtime/project-thread-preview";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -31,12 +32,17 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
   getThreadSortTimestamp,
+  sortActiveThreadsByOrderKey,
   planPinnedReorder,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import {
+  sortInboxThreadsByReturn,
+  sortWorkingThreadsBySend,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
@@ -215,6 +221,8 @@ export type SidebarListMarker =
   | "active-placeholder"
   | "settled-placeholder"
   | "pinned-divider"
+  /** Older rows stay active rows; the header only discloses them. */
+  | "older-projects-header"
   | "working-header"
   | "snoozed-header"
   | "settled-header";
@@ -672,7 +680,8 @@ export interface ThreadStatusPill {
     | "Awaiting Input"
     | "Guest Request"
     | "Waiting"
-    | "Plan Ready";
+    | "Plan Ready"
+    | "Deep Plan Ready";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -680,6 +689,7 @@ export interface ThreadStatusPill {
 
 type ThreadStatusInput = Pick<
   SidebarThreadSummary,
+  | "deepPlan"
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
@@ -984,6 +994,34 @@ export function groupSidebarThreadsByProject<
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
+/**
+ * An open boring-sidebar folder lists its first `count` threads, plus any
+ * `alwaysVisible` ones past them, until the user shows the rest.
+ */
+export function previewSidebarFolderThreads<T>(
+  threads: readonly T[],
+  input: {
+    readonly count: number;
+    readonly showAll: boolean;
+    readonly alwaysVisible: (thread: T) => boolean;
+  },
+): { readonly threads: readonly T[]; readonly hiddenCount: number; readonly canShowLess: boolean } {
+  const preview = resolveProjectThreadPreview({
+    items: threads,
+    count: input.count,
+    showAll: false,
+    alwaysVisible: input.alwaysVisible,
+  });
+  if (!preview.hasOverflowingItems || input.showAll) {
+    return { threads, hiddenCount: 0, canShowLess: preview.hasOverflowingItems };
+  }
+  return {
+    threads: preview.visibleItems,
+    hiddenCount: preview.hiddenItems.length,
+    canShowLess: false,
+  };
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"
@@ -1006,7 +1044,25 @@ export function firstValidTimestampMs(
   return 0;
 }
 
-export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
+export function sortSidebarActiveThreads<T extends SidebarThreadSummary>(
+  threads: readonly T[],
+  input: {
+    readonly sortOrder: SidebarThreadSortOrder;
+    readonly sortBySend: boolean;
+    readonly workingShelfEnabled: boolean;
+    readonly returnedAt: (thread: T) => number | undefined;
+  },
+): T[] {
+  if (input.sortOrder === "created_at") {
+    return sortActiveThreadsByOrderKey(threads, input.sortOrder);
+  }
+  return input.sortBySend
+    ? sortWorkingThreadsBySend(threads)
+    : input.workingShelfEnabled
+      ? sortInboxThreadsByReturn(threads, input.returnedAt)
+      : sortActiveThreadsByOrderKey(threads, input.sortOrder);
+}
+
 export {
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
@@ -1190,12 +1246,19 @@ export function resolveThreadStatusPill(input: {
     isLatestRunSettled(thread.latestRun, thread.runtime) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
-    return {
-      label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-    };
+    return thread.deepPlan?.phase === "awaitingApproval"
+      ? {
+          label: "Deep Plan Ready",
+          colorClass: "text-deep-plan",
+          dotClass: "bg-deep-plan",
+          pulse: false,
+        }
+      : {
+          label: "Plan Ready",
+          colorClass: "text-violet-600 dark:text-violet-300/90",
+          dotClass: "bg-violet-500 dark:bg-violet-300/90",
+          pulse: false,
+        };
   }
 
   if (hasUnseenCompletion(thread)) {
@@ -1531,6 +1594,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Working: 4,
   Connecting: 4,
   "Plan Ready": 3,
+  "Deep Plan Ready": 3,
   Waiting: 2,
   Completed: 1,
 };

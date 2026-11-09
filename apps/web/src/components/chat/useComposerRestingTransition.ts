@@ -126,6 +126,7 @@ export function useComposerRestingTransition(
 
       const nextRect = element.getBoundingClientRect();
       const nextHeight = nextRect.height;
+      const footerBottom = footer ? nextRect.bottom - footer.getBoundingClientRect().bottom : 0;
       // The chat view resize-observes the overlay to place the timeline
       // inset, the scroll-to-end pill, and the mini player. Publishing the
       // destination height here turns that feedback into one update instead
@@ -172,7 +173,8 @@ export function useComposerRestingTransition(
           overlay.style.height = `${String(overlayHeight)}px`;
           overlay.style.display = "flex";
           overlay.style.flexDirection = "column";
-          overlay.style.justifyContent = "flex-end";
+          overlay.style.justifyContent =
+            overlay.dataset.chatComposerPlacement === "hero" ? "center" : "flex-end";
           pinnedOverlayRef.current = {
             element: overlay,
             releaseOcclusion: pinComposerOcclusion(overlay, occlusionHeight),
@@ -186,7 +188,7 @@ export function useComposerRestingTransition(
         if (footer) {
           footer.style.position = "absolute";
           footer.style.top = "auto";
-          footer.style.bottom = "1px";
+          footer.style.bottom = `${footerBottom}px`;
           footer.style.height = "3rem";
           if (nextIsCollapsed) {
             footer.style.left = "auto";
@@ -273,7 +275,7 @@ export function useComposerRestingTransition(
           // Delay returning controls until the expanding prompt leaves their destination.
           const arrivingControls = nextIsCollapsed
             ? restingControlsRef.current
-            : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
+            : element.querySelector<HTMLElement>('[data-chat-composer-footer-controls="true"]');
           if (arrivingControls) {
             const drift = nextIsCollapsed
               ? -COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX

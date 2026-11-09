@@ -87,6 +87,19 @@
   background: transparent;
 }
 
+/* The fork presentations keep their message tone; V2 deepened it for its own look. */
+html:not([data-theme-id])
+  :is([data-chat-presentation="better-t3"], [data-chat-presentation="classic"]),
+html[data-theme-id=""]
+  :is([data-chat-presentation="better-t3"], [data-chat-presentation="classic"]) {
+  --message-surface: var(--accent);
+}
+
+/* The bubble tails sit 10px outside V2's content lane, which otherwise clips them. */
+[data-chat-presentation="better-t3"] .chat-content-lane {
+  overflow-x: visible;
+}
+
 .better-chat-bubble[data-presentation-bubble="assistant"] {
   --chat-surface: var(--app-theme-assistant-message-surface, var(--message-surface));
 }

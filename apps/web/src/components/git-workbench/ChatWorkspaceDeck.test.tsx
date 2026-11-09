@@ -1,5 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ChatWorkspaceDeck, resolveChatWorkspaceCardRequest } from "./ChatWorkspaceDeck";
@@ -182,6 +184,39 @@ describe("ChatWorkspaceDeck", () => {
     );
     expect(html).toContain('data-workspace-card-peek="chat"');
     expect(html).toContain('data-workspace-card-body="git"');
+  });
+
+  it("keeps the Chat body mounted when the deck moves to another thread", async () => {
+    let chatMounts = 0;
+    function ChatBody() {
+      useState(() => {
+        chatMounts += 1;
+      });
+      return <div>chat body</div>;
+    }
+    const cards = [{ ...card("chat"), renderBody: () => <ChatBody /> }, card("git")];
+    const deck = (resetKey: string) => (
+      <ChatWorkspaceDeck
+        activeCard="chat"
+        actionRequired={false}
+        cards={cards}
+        expandedCard={null}
+        isRecording={false}
+        resetKey={resetKey}
+        onActiveCardChange={vi.fn()}
+        onExpandedCardChange={vi.fn()}
+      />
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(deck("environment:cwd:thread-a"));
+    });
+    await act(async () => {
+      renderer.update(deck("environment:cwd:thread-b"));
+    });
+
+    expect(chatMounts).toBe(1);
+    await act(async () => renderer.unmount());
   });
 
   it("mounts one active body while rendering adjacent Git and MCP peeks", () => {

@@ -124,7 +124,7 @@ import { ensureLocalApi, readLocalApi } from "../localApi";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
-import { useThreadActions } from "../hooks/useThreadActions";
+import { useMarkThreadUnread, useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -192,6 +192,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarProjectSettingsTarget,
   resolveThreadStatusPill,
+  resolveThreadLastVisitedAt,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -260,6 +261,7 @@ function localizedThreadStatusLabel(
     "Pending Approval": "sidebar.status.pendingApproval",
     "Awaiting Input": "sidebar.status.awaitingInput",
     "Plan Ready": "sidebar.status.planReady",
+    "Deep Plan Ready": "chat.deepPlan.ready",
     "Guest Request": "sidebar.status.awaitingInput",
     Waiting: "sidebar.status.monitoring",
   } as const;
@@ -493,7 +495,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     rowRef(node);
     slotRef?.(node);
   };
-  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
@@ -1416,7 +1419,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const { isMobile, setOpenMobile } = useSidebar();
-  const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const markThreadUnread = useMarkThreadUnread();
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -1482,10 +1485,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
   );
   const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const threadLastVisitedAts = projectThreads.map(
-    (thread) =>
-      threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))] ??
-      null,
+  const threadLastVisitedAts = projectThreads.map((thread) =>
+    resolveThreadLastVisitedAt(
+      thread.lastVisitedAt,
+      threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+    ),
   );
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
@@ -2066,8 +2070,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       position,
     );
     if (clicked === "mark-unread") {
-      for (const { threadKey, thread } of selectedThreadEntries) {
-        markThreadUnread(threadKey, thread.latestRun?.completedAt);
+      for (const { threadRef } of selectedThreadEntries) {
+        markThreadUnread(threadRef);
       }
       clearSelection();
       return;
@@ -2444,7 +2448,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       return;
     }
     if (clicked === "mark-unread") {
-      markThreadUnread(threadKey, thread.latestRun?.completedAt);
+      markThreadUnread(threadRef);
       return;
     }
     if (clicked === "copy-path") {
@@ -3856,7 +3860,10 @@ export default function LegacySidebar() {
                 resolveThreadStatusPill({
                   thread: {
                     ...thread,
-                    lastVisitedAt: threadLastVisitedAtById[threadKey],
+                    lastVisitedAt: resolveThreadLastVisitedAt(
+                      thread.lastVisitedAt,
+                      threadLastVisitedAtById[threadKey],
+                    ),
                   },
                 }),
               )

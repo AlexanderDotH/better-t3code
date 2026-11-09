@@ -142,6 +142,50 @@ export function partitionSidebarThreadsByProjectActivity<
   return { recentThreads, olderThreads };
 }
 
+/** Active rows of projects idle past the inactivity window, for the Older projects shelf. */
+export function splitSidebarActiveThreadsByProjectActivity<
+  T extends Pick<SidebarThreadSummary, "environmentId" | "projectId">,
+>(input: {
+  readonly projects: readonly SidebarProjectSnapshot[];
+  /** Every listed thread, so settled and pinned work still counts as project activity. */
+  readonly threads: readonly SidebarThreadSummary[];
+  readonly activeThreads: readonly T[];
+  readonly nowMs: number;
+  readonly isThreadSettled?: (thread: SidebarThreadSummary) => boolean;
+}): SidebarThreadActivityPartition<T> & { readonly olderProjectCount: number } {
+  const projectKeyByMemberKey = new Map<string, string>();
+  for (const project of input.projects) {
+    for (const ref of project.memberProjectRefs) {
+      projectKeyByMemberKey.set(`${ref.environmentId}:${ref.projectId}`, project.projectKey);
+    }
+  }
+  const threadsByProjectKey = new Map<string, SidebarThreadSummary[]>();
+  for (const thread of input.threads) {
+    const projectKey = projectKeyByMemberKey.get(`${thread.environmentId}:${thread.projectId}`);
+    if (projectKey === undefined) continue;
+    const list = threadsByProjectKey.get(projectKey);
+    if (list) list.push(thread);
+    else threadsByProjectKey.set(projectKey, [thread]);
+  }
+  const { olderProjects } = partitionSidebarProjectsByActivity({
+    projects: input.projects,
+    threadsByProjectKey,
+    nowMs: input.nowMs,
+    ...(input.isThreadSettled ? { isThreadSettled: input.isThreadSettled } : {}),
+  });
+  const partition = partitionSidebarThreadsByProjectActivity({
+    threads: input.activeThreads,
+    olderProjects,
+  });
+  const olderProjectKeys = new Set(
+    partition.olderThreads.flatMap((thread) => {
+      const projectKey = projectKeyByMemberKey.get(`${thread.environmentId}:${thread.projectId}`);
+      return projectKey === undefined ? [] : [projectKey];
+    }),
+  );
+  return { ...partition, olderProjectCount: olderProjectKeys.size };
+}
+
 export function resolveSidebarOlderProjectsExpanded(input: {
   readonly persistedExpanded: boolean;
   readonly activeRouteProjectKey: string | null;

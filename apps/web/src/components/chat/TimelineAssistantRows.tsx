@@ -1,8 +1,17 @@
 import { MessageAudioAttachments } from "./MessageAudioAttachments";
+import { ChatSizeMotion } from "./ChatSizeMotion";
+import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { isAudioAttachment } from "../../types";
 import { TimelineReasoningGroup } from "./TimelineReasoningGroup";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
-import { TimelineMessageActions } from "./TimelineMessageActions";
+import {
+  EditMessageButton,
+  ForkMessageButton,
+  MessageActionsOverlay,
+  ReplyMessageButton,
+  timelineMessageCanReply,
+} from "./TimelineMessageActions";
 import { TimelineMessageQuote } from "./TimelineMessageQuote";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { type RunId } from "@t3tools/contracts";
@@ -25,110 +34,163 @@ import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import { formatChatTimestampTooltip } from "../../timestampFormat";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
-import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
+import {
+  formatTimelineTimestamp,
+  MESSAGE_HEADING_LEVEL,
+  MessageAuthorHeading,
+} from "./TimelineRowParts";
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const better = ctx.chatVisualMode === "better-t3";
+  const translate = useInterfaceTranslator().message;
+  const editor =
+    ctx.editingMessage?.messageId === row.message.id ? ctx.editingMessage.content : null;
   // The timeline holds a streaming message's row while only its text grows.
   const liveText = useAssistantMessageText(
     row.message.streaming ? ctx.threadRef : null,
     row.projectedItem?.item.id,
   );
   const text = liveText ?? row.message.text;
+  const isStreaming = Boolean(row.message.streaming);
   const audioAttachments = (row.message.attachments ?? []).filter(isAudioAttachment);
   const messageText =
-    text || (row.message.streaming || audioAttachments.length > 0 ? "" : "(empty response)");
+    text ||
+    (row.message.streaming || audioAttachments.length > 0 ? "" : translate("chat.timeline.empty"));
+  const meta = row.showAssistantMeta ? (
+    <AssistantMessageMeta
+      className={better ? "better-chat-meta" : "mt-1.5"}
+      projectedItem={row.projectedItem}
+      message={row.message}
+      showCopyButton={row.showAssistantCopyButton}
+      copyStreaming={row.assistantCopyStreaming}
+      alwaysVisible={better}
+    />
+  ) : row.showAssistantTimestamp ? (
+    <AssistantMessageMeta
+      className={better ? "better-chat-meta" : "mt-1.5"}
+      message={row.message}
+      showCopyButton={false}
+      copyStreaming={row.assistantCopyStreaming}
+      alwaysVisible={better}
+    />
+  ) : null;
 
-  return (
-    <>
-      <div
-        data-presentation-bubble={ctx.chatVisualMode === "better-t3" ? "assistant" : undefined}
-        className={cn(
-          "relative min-w-0 px-1 py-0.5",
-          ctx.chatVisualMode === "better-t3" &&
-            "better-chat-bubble better-chat-message text-message-foreground",
-        )}
-      >
-        {ctx.chatVisualMode === "better-t3" ? (
-          <div
-            aria-hidden
-            data-presentation-surface
-            className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit]"
-          />
-        ) : null}
-        <TimelineMessageActions
-          message={row.message}
-          editable={row.projectedItem?.visibility !== "inherited"}
+  const bubble = (
+    <div
+      data-presentation-bubble={better ? "assistant" : undefined}
+      className={cn(
+        "relative min-w-0 px-1 py-0.5",
+        better && "better-chat-bubble isolate text-message-foreground",
+      )}
+    >
+      {better ? (
+        <div
+          aria-hidden
+          data-presentation-surface
+          className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit]"
         />
-        {row.message.replyTo ? <TimelineMessageQuote replyTo={row.message.replyTo} /> : null}
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        {row.reasoningGroup ? (
-          <div className="mb-3" data-message-reasoning>
-            <TimelineReasoningGroup row={row.reasoningGroup} anchorKey={row.id} />
-          </div>
-        ) : null}
-        <div data-thread-find-text="true">
-          <AssistantCitationSource
-            messageId={row.message.id}
-            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-            itemKey={row.id}
-            request={ctx.citationRequest}
-            listRef={ctx.listRef}
-          >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              streamId={`${ctx.routeThreadKey}:${row.id}`}
-              streamingBlockMotionEnabled={ctx.chatVisualMode !== "better-t3"}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onVisualizationAction={
-                ctx.onSendAppMessage ? (prompt) => void ctx.onSendAppMessage?.(prompt) : undefined
-              }
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
-          </AssistantCitationSource>
+      ) : null}
+      <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+      {better && (!isStreaming || timelineMessageCanReply(ctx, row.message)) ? (
+        <MessageActionsOverlay>
+          <EditMessageButton
+            message={row.message}
+            editable={row.projectedItem?.visibility !== "inherited"}
+          />
+          <AssistantForkAction message={row.message} projectedItem={row.projectedItem} />
+          <AssistantCopyButton
+            message={row.message}
+            showCopyButton={!isStreaming}
+            streaming={isStreaming}
+          />
+          <ReplyMessageButton message={row.message} />
+        </MessageActionsOverlay>
+      ) : null}
+      {row.message.replyTo ? <TimelineMessageQuote replyTo={row.message.replyTo} /> : null}
+      {row.reasoningGroup ? (
+        <div className="mb-3" data-message-reasoning>
+          <TimelineReasoningGroup row={row.reasoningGroup} anchorKey={row.id} />
         </div>
-        <MessageAudioAttachments
-          environmentId={ctx.activeThreadEnvironmentId}
-          attachments={audioAttachments}
-          className="mt-2"
+      ) : null}
+      <ChatSizeMotion enabled={!isStreaming}>
+        {editor ?? (
+          <div data-thread-find-text="true">
+            <AssistantCitationSource
+              messageId={row.message.id}
+              {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+              itemKey={row.id}
+              request={ctx.citationRequest}
+              listRef={ctx.listRef}
+            >
+              <ChatMarkdown
+                text={messageText}
+                className={better ? "text-message-foreground" : ""}
+                cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
+                isStreaming={isStreaming}
+                streamId={`${ctx.routeThreadKey}:${row.id}`}
+                animateInitialStreamChunk={
+                  better ? ctx.canAnimateInitialText?.(row.id) === true : isStreaming
+                }
+                streamingMotionEnabled={ctx.streamingMotionEnabled !== false}
+                streamingBlockMotionEnabled={!better}
+                lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+                skills={ctx.skills}
+                headingLevelOffset={MESSAGE_HEADING_LEVEL}
+                onVisualizationAction={ctx.onVisualizationAction}
+                onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+                onRunShellCommand={ctx.onRunShellCommand}
+                onImageExpand={ctx.onImageExpand}
+              />
+            </AssistantCitationSource>
+          </div>
+        )}
+      </ChatSizeMotion>
+      <MessageAudioAttachments
+        environmentId={ctx.activeThreadEnvironmentId}
+        attachments={audioAttachments}
+        className="mt-2"
+      />
+      {ctx.onOpenTurnDiff ? (
+        <AssistantChangedFilesSection
+          turnSummary={row.assistantTurnDiffSummary}
+          routeThreadKey={ctx.routeThreadKey}
+          resolvedTheme={ctx.resolvedTheme}
+          onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
-        {ctx.onOpenTurnDiff ? (
-          <AssistantChangedFilesSection
-            turnSummary={row.assistantTurnDiffSummary}
-            routeThreadKey={ctx.routeThreadKey}
-            resolvedTheme={ctx.resolvedTheme}
-            onOpenTurnDiff={ctx.onOpenTurnDiff}
-          />
-        ) : null}
-        {row.showAssistantMeta ? (
-          <AssistantMessageMeta
-            className="mt-1.5"
-            projectedItem={row.projectedItem}
-            message={row.message}
-            showCopyButton={row.showAssistantCopyButton}
-            copyStreaming={row.assistantCopyStreaming}
-          />
-        ) : row.showAssistantTimestamp ? (
-          <AssistantMessageMeta
-            className="mt-1.5"
-            message={row.message}
-            showCopyButton={false}
-            copyStreaming={row.assistantCopyStreaming}
-          />
-        ) : null}
-      </div>
-    </>
+      ) : null}
+      {better ? null : meta}
+    </div>
   );
+
+  // Better T3 keeps the meta outside the bubble; the wrapper widens the hover target that reveals it.
+  return better ? (
+    <div className="better-chat-message">
+      {bubble}
+      {meta}
+    </div>
+  ) : (
+    bubble
+  );
+}
+
+function AssistantForkAction({
+  message,
+  projectedItem,
+}: {
+  readonly message: ChatMessage;
+  readonly projectedItem: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
+}) {
+  const ctx = use(TimelineRowCtx);
+  if (ctx.onForkBoundary)
+    return <ForkMessageButton message={message} projectedItem={projectedItem} />;
+  return projectedItem?.item.type === "assistant_message" ? (
+    <AssistantForkButton projectedItem={projectedItem} />
+  ) : null;
 }
 
 function AssistantForkButton({
@@ -158,8 +220,8 @@ function AssistantForkButton({
         render={
           <Button
             type="button"
-            size="xs"
-            variant="ghost"
+            size="icon-xs"
+            variant="ghost-muted"
             disabled={busy}
             onClick={() => {
               setBusy(true);
@@ -171,7 +233,7 @@ function AssistantForkButton({
           />
         }
       >
-        <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
+        <GitForkIcon className={cn(busy && "animate-pulse")} />
       </TooltipTrigger>
       <TooltipPopup side="top">Fork from this response</TooltipPopup>
     </Tooltip>
@@ -217,7 +279,7 @@ function AssistantMessageMeta({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
+        "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums transition-opacity duration-200",
         alwaysVisible
           ? "opacity-100"
           : "opacity-0 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/assistant:opacity-100",
@@ -229,27 +291,34 @@ function AssistantMessageMeta({
           {projectedItem.item.status}
         </span>
       ) : null}
-      <AssistantCopyButton
-        message={message}
-        showCopyButton={showCopyButton}
-        streaming={copyStreaming}
-      />
-      {projectedItem?.item.type === "assistant_message" ? (
-        <AssistantForkButton projectedItem={projectedItem} />
-      ) : null}
-      {!message.streaming && message.runId && ctx.responseMetrics ? (
-        <ResponseMetricsDetails snapshot={ctx.responseMetrics.get(message.runId) ?? null} />
+      {/* Better T3 shows these in the bubble's overlay instead. */}
+      {ctx.chatVisualMode !== "better-t3" ? (
+        <div className="flex shrink-0 items-center gap-0.5 empty:hidden">
+          <AssistantForkAction message={message} projectedItem={projectedItem} />
+          <AssistantCopyButton
+            message={message}
+            showCopyButton={showCopyButton}
+            streaming={copyStreaming}
+          />
+          <EditMessageButton
+            message={message}
+            editable={projectedItem?.visibility !== "inherited"}
+          />
+        </div>
       ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-            {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
+            {formatTimelineTimestamp(message.updatedAt, ctx.timestampFormat, ctx.chatVisualMode)}
           </TooltipTrigger>
           <TooltipPopup>
             {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat)}
           </TooltipPopup>
         </Tooltip>
       )}
+      {!message.streaming && message.runId && ctx.responseMetrics ? (
+        <ResponseMetricsDetails snapshot={ctx.responseMetrics.get(message.runId) ?? null} />
+      ) : null}
     </div>
   );
 }
@@ -273,7 +342,7 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" size="icon-xs" />;
 }
 
 export function ProposedPlanTimelineRow({
@@ -282,6 +351,7 @@ export function ProposedPlanTimelineRow({
   row: Extract<TimelineRow, { kind: "proposed-plan" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const forkFromPlan = useInterfaceTranslator().message("chat.fork.fromPlan");
   const deepPlanReview = ctx.deepPlanReview;
   const reviewedPlan =
     deepPlanReview &&
@@ -290,22 +360,33 @@ export function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
-      {ctx.onForkBoundary ? (
-        <Button
-          size="xs"
-          variant="ghost-muted"
-          disabled={ctx.forkPending}
-          onClick={() =>
-            ctx.onForkBoundary?.({ kind: "proposed-plan", planId: row.proposedPlan.id })
-          }
-        >
-          Fork from this plan
-        </Button>
-      ) : null}
       {reviewedPlan ? (
         deepPlanReview.content
       ) : (
         <ProposedPlanCard
+          actions={
+            ctx.onForkBoundary ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label={forkFromPlan}
+                      disabled={ctx.forkAvailable === false || ctx.forkPendingBoundary != null}
+                      onClick={() =>
+                        ctx.onForkBoundary?.({ kind: "proposed-plan", planId: row.proposedPlan.id })
+                      }
+                    />
+                  }
+                >
+                  <GitForkIcon />
+                </TooltipTrigger>
+                <TooltipPopup side="top">{forkFromPlan}</TooltipPopup>
+              </Tooltip>
+            ) : undefined
+          }
+          variant={row.proposedPlan.deepPlan ? "deep-plan" : "plan"}
           planMarkdown={row.proposedPlan.planMarkdown}
           environmentId={ctx.activeThreadEnvironmentId}
           threadRef={ctx.threadRef ?? undefined}
@@ -413,7 +494,14 @@ function AssistantChangedFilesSectionInner({
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
-  const allDirectoriesExpanded = persistedExpanded ?? false;
+  const { latestRunId } = use(TimelineRowActivityCtx);
+  const isLatestRun = latestRunId === turnSummary.runId;
+  const [autoExpanded] = useState(() => shouldAutoExpandChangedFiles(checkpointFiles, isLatestRun));
+  const [classicDirectoriesExpanded, setClassicDirectoriesExpanded] = useState(autoExpanded);
+  const classic = ctx.chatVisualMode === "classic";
+  const allDirectoriesExpanded = classic
+    ? classicDirectoriesExpanded
+    : (persistedExpanded ?? false);
 
   const thread = useThreadShell(ctx.threadRef);
   const activeProject = useProject(
@@ -440,8 +528,8 @@ function AssistantChangedFilesSectionInner({
         : ctx.chatVisualMode === "classic"
           ? {
               classicPresentation: {
-                expanded: allDirectoriesExpanded,
-                showCompactPreview: true,
+                expanded: persistedExpanded ?? (isLatestRun && autoExpanded),
+                showCompactPreview: isLatestRun,
                 onExpandedChange: (expanded: boolean) =>
                   setExpanded(routeThreadKey, turnSummary.runId, expanded),
               },
@@ -450,7 +538,9 @@ function AssistantChangedFilesSectionInner({
       allDirectoriesExpanded={allDirectoriesExpanded}
       resolvedTheme={resolvedTheme}
       onToggleAllDirectories={() =>
-        setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
+        classic
+          ? setClassicDirectoriesExpanded(!allDirectoriesExpanded)
+          : setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
       }
       onOpenTurnDiff={onOpenTurnDiff}
       onFileContextMenu={(filePath, event) =>

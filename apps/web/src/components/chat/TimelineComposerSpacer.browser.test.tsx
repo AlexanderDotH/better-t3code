@@ -1,14 +1,6 @@
 import { act, render as renderScreen } from "../../../test/render";
-import type { LegendListRef } from "@legendapp/list/react";
-import { createRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { TimelineComposerSpacer } from "./TimelineComposerSpacer";
-import { useTimelineEndFollow } from "./useTimelineEndFollow";
-import {
-  shouldResumeTimelineEndFollow,
-  type TimelineScrollIntent,
-  type TimelineScrollMode,
-} from "./timelineScrollAnchoring";
 
 const motion = vi.hoisted(() => ({
   active: true,
@@ -34,11 +26,7 @@ vi.mock("../../panelAnimations", async () => {
 let host: HTMLElement;
 let viewport: HTMLDivElement;
 let scrollOffset: number;
-let scrollMode: TimelineScrollMode;
-let scrollIntent: TimelineScrollIntent;
 let animateDescriptor: PropertyDescriptor | undefined;
-const frames = new Map<number, FrameRequestCallback>();
-let nextFrame = 0;
 const visibleHeights = new Map<HTMLElement, number>();
 const observers = new Map<Element, () => void>();
 const transitions: Array<{
@@ -48,11 +36,6 @@ const transitions: Array<{
   tick: (height: number) => void;
   finish: () => void;
 }> = [];
-const scrollToEnd = vi.fn(() => {
-  viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
-  return Promise.resolve();
-});
-const listRef = createRef<LegendListRef>();
 const CONTENT_HEIGHT = 1000;
 const VIEWPORT_HEIGHT = 600;
 
@@ -78,91 +61,14 @@ function Harness({
   height: number;
   transitionDurationMs?: number;
 }) {
-  const scheduleFollow = useTimelineEndFollow({
-    listRef,
-    identity: "composer-gap",
-    enabled: true,
-    isFollowingEnd: () => scrollMode === "following-end",
-    bottomInset: height,
-    revision: "rows",
-  });
   return (
     <TimelineComposerSpacer
       height={height}
       transitionDurationMs={transitionDurationMs}
-      onHeightChange={scheduleFollow}
+      onHeightChange={() => {}}
     />
   );
 }
-
-async function flushFrames() {
-  await act(() => {
-    const pending = [...frames.values()];
-    frames.clear();
-    pending.forEach((callback) => callback(0));
-  });
-}
-
-async function resizeAt(transition: (typeof transitions)[number], height: number) {
-  await act(() => {
-    transition.tick(height);
-    const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 40;
-    if (atEnd && shouldResumeTimelineEndFollow(scrollMode, scrollIntent)) {
-      scrollMode = "following-end";
-    }
-    observers.get(insetElement())?.();
-  });
-  await flushFrames();
-}
-
-it("closes the released composer space after a small upward scroll and keeps navigation in control", async () => {
-  using _setup = setup();
-
-  await using screen = await renderScreen(null, { router: false });
-  host = screen.container;
-
-  await act(() => screen.rerender(<Harness height={260} />));
-  await flushFrames();
-  expect(transitions).toHaveLength(0);
-  scrollMode = "free-scrolling";
-  scrollIntent = "away-from-end";
-  viewport.scrollTop -= 20;
-
-  await act(() => screen.rerender(<Harness height={166} />));
-  const collapse = transitions[0]!;
-  expect(collapse.from).toBe(260);
-  expect(collapse.to).toBe(166);
-  expect(viewport.scrollTop).toBe(640);
-  for (const height of [240, 213, 185, 166]) {
-    await resizeAt(collapse, height);
-    expect(gapAboveComposer()).toBeLessThanOrEqual(0);
-    expect(scrollMode).toBe("free-scrolling");
-  }
-  collapse.finish();
-  expect(gapAboveComposer()).toBe(0);
-  expect(scrollToEnd).not.toHaveBeenCalled();
-
-  scrollIntent = "toward-end";
-  if (shouldResumeTimelineEndFollow(scrollMode, scrollIntent)) scrollMode = "following-end";
-  expect(scrollMode).toBe("following-end");
-  await act(() => screen.rerender(<Harness height={260} />));
-  const expansion = transitions[1]!;
-  for (const height of [185, 213, 240, 260]) {
-    await resizeAt(expansion, height);
-    expect(gapAboveComposer()).toBe(0);
-  }
-  expansion.finish();
-  expect(viewport.scrollTop).toBe(660);
-
-  scrollMode = "free-scrolling";
-  scrollIntent = "away-from-end";
-  viewport.scrollTop = 200;
-  scrollToEnd.mockClear();
-  await act(() => screen.rerender(<Harness height={166} />));
-  await resizeAt(transitions[2]!, 166);
-  expect(viewport.scrollTop).toBe(200);
-  expect(scrollToEnd).not.toHaveBeenCalled();
-});
 
 it("applies direct layout changes immediately when the composer is not animating", async () => {
   using _setup = setup();
@@ -174,7 +80,6 @@ it("applies direct layout changes immediately when the composer is not animating
   await act(() => screen.rerender(<Harness height={200} transitionDurationMs={0} />));
   expect(transitions).toHaveLength(0);
   expect(insetHeight()).toBe(200);
-  await flushFrames();
   expect(gapAboveComposer()).toBe(0);
 });
 
@@ -198,24 +103,14 @@ it("reverses from the displayed inset and stops immediately when motion is disab
   });
   expect(transitions[1]!.cancel).toHaveBeenCalledOnce();
   expect(insetHeight()).toBe(260);
-  await flushFrames();
 });
 
 function setup() {
   motion.active = true;
-  frames.clear();
   visibleHeights.clear();
   observers.clear();
   transitions.length = 0;
-  scrollMode = "following-end";
-  scrollIntent = null;
   scrollOffset = 660;
-  scrollToEnd.mockClear();
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    frames.set(++nextFrame, callback);
-    return nextFrame;
-  });
-  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -277,12 +172,10 @@ function setup() {
       },
     },
   });
-  listRef.current = { getScrollableNode: () => viewport, scrollToEnd } as unknown as LegendListRef;
 
   return {
     [Symbol.dispose]() {
       expect(observers.size).toBe(0);
-      expect(frames.size).toBe(0);
 
       if (animateDescriptor)
         Object.defineProperty(HTMLElement.prototype, "animate", animateDescriptor);

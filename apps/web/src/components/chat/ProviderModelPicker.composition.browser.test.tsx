@@ -14,12 +14,19 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 
 const instanceId = ProviderInstanceId.make("codex");
 
-function Picker({ keybindings = [] }: { keybindings?: ResolvedKeybindingsConfig }) {
+function Picker({
+  keybindings = [],
+  layout,
+}: {
+  keybindings?: ResolvedKeybindingsConfig;
+  layout: "current" | "classic";
+}) {
   const [model, setModel] = useState("original");
   return (
     <>
       <output aria-label="Selected model">{model}</output>
       <ProviderModelPicker
+        layout={layout}
         environmentId={null}
         activeInstanceId={instanceId}
         model={model}
@@ -58,17 +65,59 @@ function Picker({ keybindings = [] }: { keybindings?: ResolvedKeybindingsConfig 
   );
 }
 
-it("keeps composition keys out of model selection and dismissal", async () => {
-  await using screen = await render(<Picker />);
-  await page.getByRole("button", { name: "Choose model" }).click();
-  const search = page.getByPlaceholder("Search models...");
-  await search.fill("Target");
-  await expect.element(page.getByRole("option", { name: /Target model/ })).toBeVisible();
+it.each(["current", "classic"] as const)(
+  "keeps composition keys out of %s model selection and dismissal",
+  async (layout) => {
+    await using screen = await render(<Picker layout={layout} />);
+    await page.getByRole("button", { name: "Choose model" }).click();
+    const search = page.getByPlaceholder("Search models...");
+    await search.fill("Target");
+    await expect.element(page.getByRole("option", { name: /Target model/ })).toBeVisible();
 
-  for (const nativeEvent of [{ isComposing: true }, { keyCode: 229 }]) {
-    for (const key of ["Enter", "Escape"]) {
+    for (const nativeEvent of [{ isComposing: true }, { keyCode: 229 }]) {
+      for (const key of ["Enter", "Escape"]) {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          ...nativeEvent,
+          bubbles: true,
+          cancelable: true,
+        });
+        await act(() => search.element().dispatchEvent(event));
+        expect(event.defaultPrevented).toBe(false);
+        await expect.element(search).toBeVisible();
+        await expect
+          .element(screen.getByRole("status", { name: "Selected model" }))
+          .toHaveTextContent("original");
+      }
+    }
+
+    await userEvent.keyboard("{Enter}");
+    await expect.element(search).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("status", { name: "Selected model" }))
+      .toHaveTextContent("target");
+    await page.getByRole("button", { name: "Choose model" }).click();
+    await expect.element(search).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).not.toBeInTheDocument();
+  },
+);
+
+it.each(["current", "classic"] as const)(
+  "keeps composing keys from triggering %s model jump shortcuts",
+  async (layout) => {
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "enter", command: "modelPicker.jump.1", when: "modelPickerOpen" },
+    ]);
+    await using screen = await render(<Picker keybindings={keybindings} layout={layout} />);
+    await page.getByRole("button", { name: "Choose model" }).click();
+    const search = page.getByPlaceholder("Search models...");
+    await search.fill("Target");
+    await expect.element(page.getByRole("option", { name: /Target model/ })).toBeVisible();
+
+    for (const nativeEvent of [{ isComposing: true }, { keyCode: 229 }]) {
       const event = new KeyboardEvent("keydown", {
-        key,
+        key: "Enter",
         ...nativeEvent,
         bubbles: true,
         cancelable: true,
@@ -80,41 +129,5 @@ it("keeps composition keys out of model selection and dismissal", async () => {
         .element(screen.getByRole("status", { name: "Selected model" }))
         .toHaveTextContent("original");
     }
-  }
-
-  await userEvent.keyboard("{Enter}");
-  await expect.element(search).not.toBeInTheDocument();
-  await expect
-    .element(screen.getByRole("status", { name: "Selected model" }))
-    .toHaveTextContent("target");
-  await page.getByRole("button", { name: "Choose model" }).click();
-  await expect.element(search).toBeVisible();
-  await userEvent.keyboard("{Escape}");
-  await expect.element(search).not.toBeInTheDocument();
-});
-
-it("keeps composing keys from triggering model jump shortcuts", async () => {
-  const keybindings = compileResolvedKeybindingsConfig([
-    { key: "enter", command: "modelPicker.jump.1", when: "modelPickerOpen" },
-  ]);
-  await using screen = await render(<Picker keybindings={keybindings} />);
-  await page.getByRole("button", { name: "Choose model" }).click();
-  const search = page.getByPlaceholder("Search models...");
-  await search.fill("Target");
-  await expect.element(page.getByRole("option", { name: /Target model/ })).toBeVisible();
-
-  for (const nativeEvent of [{ isComposing: true }, { keyCode: 229 }]) {
-    const event = new KeyboardEvent("keydown", {
-      key: "Enter",
-      ...nativeEvent,
-      bubbles: true,
-      cancelable: true,
-    });
-    await act(() => search.element().dispatchEvent(event));
-    expect(event.defaultPrevented).toBe(false);
-    await expect.element(search).toBeVisible();
-    await expect
-      .element(screen.getByRole("status", { name: "Selected model" }))
-      .toHaveTextContent("original");
-  }
-});
+  },
+);

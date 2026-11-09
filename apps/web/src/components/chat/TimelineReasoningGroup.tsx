@@ -41,11 +41,10 @@ export function TimelineReasoningGroup({
         environmentId: ctx.activeThreadEnvironmentId,
         skills: ctx.skills,
         streamId: `${ctx.routeThreadKey}:${row.id}`,
+        streamingMotionEnabled: ctx.streamingMotionEnabled !== false,
         onImageExpand: ctx.onImageExpand,
         onUseArtifactTemplate: ctx.onUseArtifactTemplate,
-        ...(ctx.onSendAppMessage
-          ? { onVisualizationAction: (prompt: string) => void ctx.onSendAppMessage?.(prompt) }
-          : {}),
+        ...(ctx.onVisualizationAction ? { onVisualizationAction: ctx.onVisualizationAction } : {}),
       }}
     />
   );

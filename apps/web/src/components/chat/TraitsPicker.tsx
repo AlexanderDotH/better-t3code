@@ -53,6 +53,7 @@ import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { useComposerMenuProps } from "./composerEventScope";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -321,6 +322,7 @@ export function getReasoningTraitStep(input: {
 }
 
 export interface TraitsMenuContentProps {
+  onManualModelSelectionChange?: ((selection: ModelSelection) => void) | undefined;
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   models: ReadonlyArray<ServerProviderModel>;
@@ -353,6 +355,7 @@ export function useTraitsSelection({
   hideContextWindow = false,
   planModeEnabled,
   autoReasoningEffort,
+  onManualModelSelectionChange,
   triggerClassName: _triggerClassName,
   ...persistence
 }: TraitsSelectionInput) {
@@ -374,6 +377,15 @@ export function useTraitsSelection({
       model,
       persistSticky: true,
     });
+    if (model) {
+      onManualModelSelectionChange?.(
+        createModelSelection(
+          instanceId ?? defaultInstanceIdForDriver(provider),
+          model,
+          nextOptions,
+        ),
+      );
+    }
   };
   const selected = getTraitsSectionVisibility({
     provider,
@@ -584,6 +596,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   disabled?: boolean;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
+  const composerMenuProps = useComposerMenuProps();
   const traits = useTraitsSelection(props);
   if (!traits.hasAnyControls) {
     return null;
@@ -618,6 +631,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                 <ComposerControl
                   disabled={disabled}
                   aria-label={triggerLabel}
+                  data-composer-shortcut="composer.effort"
                   size={size}
                   className={cn(
                     isCodexStyle
@@ -651,7 +665,7 @@ export const TraitsPicker = memo(function TraitsPicker({
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start">
+      <MenuPopup align="start" {...composerMenuProps}>
         <TraitsMenuContent {...props} />
       </MenuPopup>
     </Menu>

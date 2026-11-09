@@ -1,4 +1,5 @@
 import { useVisualizationsEnabled } from "../hooks/useVisualizationsEnabled";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
   isClosedVisualizationFence,
   normalizeVisualizationFormat,
@@ -297,6 +298,7 @@ function CodexArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const translate = useInterfaceTranslator().message;
   const Icon = ARTIFACT_TEMPLATE_ICON_BY_KIND[props.template.artifactKind];
   const presentationLabel = codexArtifactTemplatePresentationLabel(props.template.artifactKind);
 
@@ -333,7 +335,7 @@ function CodexArtifactTemplateCard(props: {
           className="shrink-0"
           onClick={() => props.onUse?.(props.template)}
         >
-          Use template
+          {translate("chat.templates.use")}
         </Button>
       ) : null}
     </div>

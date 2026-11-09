@@ -61,7 +61,6 @@ function ResumeButton(props: {
     localCheckoutBranchMismatch: null,
     composerRef: props.composerRef,
     persistThreadSettingsForNextTurn: props.persistSettings,
-    clearUsageLimitsFor: () => undefined,
     scrollToEnd: () => undefined,
     setThreadError: () => undefined,
   });

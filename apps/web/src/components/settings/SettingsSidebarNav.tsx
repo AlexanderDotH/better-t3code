@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  BlocksIcon,
   FlaskConicalIcon,
   BotIcon,
   createLucideIcon,
@@ -17,6 +18,7 @@ import {
   FolderTreeIcon,
   GitBranchIcon,
   GlobeIcon,
+  ImportIcon,
   InfoIcon,
   MessageSquareTextIcon,
   MessagesSquareIcon,
@@ -24,6 +26,7 @@ import {
   KeyboardIcon,
   KeyRoundIcon,
   PaletteIcon,
+  RocketIcon,
   SearchIcon,
   ServerIcon,
   Settings2Icon,
@@ -86,10 +89,10 @@ const T3ConnectSidebarAvatar = lazy(() =>
 const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
-  "/settings/better-t3": FlaskConicalIcon,
-  "/settings/mcp": BotIcon,
-  "/settings/skills": BotIcon,
-  "/settings/import-chats": MessagesSquareIcon,
+  "/settings/better-t3": RocketIcon,
+  "/settings/mcp": BlocksIcon,
+  "/settings/skills": BlocksIcon,
+  "/settings/import-chats": ImportIcon,
   "/settings/general": Settings2Icon,
   "/settings/diagnostics": WrenchIcon,
   "/settings/appearance": PaletteIcon,

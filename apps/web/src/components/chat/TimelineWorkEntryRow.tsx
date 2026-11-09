@@ -32,6 +32,8 @@ import {
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { ChatDetailPanel } from "./ChatDetailPanel";
+import { ChatStatusSurface } from "./ChatStatusSurface";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -116,29 +118,47 @@ const toolCallExpandedBodyClassName =
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
+export function ReasoningTraceContent({
+  entries,
+  inline = false,
+}: {
+  entries: ReadonlyArray<TimelineWorkEntry>;
+  inline?: boolean;
+}) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   const isStreaming = (entry: TimelineWorkEntry) =>
     isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
-  return (
-    <WorkLogDetails followLive={entries.some(isStreaming)}>
-      {entries.map((entry) => (
-        <ChatMarkdown
-          key={entry.id}
-          className="text-foreground"
-          text={entry.detail ?? ""}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          skills={ctx.skills}
-          isStreaming={isStreaming(entry)}
-          headingLevelOffset={MESSAGE_HEADING_LEVEL}
-          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-          onImageExpand={ctx.onImageExpand}
-          lineBreaks
-        />
-      ))}
-    </WorkLogDetails>
+  const content = entries.map((entry) => (
+    <ChatMarkdown
+      key={entry.id}
+      className={inline ? "text-xs text-secondary-label" : "text-foreground"}
+      text={entry.detail ?? ""}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef ?? undefined}
+      environmentId={ctx.activeThreadEnvironmentId}
+      onVisualizationAction={ctx.onVisualizationAction}
+      skills={ctx.skills}
+      isStreaming={isStreaming(entry)}
+      streamId={`${ctx.routeThreadKey}:${entry.id}`}
+      animateInitialStreamChunk={isStreaming(entry) && ctx.chatVisualMode !== "better-t3"}
+      streamingMotionEnabled={ctx.streamingMotionEnabled !== false}
+      streamingBlockMotionEnabled={ctx.chatVisualMode !== "better-t3"}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+      onImageExpand={ctx.onImageExpand}
+      lineBreaks
+    />
+  ));
+  return inline ? (
+    <div
+      className="flex min-w-0 select-text flex-col gap-2 px-1 py-0.5 text-secondary-label"
+      data-reasoning-output="true"
+    >
+      {content}
+    </div>
+  ) : (
+    <WorkLogDetails followLive={entries.some(isStreaming)}>{content}</WorkLogDetails>
   );
 }
 
@@ -151,6 +171,9 @@ type WorkEntryRowProps = {
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
+  if (props.workEntry.itemType === "reasoning" && ctx.chatVisualMode !== "better-t3") {
+    return <ReasoningTraceContent entries={[props.workEntry]} inline />;
+  }
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
@@ -174,7 +197,7 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
-  const { threadRef, onImageExpand, timestampFormat } = ctx;
+  const { threadRef, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
@@ -188,7 +211,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const groupView = use(WorkGroupViewCtx);
   const expandedEntries =
     groupView?.state.expandedEntries ?? ctx.workGroupViewState.expandedEntries;
-  const [expanded, setExpanded] = useState(() => expandedEntries.has(workEntry.id));
+  const better = ctx.chatVisualMode === "better-t3";
+  const [expandedOverride, setExpandedOverride] = useState<boolean | undefined>(() =>
+    expandedEntries.has(workEntry.id) ? true : undefined,
+  );
+  // Classic shows answered questions open until the user folds them.
+  const expanded =
+    expandedOverride ?? (ctx.chatVisualMode === "classic" && Boolean(workEntry.questionAnswer));
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {
@@ -198,7 +227,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     }
     if (next) expandedEntries.add(workEntry.id);
     else expandedEntries.delete(workEntry.id);
-    setExpanded(next);
+    setExpandedOverride(next);
   };
   const failureItem = workEntry.projectedItem?.item;
   const pendingApproval =
@@ -274,7 +303,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     showFailedIndicator &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
   const entryIconName =
-    showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);
+    showWarningIndicator || showDestructiveRowStyle
+      ? "circle-alert"
+      : better && workEntry.toolLifecycleStatus === "completed" && !showFailedIndicator
+        ? "check"
+        : workEntryIconName(workEntry);
   const entryToolIcon =
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
@@ -322,17 +355,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       workEntry.changedFiles?.length ||
       viewedImage,
     );
-  const expandedBody =
-    expanded && !isReasoning
-      ? plainOutput !== undefined
-        ? plainOutput
-        : buildToolCallExpandedBody(
-            workEntry,
-            workspaceRoot,
-            previewText,
-            viewedImage ? viewedImagePath : null,
-          )
-      : null;
   const plainOutputFetches =
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&
@@ -391,6 +413,172 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
     : {};
 
+  const details = (
+    <WorkEntryDetails
+      workEntry={workEntry}
+      workspaceRoot={workspaceRoot}
+      previewText={previewText}
+      plainOutput={plainOutput}
+      plainOutputFetches={plainOutputFetches}
+      viewedImage={viewedImage}
+      viewedImagePath={viewedImagePath}
+      canExpand={canExpandProjectedItem}
+    />
+  );
+  const trailingActions = (
+    <>
+      {createdThread ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-sm text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring"
+          aria-label={`Open ${createdThread.title ?? "created thread"}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            ctx.onOpenThread(createdThread.targetThreadId);
+          }}
+          onKeyDown={stopRowToggle}
+        >
+          Open chat
+        </button>
+      ) : null}
+      {notifiedSubagentThreadId ? (
+        <InlineButton
+          aria-label="Open subagent thread"
+          onClick={(event) => {
+            event.stopPropagation();
+            ctx.onOpenThread(notifiedSubagentThreadId);
+          }}
+          onKeyDown={stopRowToggle}
+        >
+          Open subagent
+        </InlineButton>
+      ) : null}
+      {showFailedIndicator && !showDestructiveRowStyle && !toolIconAcceptsTint(entryToolIcon) ? (
+        <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+      ) : null}
+    </>
+  );
+  const chevron = (
+    <span
+      className={cn(
+        "flex size-4 shrink-0 items-center justify-center",
+        !canExpandProjectedItem && "invisible",
+      )}
+      aria-hidden
+    >
+      <ChevronRightIcon
+        className={cn(
+          "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+          better && "better-chat-chevron",
+          expanded && "rotate-90",
+        )}
+      />
+    </span>
+  );
+  const heading = (
+    <span className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}>
+      {isReasoning && !expanded ? (
+        <ChatMarkdown
+          inline
+          text={workEntry.detail ?? previewText}
+          cwd={ctx.markdownCwd}
+          parseRawHtml={false}
+          extraRemarkPlugins={
+            workEntry.toolLifecycleStatus === "inProgress"
+              ? THINKING_PREVIEW_PLUGINS
+              : THOUGHT_PREVIEW_PLUGINS
+          }
+        />
+      ) : threadLabel ? (
+        <ThreadReadLabel label={threadLabel} environmentId={ctx.activeThreadEnvironmentId} linked />
+      ) : better ? (
+        // The full text belongs to the expanded output; the pill keeps one line.
+        (previewText.split("\n", 1)[0] ?? previewText)
+      ) : (
+        previewText
+      )}
+    </span>
+  );
+  const answer = answerPreview ? (
+    <span
+      className={cn(
+        "min-w-0 truncate",
+        !expanded && workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
+          ? "text-foreground"
+          : "text-muted-foreground",
+      )}
+    >
+      {answerPreview}
+    </span>
+  ) : null;
+
+  if (better) {
+    const row = (
+      <div
+        data-v2-item-type={workEntry.projectedItem?.item.type}
+        data-v2-item-visibility={workEntry.projectedItem?.visibility}
+        className={cn(
+          "better-chat-work group/timeline-row relative flex min-w-0 flex-col",
+          canExpandProjectedItem &&
+            "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        )}
+        {...rowToggleProps}
+      >
+        <div
+          data-presentation-status
+          className="better-chat-pill-row flex min-w-0 select-none items-center gap-1.5"
+        >
+          <span
+            className={cn(iconWrapperClass, "size-6 shrink-0")}
+            role={showFailedIndicator ? "img" : undefined}
+            aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          >
+            <ToolActivityIconView
+              icon={entryToolIcon}
+              fallbackName={entryIconName}
+              className="block size-4 shrink-0 stroke-2"
+              muted
+            />
+          </span>
+          <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-xs leading-5">
+            {heading}
+            {answer}
+          </p>
+          {trailingActions}
+          {chevron}
+          <TimelineRowTimestamp
+            createdAt={workEntry.createdAt}
+            timestampFormat={timestampFormat}
+            pill
+          />
+        </div>
+        <ChatDetailPanel expanded={expanded} motion={ctx.presentationMotion === true}>
+          {details}
+        </ChatDetailPanel>
+      </div>
+    );
+    // An entry inside an opened group already sits in that group's surface.
+    return groupView ? (
+      row
+    ) : (
+      <ChatStatusSurface
+        enabled
+        compact
+        tone={
+          showFailedIndicator
+            ? "error"
+            : showWarningIndicator
+              ? "warning"
+              : workEntry.toolLifecycleStatus === "completed"
+                ? "success"
+                : "neutral"
+        }
+      >
+        {row}
+      </ChatStatusSurface>
+    );
+  }
+
   return (
     <WorkLogRow
       data-v2-item-type={workEntry.projectedItem?.item.type}
@@ -412,101 +600,101 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
       label={
         <div className="min-w-0 flex-1 overflow-hidden">
-          <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
-            <span
-              className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
-            >
-              {isReasoning && !expanded ? (
-                <ChatMarkdown
-                  inline
-                  text={workEntry.detail ?? previewText}
-                  cwd={ctx.markdownCwd}
-                  parseRawHtml={false}
-                  extraRemarkPlugins={
-                    workEntry.toolLifecycleStatus === "inProgress"
-                      ? THINKING_PREVIEW_PLUGINS
-                      : THOUGHT_PREVIEW_PLUGINS
-                  }
-                />
-              ) : threadLabel ? (
-                <ThreadReadLabel
-                  label={threadLabel}
-                  environmentId={ctx.activeThreadEnvironmentId}
-                  linked
-                />
-              ) : (
-                previewText
-              )}
-            </span>
-            {answerPreview ? (
-              <span
-                className={cn(
-                  "min-w-0 truncate",
-                  !expanded &&
-                    workEntry.questionAnswer &&
-                    hasQuestionAnswer(workEntry.questionAnswer)
-                    ? "text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
-                {answerPreview}
-              </span>
-            ) : null}
+          <p
+            className={cn(
+              "flex min-w-0 w-full items-baseline gap-1.5",
+              ctx.chatVisualMode === "classic" ? "text-xs leading-5" : "text-sm leading-relaxed",
+            )}
+          >
+            {heading}
+            {answer}
           </p>
         </div>
       }
       trailing={
         <>
-          {createdThread ? (
-            <button
-              type="button"
-              className="shrink-0 rounded-sm text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring"
-              aria-label={`Open ${createdThread.title ?? "created thread"}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                ctx.onOpenThread(createdThread.targetThreadId);
-              }}
-              onKeyDown={stopRowToggle}
-            >
-              Open chat
-            </button>
-          ) : null}
-          {notifiedSubagentThreadId ? (
-            <InlineButton
-              aria-label="Open subagent thread"
-              onClick={(event) => {
-                event.stopPropagation();
-                ctx.onOpenThread(notifiedSubagentThreadId);
-              }}
-              onKeyDown={stopRowToggle}
-            >
-              Open subagent
-            </InlineButton>
-          ) : null}
-          {showFailedIndicator &&
-          !showDestructiveRowStyle &&
-          !toolIconAcceptsTint(entryToolIcon) ? (
-            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
-          ) : null}
+          {trailingActions}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
-          <span
-            className={cn(
-              "flex size-4 shrink-0 items-center justify-center",
-              !canExpandProjectedItem && "invisible",
-            )}
-            aria-hidden
-          >
-            <ChevronRightIcon
-              className={cn(
-                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
-                expanded && "rotate-90",
-              )}
-            />
-          </span>
+          {chevron}
         </>
       }
     >
-      {expanded && viewedImage && threadRef ? (
+      {expanded ? details : null}
+    </WorkLogRow>
+  );
+}
+
+/** Rendered only while the entry is open, so closed rows never build their output. */
+function WorkEntryDetails({
+  workEntry,
+  workspaceRoot,
+  previewText,
+  plainOutput,
+  plainOutputFetches,
+  viewedImage,
+  viewedImagePath,
+  canExpand,
+}: {
+  workEntry: TimelineWorkEntry;
+  workspaceRoot: string | undefined;
+  previewText: string;
+  plainOutput: string | null | undefined;
+  plainOutputFetches: boolean;
+  viewedImage: ReturnType<typeof resolveViewedImageAsset> | null;
+  viewedImagePath: string | null;
+  canExpand: boolean;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const { threadRef, onImageExpand } = ctx;
+  const better = ctx.chatVisualMode === "better-t3";
+  const isReasoning = workEntry.itemType === "reasoning";
+  const expandedBody = isReasoning
+    ? null
+    : plainOutput !== undefined
+      ? plainOutput
+      : (buildToolCallExpandedBody(
+          workEntry,
+          workspaceRoot,
+          // The Better T3 pill shows only the first line; the rest belongs to the output.
+          better ? (previewText.split("\n", 1)[0] ?? "") : previewText,
+          viewedImage ? viewedImagePath : null,
+        ) ?? (better && !viewedImage ? previewText : null));
+  const output =
+    !isReasoning &&
+    !workEntry.questionAnswer &&
+    canExpand &&
+    (expandedBody ||
+      plainOutputFetches ||
+      (workEntry.projectedItem && plainOutput === undefined)) ? (
+      workEntry.projectedItem && plainOutput === undefined ? (
+        <V2ItemInspector
+          projectedItem={workEntry.projectedItem}
+          environmentId={ctx.activeThreadEnvironmentId}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={workspaceRoot}
+          onOpenToolDiff={ctx.onOpenToolDiff}
+          onImageExpand={ctx.onImageExpand}
+          source={ctx.turnItemSource}
+        />
+      ) : (
+        <>
+          {expandedBody ? (
+            <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+          ) : null}
+          {plainOutputFetches && workEntry.projectedItem ? (
+            <FetchedToolOutput
+              projectedItem={workEntry.projectedItem}
+              environmentId={ctx.activeThreadEnvironmentId}
+              onImageExpand={onImageExpand}
+              source={ctx.turnItemSource}
+            />
+          ) : null}
+        </>
+      )
+    ) : null;
+  return (
+    <>
+      {viewedImage && threadRef ? (
         <WorkLogDetails kind="media">
           <ChatMarkdownAssetImage
             environmentId={threadRef.environmentId}
@@ -519,46 +707,22 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           />
         </WorkLogDetails>
       ) : null}
-      {expanded && workEntry.questionAnswer ? (
+      {workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
-      {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
-      {expanded &&
-      !isReasoning &&
-      !workEntry.questionAnswer &&
-      canExpandProjectedItem &&
-      (expandedBody ||
-        plainOutputFetches ||
-        (workEntry.projectedItem && plainOutput === undefined)) ? (
-        <WorkLogDetails kind="panel">
-          {workEntry.projectedItem && plainOutput === undefined ? (
-            <V2ItemInspector
-              projectedItem={workEntry.projectedItem}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.markdownCwd}
-              workspaceRoot={workspaceRoot}
-              onOpenToolDiff={ctx.onOpenToolDiff}
-              onImageExpand={ctx.onImageExpand}
-              source={ctx.turnItemSource}
-            />
-          ) : (
-            <>
-              {expandedBody ? (
-                <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
-              ) : null}
-              {plainOutputFetches && workEntry.projectedItem ? (
-                <FetchedToolOutput
-                  projectedItem={workEntry.projectedItem}
-                  environmentId={ctx.activeThreadEnvironmentId}
-                  onImageExpand={onImageExpand}
-                  source={ctx.turnItemSource}
-                />
-              ) : null}
-            </>
-          )}
-        </WorkLogDetails>
-      ) : null}
-    </WorkLogRow>
+      {isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
+      {output === null ? null : better ? (
+        <div
+          className="better-chat-work-output cursor-auto"
+          onClick={stopRowToggle}
+          onPointerDown={stopRowToggle}
+        >
+          {output}
+        </div>
+      ) : (
+        <WorkLogDetails kind="panel">{output}</WorkLogDetails>
+      )}
+    </>
   );
 }
 

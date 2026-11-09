@@ -1,5 +1,6 @@
 import { ChatDetailPanel } from "./ChatDetailPanel";
 import { ChatThinkingIndicator } from "./ChatThinkingIndicator";
+import { useChatWidthMotion } from "./ChatSizeMotion";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -13,7 +14,8 @@ import { memo, use, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
-import { Minimize2Icon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, Minimize2Icon, XIcon } from "lucide-react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
@@ -84,8 +86,8 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   });
 
   if (nonEmptyEntries.length === 0) return null;
-  if (isExpandedToolGroup && nonEmptyEntries.every((entry) => entry.itemType === "reasoning")) {
-    return <ReasoningTraceContent entries={nonEmptyEntries} />;
+  if (nonEmptyEntries.every((entry) => entry.itemType === "reasoning")) {
+    return <ReasoningTraceContent entries={nonEmptyEntries} inline={!isExpandedToolGroup} />;
   }
   if (isExpandedToolGroup) {
     return (
@@ -279,34 +281,51 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { chatVisualMode, presentationMotion } = use(TimelineRowCtx);
+  const { chatVisualMode } = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
+  const translate = useInterfaceTranslator().message;
+  const classic = chatVisualMode === "classic";
+  const better = chatVisualMode === "better-t3";
   const compacting = row.compacting === true || isCompacting;
-  const shimmer = isPreparingWorktree || compacting;
+  // Better T3 keeps the working row still; the elapsed timer is its only motion.
+  const shimmer = !better && (isPreparingWorktree || compacting);
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
   ) : compacting ? (
     <CompactingLabel createdAt={row.createdAt} />
   ) : row.createdAt ? (
     <>
-      Working for <WorkingTimer createdAt={row.createdAt} />
+      {translate("chat.timeline.workingFor")} <WorkingTimer createdAt={row.createdAt} />
     </>
   ) : (
-    "Working..."
+    translate("chat.timeline.working")
   );
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
-      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+    <div
+      className={
+        classic
+          ? "py-0.5 pl-1.5"
+          : better
+            ? "better-chat-pill-row"
+            : "border-b border-border/60 pb-2 pt-1"
+      }
+    >
+      <div
+        className={
+          better
+            ? "flex min-w-0 items-center gap-2 text-xs text-muted-foreground tabular-nums"
+            : classic
+              ? "flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-2xs tabular-nums"
+              : "flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"
+        }
+      >
+        {classic ? <ClassicWorkingDots /> : null}
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"
         >
-          {chatVisualMode === "better-t3" && !shimmer ? (
-            <ChatThinkingIndicator motion={presentationMotion === true} />
-          ) : (
-            label
-          )}
+          {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
         {backgroundWorktreeSetup ? (
@@ -314,6 +333,22 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
         ) : null}
       </div>
     </div>
+  );
+}
+
+const CLASSIC_DOT_DELAYS = ["0ms", "200ms", "400ms"] as const;
+
+function ClassicWorkingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.75" aria-hidden="true">
+      {CLASSIC_DOT_DELAYS.map((delay) => (
+        <span
+          key={delay}
+          className="size-1 rounded-full bg-muted-foreground/30 motion-safe:animate-status-pulse"
+          style={{ animationDelay: delay }}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -369,10 +404,17 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
+  const better = ctx.chatVisualMode === "better-t3";
+  // Reserve the activity row during setup so the handoff keeps the same height.
+  if (isPreparingWorktree || isCompacting)
+    return better ? <div className="better-chat-thinking-pill min-h-7" /> : <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
-  const activity = (
+  const activity = better ? (
+    <div className="better-chat-thinking-pill flex min-h-7 items-center">
+      <ChatThinkingIndicator motion={live && ctx.presentationMotion === true} />
+    </div>
+  ) : (
     <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />
   );
   const { groupId } = row;
@@ -404,12 +446,18 @@ function LiveActivityRow({
   active?: boolean;
   shimmer?: boolean;
 }) {
-  const animated = active && !failed;
+  const better = use(TimelineRowCtx).chatVisualMode === "better-t3";
+  // Better T3 drops the label shine and shimmer: both repaint every frame while a tool runs.
+  const animated = active && !failed && !better;
   const showShimmer = animated && shimmer;
   return (
     <div
       ref={animated ? observeVisibleAnimation : undefined}
-      className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
+      data-presentation-status
+      className={cn(
+        "relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md leading-relaxed",
+        better ? "text-xs" : "text-sm",
+      )}
     >
       <LiveActivityContent
         label={label}
@@ -445,8 +493,41 @@ function LiveActivityContent({
   active?: boolean;
   highlighted?: boolean;
 }) {
+  const better = use(TimelineRowCtx).chatVisualMode === "better-t3";
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(toolIcon);
+
+  if (better)
+    return (
+      <span
+        className={cn(
+          "better-chat-pill-row flex min-w-0 items-center gap-1.5",
+          highlighted ? "text-foreground" : "text-secondary-label",
+        )}
+      >
+        {iconName ? (
+          <span
+            className={cn(
+              "flex size-6 shrink-0 items-center justify-center",
+              failed ? failedToolIconClassName : "text-icon-muted",
+            )}
+            role={announceFailure ? "img" : undefined}
+            aria-label={announceFailure ? "Tool call failed" : undefined}
+          >
+            <ToolActivityIconView
+              icon={toolIcon}
+              fallbackName={iconName}
+              className="block size-4 shrink-0 stroke-2"
+              muted
+            />
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {showTrailingFailureMark ? (
+          <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+        ) : null}
+      </span>
+    );
 
   return (
     <WorkLogRow
@@ -502,11 +583,18 @@ export function LiveWorkEntryTimelineRow({
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
+  const widthRef = useChatWidthMotion<HTMLButtonElement>(
+    label,
+    ctx.chatVisualMode === "better-t3" && ctx.presentationMotion === true,
+  );
 
   const item = row.entry.projectedItem?.item;
   const pendingApproval =
     item?.type === "approval_request" ? ctx.pendingApprovals.get(item.requestId) : undefined;
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
+  if (row.entry.itemType === "reasoning" && ctx.chatVisualMode !== "better-t3") {
+    return <ReasoningTraceContent entries={[row.entry]} inline />;
+  }
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
   const thoughtLine = row.thought && !row.expanded ? liveThoughtLine(row.thought.detail ?? "") : "";
@@ -516,9 +604,11 @@ export function LiveWorkEntryTimelineRow({
     <>
       <button
         type="button"
+        ref={widthRef}
         className={cn(
           "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring/70",
           thoughtLine ? "flex-col items-start" : "min-h-6 items-center",
+          ctx.chatVisualMode === "better-t3" && "better-chat-running",
         )}
         aria-label={
           failed
@@ -586,15 +676,6 @@ export function LiveWorkEntryTimelineRow({
           active={row.active}
         />
       </button>
-      {ctx.chatVisualMode === "better-t3" && row.expanded ? (
-        <ChatDetailPanel expanded={row.expanded} motion={ctx.presentationMotion === true}>
-          <WorkGroupSection
-            anchorKey={row.id}
-            groupedEntries={row.groupedEntries}
-            isExpandedToolGroup
-          />
-        </ChatDetailPanel>
-      ) : null}
     </>
   );
 }
@@ -605,28 +686,104 @@ export function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  return (
-    <>
-      <WorkGroupHeader
-        label={row.summary}
-        iconName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
-        toolIcon={row.toolIcon}
-        failed={row.hasFailure}
-        expanded={row.expanded}
-        createdAt={row.createdAt}
-        timestampFormat={ctx.timestampFormat}
-        onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-      />
-      {ctx.chatVisualMode === "better-t3" && row.expanded && row.detailEntries ? (
-        <ChatDetailPanel expanded={row.expanded} motion={ctx.presentationMotion === true}>
-          <WorkGroupSection
-            anchorKey={row.id}
-            groupedEntries={row.detailEntries}
-            isExpandedToolGroup
+  const translate = useInterfaceTranslator().message;
+  const onToggle = () => ctx.onToggleWorkGroup(row.groupId, row.id);
+  const widthRef = useChatWidthMotion<HTMLButtonElement>(
+    row.summary,
+    ctx.chatVisualMode === "better-t3" && ctx.presentationMotion === true,
+  );
+  const iconName = row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind);
+  if (ctx.chatVisualMode === "classic") {
+    return (
+      <button
+        type="button"
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-xs leading-5 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-expanded={row.expanded}
+        aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+        onClick={onToggle}
+      >
+        <ChevronDownIcon className={cn("size-3.5 shrink-0", row.expanded && "rotate-180")} />
+        <span className="font-medium">
+          {row.expanded
+            ? translate("chat.timeline.showFewerLogEntries")
+            : `+${translate("chat.timeline.previousLogEntries", { count: row.hiddenCount })}`}
+        </span>
+      </button>
+    );
+  }
+  if (ctx.chatVisualMode === "better-t3") {
+    return (
+      <button
+        type="button"
+        data-presentation-status
+        ref={widthRef}
+        className="better-chat-pill-row group/timeline-row relative flex w-full cursor-pointer items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+        aria-expanded={row.expanded}
+        onClick={onToggle}
+      >
+        <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+          <ToolActivityIconView
+            icon={row.toolIcon}
+            fallbackName={iconName}
+            className="size-4 shrink-0 stroke-2"
+            muted
           />
-        </ChatDetailPanel>
-      ) : null}
-    </>
+        </span>
+        <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
+        <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            className={cn(
+              "better-chat-chevron size-3 shrink-0 text-muted-foreground",
+              row.expanded && "rotate-90",
+            )}
+          />
+        </span>
+        <TimelineRowTimestamp
+          createdAt={row.createdAt}
+          timestampFormat={ctx.timestampFormat}
+          pill
+        />
+      </button>
+    );
+  }
+  return (
+    <WorkGroupHeader
+      label={row.summary}
+      iconName={iconName}
+      toolIcon={row.toolIcon}
+      failed={row.hasFailure}
+      expanded={row.expanded}
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      onToggle={onToggle}
+    />
+  );
+}
+
+/**
+ * Better T3 opens a group's entries under its pill. The panel stays mounted so closing animates;
+ * its content mounts only while open or closing.
+ */
+export function WorkGroupDetailsPanel({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "work-live" | "work-toggle" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const entries = row.kind === "work-live" ? row.groupedEntries : row.detailEntries;
+  if (!entries) return null;
+  return (
+    <ChatDetailPanel expanded={row.expanded} motion={ctx.presentationMotion === true}>
+      <div className="better-chat-work-group-details">
+        <WorkGroupSection
+          anchorKey={`${row.groupId}:details`}
+          disclosureAnchorKey={row.id}
+          groupedEntries={entries}
+          isExpandedToolGroup
+        />
+      </div>
+    </ChatDetailPanel>
   );
 }
 

@@ -22,6 +22,7 @@ import {
   searchSidebarThreads,
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
+  sortSidebarActiveThreads,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
@@ -34,6 +35,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  previewSidebarFolderThreads,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -44,12 +46,20 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  DeepPlanRunId,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
@@ -465,6 +475,53 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
+  });
+
+  it("distinguishes a ready Deep Plan without hiding higher-priority statuses", () => {
+    const deepPlan: NonNullable<SidebarThreadSummary["deepPlan"]> = {
+      id: DeepPlanRunId.make("deep-plan"),
+      threadId: ThreadId.make("thread-deep-plan"),
+      phase: "awaitingApproval",
+      revision: 1,
+      plan: null,
+      approval: null,
+      approvalKey: null,
+      sources: [],
+      sourceCoverage: [],
+      stepStates: [],
+      finalValidation: {
+        status: "pending",
+        evidence: [],
+        updatedAt: null,
+        attempt: 0,
+        requestId: null,
+        turnId: null,
+      },
+      procedureAdjustments: [],
+      operations: [],
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+      pauseReason: null,
+    };
+    const thread = {
+      ...baseThread,
+      deepPlan,
+      hasActionableProposedPlan: true,
+      latestRun: makeLatestRun(),
+      runtime: { ...baseThread.runtime, status: "completed" as const, activeRunId: null },
+    };
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({
+      label: "Deep Plan Ready",
+      colorClass: "text-deep-plan",
+      dotClass: "bg-deep-plan",
+      pulse: false,
+    });
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, hasPendingApprovals: true } }),
+    ).toMatchObject({ label: "Pending Approval" });
+    expect(resolveThreadStatusPill({ thread: { ...thread, deepPlan: null } })).toMatchObject({
+      label: "Plan Ready",
+    });
   });
 
   it("does not manufacture completed state without a client visit marker", () => {
@@ -1001,6 +1058,44 @@ describe("Working shelf (beta)", () => {
     expect(shelve([], false)).toBe(false);
   });
 
+  it.each([
+    { sortBySend: false, workingShelfEnabled: false },
+    { sortBySend: false, workingShelfEnabled: true },
+    { sortBySend: true, workingShelfEnabled: false },
+  ])("honors creation order in the active list: %j", (mode) => {
+    const newer = makeThreadFixture({
+      id: ThreadId.make("newer"),
+      createdAt: "2026-03-09T11:00:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-03-09T11:00:00.000Z",
+      latestRun: null,
+    });
+    const older = makeThreadFixture({
+      id: ThreadId.make("older"),
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T12:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T12:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-03-09T12:00:00.000Z",
+      latestRun: null,
+    });
+    const returnedAt = (thread: SidebarThreadSummary) => Date.parse(thread.updatedAt);
+    expect(
+      sortSidebarActiveThreads([older, newer], {
+        ...mode,
+        sortOrder: "created_at",
+        returnedAt,
+      }).map((thread) => thread.id),
+    ).toEqual(["newer", "older"]);
+    expect(
+      sortSidebarActiveThreads([older, newer], {
+        ...mode,
+        sortOrder: "updated_at",
+        returnedAt,
+      }).map((thread) => thread.id),
+    ).toEqual(["older", "newer"]);
+  });
+
   describe("sortInboxThreadsByReturn", () => {
     const thread = (
       id: string,
@@ -1079,6 +1174,22 @@ describe("Working shelf (beta)", () => {
         activeOrder: ["a1", "a2", "p1"],
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
+    });
+
+    it("keeps Older projects rows in the active drop section", () => {
+      const withOlder = [
+        marker("pinned-header"),
+        marker("pinned-divider"),
+        row("recent", "active"),
+        marker("older-projects-header"),
+        row("older", "active"),
+        marker("settled-header"),
+      ];
+      expect(resolveSidebarDropTarget(withOlder, "recent", "older")).toEqual({
+        section: "active",
+        pinnedOrder: [],
+        activeOrder: ["older", "recent"],
+      });
     });
 
     it.each([
@@ -1573,6 +1684,27 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("previewSidebarFolderThreads", () => {
+  it("shortens an open folder to the preview count without hiding threads that need you", () => {
+    const threads = ["a", "b", "c", "needs-you", "e"];
+    const preview = (showAll: boolean, count = 2) =>
+      previewSidebarFolderThreads(threads, {
+        count,
+        showAll,
+        alwaysVisible: (thread) => thread === "needs-you",
+      });
+
+    expect(preview(false)).toEqual({
+      threads: ["a", "b", "needs-you"],
+      hiddenCount: 2,
+      canShowLess: false,
+    });
+    expect(preview(true)).toEqual({ threads, hiddenCount: 0, canShowLess: true });
+    // Once nothing would be hidden, a folder the user expanded has nothing to fold back.
+    expect(preview(true, 5)).toEqual({ threads, hiddenCount: 0, canShowLess: false });
   });
 });
 

@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { useGitWorkspaceDeckActions } from "./GitWorkspaceDeckController.actions";
 import { mapChanges, mapSnapshot } from "./GitWorkspaceDeckController.mapping";
+import { bufferedFileEdits, workspaceFileBufferKey } from "./GitWorkspaceDeckSessionState";
+import { useGitFileDraftStore } from "./gitFileDraftStore";
 
 const io = vi.hoisted(() => ({
   apply: vi.fn(),
@@ -124,6 +126,8 @@ function selection(action: "stage" | "unstage" | "discard" = "stage") {
 }
 
 beforeEach(() => {
+  bufferedFileEdits.clear();
+  useGitFileDraftStore.getState().clear();
   io.apply.mockReset().mockResolvedValue({ _tag: "Success", value: { snapshot: snapshot() } });
   io.refresh.mockReset().mockResolvedValue({ _tag: "Success", value: snapshot() });
   io.other.mockReset();
@@ -149,6 +153,50 @@ afterEach(async () => {
 });
 
 describe("Git workspace staging actions", () => {
+  it("discards the saved user draft when keeping the agent's version after a conflict", async () => {
+    const props: ActionInput = {
+      ...input(),
+      currentFile: {
+        baseContent: "original",
+        content: "my edits",
+        serverContent: "agent edits",
+        loading: false,
+        path: "a",
+        revision: "revision-2",
+        saveState: "conflict",
+      },
+    };
+    const key = workspaceFileBufferKey(props.environmentId, props.cwd!, "a");
+    useGitFileDraftStore.getState().setDraft(key, {
+      content: "my edits",
+      path: "a",
+      revision: "revision-1",
+    });
+    bufferedFileEdits.set(key, {
+      baseContent: "original",
+      baseRevision: "revision-1",
+      content: "my edits",
+      conflict: true,
+      cwd: props.cwd!,
+      environmentId: props.environmentId,
+      path: "a",
+    });
+    await act(async () => {
+      renderer = create(<Host input={props} />);
+    });
+    await act(async () => {
+      actions.saveCurrentFile({
+        content: "agent edits",
+        expectedRevision: "revision-2",
+        path: "a",
+        resolution: "agent",
+      });
+    });
+    expect(bufferedFileEdits.has(key)).toBe(false);
+    expect(useGitFileDraftStore.getState().drafts.has(key)).toBe(false);
+    expect(io.other).not.toHaveBeenCalled();
+  });
+
   it("uses scoped fresh queries and surfaces a stale stop after retaining the first mutation", async () => {
     io.apply
       .mockResolvedValueOnce({ _tag: "Success", value: { snapshot: snapshot() } })

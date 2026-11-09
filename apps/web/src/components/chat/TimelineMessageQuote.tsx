@@ -12,14 +12,8 @@ export function TimelineMessageQuote({ replyTo }: { replyTo: MessageReplyReferen
     <MessageReplyQuote
       replyTo={replyTo}
       onJumpToSource={(source) => {
-        const index = ctx.listRef.current
-          ?.getState()
-          .data.findIndex(
-            (entry) => entry.kind === "message" && entry.message.id === source.messageId,
-          );
-        if (index !== undefined && index >= 0)
-          void ctx.listRef.current?.scrollToIndex({ index, animated: false });
-        else if (ctx.replySourceThreadId) ctx.onOpenThread(ctx.replySourceThreadId);
+        if (ctx.onJumpToReplySource?.(source.messageId)) return;
+        if (ctx.replySourceThreadId) ctx.onOpenThread(ctx.replySourceThreadId);
         else toastManager.add({ type: "info", title: translate("chat.reply.sourceUnavailable") });
       }}
     />

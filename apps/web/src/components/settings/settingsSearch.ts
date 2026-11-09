@@ -759,6 +759,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
+    id: "composer-layout",
+    title: "Composer layout",
+    to: "/settings/chat",
+    searchTerms: [
+      "classic current legacy composer model picker layout",
+      "klassisch aktuell alter Composer Modellauswahl",
+      "classique actuel composeur sélecteur modèle",
+    ],
+  },
+  {
     id: "composer-rich-text",
     title: "Rich text composer",
     to: "/settings/chat",
@@ -777,7 +787,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "composer-collapse",
     title: "Collapse composer on scroll",
-    to: "/settings/general",
+    to: "/settings/chat",
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
@@ -968,9 +978,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
-    to: "/settings/general",
-    searchTerms: ["project thread tree old flat list"],
+    title: "Classic sidebar",
+    to: "/settings/better-t3",
+    targetId: "chat.classicSidebar",
+    searchTerms: ["legacy project thread tree old flat list Klassische Seitenleiste classique"],
   },
   {
     id: "keybindings",

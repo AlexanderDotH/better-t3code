@@ -156,7 +156,7 @@ export function useGitWorkspaceDeckController({
     navigateFile(() => setActiveTab(tab));
   };
   const changeExpandedCard = (card: ChatWorkspaceCardId | null) => {
-    navigateFile(() => setExpandedCard(card));
+    return navigateFile(() => setExpandedCard(card));
   };
   const selectCard = (card: ChatWorkspaceCardId) => {
     navigateFile(() => {

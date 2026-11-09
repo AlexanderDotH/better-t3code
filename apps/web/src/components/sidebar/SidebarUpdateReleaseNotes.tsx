@@ -6,6 +6,7 @@ import {
   getDesktopUpdateReleaseUrl,
 } from "../desktopUpdate.logic";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
@@ -64,6 +65,7 @@ export function SidebarUpdateReleaseNotes({
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
 }) {
+  const translator = useInterfaceTranslator();
   if (state.releaseNotes.length === 0) {
     return <>{tooltip}</>;
   }
@@ -77,7 +79,7 @@ export function SidebarUpdateReleaseNotes({
         {state.status === "available" ? (
           <div>
             <div className="whitespace-nowrap text-sm leading-5 font-medium">
-              Update ready to download
+              {translator.message("sidebar.update.readyToDownload")}
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
@@ -114,7 +116,11 @@ export function SidebarUpdateReleaseNotes({
                 )
               ) : (
                 <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+                  {index === 0
+                    ? translator.message("sidebar.update.whatsChanged")
+                    : translator.message("sidebar.update.changesIn", {
+                        version: releaseNote.version,
+                      })}
                 </h3>
               )}
               {releaseNote.intro ? (

@@ -153,6 +153,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
       ref={deckRef}
       className={cn("workspace-card-deck", props.className)}
       data-workspace-card-deck="true"
+      data-deck-animations={props.selectionMode === "animate" && !prefersReducedMotion}
       data-active-card={view.activeCard}
       data-deck-collapsing={collapsingCard ?? undefined}
       data-expanded-card={props.expandedCard ?? undefined}

@@ -42,7 +42,8 @@ import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { normalizeProviderAccentColor } from "../../providerInstances";
-import { Badge } from "../ui/badge";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { ProviderDriverBadge } from "./ProviderDriverBadge";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { DraftInput } from "../ui/draft-input";
@@ -345,6 +346,7 @@ export function ProviderEnvironmentSection(props: {
   readonly managed?: { readonly names: ReadonlySet<string>; readonly reason: string } | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
   );
@@ -426,12 +428,12 @@ export function ProviderEnvironmentSection(props: {
 
   return (
     <SettingsRow
-      title="Variables"
-      description="API keys, base URLs, and other per-instance CLI settings."
+      title={translate("settings.providers.environment.title")}
+      description={translate("settings.providers.environment.description")}
       control={
         <Button type="button" size="sm" variant="outline" onClick={addVariable}>
           <PlusIcon className="size-3" />
-          Add variable
+          {translate("settings.providers.environment.add")}
         </Button>
       }
     >
@@ -456,9 +458,11 @@ export function ProviderEnvironmentSection(props: {
                 value={variable.name}
                 onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
                 disabled={variable.valueRedacted === true}
-                placeholder="VARIABLE_NAME"
+                placeholder={translate("settings.providers.environment.namePlaceholder")}
                 spellCheck={false}
-                aria-label={`Environment variable name ${index + 1}`}
+                aria-label={translate("settings.providers.environment.nameAria", {
+                  index: index + 1,
+                })}
               />
             );
             const removeButton = (
@@ -467,7 +471,9 @@ export function ProviderEnvironmentSection(props: {
                 size="icon-micro"
                 variant="ghost-destructive"
                 onClick={() => removeVariable(variable.id)}
-                aria-label={`Remove environment variable ${variable.name || index + 1}`}
+                aria-label={translate("settings.providers.environment.remove", {
+                  name: variable.name || String(index + 1),
+                })}
               >
                 <XIcon className="size-3" />
               </Button>
@@ -492,7 +498,9 @@ export function ProviderEnvironmentSection(props: {
                           });
                         }}
                         aria-pressed={variable.sensitive}
-                        aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
+                        aria-label={translate("settings.providers.environment.markSensitive", {
+                          name: variable.name || String(index + 1),
+                        })}
                       >
                         <MorphIcon
                           className="size-3"
@@ -502,7 +510,11 @@ export function ProviderEnvironmentSection(props: {
                     }
                   />
                   <TooltipPopup side="top">
-                    {variable.sensitive ? "Sensitive, stored separately" : "Plain text"}
+                    {translate(
+                      variable.sensitive
+                        ? "settings.providers.environment.sensitiveStored"
+                        : "settings.providers.environment.plainText",
+                    )}
                   </TooltipPopup>
                 </Tooltip>
               ) : null;
@@ -531,7 +543,9 @@ export function ProviderEnvironmentSection(props: {
                     placeholder="value"
                     configured={variable.valueRedacted === true}
                     spellCheck={false}
-                    aria-label={`Environment variable value ${index + 1}`}
+                    aria-label={translate("settings.providers.environment.valueAria", {
+                      index: index + 1,
+                    })}
                     sources={props.secretSources ?? []}
                     onSecretChange={(secret) => setVariableSecret(variable.id, secret)}
                   >
@@ -553,7 +567,9 @@ export function ProviderEnvironmentSection(props: {
                       autoComplete="off"
                       placeholder="value"
                       spellCheck={false}
-                      aria-label={`Environment variable value ${index + 1}`}
+                      aria-label={translate("settings.providers.environment.valueAria", {
+                        index: index + 1,
+                      })}
                     />,
                   )
                 )}
@@ -561,9 +577,9 @@ export function ProviderEnvironmentSection(props: {
             );
           })}
           <p className="text-xs text-muted-foreground">
-            Sensitive values are stored separately and never returned to the app.
+            {translate("settings.providers.environment.storageNote")}
             {rows.some((row) => row.valueRedacted === true)
-              ? " Enter a new value to rename a saved one or make it plain text."
+              ? ` ${translate("settings.providers.environment.redactedHint")}`
               : null}
           </p>
         </div>
@@ -1159,11 +1175,7 @@ export function ProviderInstanceCard({
 
   const editorHeaderAction = (
     <div className="flex shrink-0 items-center gap-1.5">
-      {driverOption?.badgeLabel ? (
-        <Badge variant="warning" size="sm" className="shrink-0">
-          {driverOption.badgeLabel}
-        </Badge>
-      ) : null}
+      {driverOption?.badgeLabel ? <ProviderDriverBadge label={driverOption.badgeLabel} /> : null}
       {versionCodeNode}
       {versionAdvisoryNode}
       <span

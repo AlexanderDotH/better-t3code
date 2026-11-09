@@ -1,4 +1,7 @@
 import {
+  EnvironmentId,
+  ThreadId,
+  type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionSelection,
@@ -10,6 +13,7 @@ import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerEffortColumn, describeComposerEffort } from "./ComposerModelEffort";
 import type { TraitsSelectionInput } from "./TraitsPicker";
 
@@ -122,4 +126,106 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
     .element(screen.getByRole("button", { name: "Session Mode: Plan" }))
     .toBeInTheDocument();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
+});
+
+it("retains the complete selection when remembering manual traits for a project", async () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("traits-project"),
+    threadId: ThreadId.make("traits-thread"),
+  };
+  const instanceId = ProviderInstanceId.make("codex-work");
+  const initial: ModelSelection = {
+    instanceId,
+    model: "project-model",
+    options: [
+      { id: "contextWindow", value: "1m" },
+      { id: "serviceTier", value: "priority" },
+    ],
+  };
+  const providerModels: ReadonlyArray<ServerProviderModel> = [
+    {
+      slug: initial.model,
+      name: initial.model,
+      isCustom: false,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            currentValue: "medium",
+            options: [
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High" },
+            ],
+          },
+          {
+            id: "contextWindow",
+            label: "Context",
+            type: "select",
+            currentValue: "default",
+            options: [
+              { id: "default", label: "Default" },
+              { id: "1m", label: "1M" },
+            ],
+          },
+          {
+            id: "serviceTier",
+            label: "Speed",
+            type: "select",
+            currentValue: "default",
+            options: [
+              { id: "default", label: "Standard" },
+              { id: "priority", label: "Fast" },
+            ],
+          },
+        ],
+      }),
+    },
+  ];
+  useComposerDraftStore.getState().setModelSelection(threadRef, initial);
+  let remembered: ModelSelection | null = null;
+  function ProjectTraits() {
+    const selection = useComposerDraftStore(
+      (store) => store.getComposerDraft(threadRef)?.modelSelectionByProvider[instanceId],
+    );
+    const traits = {
+      provider: ProviderDriverKind.make("codex"),
+      instanceId,
+      model: initial.model,
+      models: providerModels,
+      threadRef,
+      modelOptions: selection?.options,
+      planModeEnabled: true,
+      onManualModelSelectionChange: (next: ModelSelection) => {
+        remembered = next;
+      },
+    };
+    return <ComposerEffortColumn traits={traits} />;
+  }
+  await using screen = await render(<ProjectTraits />);
+  await screen.getByRole("radio", { name: "Auto", exact: true }).click();
+  expect(remembered).toEqual({
+    ...initial,
+    options: [
+      { id: "reasoningEffort", value: "medium" },
+      { id: "contextWindow", value: "1m" },
+      { id: "serviceTier", value: "priority" },
+      { id: "t3AutoReasoning", value: true },
+    ],
+  });
+  await screen.getByRole("radio", { name: "High", exact: true }).click();
+  expect(remembered).toEqual({
+    ...initial,
+    options: [
+      { id: "reasoningEffort", value: "high" },
+      { id: "contextWindow", value: "1m" },
+      { id: "serviceTier", value: "priority" },
+    ],
+  });
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(threadRef)?.modelSelectionByProvider[
+      instanceId
+    ],
+  ).toEqual(remembered);
 });

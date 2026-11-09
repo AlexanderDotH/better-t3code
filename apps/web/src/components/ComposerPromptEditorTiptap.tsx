@@ -922,6 +922,16 @@ function createComposerExtensions(richText: boolean) {
 const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
+function applyControlledEditorUpdate(applying: RefObject<boolean>, update: () => void) {
+  const wasApplying = applying.current;
+  applying.current = true;
+  try {
+    update();
+  } finally {
+    applying.current = wasApplying;
+  }
+}
+
 function ComposerPromptEditorTiptapInner(
   props: ComposerPromptEditorProps & {
     initialExpandedCursor: number;
@@ -1480,7 +1490,6 @@ function ComposerPromptEditorTiptapInner(
       start: Math.min(next.expandedCursor, flatToMarkdown(map, toFlat)),
       end: Math.max(next.expandedCursor, flatToMarkdown(map, toFlat)),
     };
-    snapshotRef.current = next;
     return next;
   };
 
@@ -1550,52 +1559,50 @@ function ComposerPromptEditorTiptapInner(
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
     if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
 
-    isApplyingControlledUpdateRef.current = true;
-    const citationRequest = citationRequestRef.current;
-    if (
-      citationRequest &&
-      value !== citationRequest.value &&
-      value !== citationRequest.previousValue
-    ) {
-      citationRequestRef.current = null;
-    }
-    const pendingCitation =
-      citationRequestRef.current?.value === value ? citationRequestRef.current : null;
-    if (previousSnapshot.value !== value) {
-      saveCitationDraft(editor, previousSnapshot.value);
-      editor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
-        {
-          emitUpdate: false,
-        },
-      );
-    }
-    const map = serializeEditorDoc(editor.state.doc);
-    const flat = markdownToFlat(map, normalizedExpandedCursor);
-    editor.commands.setTextSelection(flatToPm(map, flat));
-    if (isFocused) scrollTiptapCaretIntoView(editor);
-    if (pendingCitation) {
-      citationRequestRef.current = null;
-      const target = map.runs.find(
-        (run) =>
-          run.kind === "token" &&
-          run.nodeName === "composer-citation" &&
-          run.mdStart === pendingCitation.citationStart,
-      );
-      if (target) {
-        const node = editor.state.doc.nodeAt(target.pmPos);
-        const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
-        if (citeKey) {
-          setOpenCitation({
-            key: citeKey,
-            sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: pendingCitation.insertedSpaces,
-          });
+    applyControlledEditorUpdate(isApplyingControlledUpdateRef, () => {
+      const citationRequest = citationRequestRef.current;
+      if (
+        citationRequest &&
+        value !== citationRequest.value &&
+        value !== citationRequest.previousValue
+      ) {
+        citationRequestRef.current = null;
+      }
+      const pendingCitation =
+        citationRequestRef.current?.value === value ? citationRequestRef.current : null;
+      if (previousSnapshot.value !== value) {
+        saveCitationDraft(editor, previousSnapshot.value);
+        editor.commands.setContent(
+          buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
+          {
+            emitUpdate: false,
+          },
+        );
+      }
+      const map = serializeEditorDoc(editor.state.doc);
+      const flat = markdownToFlat(map, normalizedExpandedCursor);
+      editor.commands.setTextSelection(flatToPm(map, flat));
+      if (isFocused) scrollTiptapCaretIntoView(editor);
+      if (pendingCitation) {
+        citationRequestRef.current = null;
+        const target = map.runs.find(
+          (run) =>
+            run.kind === "token" &&
+            run.nodeName === "composer-citation" &&
+            run.mdStart === pendingCitation.citationStart,
+        );
+        if (target) {
+          const node = editor.state.doc.nodeAt(target.pmPos);
+          const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
+          if (citeKey) {
+            setOpenCitation({
+              key: citeKey,
+              sourceAnchor: pendingCitation.sourceAnchor,
+              removeOnCancel: pendingCitation.insertedSpaces,
+            });
+          }
         }
       }
-    }
-    queueMicrotask(() => {
-      isApplyingControlledUpdateRef.current = false;
     });
   }, [
     clampEditorCursor,

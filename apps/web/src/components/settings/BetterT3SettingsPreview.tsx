@@ -396,7 +396,6 @@ function ChatPresentationPreview(props: {
               "better-t3-preview-presentation-reveal",
           )}
         >
-          {!betterT3 ? <BotIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground" /> : null}
           <div className="min-w-0 flex-1 space-y-1.5">
             {props.reasoning.reasoningInMessage ? (
               <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">

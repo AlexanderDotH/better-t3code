@@ -51,31 +51,34 @@ export function useGitFileNavigation(input: {
   const navigate = (apply: () => void) => {
     if (!input.active) {
       apply();
-      return;
+      return true;
     }
     if (input.currentFile?.saveState === "saving") {
       toastManager.add({ type: "info", title: translate("git.file.waitForSave") });
-      return;
+      return false;
     }
     if (
       !fileKey ||
       (!useGitFileDraftStore.getState().drafts.has(fileKey) && !bufferedFileEdits.has(fileKey))
     ) {
       apply();
-      return;
+      return true;
     }
-    if (confirmationPending.current) return;
+    if (confirmationPending.current) return false;
     confirmationPending.current = true;
-    void ensureLocalApi()
+    return ensureLocalApi()
       .dialogs.confirm(translate("git.file.leaveEdits"))
       .then(
         (leave) => {
           confirmationPending.current = false;
-          if (leave && activeScope.current === input.scopeKey && !navigationBlocked.current)
-            apply();
+          if (!leave || activeScope.current !== input.scopeKey || navigationBlocked.current)
+            return false;
+          apply();
+          return true;
         },
         () => {
           confirmationPending.current = false;
+          return false;
         },
       );
   };

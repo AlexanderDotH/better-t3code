@@ -8,6 +8,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogFooter, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Checkbox } from "../ui/checkbox";
+import { Switch } from "../ui/switch";
 import { ComposerBanner } from "./ComposerBanner";
 
 export interface DeepPlanSourceOption {
@@ -24,6 +25,7 @@ export function DeepPlanSourcePicker({
   projectSourceCount,
   options,
   selected,
+  includeProjectChats = true,
   loading,
   error,
   disabled = false,
@@ -35,12 +37,13 @@ export function DeepPlanSourcePicker({
   projectSourceCount: number | null;
   options: readonly DeepPlanSourceOption[];
   selected: readonly DeepPlanSourceRef[];
+  includeProjectChats?: boolean;
   loading: boolean;
   error: string | null;
   disabled?: boolean;
   frozen?: boolean;
   onOpen: () => void;
-  onChange: (sources: readonly DeepPlanSourceRef[]) => void;
+  onChange: (sources: readonly DeepPlanSourceRef[], includeProjectChats: boolean) => void;
 }) {
   const translate = useInterfaceTranslator().message;
   const [open, setOpen] = useState(false);
@@ -73,12 +76,15 @@ export function DeepPlanSourcePicker({
     ref.environmentId === currentProject.environmentId &&
     ref.projectId === currentProject.projectId;
   const extras = selected.filter((ref) => !belongsToCurrentProject(ref));
+  const chosen = includeProjectChats ? extras : selected;
+  const chosenProjectCount = selected.length - extras.length;
   const toggleSource = (ref: DeepPlanSourceRef) => {
     const key = deepPlanSourceRefKey(ref);
     onChange(
       selectedKeys.has(key)
         ? selected.filter((source) => deepPlanSourceRefKey(source) !== key)
         : [...selected, ref],
+      includeProjectChats,
     );
   };
 
@@ -91,14 +97,22 @@ export function DeepPlanSourcePicker({
           </ComposerBanner.Icon>
           <ComposerBanner.Content className="flex-wrap gap-x-2">
             <span className="font-medium">{translate("chat.deepPlan.sources")}</span>
-            <span
-              className="min-w-0 text-muted-foreground"
-              aria-label={translate("chat.deepPlan.allProjectChats")}
-            >
-              {projectSourceCount === null
-                ? translate("chat.deepPlan.preparing")
-                : translate("chat.deepPlan.projectSources", { count: projectSourceCount })}
-            </span>
+            {includeProjectChats ? (
+              <span
+                className="min-w-0 text-muted-foreground"
+                aria-label={translate("chat.deepPlan.allProjectChats")}
+              >
+                {projectSourceCount === null
+                  ? translate("chat.deepPlan.preparing")
+                  : translate("chat.deepPlan.projectSources", { count: projectSourceCount })}
+              </span>
+            ) : (
+              <span className="min-w-0 text-muted-foreground">
+                {chosenProjectCount === 0
+                  ? translate("chat.deepPlan.noProjectChats")
+                  : translate("chat.deepPlan.projectSources", { count: chosenProjectCount })}
+              </span>
+            )}
           </ComposerBanner.Content>
           <ComposerBanner.Actions>
             <Button
@@ -115,9 +129,9 @@ export function DeepPlanSourcePicker({
             </Button>
           </ComposerBanner.Actions>
         </ComposerBanner.Row>
-        {extras.length > 0 ? (
+        {chosen.length > 0 ? (
           <ComposerBanner.Body className="flex flex-wrap gap-1 py-1">
-            {extras.map((ref) => {
+            {chosen.map((ref) => {
               const key = deepPlanSourceRefKey(ref);
               const option = optionByKey.get(key);
               const title = option?.title ?? String(ref.threadId);
@@ -164,9 +178,23 @@ export function DeepPlanSourcePicker({
           <DialogHeader>
             <DialogTitle size="sm">{translate("chat.deepPlan.chooseSources")}</DialogTitle>
             <p className="text-xs/4 text-muted-foreground">
-              {translate("chat.deepPlan.selectionHint")}
+              {translate(
+                includeProjectChats
+                  ? "chat.deepPlan.selectionHint"
+                  : "chat.deepPlan.manualSelectionHint",
+              )}
             </p>
           </DialogHeader>
+          <label className="mx-5 mb-2 flex min-h-8 cursor-pointer items-center justify-between gap-3 text-xs/4 pointer-coarse:min-h-11">
+            <span>{translate("chat.deepPlan.includeProjectChats")}</span>
+            <Switch
+              size="sm"
+              aria-label={translate("chat.deepPlan.includeProjectChats")}
+              checked={includeProjectChats}
+              disabled={disabled}
+              onCheckedChange={(checked) => onChange(checked ? extras : selected, checked)}
+            />
+          </label>
           <div className="px-5 pb-2">
             <Input
               size="compact"
@@ -201,7 +229,7 @@ export function DeepPlanSourcePicker({
                   {group.label}
                 </legend>
                 {group.options.map((option) => {
-                  const included = belongsToCurrentProject(option.ref);
+                  const included = includeProjectChats && belongsToCurrentProject(option.ref);
                   return (
                     <label
                       key={deepPlanSourceRefKey(option.ref)}

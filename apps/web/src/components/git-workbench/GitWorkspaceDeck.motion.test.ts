@@ -126,7 +126,7 @@ describe("Git workspace deck motion CSS repository policy", () => {
 
       expect(css).toMatch(/\.git-compact-card\[data-expanded="true"\]\s*\{[^}]*padding:\s*0;/);
       expect(css).toMatch(
-        /\.git-workbench-drawer--embedded\s*\{[^}]*border-block-start:\s*0;[^}]*border-radius:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/,
+        /\.git-workbench-drawer--embedded\s*\{[^}]*border-block-start:\s*0;[^}]*border-radius:\s*inherit;[^}]*background:\s*var\(--background\);[^}]*box-shadow:\s*none;/,
       );
       expect(css).not.toContain("var(--git-workbench-drawer-height)");
       expect(css).not.toContain(".git-workbench-drawer__resize-handle");

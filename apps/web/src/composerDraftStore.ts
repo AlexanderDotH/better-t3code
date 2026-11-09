@@ -286,6 +286,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
   composerMode: Schema.optionalKey(ComposerMode),
   deepPlanSourceRefs: Schema.optionalKey(Schema.Array(DeepPlanSourceRef)),
+  deepPlanIncludeProjectChats: Schema.optionalKey(Schema.Boolean),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -414,6 +415,7 @@ export interface ComposerThreadDraftState {
   interactionMode: ProviderInteractionMode | null;
   composerMode?: ComposerMode | null;
   deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
+  deepPlanIncludeProjectChats?: boolean;
 }
 
 export function composerDraftHasUserContent(
@@ -590,6 +592,7 @@ interface ComposerDraftStoreState {
   setDeepPlanSourceRefs: (
     threadRef: ComposerThreadTarget,
     refs: ReadonlyArray<DeepPlanSourceRef>,
+    includeProjectChats?: boolean,
   ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   addImages: (
@@ -944,7 +947,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.runtimeMode === null &&
     draft.interactionMode === null &&
     draft.composerMode == null &&
-    (draft.deepPlanSourceRefs?.length ?? 0) === 0
+    (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
+    draft.deepPlanIncludeProjectChats !== false
   );
 }
 
@@ -1950,6 +1954,7 @@ function normalizePersistedDraftsByThreadId(
     const deepPlanSourceRefs = Array.isArray(draftCandidate.deepPlanSourceRefs)
       ? draftCandidate.deepPlanSourceRefs.filter(isDeepPlanSourceRef)
       : [];
+    const excludesProjectChats = draftCandidate.deepPlanIncludeProjectChats === false;
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -2043,7 +2048,8 @@ function normalizePersistedDraftsByThreadId(
       !runtimeMode &&
       !interactionMode &&
       !composerMode &&
-      deepPlanSourceRefs.length === 0
+      deepPlanSourceRefs.length === 0 &&
+      !excludesProjectChats
     ) {
       continue;
     }
@@ -2083,6 +2089,7 @@ function normalizePersistedDraftsByThreadId(
       ...(interactionMode ? { interactionMode } : {}),
       ...(composerMode ? { composerMode } : {}),
       ...(deepPlanSourceRefs.length > 0 ? { deepPlanSourceRefs } : {}),
+      ...(excludesProjectChats ? { deepPlanIncludeProjectChats: false } : {}),
     };
   }
 
@@ -2126,7 +2133,8 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
       return retained.runtimeMode ||
         retained.interactionMode ||
         retained.composerMode ||
-        retained.deepPlanSourceRefs?.length
+        retained.deepPlanSourceRefs?.length ||
+        retained.deepPlanIncludeProjectChats === false
         ? [[threadKey, retained]]
         : [];
     }),
@@ -2189,7 +2197,8 @@ export function partializeComposerDraftStoreState(
       draft.runtimeMode === null &&
       draft.interactionMode === null &&
       draft.composerMode == null &&
-      (draft.deepPlanSourceRefs?.length ?? 0) === 0
+      (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
+      draft.deepPlanIncludeProjectChats !== false
     ) {
       continue;
     }
@@ -2265,6 +2274,9 @@ export function partializeComposerDraftStoreState(
       ...(draft.composerMode ? { composerMode: draft.composerMode } : {}),
       ...(draft.deepPlanSourceRefs?.length
         ? { deepPlanSourceRefs: draft.deepPlanSourceRefs.map((ref) => ({ ...ref })) }
+        : {}),
+      ...(draft.deepPlanIncludeProjectChats === false
+        ? { deepPlanIncludeProjectChats: false }
         : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
@@ -2550,6 +2562,9 @@ function toHydratedThreadDraft(
     interactionMode: persistedDraft.interactionMode ?? null,
     composerMode: persistedDraft.composerMode ?? persistedDraft.interactionMode ?? null,
     deepPlanSourceRefs: persistedDraft.deepPlanSourceRefs?.map((ref) => ({ ...ref })) ?? [],
+    ...(persistedDraft.deepPlanIncludeProjectChats === false
+      ? { deepPlanIncludeProjectChats: false }
+      : {}),
   };
 }
 
@@ -3387,7 +3402,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey };
           });
         },
-        setDeepPlanSourceRefs: (threadRef, refs) => {
+        setDeepPlanSourceRefs: (threadRef, refs, includeProjectChats = true) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
           const deepPlanSourceRefs = uniqueDeepPlanSourceRefs(refs.filter(isDeepPlanSourceRef)).map(
@@ -3395,8 +3410,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           );
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey];
-            if (!existing && deepPlanSourceRefs.length === 0) return state;
-            const nextDraft = { ...(existing ?? createEmptyThreadDraft()), deepPlanSourceRefs };
+            if (!existing && deepPlanSourceRefs.length === 0 && includeProjectChats) return state;
+            const { deepPlanIncludeProjectChats: _previous, ...base } =
+              existing ?? createEmptyThreadDraft();
+            const nextDraft = {
+              ...base,
+              deepPlanSourceRefs,
+              ...(includeProjectChats ? {} : { deepPlanIncludeProjectChats: false }),
+            };
             const draftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
             else draftsByThreadKey[threadKey] = nextDraft;

@@ -53,9 +53,8 @@ export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
   const analysis = selectDeepPlanSourceAnalysis(run, translator);
   if (
     run.phase !== "collecting" &&
-    run.phase !== "planning" &&
-    missing.length === 0 &&
-    completed === run.sources.length
+    (run.sources.length === 0 ||
+      (run.phase !== "planning" && missing.length === 0 && completed === run.sources.length))
   )
     return null;
   return (

@@ -43,6 +43,7 @@ import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { ProjectIndexActivitySubscriptions } from "./project-indexing/ProjectIndexActivitySubscriptions";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
@@ -317,6 +318,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
 }
 
 function SidebarControl({ side }: { side: "left" | "right" }) {
+  const translator = useInterfaceTranslator();
   const placement = resolveAppSidebarPlacement(side);
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
@@ -396,12 +398,13 @@ function SidebarControl({ side }: { side: "left" | "right" }) {
                 "pointer-events-auto",
                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
               )}
-              aria-label="Toggle main sidebar"
+              aria-label={translator.message("sidebar.toggleMain")}
             />
           }
         />
         <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          {translator.message("sidebar.toggleMain")}
+          {shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
     </div>

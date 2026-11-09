@@ -37,17 +37,6 @@ import type { RunAttemptId } from "@t3tools/contracts";
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
-export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
-export type TimelineScrollIntent = "toward-end" | "away-from-end" | null;
-
-/** A shrinking footer can clamp to the end while the reader is scrolling upward. */
-export function shouldResumeTimelineEndFollow(
-  mode: TimelineScrollMode,
-  intent: TimelineScrollIntent,
-): boolean {
-  return mode !== "free-scrolling" || intent !== "away-from-end";
-}
-
 interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
   readonly scroll: number;

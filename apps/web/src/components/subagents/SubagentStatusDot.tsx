@@ -14,14 +14,6 @@ const DOT_TONE_CLASS_NAMES: Record<SubagentIndicatorTone, string> = {
   archived: "bg-muted-foreground/40 shadow-none",
 };
 
-const ICON_TONE_CLASS_NAMES: Record<SubagentIndicatorTone, string> = {
-  working: "text-sky-600 dark:text-sky-300/80",
-  success: "text-success",
-  failure: "text-destructive",
-  stale: "text-muted-foreground/60",
-  archived: "text-muted-foreground/50",
-};
-
 function subagentIndicatorToneFromPresentation(
   presentation: SubagentStatusPresentation,
 ): SubagentIndicatorTone {
@@ -35,10 +27,6 @@ function subagentIndicatorToneFromPresentation(
     return "failure";
   }
   return "stale";
-}
-
-export function subagentIndicatorIconClassName(tone: SubagentIndicatorTone): string {
-  return ICON_TONE_CLASS_NAMES[tone];
 }
 
 export function SubagentStatusDot({

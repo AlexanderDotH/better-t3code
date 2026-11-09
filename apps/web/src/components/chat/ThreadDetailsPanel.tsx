@@ -11,12 +11,19 @@ import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
-import BaseGitActionsControl from "../GitActionsControl";
+import type { GitActionsPanelHost } from "../GitActionsControl";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { memo, useState, type ComponentProps } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -40,12 +47,11 @@ import {
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
 
-const GitActionsControl = memo(BaseGitActionsControl);
-
 interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
   "anchor" | "handle"
 > {
+  onGitActionsPanelHostChange: Dispatch<SetStateAction<GitActionsPanelHost | null>>;
   forceNewWorktree?: boolean;
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -75,7 +81,6 @@ interface ThreadDetailsPanelProps extends Pick<
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
-  onOpenChanges?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -93,7 +98,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.environmentId,
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
-  const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -224,10 +228,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
                     {show.git ? (
-                      <GitActionsControl
-                        gitCwd={props.gitCwd}
-                        activeThreadRef={activeThreadRef}
-                        {...(props.draftId ? { draftId: props.draftId } : {})}
+                      <GitActionsPanelOutlet
+                        environmentId={props.environmentId}
+                        threadId={props.threadId}
+                        compact={density !== "full"}
+                        showActions={visible.gitActions}
+                        showChanges={visible.changes}
+                        onHostChange={props.onGitActionsPanelHostChange}
                       />
                     ) : null}
                   </div>
@@ -304,4 +311,36 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       }}
     </ThreadDetailsCard>
   );
+}
+
+function GitActionsPanelOutlet({
+  environmentId,
+  threadId,
+  compact,
+  showActions,
+  showChanges,
+  onHostChange,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  compact: boolean;
+  showActions: boolean;
+  showChanges: boolean;
+  onHostChange: Dispatch<SetStateAction<GitActionsPanelHost | null>>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the mounted DOM outlet with the persistent Git controller's portal
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    onHostChange({
+      element,
+      threadRef: { environmentId, threadId },
+      compact,
+      showActions,
+      showChanges,
+    });
+    return () => onHostChange((current) => (current?.element === element ? null : current));
+  }, [environmentId, threadId, compact, showActions, showChanges, onHostChange]);
+  return <div ref={ref} data-thread-git-actions-outlet />;
 }

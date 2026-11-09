@@ -799,6 +799,26 @@ describe("Git workbench review integration", () => {
     );
     expect(fixture.container.querySelector("[data-file-draft]")?.textContent).toBe("typed edits");
     expect(runtime.confirm).toHaveBeenCalledTimes(2);
+
+    runtime.confirm.mockResolvedValueOnce(false);
+    await fixture.click('[data-workspace-card-peek="chat"] [data-workspace-card-peek-trigger]');
+    fixture.expectOpenChanges();
+    expect(
+      fixture.container
+        .querySelector("[data-chat-workspace-deck]")
+        ?.getAttribute("data-selection-locked"),
+    ).toBeNull();
+    await fixture.click('[data-workspace-card-peek="chat"] [data-workspace-card-peek-trigger]');
+    await vi.waitFor(() =>
+      expect(
+        fixture.container
+          .querySelector("[data-chat-workspace-deck]")
+          ?.getAttribute("data-active-card"),
+      ).toBe("chat"),
+    );
+    expect([...useGitFileDraftStore.getState().drafts.values()]).toMatchObject([
+      { content: "typed edits" },
+    ]);
   });
 
   it("keeps dirty edits when an action requires Chat and isolates a different environment", async () => {

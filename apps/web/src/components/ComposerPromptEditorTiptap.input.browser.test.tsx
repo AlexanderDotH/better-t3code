@@ -10,6 +10,7 @@ import {
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
 import { createElement, createRef, useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -34,16 +35,18 @@ function Composer({
   richTextEnabled,
   skills,
   onChange,
+  editorRef,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
+  editorRef?: ComposerPromptEditorProps["editorRef"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
-      editorRef={createRef<ComposerPromptEditorHandle>()}
+      editorRef={editorRef ?? createRef<ComposerPromptEditorHandle>()}
       value={prompt.value}
       cursor={prompt.cursor}
       richTextEnabled={richTextEnabled}
@@ -132,6 +135,55 @@ function textWithMark(editor: Editor, name: string) {
   });
   return text;
 }
+
+it("retains typing when a transaction observer reads the composer snapshot", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const composer = (richTextEnabled: boolean) => (
+    <Composer value="" skills={[]} richTextEnabled={richTextEnabled} editorRef={editorRef} />
+  );
+  await using screen = await render(composer(true));
+  const editor = editorIn(screen.container);
+  editor.on("transaction", () => editorRef.current?.readSnapshot());
+
+  await userEvent.type(screen.getByRole("textbox"), "Keep this text");
+  await screen.rerender(composer(false));
+  await expect.element(screen.getByRole("textbox")).toHaveTextContent("Keep this text");
+});
+
+it("accepts an edit immediately after restoring a controlled draft", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  let editor: Editor;
+  function RestorableComposer() {
+    const [draft, setDraft] = useState({ value: "", cursor: 0 });
+    return (
+      <>
+        <button
+          onClick={() => {
+            flushSync(() => setDraft({ value: "Restored ", cursor: 9 }));
+            editor.commands.insertContent("and typed");
+          }}
+        >
+          Restore and edit
+        </button>
+        <output>{draft.value}</output>
+        <ComposerPromptEditor
+          editorRef={editorRef}
+          {...draft}
+          skills={[]}
+          contextRecords={new Map()}
+          disabled={false}
+          placeholder=""
+          onChange={(value, cursor) => setDraft({ value, cursor })}
+          onPaste={() => {}}
+        />
+      </>
+    );
+  }
+  await using screen = await render(<RestorableComposer />);
+  editor = editorIn(screen.container);
+  await screen.getByRole("button", { name: "Restore and edit" }).click();
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Restored and typed");
+});
 
 it.each([
   { value: "clean _build and node", code: [] },

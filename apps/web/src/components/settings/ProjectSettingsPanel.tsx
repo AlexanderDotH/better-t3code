@@ -5,7 +5,8 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
-import { type EnvironmentId } from "@t3tools/contracts";
+import { deriveProjectGroupingOverrideKey } from "@t3tools/client-runtime/state/project-grouping";
+import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   checkProjectAccess,
   reportProjectFailure,
@@ -17,6 +18,7 @@ import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
@@ -30,6 +32,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -44,6 +47,9 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
+import { HarnessChatSyncSettings } from "./HarnessChatSyncSettings";
+import { TranscriptPortabilitySettings } from "./TranscriptPortabilitySettings";
+import { ProjectIndexingProjectSettings } from "../project-indexing/ProjectIndexingSettingsSection";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import {
   defaultProjectIcon,
@@ -70,6 +76,21 @@ const ProjectIconPickerDialog = lazy(() =>
 );
 
 export type ProjectSettingsCategory = "general" | "source-control" | "project";
+
+const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
+
+function isProjectGroupingChoice(value: unknown): value is SidebarProjectGroupingMode | "inherit" {
+  return (
+    value === "inherit" ||
+    value === "repository" ||
+    value === "repository_path" ||
+    value === "separate"
+  );
+}
 
 interface ProjectSelection {
   readonly key: string;
@@ -299,6 +320,20 @@ function ProjectDetail({
   };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
+  const defaultGroupingMode = useClientSettings((settings) => settings.sidebarProjectGroupingMode);
+  const groupingOverrides = useClientSettings(
+    (settings) => settings.sidebarProjectGroupingOverrides,
+  );
+  const updateGroupingPreference = (
+    member: SidebarProjectGroupMember,
+    mode: SidebarProjectGroupingMode | "inherit",
+  ) => {
+    const overrideKey = deriveProjectGroupingOverrideKey(member);
+    const next = { ...groupingOverrides };
+    if (mode === "inherit") delete next[overrideKey];
+    else next[overrideKey] = mode;
+    void updateClientSettings({ sidebarProjectGroupingOverrides: next });
+  };
   const canResetScratchTitle =
     group.memberProjects.every((member) => member.isScratch) &&
     group.memberProjects.some((member) => member.title !== SCRATCH_PROJECT_TITLE);
@@ -370,6 +405,9 @@ function ProjectDetail({
     if (members) members.push(member);
     else checkoutsByEnvironment.set(member.environmentId, [member]);
   }
+  // Environment-wide sections render once; a group spanning machines shows every machine.
+  const singleEnvironmentId =
+    checkoutsByEnvironment.size === 1 ? group.memberProjects[0]!.environmentId : null;
   const checkoutRemoveButton = (member: SidebarProjectGroupMember) => (
     <Button
       size="sm"
@@ -622,12 +660,28 @@ function ProjectDetail({
                 {member.environmentLabel}: {member.workspaceRoot}
               </p>
             ) : null}
-            <ProjectMemorySettingsController
-              project={member}
-              readOnly={!editableIds.has(member.environmentId)}
-            />
+            <div className="flex flex-col gap-8">
+              <SettingsSection title="Sidebar">
+                <ProjectGroupingRow
+                  member={member}
+                  defaultMode={defaultGroupingMode}
+                  mode={groupingOverrides[deriveProjectGroupingOverrideKey(member)] ?? "inherit"}
+                  onChange={(mode) => updateGroupingPreference(member, mode)}
+                />
+              </SettingsSection>
+              <ProjectMemorySettingsController
+                project={member}
+                readOnly={!editableIds.has(member.environmentId)}
+              />
+              <ProjectIndexingProjectSettings
+                environmentId={member.environmentId}
+                projectId={member.id}
+              />
+            </div>
           </div>
         ))}
+        <TranscriptPortabilitySettings environmentId={singleEnvironmentId} />
+        <HarnessChatSyncSettings environmentId={singleEnvironmentId} />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
           <SettingsRow
@@ -688,5 +742,59 @@ function ProjectDetail({
         </Suspense>
       ) : null}
     </>
+  );
+}
+
+function ProjectGroupingRow({
+  member,
+  defaultMode,
+  mode,
+  onChange,
+}: {
+  member: SidebarProjectGroupMember;
+  defaultMode: SidebarProjectGroupingMode;
+  mode: SidebarProjectGroupingMode | "inherit";
+  onChange: (mode: SidebarProjectGroupingMode | "inherit") => void;
+}) {
+  return (
+    <SettingsRow
+      title="Project grouping"
+      description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."
+      resetAction={
+        mode !== "inherit" ? (
+          <SettingResetButton
+            label="project grouping"
+            tooltip="Reset to inherited project grouping"
+            onClick={() => onChange("inherit")}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={mode}
+          onValueChange={(value) => {
+            if (isProjectGroupingChoice(value)) onChange(value);
+          }}
+        >
+          <SelectTrigger size="sm" aria-label={`Grouping rule for ${member.workspaceRoot}`}>
+            <SelectValue>
+              {mode === "inherit"
+                ? `Default (${PROJECT_GROUPING_MODE_LABELS[defaultMode]})`
+                : PROJECT_GROUPING_MODE_LABELS[mode]}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="inherit">
+              Use global default
+            </SelectItem>
+            {(["repository", "repository_path", "separate"] as const).map((option) => (
+              <SelectItem hideIndicator key={option} value={option}>
+                {PROJECT_GROUPING_MODE_LABELS[option]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
   );
 }

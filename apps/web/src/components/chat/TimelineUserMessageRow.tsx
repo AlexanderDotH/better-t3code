@@ -1,7 +1,15 @@
 import { TimelineMessageQuote } from "./TimelineMessageQuote";
 import { ContextChipFileAppearanceContext } from "../ContextChip";
 import { MessageAttachmentFiles } from "./MessageAttachmentFiles";
-import { TimelineMessageActions } from "./TimelineMessageActions";
+import {
+  EditMessageButton,
+  ForkMessageButton,
+  MessageActionsOverlay,
+  ReplyMessageButton,
+  RetryMessageButton,
+} from "./TimelineMessageActions";
+import { MessageImageAttachment } from "./MessageImageAttachment";
+import { ChatSizeMotion, useChatWidthMotion } from "./ChatSizeMotion";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
@@ -81,10 +89,11 @@ import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
 import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import { formatChatTimestampTooltip } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
+  formatTimelineTimestamp,
   MESSAGE_HEADING_LEVEL,
   MessageAuthorHeading,
   TimelineRowTimestamp,
@@ -281,7 +290,9 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
 
 function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  return ctx.workflowOpening?.messageId === row.message.id ? (
+  return ctx.editingMessage?.messageId === row.message.id ? (
+    <UserTimelineRow row={row} />
+  ) : ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}
       environmentId={ctx.activeThreadEnvironmentId}
@@ -339,7 +350,12 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             className={cn("px-3 pb-3", !ctx.findActive && "max-h-96 overflow-auto")}
             data-thread-find-text="true"
           >
-            <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
+            <UserMessageBody
+              messageId={row.message.id}
+              text={text}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+            />
           </div>
         ) : null}
       </div>
@@ -471,6 +487,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userMessage = resolveUserMessagePresentation(row.message);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
+  // Better T3 keeps attachments inside the bubble, under the text, instead of around it.
+  const better = ctx.chatVisualMode === "better-t3";
+  const bubbleAttachments = better && !folded && userMessage.attribution !== "guest";
+  const editor =
+    ctx.editingMessage?.messageId === row.message.id ? ctx.editingMessage.content : null;
+  const bubbleWidthRef = useChatWidthMotion<HTMLDivElement>(
+    `${editor !== null}:${row.message.attachments?.length ?? 0}`,
+    better && ctx.presentationMotion === true,
+  );
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(
@@ -503,6 +528,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   // Images or videos sent without words show as media, not as a bubble around them.
   const mediaOnly =
+    !bubbleAttachments &&
     !folded &&
     userMessage.attribution !== "guest" &&
     resolvedContext.text.trim() === "" &&
@@ -512,6 +538,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     regularImages.length + userVideos.length > 0;
   // Media sent with words sits above the bubble as its own shape, like a chat app.
   const mediaAboveText =
+    !bubbleAttachments &&
     !folded &&
     userMessage.attribution !== "guest" &&
     !mediaOnly &&
@@ -532,6 +559,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   // Files sent without words show as cards, not as a bubble around a name chip.
   const fileCardsOnly =
+    !bubbleAttachments &&
     !folded &&
     userMessage.attribution !== "guest" &&
     otherUserFiles.length > 0 &&
@@ -546,6 +574,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         : reference.label,
     ).trim() === "";
   const audioOnly =
+    !bubbleAttachments &&
     !folded &&
     userMessage.attribution !== "guest" &&
     userAudio.length > 0 &&
@@ -790,9 +819,47 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     ) : null;
 
+  const actionButtons = (
+    <>
+      <EditMessageButton
+        message={row.message}
+        editable={row.projectedItem?.visibility !== "inherited"}
+      />
+      <ForkMessageButton message={row.message} projectedItem={row.projectedItem} />
+      <RetryMessageButton message={row.message} />
+      {typeof revertTurnCount === "number" && (
+        <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+      )}
+      {copyText && (
+        <MessageCopyButton
+          text={contextClipboardFragment ? copyText : plainText}
+          {...(contextClipboardFragment
+            ? {
+                extraFlavors: {
+                  [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
+                },
+              }
+            : {})}
+          variant="ghost"
+          size={better ? "icon-xs" : "xs"}
+        />
+      )}
+      {promptLink !== null && (
+        <MessageCopyButton
+          text={promptLink}
+          label="Copy prompt link"
+          icon={LinkIconNode}
+          variant="ghost"
+          size={better ? "icon-xs" : "xs"}
+        />
+      )}
+      {/* Elsewhere the reply gesture shows its own action beside the bubble. */}
+      {better ? <ReplyMessageButton message={row.message} /> : null}
+    </>
+  );
   // Touch shows actions all the time, and narrow lanes have no room beside the
   // bubble, so both keep the actions on their own line.
-  const floatActions = row.groupedWithNext === true && !coarsePointer;
+  const floatActions = !better && row.groupedWithNext === true && !coarsePointer;
   const messageActions = (
     <div
       className={cn(
@@ -807,47 +874,88 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <Tooltip>
         <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-          {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+          {formatTimelineTimestamp(row.message.createdAt, ctx.timestampFormat, ctx.chatVisualMode)}
         </TooltipTrigger>
         <TooltipPopup>
           {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
         </TooltipPopup>
       </Tooltip>
-      <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
-        <TimelineMessageActions
-          message={row.message}
-          editable={row.projectedItem?.visibility !== "inherited"}
-        />
-        {typeof revertTurnCount === "number" && (
-          <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-        )}
-        {copyText && (
-          <MessageCopyButton
-            text={contextClipboardFragment ? copyText : plainText}
-            {...(contextClipboardFragment
-              ? {
-                  extraFlavors: {
-                    [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
-                  },
-                }
-              : {})}
-            variant="ghost"
-          />
-        )}
-        {promptLink !== null && (
-          <MessageCopyButton
-            text={promptLink}
-            label="Copy prompt link"
-            icon={LinkIconNode}
-            variant="ghost"
-          />
-        )}
-      </div>
+      {better && (!folded || expanded) ? null : (
+        <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
+          {actionButtons}
+        </div>
+      )}
     </div>
   );
+  const bubbleAttachmentBlock =
+    bubbleAttachments &&
+    (regularImages.length > 0 ||
+      userVideos.length > 0 ||
+      userAudio.length > 0 ||
+      otherUserFiles.length > 0 ||
+      unknownAttachments.length > 0) ? (
+      <ChatSizeMotion>
+        <div
+          className="better-chat-attachments"
+          data-message-attachments
+          onCopyCapture={onBodyCopyCapture}
+        >
+          {userAudio.length > 0 ? (
+            <div className="flex max-w-full flex-col gap-1">
+              {userAudio.map((file) => (
+                <InlineAudioPreview
+                  key={file.id}
+                  name={file.name}
+                  variant="chip"
+                  environmentId={ctx.activeThreadEnvironmentId}
+                  resource={{
+                    _tag: "attachment",
+                    attachmentId: file.id,
+                    fileName: file.name,
+                    mimeType: file.mimeType,
+                    disposition: "inline",
+                  }}
+                  onOpen={() => ctx.onFileOpen(file)}
+                />
+              ))}
+            </div>
+          ) : null}
+          {regularImages.length > 0 || userVideos.length > 0 ? (
+            <div className="better-chat-attachment-grid">
+              {regularImages.map((image) => (
+                <MessageImageAttachment
+                  key={image.id}
+                  image={image}
+                  onOpen={() => {
+                    const preview = buildExpandedImagePreview(regularImages, image.id);
+                    if (preview) ctx.onImageExpand(preview);
+                  }}
+                />
+              ))}
+              {userVideos.map((file) => (
+                <UserVideoAttachment key={file.id} file={file} />
+              ))}
+            </div>
+          ) : null}
+          {otherUserFiles.length > 0 || unknownAttachments.length > 0 ? (
+            <MessageAttachmentFiles
+              files={otherUserFiles}
+              unknownAttachments={unknownAttachments}
+              environmentId={ctx.activeThreadEnvironmentId}
+              theme={ctx.resolvedTheme}
+              onOpen={ctx.onFileOpen}
+              onDownload={ctx.onFileDownload}
+            />
+          ) : null}
+        </div>
+      </ChatSizeMotion>
+    ) : null;
   return (
     <div
-      className="group @container flex flex-col items-end gap-1"
+      className={cn(
+        "group @container flex flex-col items-end gap-1",
+        better && "better-chat-message",
+      )}
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
@@ -877,6 +985,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       ) : null}
       <div
+        ref={bubbleWidthRef}
         data-presentation-bubble={ctx.chatVisualMode === "better-t3" ? "user" : undefined}
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
@@ -888,7 +997,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ? guestBubbleClassName(false)
             : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
           !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
-          folded && expanded && "w-full",
+          ((folded && expanded) || editor !== null) && "w-full",
         )}
       >
         {ctx.chatVisualMode === "better-t3" ? (
@@ -897,6 +1006,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             data-presentation-surface
             className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit]"
           />
+        ) : null}
+        {better && (!folded || expanded) ? (
+          <MessageActionsOverlay>{actionButtons}</MessageActionsOverlay>
         ) : null}
         {row.message.replyTo ? <TimelineMessageQuote replyTo={row.message.replyTo} /> : null}
         {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
@@ -919,18 +1031,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           />
         ) : null}
         {/* Find reads the DOM, so a folded message stays mounted but hidden while find is open. */}
-        {!folded || expanded || ctx.findActive ? (
+        {!folded || expanded || ctx.findActive || editor !== null ? (
           <div
             ref={folded ? revealFoldRef : undefined}
-            hidden={folded && !expanded}
+            hidden={folded && !expanded && editor === null}
             dir={markdownProseDirection(resolvedContext.text)}
             className={cn(
               folded && "px-3 pb-3",
               folded && !ctx.findActive && "max-h-96 overflow-auto",
             )}
           >
-            {!mediaAboveText && mediaBlock}
-            {userAudio.length > 0 ? (
+            {!mediaAboveText && !bubbleAttachments && mediaBlock}
+            {userAudio.length > 0 && !bubbleAttachments ? (
               <div className={cn("flex max-w-full flex-col gap-1", !audioOnly && "mb-2")}>
                 {userAudio.map((file) => (
                   <InlineAudioPreview
@@ -965,9 +1077,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </div>
             ) : null}
             {!fileCardsOnly &&
-            ((ctx.chatVisualMode === "better-t3"
-              ? otherUserFiles.length > 0
-              : unchippedFiles.length > 0) ||
+            !bubbleAttachments &&
+            ((better ? otherUserFiles.length > 0 : unchippedFiles.length > 0) ||
               unknownAttachments.length > 0) ? (
               <div className="mb-2 flex flex-col gap-1">
                 {(ctx.chatVisualMode === "better-t3" ? otherUserFiles : unchippedFiles).map(
@@ -1055,17 +1166,23 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 ))}
               </div>
             ) : null}
-            {fileCardsOnly || audioOnly ? null : (
-              <div onCopyCapture={onBodyCopyCapture}>
-                <CollapsibleUserMessageBody
-                  text={resolvedContext.text}
-                  renderContextReference={renderContextReference}
-                  skills={ctx.skills}
-                  markdownCwd={ctx.markdownCwd}
-                  collapsible={!folded}
-                />
+            {editor === null && (fileCardsOnly || audioOnly) ? null : (
+              <div onCopyCapture={editor === null ? onBodyCopyCapture : undefined}>
+                <ChatSizeMotion>
+                  {editor ?? (
+                    <CollapsibleUserMessageBody
+                      messageId={row.message.id}
+                      text={resolvedContext.text}
+                      renderContextReference={renderContextReference}
+                      skills={ctx.skills}
+                      markdownCwd={ctx.markdownCwd}
+                      collapsible={!folded}
+                    />
+                  )}
+                </ChatSizeMotion>
               </div>
             )}
+            {bubbleAttachmentBlock}
           </div>
         ) : null}
         {floatActions ? (
@@ -1161,6 +1278,7 @@ const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
 const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  messageId: MessageId;
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1198,6 +1316,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           }
         >
           <UserMessageBody
+            messageId={props.messageId}
             text={props.text}
             renderContextReference={props.renderContextReference}
             skills={props.skills}
@@ -1227,6 +1346,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 });
 
 const UserMessageBody = memo(function UserMessageBody(props: {
+  messageId: MessageId;
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1239,8 +1359,11 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   return (
     <ChatMarkdown
       text={props.text}
+      streamId={`${ctx.routeThreadKey}:${props.messageId}`}
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
+      environmentId={ctx.activeThreadEnvironmentId}
+      onVisualizationAction={ctx.onVisualizationAction}
       skills={props.skills}
       className="text-foreground"
       lineBreaks

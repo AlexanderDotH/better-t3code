@@ -74,6 +74,11 @@ describe("searchSettings", () => {
       );
     }
     expect(searchSettings("Better-T3-Übergänge")[0]?.targetId).toBe("chat.presentationMotion");
+    for (const query of ["classic composer", "model picker", "klassisch Composer"]) {
+      expect(searchSettings(query)).toContainEqual(
+        expect.objectContaining({ id: "composer-layout", to: "/settings/chat" }),
+      );
+    }
   });
   it("finds the Codex and Better T3 compaction settings and their environment targets", () => {
     for (const query of ["Codex compaction", "custom context engine", "Kontextkompaktierung"]) {
@@ -508,6 +513,8 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
     expect(movedSettingsPath("/settings/beta", "")).toBe("/settings/labs");
+    expect(movedSettingsPath("/settings/general", "legacy-sidebar")).toBe("/settings/better-t3");
+    expect(getSettingsSearchTargetScope("legacy-sidebar")?.scope).toBeNull();
   });
 
   it("leaves current pages alone", () => {

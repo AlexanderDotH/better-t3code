@@ -723,6 +723,30 @@ describe("composerDraftStore context persistence", () => {
   });
 });
 
+describe("composerDraftStore Deep Plan sources", () => {
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("deep-plan-sources"));
+
+  beforeEach(resetComposerDraftStore);
+
+  it("keeps a choice without project chats through persistence until they are included again", () => {
+    const store = useComposerDraftStore.getState();
+    store.setDeepPlanSourceRefs(threadRef, [], false);
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrated = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]).toMatchObject({
+      deepPlanSourceRefs: [],
+      deepPlanIncludeProjectChats: false,
+    });
+    store.setDeepPlanSourceRefs(threadRef, []);
+    expect(draftFor(threadRef.threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+});
+
 describe("composerDraftStore thread contexts", () => {
   const threadId = ThreadId.make("thread-with-context");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);

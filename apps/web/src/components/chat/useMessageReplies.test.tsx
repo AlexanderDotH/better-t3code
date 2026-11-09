@@ -7,6 +7,7 @@ import {
   ThreadId,
   ProviderInstanceId,
   ProviderDriverKind,
+  type ComposerMode,
   type OrchestrationV2MessageReply,
 } from "@t3tools/contracts";
 import { useLayoutEffect, type ReactElement } from "react";
@@ -100,7 +101,14 @@ const reply = {
 function setup({
   currentThread = thread,
   messageReply,
-}: { currentThread?: typeof thread; messageReply?: OrchestrationV2MessageReply } = {}) {
+  enabled = true,
+  composerMode = "default",
+}: {
+  currentThread?: typeof thread;
+  messageReply?: OrchestrationV2MessageReply;
+  enabled?: boolean;
+  composerMode?: ComposerMode;
+} = {}) {
   let modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test-model" };
   let controller: ReturnType<typeof useMessageReplies>;
   const resetCursorState = vi.fn();
@@ -132,7 +140,7 @@ function setup({
             selectedProvider: ProviderDriverKind.make("codex"),
             selectedModel: modelSelection.model,
             selectedProviderModels: [],
-            composerMode: "default" as const,
+            composerMode,
             deepPlanSourceRefs: [],
             interactionMode: "default" as const,
             interactionModeEnabled: true,
@@ -145,7 +153,7 @@ function setup({
       threadRef: currentThread,
       ...(messageReply ? { messageReply } : {}),
       composerRef,
-      enabled: true,
+      enabled,
       runtimeMode: "full-access",
       blocked: false,
       onSent,
@@ -316,13 +324,20 @@ describe("message reply dispatch", () => {
     expect(runtime.release).toHaveBeenCalledTimes(1);
   });
 
-  it("does not send a stale reply draft to a server without reply support", async () => {
-    const { element, current } = setup();
-    await using screen = await mountHook(element);
-    runtime.capabilities.messageReplies = false;
-    await act(async () => current().sendReply());
-    expect(runtime.startReply).not.toHaveBeenCalled();
-    expect(useComposerDraftStore.getState().getComposerDraft(thread)?.replyTarget).toEqual(reply);
-    expect(screen.alerts()).toHaveLength(1);
-  });
+  it.each(["unsupported", "disabled", "deep-plan"] as const)(
+    "preserves a stale reply draft when replies are %s",
+    async (reason) => {
+      const { element, current } = setup({
+        enabled: reason !== "disabled",
+        composerMode: reason === "deep-plan" ? "deep-plan" : "default",
+      });
+      await using screen = await mountHook(element);
+      runtime.capabilities.messageReplies = reason !== "unsupported";
+      await act(async () => current().sendReply());
+      expect(runtime.startReply).not.toHaveBeenCalled();
+      expect(runtime.startTurn).not.toHaveBeenCalled();
+      expect(useComposerDraftStore.getState().getComposerDraft(thread)?.replyTarget).toEqual(reply);
+      expect(screen.alerts()).toHaveLength(1);
+    },
+  );
 });

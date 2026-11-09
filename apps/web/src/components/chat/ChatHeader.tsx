@@ -32,6 +32,7 @@ import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { serverEnvironment } from "../../state/server";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   WorkspaceBreadcrumb,
@@ -103,6 +104,10 @@ export const ChatHeader = memo(function ChatHeader({
     AuthOrchestrationOperateScope,
   );
   const canShareWithGuest = useAtomValue(canShareWithGuestAtom(activeThreadEnvironmentId));
+  const supportsTranscriptExport = useAtomValue(
+    serverEnvironment.configValueAtom(activeThreadEnvironmentId),
+    (config) => (config?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1,
+  );
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -292,7 +297,8 @@ export const ChatHeader = memo(function ChatHeader({
       ref={breadcrumbContainerRef}
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
-        rightPanelOpen ? "pr-10" : "pr-24",
+        // The titlebar controls float over the header's right edge; their width varies by platform.
+        rightPanelOpen ? "pr-10" : "pr-(--workspace-titlebar-controls-width)",
       )}
       onContextMenu={handleHeaderContextMenu}
     >
@@ -448,8 +454,9 @@ export const ChatHeader = memo(function ChatHeader({
           projectLabel={activeProject.title}
         />
       ) : null}
-      {isServerThread ? (
+      {isServerThread && supportsTranscriptExport ? (
         <ChatTranscriptCopyButton
+          key={`${activeThreadEnvironmentId}:${activeThreadId}`}
           environmentId={activeThreadEnvironmentId}
           threadId={activeThreadId}
           activeTurnInProgress={activeTurnInProgress}

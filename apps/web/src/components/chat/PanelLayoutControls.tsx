@@ -1,8 +1,9 @@
-import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
+import { MoveHorizontalIcon, PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
@@ -61,6 +62,16 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   windowExpansionDirection,
   windowExpansionBlocked,
 }: PanelLayoutControlsProps) {
+  const windowExpansionLabel =
+    windowExpansionBlocked && !windowExpanded
+      ? "Restore panel size to expand the window"
+      : windowExpanded
+        ? rightPanelOpen
+          ? "Close right panel and restore window size"
+          : "Restore window size"
+        : rightPanelOpen
+          ? `Expand window to the ${windowExpansionDirection}`
+          : `Open right panel and expand window to the ${windowExpansionDirection}`;
   const threadPanelToggle = (
     <Toggle
       className="relative shrink-0 [-webkit-app-region:no-drag]"
@@ -119,26 +130,26 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       ) : null}
       {windowExpansionAvailable ? (
         <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                pressed={windowExpanded}
-                disabled={windowExpansionPreparing || (windowExpansionBlocked && !windowExpanded)}
-                onPressedChange={onToggleWindowExpansion}
-                aria-label={
-                  windowExpanded
-                    ? "Restore window size"
-                    : `Expand window to the ${windowExpansionDirection}`
-                }
-                variant="ghost"
-                size="sm"
-              />
-            }
-          >
-            <MorphIcon icon={windowExpanded ? Minimize2 : Maximize2} className="size-4" />
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={windowExpanded}
+              onPressedChange={onToggleWindowExpansion}
+              aria-label={windowExpansionLabel}
+              aria-busy={windowExpansionPreparing}
+              variant="ghost"
+              size="sm"
+              disabled={
+                (!rightPanelAvailable && !windowExpanded) ||
+                windowExpansionPreparing ||
+                (windowExpansionBlocked && !windowExpanded)
+              }
+            >
+              <MoveHorizontalIcon className="size-4" />
+            </Toggle>
           </TooltipTrigger>
-          <TooltipPopup>
-            {windowExpanded ? "Restore window size" : "Expand window for the right panel"}
+          <TooltipPopup side="bottom">
+            {windowExpansionPreparing ? "Resizing window…" : windowExpansionLabel}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -219,8 +230,24 @@ export function WorkspaceTitlebarControls(props: {
   readonly onToggleMaximized: () => void;
   readonly children: ReactNode;
 }) {
+  const controlsRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the fixed controls' measured width so the chat header keeps its own actions clear of them
+  useLayoutEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const root = document.documentElement;
+    const publish = () =>
+      root.style.setProperty("--workspace-titlebar-controls-width", `${controls.offsetWidth}px`);
+    publish();
+    const stopObserving = observeResize(controls, publish);
+    return () => {
+      stopObserving();
+      root.style.removeProperty("--workspace-titlebar-controls-width");
+    };
+  }, []);
   return (
     <div
+      ref={controlsRef}
       className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >

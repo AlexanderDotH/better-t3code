@@ -13,9 +13,11 @@ import {
 } from "@t3tools/shared/voiceFileContext";
 import { resolvePlanImplementationDispatch } from "@t3tools/client-runtime/plan-implementation";
 import {
+  parseDeepPlanComposerCommand,
   prepareDeepPlanForTurn,
   resolveDeepPlanningAvailability,
 } from "@t3tools/client-runtime/deep-planning";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { getWebDeepPlanningApi } from "../../state/deepPlanning";
 import { randomUUID } from "../../lib/utils";
 import { AsyncResult } from "effect/reactivity";
@@ -168,7 +170,6 @@ import type { useLocalDispatchState } from "./useLocalDispatchState";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
-import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
@@ -187,7 +188,6 @@ function draftHasNonPromptContent(target: ComposerThreadTarget) {
 type PendingThreadRequests = ReturnType<typeof usePendingThreadRequests>;
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
 type DraftEnvironmentRouting = ReturnType<typeof useDraftEnvironmentRouting>;
-type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
 type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
@@ -235,10 +235,9 @@ interface ComposerSendInput {
   readonly keepFullHistory: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly showPlanFollowUpPrompt: boolean;
-  readonly usageLimitsKey: string | null;
   readonly usageLimitsOffered: boolean;
-  readonly openUsageLimits: UsageLimitsPanel["open"];
-  readonly clearUsageLimitsFor: UsageLimitsPanel["clearFor"];
+  /** Shows or hides the usage limits panel; resolves false when it could not. */
+  readonly toggleUsageLimits: () => Promise<boolean>;
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
@@ -330,10 +329,8 @@ export function useComposerSend(input: ComposerSendInput) {
     keepFullHistory,
     resumeCompactionTokens,
     showPlanFollowUpPrompt,
-    usageLimitsKey,
     usageLimitsOffered,
-    openUsageLimits,
-    clearUsageLimitsFor,
+    toggleUsageLimits,
     needsLoadBalancing,
     loadBalancing,
     readPendingEnvironmentChange,
@@ -361,6 +358,7 @@ export function useComposerSend(input: ComposerSendInput) {
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
   } = input;
+  const translate = useInterfaceTranslator().message;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
@@ -451,12 +449,11 @@ export function useComposerSend(input: ComposerSendInput) {
     const promptAtSend = promptRef.current;
     if (
       usageLimitsOffered &&
-      usageLimitsKey !== null &&
       !directAnnotation &&
       !draftHasNonPromptContent(composerDraftTarget) &&
       isUsageLimitsCommand(promptRef.current)
     ) {
-      if (openUsageLimits()) {
+      if ((await toggleUsageLimits()) && promptRef.current === promptAtSend) {
         promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();
@@ -516,7 +513,23 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
-    const sendCtx = composerRef.current?.getSendContext();
+    const composerSendCtx = composerRef.current?.getSendContext();
+    // `/deep-plan <prompt>` sends the prompt as a DeepPlan turn; an answer keeps its text.
+    const deepPlanCommand =
+      composerSendCtx &&
+      !directAnnotation &&
+      !queuedRunEdit.isEditing &&
+      !(Boolean(activePendingProgress) && composerSendCtx.answeringPendingUserInput !== false)
+        ? parseDeepPlanComposerCommand(promptAtSend)
+        : null;
+    const sendCtx =
+      composerSendCtx && deepPlanCommand
+        ? {
+            ...composerSendCtx,
+            composerMode: "deep-plan" as const,
+            interactionMode: "plan" as const,
+          }
+        : composerSendCtx;
     const sendPreferences = getClientSettings();
     const fetchModeForSend = sendCtx
       ? composerFetchMode({
@@ -603,6 +616,16 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
+    if (deepPlanCommand) {
+      if (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTarget) {
+        setThreadError(activeThread.id, translate("chat.deepPlan.replyUnavailable"));
+        return;
+      }
+      if (!sendCtx.interactionModeEnabled) {
+        setThreadError(activeThread.id, translate("chat.deepPlan.unavailable"));
+        return;
+      }
+    }
     if (sendCtx.composerMode === "deep-plan") {
       const availability = resolveDeepPlanningAvailability({
         capabilities: appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
@@ -620,6 +643,19 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         return;
       }
+    }
+    if (deepPlanCommand) {
+      handleInteractionModeChange("deep-plan");
+      promptRef.current = deepPlanCommand.prompt;
+      setComposerDraftPrompt(composerDraftTarget, deepPlanCommand.prompt);
+      composerRef.current?.resetCursorState({
+        prompt: deepPlanCommand.prompt,
+        cursor: collapseExpandedComposerCursor(
+          deepPlanCommand.prompt,
+          deepPlanCommand.prompt.length,
+        ),
+      });
+      if (deepPlanCommand.prompt.trim().length === 0) return;
     }
     const approvalFeedbackTarget = pendingApprovalsRef.current.find(
       (approval) =>
@@ -900,7 +936,6 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const standaloneSlashCommand =
-      sendInteractionModeEnabled &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -908,7 +943,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
+        ? parseStandaloneComposerSlashCommand(trimmed, sendInteractionModeEnabled)
         : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
       handleInteractionModeChange(standaloneSlashCommand);
@@ -1565,6 +1600,7 @@ export function useComposerSend(input: ComposerSendInput) {
             projectId: activeProject.id,
             threadId: threadIdForSend,
             additionalSourceRefs: sendCtx.deepPlanSourceRefs,
+            includeProjectChats: sendCtx.deepPlanIncludeProjectChats,
             apiForEnvironment: getWebDeepPlanningApi,
             createId: randomUUID,
           });
@@ -1630,7 +1666,6 @@ export function useComposerSend(input: ComposerSendInput) {
       } else {
         turnStartSucceeded = true;
         setKeepFullHistory(routeThreadKey, false);
-        clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }

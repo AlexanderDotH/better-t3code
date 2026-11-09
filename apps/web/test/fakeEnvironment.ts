@@ -18,6 +18,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
   type VcsStatusStreamEvent,
+  type OrchestrationV2Command,
   type OrchestrationProjectShell,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2Run,
@@ -183,6 +184,8 @@ function run(threadId: ThreadId, id: RunId, ordinal: number, userMessageId: stri
 }
 
 export interface FakeThread {
+  /** Opts this fixture into server-side read/unread updates. */
+  readonly lastVisitedAt?: string | null;
   /** Makes this a side chat of that thread. */
   readonly sideChatOf?: ThreadId;
   readonly id: ThreadId;
@@ -251,7 +254,12 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    lastVisitedAt: AT,
+    lastVisitedAt:
+      thread.lastVisitedAt === undefined
+        ? AT
+        : thread.lastVisitedAt === null
+          ? null
+          : DateTime.makeUnsafe(thread.lastVisitedAt),
     deletedAt: null,
   };
 }
@@ -288,7 +296,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       archivedAt: null,
       settledOverride: null,
       settledAt: null,
-      lastVisitedAt: AT,
+      lastVisitedAt: shell.lastVisitedAt ?? null,
       deletedAt: null,
     },
     runs: [...thread.runs],
@@ -319,6 +327,7 @@ const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStrea
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
 let sequence = 1;
+const shellSubscribers = new Set<Queue.Queue<OrchestrationV2ShellStreamItem>>();
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
@@ -335,6 +344,38 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
   );
 
 const handlers: Record<string, (input: never) => unknown> = {
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) => {
+    if (command.type !== "thread.visit" && command.type !== "thread.mark-unread")
+      return Effect.never;
+    return Effect.gen(function* () {
+      const thread = threads.find((thread) => thread.id === command.threadId);
+      if (!thread) return { sequence };
+      if (thread.lastVisitedAt === undefined) return yield* Effect.never;
+      const lastVisitedAt =
+        command.type === "thread.visit"
+          ? command.visitedAt
+          : DateTime.formatIso(
+              DateTime.makeUnsafe(
+                DateTime.toEpochMillis(thread.runs.at(-1)?.completedAt ?? AT) - 1,
+              ),
+            );
+      threads = threads.map((item) => (item.id === thread.id ? { ...item, lastVisitedAt } : item));
+      sequence += 1;
+      yield* Effect.forEach(shellSubscribers, (queue) =>
+        Queue.offer(queue, {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: threads.map(shellOf),
+            archivedThreads: [],
+          },
+        }),
+      );
+      return { sequence };
+    });
+  },
   [WS_METHODS.subscribeTerminalMetadata]: () =>
     subscribe<TerminalMetadataStreamEvent>([{ type: "snapshot", terminals: [] }], (queue) => {
       terminalMetadataSubscriber = queue;
@@ -343,19 +384,27 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: threads.map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: threads.map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscribers.add(queue);
+        return () => {
+          shellSubscribers.delete(queue);
+        };
       },
-      { kind: "synchronized" },
-    ]),
+    ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;

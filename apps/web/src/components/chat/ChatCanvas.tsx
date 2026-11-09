@@ -7,6 +7,8 @@ import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore
 import { observeResize } from "../../lib/observeResize";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
+const MIN_CHAT_WIDTH_REM = 40;
+
 export function ChatCanvas({
   store,
   threadRef,
@@ -40,6 +42,8 @@ export function ChatCanvas({
       const canvasBounds = element.getBoundingClientRect();
       const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
+      const maxChatWidth = Number.parseFloat(styles.width);
+      const remSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
       store.getState().setMeasurements({
         findBar:
           detailsCardTopInset > 0
@@ -52,8 +56,8 @@ export function ChatCanvas({
         width: element.clientWidth,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
-        maxChatWidth: Number.parseFloat(styles.width),
-        minChatWidth: Number.parseFloat(styles.minWidth),
+        maxChatWidth,
+        minChatWidth: Math.min(maxChatWidth, MIN_CHAT_WIDTH_REM * remSize),
         composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
         timelineGutter: timelineElement
           ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
@@ -110,7 +114,7 @@ export function ChatCanvas({
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
+          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) box-content ps-3 sm:ps-12"
         />
         {children}
       </div>

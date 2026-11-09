@@ -4,6 +4,7 @@ import { ImageIcon, TextIcon } from "lucide-react";
 import { Suspense } from "react";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { Button } from "../ui/button";
@@ -72,11 +73,15 @@ export function SnapShotContentsButton({
   source,
   className,
   side = "top",
+  appearance = "compact",
 }: {
   source: SnapShotSource;
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
+  /** "message" is the Better T3 caption's labeled pill. */
+  appearance?: "compact" | "message";
 }) {
+  const translate = useInterfaceTranslator().message;
   const includesAccessibility = snapShotIncludesAccessibility(source);
   const ContentsIcon = includesAccessibility ? TextIcon : ImageIcon;
   const accessibilityDetails = snapShotAccessibilityDetails(source);
@@ -89,20 +94,32 @@ export function SnapShotContentsButton({
           render={
             <PopoverTrigger
               render={
-                <Button
-                  aria-label={
-                    includesAccessibility ? "View accessibility data" : "No accessibility data"
-                  }
-                  className={className}
-                  onClick={(event) => event.stopPropagation()}
-                  size="icon-micro"
-                  variant="overlay"
-                />
+                appearance === "message" ? (
+                  <button
+                    type="button"
+                    className={cn("better-chat-capture-contents", className)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                ) : (
+                  <Button
+                    aria-label={
+                      includesAccessibility ? "View accessibility data" : "No accessibility data"
+                    }
+                    className={className}
+                    onClick={(event) => event.stopPropagation()}
+                    size="icon-micro"
+                    variant="overlay"
+                  />
+                )
               }
             />
           }
         >
-          <ContentsIcon className="size-3" aria-hidden="true" />
+          {appearance === "message" ? (
+            translate("chat.attachments.contents")
+          ) : (
+            <ContentsIcon className="size-3" aria-hidden="true" />
+          )}
         </TooltipTrigger>
         <TooltipPopup side={side}>{tooltip}</TooltipPopup>
       </Tooltip>
@@ -133,14 +150,19 @@ export function SnapShotContentsButton({
 export function SnapShotAttachmentDetails({
   source,
   className,
+  appearance = "compact",
 }: {
   source: SnapShotSource;
   className?: string;
+  /** "message" is the Better T3 capture caption: larger identity and a labeled contents pill. */
+  appearance?: "compact" | "message";
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div
       className={cn(
         "pointer-events-none absolute inset-x-0 bottom-0 flex min-w-0 items-center gap-1.5 bg-linear-to-t from-black/85 via-black/55 to-transparent px-2.5 pb-2 pt-6",
+        appearance === "message" && "better-chat-capture-caption",
         className,
       )}
     >
@@ -151,15 +173,31 @@ export function SnapShotAttachmentDetails({
           {source.appName.slice(0, 1)}
         </div>
       )}
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
-          <span className="truncate">{source.appName}</span>
-          <SnapShotContentsButton source={source} className="pointer-events-auto" />
+      {appearance === "message" ? (
+        <>
+          <div className="better-chat-capture-identity">
+            <div className="better-chat-capture-title">{source.appName}</div>
+            <div className="better-chat-capture-subtitle">
+              {source.windowTitle || translate("chat.attachments.capturedWindow")}
+            </div>
+          </div>
+          <SnapShotContentsButton
+            source={source}
+            appearance="message"
+            className="pointer-events-auto"
+          />
+        </>
+      ) : (
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
+            <span className="truncate">{source.appName}</span>
+            <SnapShotContentsButton source={source} className="pointer-events-auto" />
+          </div>
+          <div className="truncate text-3xs leading-3.5 text-white/70">
+            {source.windowTitle || "Captured window"}
+          </div>
         </div>
-        <div className="truncate text-3xs leading-3.5 text-white/70">
-          {source.windowTitle || "Captured window"}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

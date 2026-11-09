@@ -18,7 +18,15 @@ let notifyResize: (entries: ResizeObserverEntry[]) => void;
 let host: HTMLElement;
 let animateDescriptor: PropertyDescriptor | undefined;
 
-function Fixture({ collapsed, enabled = true }: { collapsed: boolean; enabled?: boolean }) {
+function Fixture({
+  collapsed,
+  enabled = true,
+  footerLayout,
+}: {
+  collapsed: boolean;
+  enabled?: boolean;
+  footerLayout?: "inline" | "external";
+}) {
   const ref = useComposerRestingTransition(
     collapsed,
     collapsed,
@@ -33,16 +41,45 @@ function Fixture({ collapsed, enabled = true }: { collapsed: boolean; enabled?: 
       <div ref={ref} data-chat-composer-main-surface="true">
         <div data-chat-composer-surface="true">
           <div data-chat-composer-body="true">Draft</div>
+          {footerLayout ? (
+            <div
+              data-chat-composer-footer="true"
+              data-footer-layout={footerLayout}
+              data-collapsed={collapsed}
+            >
+              {!collapsed ? (
+                <div
+                  data-chat-composer-footer-controls="true"
+                  data-chat-composer-controls={footerLayout === "external" ? "left" : "footer"}
+                >
+                  Model and mode
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
 
-async function renderFixture(screen: Screen, collapsed: boolean, enabled = true) {
+async function renderFixture(
+  screen: Screen,
+  collapsed: boolean,
+  enabled = true,
+  footerLayout?: "inline" | "external",
+) {
   geometry.naturalHeight = collapsed ? 50 : 144;
   geometry.bodyHeight = collapsed ? 48 : 94;
-  await act(() => screen.rerender(<Fixture collapsed={collapsed} enabled={enabled} />));
+  await act(() =>
+    screen.rerender(
+      <Fixture
+        collapsed={collapsed}
+        enabled={enabled}
+        {...(footerLayout ? { footerLayout } : {})}
+      />,
+    ),
+  );
 }
 
 async function resizeBody() {
@@ -163,6 +200,30 @@ it("uses natural geometry without animation when motion is disabled", async () =
   expect(host.querySelector<HTMLElement>("[data-chat-composer-overlay]")!.style.height).toBe("");
 });
 
+it.each(["inline", "external"] as const)(
+  "retains the %s footer position and reveals its controls when expanding",
+  async (footerLayout) => {
+    using _timers = fakeTimers();
+    using _setup = setup();
+    await using screen = await renderScreen(null, { router: false });
+    host = screen.container;
+
+    await renderFixture(screen, false, true, footerLayout);
+    await renderFixture(screen, true, true, footerLayout);
+    const footer = host.querySelector<HTMLElement>("[data-chat-composer-footer]")!;
+    expect(footer.style.bottom).toBe(footerLayout === "inline" ? "40px" : "1px");
+    await act(() => heightAnimations()[0]!.finish());
+    expect(footer.style.bottom).toBe("");
+
+    await renderFixture(screen, false, true, footerLayout);
+    const controls = host.querySelector<HTMLElement>("[data-chat-composer-footer-controls]")!;
+    expect(animations.some(({ target }) => target === controls)).toBe(true);
+    await act(() => {
+      for (const entry of animations) entry.finish();
+    });
+  },
+);
+
 function setup() {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   geometry.naturalHeight = 144;
@@ -185,6 +246,11 @@ function setup() {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
   ) {
+    if (this.hasAttribute("data-chat-composer-footer")) {
+      const bottom =
+        this.dataset.collapsed === "true" && this.dataset.footerLayout === "inline" ? 40 : 1;
+      return new DOMRect(0, 600 - bottom - 48, 500, 48);
+    }
     if (this.hasAttribute("data-chat-composer-body")) {
       return new DOMRect(0, 0, 500, geometry.bodyHeight);
     }
@@ -215,9 +281,10 @@ function setup() {
           rejectFinished(new DOMException("Animation cancelled", "AbortError"));
         }),
       } as unknown as Animation;
-      // Content animations are absent from this geometry fixture.
-      currentHeightAnimation = animation;
-      geometry.visibleHeight = Number.parseFloat(String(keyframes[0]?.height));
+      if (this.hasAttribute("data-chat-composer-main-surface")) {
+        currentHeightAnimation = animation;
+        geometry.visibleHeight = Number.parseFloat(String(keyframes[0]?.height));
+      }
       animations.push({
         target: this,
         keyframes,

@@ -12,6 +12,7 @@ import { toastManager } from "../ui/toast";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { useNotificationSuppression } from "../ui/notificationSuppression";
 import { ExpandableText } from "../settings/ExpandableText";
 
 function copyAdminRequest() {
@@ -83,7 +84,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   errorCode?: string | null;
   onDismiss?: () => void;
 }) {
-  if (!error) return null;
+  const suppressErrorsAndWarnings = useNotificationSuppression();
+  if (!error || suppressErrorsAndWarnings) return null;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
   const variant = errorClass === "usage_limit" || chatGptLimit ? "warning" : "error";

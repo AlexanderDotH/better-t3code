@@ -98,7 +98,7 @@ vi.mock("~/state/server", async () => {
   return { serverEnvironment: { configValueAtom: () => config } };
 });
 vi.mock("~/state/entities", () => ({
-  useThreadShell: () => ({ id: testState.threadId, branch: "feature/test" }),
+  useQuietThreadShell: () => ({ id: testState.threadId, branch: "feature/test" }),
 }));
 vi.mock("~/state/threads", () => ({
   threadEnvironment: {

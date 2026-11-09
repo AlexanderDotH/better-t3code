@@ -140,7 +140,13 @@ function useContextWindowSelection(props: ContextWindowPickerProps): ContextWind
   const selected = contextWindowDescriptor(props);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const externalValue = selected ? getProviderOptionCurrentValue(selected.descriptor) : undefined;
-  const scope = JSON.stringify([props.draftId, props.model, props.provider, props.threadRef]);
+  const scope = JSON.stringify([
+    props.draftId,
+    props.model,
+    props.provider,
+    props.instanceId,
+    props.threadRef,
+  ]);
   const [optimistic, setOptimistic] = useState<{
     scope: string;
     externalValue: unknown;

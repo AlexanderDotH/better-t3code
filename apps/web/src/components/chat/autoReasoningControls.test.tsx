@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  ProviderInstanceId,
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -136,7 +137,11 @@ describe("Auto reasoning controls", () => {
     try {
       await act(() => {
         renderer = create(
-          <ContextWindowMenuContent {...input} draftId={DraftId.make("auto-test")} />,
+          <ContextWindowMenuContent
+            {...input}
+            instanceId={ProviderInstanceId.make("codex-work")}
+            draftId={DraftId.make("auto-test")}
+          />,
         );
       });
       await act(() =>
@@ -152,6 +157,16 @@ describe("Auto reasoning controls", () => {
         id: "t3AutoReasoning",
         value: true,
       });
+      await act(() =>
+        renderer!.update(
+          <ContextWindowMenuContent
+            {...input}
+            instanceId={ProviderInstanceId.make("codex-personal")}
+            draftId={DraftId.make("auto-test")}
+          />,
+        ),
+      );
+      expect(renderer!.root.findByType("input").props.value).toBe(0);
     } finally {
       await act(async () => renderer?.unmount());
     }
