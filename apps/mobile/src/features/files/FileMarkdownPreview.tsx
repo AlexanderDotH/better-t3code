@@ -33,6 +33,7 @@ import {
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
@@ -119,7 +120,10 @@ export function FileMarkdownPreview(props: {
       (!props.captured && fileLink.kind === "file" && fileLink.line !== undefined)
     ) {
       const name =
-        preview?.source.name ?? (fileLink.kind === "file" ? fileLink.label : "Open file");
+        preview?.source.name ??
+        (fileLink.kind === "file"
+          ? fileLink.label
+          : currentInterfaceTranslator().message("browser.files.openFile"));
       return (
         <Text
           accessibilityRole="link"

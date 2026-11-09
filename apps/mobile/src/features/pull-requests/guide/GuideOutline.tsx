@@ -8,6 +8,7 @@ import { PullRequestMarkdown } from "../PullRequestMarkdown";
 import { Menu } from "../../../components/ui/Menu";
 
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export function GuideOutline({
   guide,
@@ -18,6 +19,7 @@ export function GuideOutline({
   readonly onOpen: (position: number) => void;
   readonly onRewrite?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const files = new Set(guide.stops.flatMap(stopFilePaths));
   return (
@@ -30,16 +32,22 @@ export function GuideOutline({
           </Text>
         </View>
         <Menu
-          title="Guide options"
+          title={translator.message("mobile.ui.guideOptions")}
           actions={[
             {
               id: "word-wrap",
-              title: "Word wrap",
+              title: translator.message("settings.application.title.wordWrap"),
               image: "text.alignleft",
               state: appearance.codeWordBreak ? "on" : "off",
             },
             ...(onRewrite
-              ? [{ id: "rewrite", title: "Rewrite guide", image: "arrow.clockwise" }]
+              ? [
+                  {
+                    id: "rewrite",
+                    title: translator.message("mobile.ui.rewriteGuide"),
+                    image: "arrow.clockwise",
+                  },
+                ]
               : []),
           ]}
           onPressAction={({ nativeEvent }) =>
@@ -50,7 +58,7 @@ export function GuideOutline({
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Guide options"
+            accessibilityLabel={translator.message("mobile.ui.guideOptions")}
             className="h-11 w-11 items-center justify-center rounded-full active:bg-grouped-card"
           >
             <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
@@ -89,7 +97,7 @@ export function GuideOutline({
                   <SymbolView name="eye" size={14} tintColorClassName="accent-warning-foreground" />
                 ) : null}
                 <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
-                  {filename ?? "Context"}
+                  {filename ?? translator.message("settings.theme.editor.group.context")}
                   {paths.length > 1 ? ` +${paths.length - 1}` : ""}
                 </Text>
               </View>
@@ -102,7 +110,12 @@ export function GuideOutline({
       })}
       {guide.stops.length ? (
         <View className="self-end">
-          <Button label="Start tour" tone="text" onPress={() => onOpen(0)} icon="arrow.right" />
+          <Button
+            label={translator.message("mobile.ui.startTour")}
+            tone="text"
+            onPress={() => onOpen(0)}
+            icon="arrow.right"
+          />
         </View>
       ) : null}
     </View>

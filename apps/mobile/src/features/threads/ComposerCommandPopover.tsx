@@ -20,6 +20,7 @@ import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../components/EnvironmentMachine
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -143,7 +144,9 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
 
 function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
   if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
+    return triggerKind === "path"
+      ? currentInterfaceTranslator().message("mobile.ui.searchingFiles")
+      : currentInterfaceTranslator().message("common.loading");
   }
   switch (triggerKind) {
     case "pull-request":

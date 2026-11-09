@@ -225,7 +225,11 @@ export function MobileAiEndpointSetup(props: {
         draft,
       });
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not save endpoint.");
+      setError(
+        error instanceof Error
+          ? error.message
+          : translator.message("settings.providers.endpoint.saveFailed"),
+      );
       return;
     }
     setSaving(true);
@@ -274,7 +278,11 @@ export function MobileAiEndpointSetup(props: {
     };
     await persistEndpoint()
       .catch((error: unknown) => {
-        setError(error instanceof Error ? error.message : "Could not save endpoint.");
+        setError(
+          error instanceof Error
+            ? error.message
+            : translator.message("settings.providers.endpoint.saveFailed"),
+        );
       })
       .finally(() => setSaving(false));
   };

@@ -75,7 +75,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     selectedLines.length === 1
       ? firstNumber !== null
         ? `Line ${firstNumber}`
-        : "File comment"
+        : translator.message("mobile.review.fileComment")
       : firstNumber !== null && lastNumber !== null
         ? `Lines ${firstNumber}-${lastNumber}`
         : `${selectedLines.length} lines selected`;
@@ -242,7 +242,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         autoFocus
                         multiline
                         scrollEnabled
-                        placeholder="Leave a comment..."
+                        placeholder={translator.message("mobile.ui.leaveAComment")}
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}

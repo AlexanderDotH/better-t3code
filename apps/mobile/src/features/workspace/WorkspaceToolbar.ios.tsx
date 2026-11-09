@@ -19,17 +19,26 @@ import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { shouldRestoreNativeSearch } from "./workspace-tabs-state";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const SEARCH_LABELS = {
-  threads: "Search threads",
-  pullRequests: "Search pull requests",
-  settings: "Search settings",
+  get threads() {
+    return currentInterfaceTranslator().message("mobile.navigation.searchThreads");
+  },
+  get pullRequests() {
+    return currentInterfaceTranslator().message("pullRequest.search");
+  },
+  get settings() {
+    return currentInterfaceTranslator().message("settings.application.search.aria");
+  },
 } as const;
 
 export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
   readonly sidebar?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const workspace = useWorkspaceTabs()!;
   const activeNewTask = useActiveNewTask();
   const deviceType = useDeviceType();
@@ -121,7 +130,7 @@ export function WorkspaceToolbar(props: {
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"
-      accessibilityLabel="New chat"
+      accessibilityLabel={translator.message("mobile.ui.newChat")}
       icon="square.and.pencil"
       onPress={props.onNewTask}
       separateBackground
@@ -130,7 +139,7 @@ export function WorkspaceToolbar(props: {
   const searchButton = foldedSearch ? (
     <Toolbar.Button
       identifier="workspace-search"
-      accessibilityLabel={searchVisible ? "Close search" : searchLabel}
+      accessibilityLabel={searchVisible ? translator.message("mobile.ui.closeSearch") : searchLabel}
       icon={searchVisible ? "xmark" : "magnifyingglass"}
       onPress={searchVisible ? () => searchRef.current?.cancelSearch() : focusSearch}
       separateBackground
@@ -194,7 +203,7 @@ export function WorkspaceToolbar(props: {
           sidebarTabs === "picker" ||
           floatingTabs ? null : (
             <Toolbar.Button
-              accessibilityLabel="New chat"
+              accessibilityLabel={translator.message("mobile.ui.newChat")}
               icon="square.and.pencil"
               onPress={props.onNewTask}
             />

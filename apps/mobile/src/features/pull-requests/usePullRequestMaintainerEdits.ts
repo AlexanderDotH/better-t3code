@@ -11,12 +11,14 @@ import * as Dialog from "../../components/ui/Dialog";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function usePullRequestMaintainerEdits(
   params: PullRequestParams,
   pr: PullRequestDetail | null,
   canEdit: boolean,
 ) {
+  const translator = useMobileInterfaceTranslator();
   const target = pullRequestTarget(params);
   const update = useAtomCommand(composerPullRequests.update, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
@@ -44,8 +46,8 @@ export function usePullRequestMaintainerEdits(
       setChoice(previousChoice);
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Could not save maintainer access",
-        cause instanceof Error ? cause.message : "Try again.",
+        translator.message("mobile.ui.couldNotSaveMaintainerAccess"),
+        cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
       );
       return;
     }
@@ -56,8 +58,8 @@ export function usePullRequestMaintainerEdits(
     value,
     saving,
     subtitle: saving
-      ? "Saving…"
-      : "Maintainers can push to this branch. If your fork has workflows, this can also give access to its secrets.",
+      ? translator.message("mobile.settings.agents.saving")
+      : translator.message("mobile.ui.maintainersCanPushToThisBranchIf"),
     toggle: () => void save(!value),
   };
 }

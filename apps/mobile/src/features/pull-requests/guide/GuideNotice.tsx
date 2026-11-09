@@ -6,10 +6,12 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
 import { guideNoticeState } from "./reviewGuideState";
 import type { useReviewGuide } from "./useReviewGuide";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 const NOTICE_ENTER = FadeIn.delay(180).duration(120).reduceMotion(ReduceMotion.System);
 
 export function GuideNotice({ state }: { readonly state: ReturnType<typeof useReviewGuide> }) {
+  const translator = useMobileInterfaceTranslator();
   const notice = guideNoticeState(state);
   if (notice.kind === "ready") return null;
   const compact = state.data?.guide != null;
@@ -33,7 +35,7 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
           tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
         />
         <Text className="text-base font-t3-semibold">
-          {compact ? notice.title : "Review guide"}
+          {compact ? notice.title : translator.message("mobile.ui.reviewGuide")}
         </Text>
       </View>
       <View style={compact ? undefined : { minHeight: 100 }} className="pt-3 pb-4">
@@ -51,8 +53,8 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
         ) : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"
-              ? "Reconnect or ask someone with write access to retry."
-              : "Writing a guide requires a connection and write access."}
+              ? translator.message("mobile.ui.reconnectOrAskSomeoneWithWriteAccess")
+              : translator.message("mobile.ui.writingAGuideRequiresAConnectionAnd")}
           </Text>
         )}
         {notice.kind === "writing" && state.data?.run?._tag === "Running" ? (

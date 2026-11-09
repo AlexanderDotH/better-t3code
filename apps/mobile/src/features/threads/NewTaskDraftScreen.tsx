@@ -223,7 +223,10 @@ export function NewTaskDraftScreen(props: {
     const result = await action();
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      Dialog.alert(title, error instanceof Error ? error.message : "An error occurred.");
+      Dialog.alert(
+        title,
+        error instanceof Error ? error.message : translator.message("browser.files.errorOccurred"),
+      );
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -237,8 +240,8 @@ export function NewTaskDraftScreen(props: {
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
       Dialog.alert(
-        "Failed to remove project",
-        error instanceof Error ? error.message : "An error occurred.",
+        translator.message("mobile.ui.failedToRemoveProject"),
+        error instanceof Error ? error.message : translator.message("browser.files.errorOccurred"),
       );
       return;
     }
@@ -620,7 +623,7 @@ export function NewTaskDraftScreen(props: {
     // Recovery may retain over-cap attachments; block send before uploading a turn the server would reject.
     if (draft.attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
-        "Too many attachments",
+        translator.message("mobile.ui.tooManyAttachments"),
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return null;
@@ -628,7 +631,7 @@ export function NewTaskDraftScreen(props: {
 
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
-      Dialog.alert("Too much context", contextBlockReason);
+      Dialog.alert(translator.message("mobile.ui.tooMuchContext"), contextBlockReason);
       return null;
     }
     const strandedThread = threadContextsOutsideEnvironment({
@@ -643,7 +646,7 @@ export function NewTaskDraftScreen(props: {
           (environment) => environment.environmentId === strandedThread.environmentId,
         )?.environmentLabel ?? "its machine";
       Dialog.alert(
-        "Attached thread unavailable",
+        translator.message("mobile.ui.attachedThreadUnavailable"),
         `"${strandedThread.title}" is on another machine. Switch back to ${owner} or remove it from the draft.`,
       );
       return null;
@@ -677,8 +680,10 @@ export function NewTaskDraftScreen(props: {
     if (AsyncResult.isFailure(queued)) {
       const error = squashAtomCommandFailure(queued);
       Dialog.alert(
-        "Could not queue task",
-        error instanceof Error ? error.message : "The task could not be saved to the outbox.",
+        translator.message("mobile.ui.couldNotQueueTask"),
+        error instanceof Error
+          ? error.message
+          : translator.message("mobile.ui.theTaskCouldNotBeSavedTo"),
       );
       return null;
     }
@@ -712,7 +717,7 @@ export function NewTaskDraftScreen(props: {
       ? cloneBlocksStart
         ? "Wait for the project clone to finish."
         : flow.submitting
-          ? "Starting the thread…"
+          ? translator.message("mobile.ui.startingTheThread")
           : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
             ? "Choose a base branch before creating a worktree."
             : null
@@ -745,22 +750,22 @@ export function NewTaskDraftScreen(props: {
   );
   const shareUnavailableNotice = isIncomingShareUnavailable ? (
     <Text textRole="footnote" className="text-center text-foreground-muted">
-      The shared content is no longer in the inbox. You can continue editing this task draft.
+      {translator.message("mobile.ui.theSharedContentIsNoLongerIn")}
     </Text>
   ) : null;
   const hero = flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
       <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-        What should we work on?
+        {translator.message("ui.project.emptyTitle")}
       </Text>
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
-          accessibilityHint="Opens the project picker"
-          accessibilityLabel="No project"
+          accessibilityHint={translator.message("mobile.thread.openProjectPicker")}
+          accessibilityLabel={translator.message("settings.skills.noProject")}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
           icon="folder"
-          label="No project"
+          label={translator.message("settings.skills.noProject")}
           onPress={chooseProject}
         />
         {environmentControl}
@@ -771,12 +776,12 @@ export function NewTaskDraftScreen(props: {
     <View className="items-center gap-6 px-6" testID="new-task-hero">
       <View className="w-full items-center gap-1.5">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          What should we build
+          {translator.message("mobile.thread.whatBuild")}
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
           <Pressable
-            accessibilityHint="Opens the project picker"
+            accessibilityHint={translator.message("mobile.thread.openProjectPicker")}
             accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
@@ -856,11 +861,15 @@ export function NewTaskDraftScreen(props: {
 
       <View className="min-w-0 shrink">
         <ComposerInlineControl
-          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+          accessibilityLabel={`${flow.workspaceMode === "worktree" ? translator.message("mobile.thread.baseBranch") : translator.message("mobile.git.branch")}: ${selectedBranchLabel}`}
           chevronDirection="right"
           disabled={isComposerInteractionLocked || !flow.isGitRepo}
           icon="arrow.triangle.branch"
-          label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+          label={
+            showBranchLoading
+              ? translator.message("mobile.git.loadingBranches")
+              : selectedBranchLabel
+          }
           maxWidth="100%"
           onPress={() => openContextPicker("NewTaskBranch")}
         />
@@ -873,7 +882,7 @@ export function NewTaskDraftScreen(props: {
       <ThreadScreenFallback
         header={
           <AppBar
-            title="New thread"
+            title={translator.message("sidebar.thread.new")}
             sidebar={false}
             onBack={goBack}
             options={{
@@ -888,7 +897,7 @@ export function NewTaskDraftScreen(props: {
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
-            Your draft is saved on this device. Connect to an environment to choose its first model.
+            {translator.message("mobile.ui.yourDraftIsSavedOnThisDevice")}
           </Text>
           <ComposerEditor
             draftKey={flow.draftKey}

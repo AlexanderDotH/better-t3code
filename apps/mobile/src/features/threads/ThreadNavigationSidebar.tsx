@@ -706,9 +706,9 @@ function ThreadNavigationSidebarPane(
       }
     >
       {catalogState.isLoadingConnections
-        ? "Loading threads…"
+        ? translator.message("mobile.ui.loadingThreads")
         : Platform.OS === "android" && !catalogState.hasConnections
-          ? "No environments connected"
+          ? translator.message("mobile.home.noEnvironments")
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending
               ? translator.message("mobile.navigation.searchingMessages")
@@ -737,7 +737,7 @@ function ThreadNavigationSidebarPane(
               hideNavigationBar: false,
               hideWhenScrolling: false,
               obscureBackground: false,
-              placeholder: "Search",
+              placeholder: translator.message("mobile.archive.searchShort"),
               placement: "stacked",
               onCancelButtonPress: () => {
                 props.onSearchQueryChange("");
@@ -893,7 +893,10 @@ function ThreadNavigationSidebarPane(
             />
             <View className="flex-row items-center gap-2.5">
               <Menu actions={listMenuActions} onPressAction={handleListMenuAction}>
-                <SidebarFilterButton accessibilityLabel="Filter threads" icon={filterIcon} />
+                <SidebarFilterButton
+                  accessibilityLabel={translator.message("mobile.ui.filterThreads")}
+                  icon={filterIcon}
+                />
               </Menu>
               <SidebarHeaderActions onOpenSettings={props.onOpenSettings} />
             </View>
@@ -913,7 +916,7 @@ function ThreadNavigationSidebarPane(
               autoCorrect={false}
               clearButtonMode="while-editing"
               onChangeText={props.onSearchQueryChange}
-              placeholder="Search"
+              placeholder={translator.message("mobile.archive.searchShort")}
               placeholderTextColorClassName="accent-placeholder"
               selectionColorClassName={undefined}
               cursorColorClassName={undefined}

@@ -10,6 +10,7 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>["kind"]) {
   if (kind === "image") return "image" as const;
@@ -38,33 +39,34 @@ export function AttachmentDocumentBody(props: {
   readonly nativeError: string | null;
   readonly onOpenNative: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { document } = props;
   if (document.error) {
     return (
       <View className="flex-1 items-center justify-center bg-sheet px-6">
         <EmptyState
-          title="File unavailable"
+          title={translator.message("mobile.files.fileUnavailable")}
           detail={document.error}
-          actionLabel="Try again"
+          actionLabel={translator.message("cloud.action.tryAgain")}
           onAction={document.retry}
         />
       </View>
     );
   }
   if (props.nativeViewer !== null && props.nativeViewer !== "unavailable") {
-    return <FilePreviewLoading message="Opening in file viewer..." />;
+    return <FilePreviewLoading message={translator.message("mobile.ui.openingInFileViewer")} />;
   }
   // ZIP text entries are read into memory and have no file URI.
   if (document.needsText ? !document.content : !document.uri) {
-    return <FilePreviewLoading message="Loading file..." />;
+    return <FilePreviewLoading message={translator.message("mobile.ui.loadingFile")} />;
   }
   if (document.needsText && document.content) {
     const { content, table } = document;
     return (
       <View className="flex-1 bg-sheet">
         {content.truncated ? (
-          <FilePreviewNotice title="Partial file">
-            Preview limited to the first 1 MB. Save or share the file to read it in full.
+          <FilePreviewNotice title={translator.message("mobile.files.partialFile")}>
+            {translator.message("mobile.ui.previewLimitedToTheFirst1Mb")}
           </FilePreviewNotice>
         ) : null}
         {table && document.activeMode === "table" ? (
@@ -98,12 +100,9 @@ export function AttachmentDocumentBody(props: {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <EmptyState
-        title="No preview for this file"
-        detail={
-          props.nativeError ??
-          "No app on this device can show this format. Save or share it to open it elsewhere."
-        }
-        actionLabel="Try again"
+        title={translator.message("mobile.ui.noPreviewForThisFile")}
+        detail={props.nativeError ?? translator.message("mobile.ui.noAppOnThisDeviceCanShow")}
+        actionLabel={translator.message("cloud.action.tryAgain")}
         onAction={props.onOpenNative}
       />
     </View>

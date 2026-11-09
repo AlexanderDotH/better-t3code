@@ -9,11 +9,13 @@ import { pullRequestStatus } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
 import type { PullRequestStackState } from "./usePullRequestStack";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function PullRequestStackCard(props: {
   readonly params: PullRequestParams;
   readonly state: PullRequestStackState;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const [expanded, setExpanded] = useState(false);
@@ -27,7 +29,7 @@ export function PullRequestStackCard(props: {
     return (
       <PullRequestCardGroup>
         <PullRequestCardRow
-          title="Stack"
+          title={translator.message("mobile.ui.stack")}
           icon={PullRequestGlyph.stack}
           value={`${summary.position} of ${summary.size}`}
           last
@@ -39,7 +41,7 @@ export function PullRequestStackCard(props: {
   return (
     <PullRequestCardGroup>
       <PullRequestCardRow
-        title="Stack"
+        title={translator.message("mobile.ui.stack")}
         icon={PullRequestGlyph.stack}
         value={`${position} of ${stack.layers.length}`}
         accessibilityLabel={`Stack, ${position} of ${stack.layers.length}${props.state.isFresh ? "" : ", showing saved stack"}`}

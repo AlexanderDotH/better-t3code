@@ -7,6 +7,7 @@ import { serverEnvironment } from "../../../state/server";
 import type { SettingsTarget } from "../settings-environment-filter";
 import { ListActionRow as SettingsActionRow } from "../../../components/ui/ListActionRow";
 import { SettingsSection } from "./SettingsSection";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 /** Suggests `t3 doctor` on every machine whose database still holds at least 1 GiB of freed pages. */
 export function DatabaseStorageNotice({
@@ -14,6 +15,7 @@ export function DatabaseStorageNotice({
 }: {
   readonly targets: readonly SettingsTarget[];
 }) {
+  const translator = useMobileInterfaceTranslator();
   const recommendations = useAtomValue(
     serverEnvironment.databaseCompactionRecommendations(
       JSON.stringify(targets.map((target) => target.environmentId)),
@@ -30,8 +32,8 @@ export function DatabaseStorageNotice({
   if (visible.length === 0) return null;
   return (
     <SettingsSection
-      title="Reclaim database space"
-      footer="Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment."
+      title={translator.message("mobile.ui.reclaimDatabaseSpace")}
+      footer={translator.message("mobile.ui.oldHistoryIsCleanedUpAutomaticallyBut")}
     >
       {visible.map(({ environmentId, status }) => (
         <SettingsActionRow
@@ -45,7 +47,7 @@ export function DatabaseStorageNotice({
       ))}
       <SettingsActionRow
         icon="xmark"
-        label="Dismiss"
+        label={translator.message("mobile.thread.dismiss")}
         onPress={() =>
           updatePreferences({
             transform: (current) => ({

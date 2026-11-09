@@ -54,14 +54,14 @@ function ArchivedThreadsHeader(props: {
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
   return (
     <AppBar
-      title="Archived threads"
+      title={translator.message("mobile.settings.archivedThreads")}
       sidebar={false}
       onBack={() => navigation.goBack()}
       search={{
         value: props.searchQuery,
         onChangeText: props.onSearchQueryChange,
         placeholder: translator.message("mobile.archive.search"),
-        compactPlaceholder: "Search",
+        compactPlaceholder: translator.message("mobile.archive.searchShort"),
         mode: "inline",
         compactToolbar: width < 700,
       }}
@@ -277,14 +277,19 @@ function ArchivedThreadRow(props: {
 }
 
 function ArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="rounded-[20px] border border-danger-border bg-danger p-4">
       <Text className="text-base font-t3-bold text-danger-foreground">
-        Could not load every archive
+        {translator.message("mobile.archive.loadFailed")}
       </Text>
       <Text className="mt-1 text-sm text-foreground-muted">{props.message}</Text>
       <View className="mt-3">
-        <Button label="Try again" tone="secondary" onPress={props.onRetry} />
+        <Button
+          label={translator.message("cloud.action.tryAgain")}
+          tone="secondary"
+          onPress={props.onRetry}
+        />
       </View>
     </View>
   );
@@ -389,7 +394,9 @@ export function ArchivedThreadsScreen(props: {
       return (
         <View className="items-center py-16">
           <AppActivityIndicator colorClassName="accent-icon" />
-          <Text className="mt-3 text-sm text-foreground-muted">Loading archive...</Text>
+          <Text className="mt-3 text-sm text-foreground-muted">
+            {translator.message("mobile.ui.loadingArchive")}
+          </Text>
         </View>
       );
     }

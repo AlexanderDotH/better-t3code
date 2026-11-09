@@ -9,6 +9,7 @@ import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { useHardwareBack } from "../../lib/backHandler";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function FilesHeader(props: {
   readonly projectName: string;
@@ -18,6 +19,7 @@ export function FilesHeader(props: {
   readonly onBack?: () => void;
   readonly leading?: ReactNode;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { paddingTop, paddingBottom } = useToolbarLayout();
   const searchRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -44,29 +46,29 @@ export function FilesHeader(props: {
         style={{ opacity: searching ? 0 : 1 }}
       >
         <AndroidScreenHeader
-          title="Files"
+          title={translator.message("mobile.files.title")}
           subtitle={props.projectName}
           hideBottomBorder
           onBack={props.onBack}
           leading={props.leading}
           actions={[
             {
-              accessibilityLabel: "Search files",
+              accessibilityLabel: translator.message("mobile.files.search"),
               icon: "magnifyingglass",
               onPress: () => setSearchOpen(true),
             },
           ]}
           trailing={
             <AndroidAnchoredMenu
-              title="File options"
-              actions={[{ id: "refresh", title: "Refresh files" }]}
+              title={translator.message("mobile.ui.fileOptions")}
+              actions={[{ id: "refresh", title: translator.message("mobile.files.refresh") }]}
               onPressAction={({ nativeEvent }) => {
                 if (nativeEvent.event === "refresh") props.onRefresh();
               }}
             >
               {(open) => (
                 <AndroidHeaderIconButton
-                  accessibilityLabel="File options"
+                  accessibilityLabel={translator.message("mobile.ui.fileOptions")}
                   icon="ellipsis"
                   onPress={open}
                 />
@@ -79,15 +81,15 @@ export function FilesHeader(props: {
         <View className="absolute inset-0 bg-header px-2" style={{ paddingTop, paddingBottom }}>
           <View className="flex-1 flex-row items-center gap-1">
             <AndroidHeaderIconButton
-              accessibilityLabel="Close file search"
+              accessibilityLabel={translator.message("mobile.ui.closeFileSearch")}
               icon="arrow.left"
               onPress={closeSearch}
             />
             <SearchField
               inputRef={searchRef}
-              accessibilityLabel="Search files"
-              clearAccessibilityLabel="Clear file search"
-              placeholder="Search files"
+              accessibilityLabel={translator.message("mobile.files.search")}
+              clearAccessibilityLabel={translator.message("mobile.ui.clearFileSearch")}
+              placeholder={translator.message("mobile.files.search")}
               value={props.searchQuery}
               onChangeText={onSearchQueryChange}
             />

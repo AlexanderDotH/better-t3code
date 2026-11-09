@@ -36,23 +36,51 @@ import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const durationAmounts = Array.from({ length: 99 }, (_, index) => index + 1);
 const SnoozeStack = createNativeStackNavigator<{ CustomSnooze: undefined }>();
 const modes = [
-  { value: "date", label: "Date and time" },
-  { value: "duration", label: "Duration" },
+  {
+    value: "date",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.dateAndTime");
+    },
+  },
+  {
+    value: "duration",
+    get label() {
+      return currentInterfaceTranslator().message("settings.diagnostics.table.duration");
+    },
+  },
 ] as const;
 const units = [
-  { value: "minutes", label: "Minutes" },
-  { value: "hours", label: "Hours" },
-  { value: "days", label: "Days" },
+  {
+    value: "minutes",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.minutes");
+    },
+  },
+  {
+    value: "hours",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.hours");
+    },
+  },
+  {
+    value: "days",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.days");
+    },
+  },
 ] as const;
 
 export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width, height } = useWindowDimensions();
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(() => new Date(Date.now() + 3_600_000));
@@ -75,7 +103,9 @@ export function CustomSnoozeSheet(props: {
     const snoozedUntil = resolveCustomSnooze(input, new Date());
     if (!snoozedUntil) {
       setError(
-        mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration.",
+        mode === "date"
+          ? translator.message("mobile.ui.chooseADateAndTimeInThe")
+          : translator.message("mobile.ui.enterAPositiveDuration"),
       );
       return;
     }
@@ -117,7 +147,7 @@ export function CustomSnoozeSheet(props: {
                 modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
               >
                 <Picker
-                  label="Snooze mode"
+                  label={translator.message("mobile.ui.snoozeMode")}
                   selection={mode}
                   onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
                     setMode(value);
@@ -133,7 +163,7 @@ export function CustomSnoozeSheet(props: {
                 </Picker>
                 {mode === "date" ? (
                   <DatePicker
-                    title="Snooze until"
+                    title={translator.message("mobile.thread.snoozeUntil")}
                     selection={date}
                     displayedComponents={["date", "hourAndMinute"]}
                     onDateChange={updateDate}
@@ -146,7 +176,7 @@ export function CustomSnoozeSheet(props: {
                 ) : (
                   <HStack spacing={0}>
                     <Picker
-                      label="Duration amount"
+                      label={translator.message("mobile.ui.durationAmount")}
                       selection={amount}
                       onSelectionChange={(value: number) => {
                         setAmount(value);
@@ -169,7 +199,7 @@ export function CustomSnoozeSheet(props: {
                       ))}
                     </Picker>
                     <Picker
-                      label="Duration unit"
+                      label={translator.message("mobile.ui.durationUnit")}
                       selection={unit}
                       onSelectionChange={(value: typeof unit) => {
                         setUnit(value);
@@ -222,6 +252,7 @@ function SnoozePopoverNavigation(props: {
   readonly onSubmit: () => void;
   readonly children: ReactNode;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigationTheme = useMobileNavigationTheme();
   const { themeVariables: colors } = useAppearancePreferences();
 
@@ -243,17 +274,20 @@ function SnoozePopoverNavigation(props: {
                   headerTintColor: colors["--color-foreground"],
                   headerTitleStyle: { fontSize: 17, fontWeight: "700" },
                   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
-                  title: "Custom snooze",
+                  title: translator.message("mobile.ui.customSnooze"),
                 }}
               >
                 <SnoozeStack.Screen name="CustomSnooze">
                   {() => (
                     <>
                       <SheetHeader
-                        title="Custom snooze"
+                        title={translator.message("mobile.ui.customSnooze")}
                         onCancel={props.onClose}
-                        accessibilityLabel="Cancel custom snooze"
-                        confirm={{ label: "Snooze", onPress: props.onSubmit }}
+                        accessibilityLabel={translator.message("mobile.ui.cancelCustomSnooze")}
+                        confirm={{
+                          label: translator.message("mobile.thread.snooze"),
+                          onPress: props.onSubmit,
+                        }}
                       />
                       <ScrollView
                         contentInsetAdjustmentBehavior="automatic"

@@ -155,7 +155,10 @@ export function SettingsLegalDocumentRouteScreen({
         }}
         onError={(event) => {
           setLoadProgress(0);
-          setLoadError(event.nativeEvent.description || "The page could not be loaded.");
+          setLoadError(
+            event.nativeEvent.description ||
+              translator.message("mobile.ui.thePageCouldNotBeLoaded"),
+          );
         }}
         onHttpError={(event) => {
           if (!isLegalDocumentUrl(event.nativeEvent.url)) return;

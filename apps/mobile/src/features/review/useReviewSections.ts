@@ -22,6 +22,7 @@ import {
   type ReviewSectionItem,
 } from "./reviewModel";
 import { setReviewSelectedSectionId, type ReviewCacheForThread } from "./reviewState";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const NO_GIT_SECTIONS_ATOM = Atom.make<ReadonlyArray<ReviewDiffPreviewSource>>([]).pipe(
   Atom.keepAlive,
@@ -38,6 +39,7 @@ export function useReviewSections(input: {
   readonly threadId?: ThreadId;
   readonly reviewCache: ReviewCacheForThread;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { environmentId, reviewCache, threadId } = input;
   const enabled = input.enabled ?? true;
   const fileAccessSession = useEnvironmentQuery(
@@ -146,7 +148,7 @@ export function useReviewSections(input: {
       diffPreview.error ??
       activeTurnDiff.error ??
       (selectedSection === null && !fileAccess.isPending && !canReadFiles
-        ? (fileAccess.error ?? "This connection cannot read local diffs.")
+        ? (fileAccess.error ?? translator.message("mobile.ui.thisConnectionCannotReadLocalDiffs"))
         : null),
     isSelectedSectionPending:
       selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,

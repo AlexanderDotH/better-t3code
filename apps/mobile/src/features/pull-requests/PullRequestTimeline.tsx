@@ -17,6 +17,8 @@ import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 import { discussionCommentCountLabel } from "./pullRequestDiffComments";
 import { normalizedReviewState } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 function TimelineEvent(props: {
   icon: AppSymbolName | "commit";
@@ -74,6 +76,7 @@ function TimelineComment({
   params: PullRequestParams;
   actions: CommentActions;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [expanded, setExpanded] = useState(false);
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
@@ -94,7 +97,9 @@ function TimelineComment({
         <PullRequestAvatar actor={comment.author} size={22} />
         <View className="min-w-0 flex-1">
           <Text className="text-sm">
-            <Text className="font-t3-medium">{comment.author?.login ?? "Unknown author"}</Text>
+            <Text className="font-t3-medium">
+              {comment.author?.login ?? translator.message("mobile.ui.unknownAuthor")}
+            </Text>
             <Text className="text-foreground-muted">
               {approved ? " approved" : changes ? " requested changes" : " commented"}
             </Text>
@@ -175,7 +180,9 @@ function TimelineComment({
               className="flex-row items-center justify-center gap-1 py-2 active:opacity-70"
             >
               <Text className="text-xs font-t3-medium text-foreground">
-                {expanded ? "Show less" : "Show more"}
+                {expanded
+                  ? translator.message("mobile.thread.showLess")
+                  : translator.message("mobile.thread.showMore")}
               </Text>
               <SymbolView
                 name={expanded ? "chevron.up" : "chevron.down"}
@@ -222,7 +229,8 @@ export function pullRequestTimelineRows(
             <PullRequestAvatar actor={thread.comments[0]?.author ?? null} size={22} />
             <Text className="flex-1 text-sm">
               <Text className="font-t3-medium">
-                {thread.comments[0]?.author?.login ?? "Unknown author"}
+                {thread.comments[0]?.author?.login ??
+                  currentInterfaceTranslator().message("mobile.ui.unknownAuthor")}
               </Text>
               <Text className="text-foreground-muted"> started a discussion</Text>
             </Text>
@@ -249,7 +257,11 @@ export function pullRequestTimelineRows(
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
             </View>
             <Text className="text-xs text-foreground-muted">
-              {thread.isResolved ? "Resolved" : "Unresolved"}
+              {thread.isResolved
+                ? currentInterfaceTranslator().message("pullRequest.thread.resolved")
+                : currentInterfaceTranslator().message(
+                    "projectIndexing.importResolution.unresolved",
+                  )}
               {thread.isOutdated ? " · Outdated" : ""} ·{" "}
               {discussionCommentCountLabel(thread.commentCount ?? thread.comments.length)}
             </Text>
@@ -290,7 +302,7 @@ export function pullRequestTimelineRows(
       date: "",
       content: (
         <Text className="py-3 text-xs text-foreground-muted">
-          More activity is available on the provider.
+          {currentInterfaceTranslator().message("mobile.ui.moreActivityIsAvailableOnTheProvider")}
         </Text>
       ),
     });

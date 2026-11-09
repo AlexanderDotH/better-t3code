@@ -19,18 +19,29 @@ import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../n
 import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { environmentThreadShells } from "../../state/threads";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const KIND_LABELS = {
-  subagent: "Subagent",
-  command: "Command",
-  monitor: "Monitor",
-  background_task: "Background task",
+  get subagent() {
+    return currentInterfaceTranslator().message("mobile.ui.subagent");
+  },
+  get command() {
+    return currentInterfaceTranslator().message("chat.composer.approval.detail.command");
+  },
+  get monitor() {
+    return currentInterfaceTranslator().message("settings.diagnostics.process.category.monitor");
+  },
+  get background_task() {
+    return currentInterfaceTranslator().message("mobile.ui.backgroundTask");
+  },
 } as const;
 
 type BackgroundWorkTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
 export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<BackgroundWorkTarget>) {
+  const translator = useMobileInterfaceTranslator();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -56,7 +67,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
     >
       {presentation === null ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
-          Nothing running in the background.
+          {translator.message("mobile.ui.nothingRunningInTheBackground")}
         </Text>
       ) : (
         presentation.items.map((item) => (
@@ -83,7 +94,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
               tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
-              title="Background work"
+              title={translator.message("chat.background.work")}
               titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
@@ -97,7 +108,10 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title="Background work" onBack={() => navigation.goBack()} />
+      <AndroidSheetHeader
+        title={translator.message("chat.background.work")}
+        onBack={() => navigation.goBack()}
+      />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );

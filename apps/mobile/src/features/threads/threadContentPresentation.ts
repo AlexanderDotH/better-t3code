@@ -1,4 +1,5 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export type ThreadContentPresentation =
   | { readonly kind: "ready" }
@@ -21,14 +22,14 @@ export function projectThreadContentPresentation(input: {
   if (input.detailDeleted) {
     return {
       kind: "unavailable",
-      title: "Thread unavailable",
-      detail: "This thread was deleted or is no longer available.",
+      title: currentInterfaceTranslator().message("mobile.terminal.threadUnavailable"),
+      detail: currentInterfaceTranslator().message("mobile.ui.thisThreadWasDeletedOrIsNo"),
     };
   }
   if (input.detailError !== null) {
     return {
       kind: "unavailable",
-      title: "Could not load conversation",
+      title: currentInterfaceTranslator().message("mobile.ui.couldNotLoadConversation"),
       detail: input.detailError,
     };
   }
@@ -41,7 +42,9 @@ export function projectThreadContentPresentation(input: {
   }
   return {
     kind: "unavailable",
-    title: "Messages not cached",
-    detail: "Reconnect this environment to load the conversation.",
+    title: currentInterfaceTranslator().message("mobile.ui.messagesNotCached"),
+    detail: currentInterfaceTranslator().message(
+      "mobile.ui.reconnectThisEnvironmentToLoadTheConversation",
+    ),
   };
 }

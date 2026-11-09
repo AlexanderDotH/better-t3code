@@ -137,6 +137,7 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
+  const translator = useMobileInterfaceTranslator();
   const goBack = useWorkspaceBackNavigation("threads");
   const { layout } = useAdaptiveWorkspaceLayout();
   const { themeVariables } = useAppearancePreferences();
@@ -146,7 +147,7 @@ function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   return (
     <>
       <AppBar
-        title="Thread"
+        title={translator.message("mobile.thread.settings.thread")}
         options={{ contentStyle: { backgroundColor: themeVariables["--color-header"] } }}
         onBack={layout.usesSplitView ? undefined : goBack}
         hideBottomBorder
@@ -252,6 +253,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 }
 
 function LiveThreadRouteController(props: ThreadRouteScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   useAndroidWorkspaceBack("threads");
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
@@ -287,7 +289,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     <>
       {props.inspectorPresentation ? (
         <ThreadInspectorHeader
-          title={selectedThread?.title ?? "Thread"}
+          title={selectedThread?.title ?? translator.message("mobile.thread.settings.thread")}
           {...props.inspectorPresentation}
         />
       ) : null}
@@ -298,7 +300,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   if (environmentId !== null && threadIdRaw === null) {
     return withInspectorHeader(
       <ThreadUnavailableScreen
-        actionLabel="Manage environments"
+        actionLabel={translator.message("mobile.ui.manageEnvironments")}
         onAction={() => openSettings(navigation, "SettingsEnvironments")}
       />,
     );
@@ -349,7 +351,9 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   return withInspectorHeader(
     <ThreadUnavailableScreen
       actionLabel={
-        routeEnvironmentRuntime === null ? "Manage environments" : "Reconnect environment"
+        routeEnvironmentRuntime === null
+          ? translator.message("mobile.ui.manageEnvironments")
+          : translator.message("mobile.ui.reconnectEnvironment")
       }
       onAction={() => {
         if (routeEnvironmentRuntime !== null) {
@@ -761,8 +765,8 @@ function ThreadRouteContent(
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not resume thread",
-        error instanceof Error ? error.message : "Try again.",
+        translator.message("mobile.ui.couldNotResumeThread"),
+        error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
       );
     }
   };
@@ -917,7 +921,7 @@ function ThreadRouteContent(
       await recoverFailedThreadDraft(creation);
     } catch (error) {
       Dialog.alert(
-        "Could not restore draft",
+        translator.message("mobile.ui.couldNotRestoreDraft"),
         error instanceof Error ? error.message : String(error),
       );
       return;

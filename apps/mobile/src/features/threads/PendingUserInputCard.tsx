@@ -220,7 +220,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             {translator.message("mobile.thread.inputNeeded")}
           </Text>
-          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
+          <Text className="font-t3-bold text-lg text-foreground">
+            {translator.message("mobile.thread.fillAnswers")}
+          </Text>
         </View>
         <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
           <SymbolView
@@ -242,8 +244,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       >
         {!canRespond ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            The provider process for this request is no longer available. Interrupt or restart the
-            run to continue.
+            {translator.message("mobile.ui.theProviderProcessForThisRequestIs")}
           </Text>
         ) : null}
         {props.pendingUserInput.questions.map((question) => {
@@ -335,7 +336,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       />
       {props.pendingUserInput.dismissible ? (
         <Button
-          label="Dismiss without answering"
+          label={translator.message("mobile.ui.dismissWithoutAnswering")}
           tone="text"
           disabled={isResponding}
           onPress={() => void props.onDismiss()}
@@ -343,7 +344,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       ) : null}
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-tertiary">
-          This connection cannot submit answers.
+          {translator.message("mobile.ui.thisConnectionCannotSubmitAnswers")}
         </Text>
       ) : null}
     </Animated.View>

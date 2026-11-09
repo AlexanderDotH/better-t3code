@@ -9,6 +9,8 @@ import { T3Wordmark } from "./T3Wordmark";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 const BRAND_MAX_FONT_SCALE = 1.4;
 
@@ -25,6 +27,7 @@ export function CompactBrandTitle(
     readonly fit?: boolean;
   } = {},
 ) {
+  const translator = useMobileInterfaceTranslator();
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset();
   const { scale } = useAndroidControlSizing();
@@ -40,7 +43,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
-      accessibilityLabel={props.accessibilityLabel ?? "T3 Code, Threads"}
+      accessibilityLabel={props.accessibilityLabel ?? translator.message("mobile.ui.t3CodeThreads")}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -58,7 +61,7 @@ export function CompactBrandTitle(
         className="font-t3-medium text-foreground-muted"
         style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
       >
-        Code
+        {translator.message("settings.betterT3.preview.examples.flow.code")}
       </Text>
       {showStage ? (
         <View
@@ -104,7 +107,7 @@ export function getCompactBrandHeaderOptions(
   return {
     headerTitle: renderCompactBrandTitle,
     headerTitleStyle: fallbackTitleStyle,
-    title: "Threads",
+    title: currentInterfaceTranslator().message("mobile.settings.section.threads"),
     unstable_headerLeftItems: undefined,
   };
 }

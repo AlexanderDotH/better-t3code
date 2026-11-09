@@ -76,6 +76,7 @@ import {
   IDLE_COMPACTION_TITLES,
   IDLE_COMPACTING_LABELS,
 } from "@t3tools/client-runtime/user-message";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
@@ -261,7 +262,9 @@ function compactWorkEntryText(value: string): string {
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (entry.itemType === "fork") return entry.label;
   if (expanded && entry.itemType === "reasoning")
-    return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+    return entry.toolLifecycleStatus === "inProgress"
+      ? currentInterfaceTranslator().message("chat.timeline.thinking")
+      : currentInterfaceTranslator().message("chat.timeline.thought");
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -617,7 +620,9 @@ function itemSummary(
     case "run_interrupt_result":
       return "Run interrupted";
     case "error":
-      return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
+      return item.failure.class === "usage_limit"
+        ? currentInterfaceTranslator().message("sidebar.thread.usageLimitReached")
+        : currentInterfaceTranslator().message("mobile.ui.providerError");
     case "handoff":
       return "Context handed off";
     case "fork":
@@ -733,28 +738,30 @@ function toWorkLogEntry(
         ...common,
         command: item.input,
         rawCommand: item.input,
-        toolTitle: title ?? "Command",
+        toolTitle:
+          title ?? currentInterfaceTranslator().message("chat.composer.approval.detail.command"),
         toolData: item,
       };
     case "file_change":
       return {
         ...common,
         changedFiles: [item.fileName],
-        toolTitle: title ?? "File change",
+        toolTitle:
+          title ?? currentInterfaceTranslator().message("chat.composer.approval.detail.fileChange"),
         toolData: item,
       };
     case "file_search":
       return {
         ...common,
         ...(item.pattern ? { detail: item.pattern } : {}),
-        toolTitle: title ?? "File search",
+        toolTitle: title ?? currentInterfaceTranslator().message("mobile.ui.fileSearch"),
         toolData: item,
       };
     case "web_search":
       return {
         ...common,
         ...(item.patterns?.length ? { detail: item.patterns.join(", ") } : {}),
-        toolTitle: title ?? "Web search",
+        toolTitle: title ?? currentInterfaceTranslator().message("mobile.ui.webSearch"),
         toolData: item,
       };
     case "checkpoint":
@@ -769,7 +776,7 @@ function toWorkLogEntry(
     case "dynamic_tool":
       return {
         ...common,
-        toolTitle: title ?? item.toolName ?? "Tool",
+        toolTitle: title ?? item.toolName ?? currentInterfaceTranslator().message("mobile.ui.tool"),
         toolData: { input: item.input, output: item.output },
       };
     default:
@@ -860,7 +867,7 @@ function toFeedActivity(
 function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
-      ? "Thought"
+      ? currentInterfaceTranslator().message("chat.timeline.thought")
       : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
@@ -1226,10 +1233,10 @@ function deriveThreadFeedRunFolds(
       label: interrupted
         ? duration
           ? `You stopped after ${duration}`
-          : "You stopped this response"
+          : currentInterfaceTranslator().message("mobile.thread.stoppedResponse")
         : duration
           ? `Worked for ${duration}`
-          : "Worked",
+          : currentInterfaceTranslator().message("mobile.thread.worked"),
       foldKind: interrupted ? "stopped" : "worked",
       duration,
     });
@@ -1247,7 +1254,7 @@ function deriveThreadFeedRunFolds(
       runId: RunId.make(`deferred-work:${entry.id}`),
       createdAt: entry.createdAt,
       hiddenEntryIds: new Set([entry.id]),
-      label: "Earlier work",
+      label: currentInterfaceTranslator().message("mobile.thread.earlierWork"),
       foldKind: "earlier",
       duration: null,
       deferredWorkItemIds,
@@ -1792,8 +1799,8 @@ function appendToolGroupRows(
   const summary = live
     ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
       ? latestActivity.lifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
+        ? currentInterfaceTranslator().message("chat.timeline.thinking")
+        : currentInterfaceTranslator().message("chat.timeline.thought")
       : liveToolActivitySummary(latestActivity, live)
     : singleActivity !== null &&
         singleActivity.toolLike &&
@@ -1887,7 +1894,10 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   if (activity.workEntry.itemType === "reasoning") {
     return compactWorkEntryText(
-      activity.workEntry.detail?.trim() || (status === "inProgress" ? "Thinking" : "Thought"),
+      activity.workEntry.detail?.trim() ||
+        (status === "inProgress"
+          ? currentInterfaceTranslator().message("chat.timeline.thinking")
+          : currentInterfaceTranslator().message("chat.timeline.thought")),
     );
   }
   const presentation = resolveWorkEntryToolPresentation({
@@ -1898,17 +1908,18 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    const verb =
+    const name = program ?? currentInterfaceTranslator().message("mobile.ui.command");
+    const key =
       status === "inProgress"
-        ? "Running"
+        ? "mobile.ui.runningProgram"
         : status === "failed"
-          ? "Failed"
+          ? "mobile.ui.failedProgram"
           : status === "declined"
-            ? "Declined"
+            ? "mobile.ui.declinedProgram"
             : status === "stopped"
-              ? "Stopped"
-              : "Ran";
-    return `${verb} ${program ?? "command"}`;
+              ? "mobile.ui.stoppedProgram"
+              : "mobile.ui.ranProgram";
+    return currentInterfaceTranslator().message(key, { program: name });
   }
   return compactWorkEntryText(activity.detail ?? activity.summary);
 }

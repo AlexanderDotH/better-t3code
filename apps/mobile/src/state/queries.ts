@@ -45,6 +45,7 @@ import {
   normalizeComposerPathSearchQuery,
   type CheckpointDiffTarget,
 } from "./queryTargets";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
@@ -393,6 +394,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
+  const translator = useMobileInterfaceTranslator();
   const query = normalizeComposerPathSearchQuery(target.query);
   const normalizedTarget = { environmentId: target.environmentId, cwd: target.cwd, query };
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
@@ -434,7 +436,8 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
         ? null
         : canReadFiles
           ? result.error
-          : (fileAccess.error ?? "This connection cannot search host files."),
+          : (fileAccess.error ??
+            translator.message("mobile.ui.thisConnectionCannotSearchHostFiles")),
     isPending:
       normalizedTarget.query !== debouncedTarget.query ||
       (hasTarget && (fileAccess.isPending || result.isPending)),

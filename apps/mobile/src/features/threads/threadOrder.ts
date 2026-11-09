@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export type ThreadMoveDestination =
   | "up"
@@ -289,7 +290,10 @@ export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
 export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
   if (destination === "snoozed") return null;
-  if (destination === "settled") return source === "settled" ? null : "Settle";
+  if (destination === "settled")
+    return source === "settled"
+      ? null
+      : currentInterfaceTranslator().message("mobile.thread.settle");
   if (source === destination) return "Reorder";
   if (destination === "pinned") return "Pin";
   if (source === "pinned") return "Unpin";

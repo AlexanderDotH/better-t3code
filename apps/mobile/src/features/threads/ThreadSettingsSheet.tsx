@@ -378,6 +378,7 @@ const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | 
 function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const registry = use(RegistryContext);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -582,8 +583,8 @@ function ThreadSettingsSessionProvider(
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Dialog.alert(
-          "Model unavailable",
-          "Set up this provider on web or desktop, or select another model.",
+          translator.message("mobile.ui.modelUnavailable"),
+          translator.message("mobile.ui.setUpThisProviderOnWebOr"),
         );
         return false;
       }
@@ -1090,7 +1091,7 @@ function ThreadSettingsOptionsItem(props: {
       </Text>
       <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
         <SwitchRow
-          label="Manage hidden models"
+          label={translator.message("mobile.ui.manageHiddenModels")}
           value={session.manageHidden}
           onValueChange={session.setManageHidden}
           isLast={Platform.OS === "ios" || !session.hasLegacyModels}
@@ -1124,7 +1125,7 @@ function ThreadSettingsMainContent(props: {
     void refreshProviderCatalog(session.environmentId).then((result) => {
       setIsRefreshingProviders(false);
       const error = providerCatalogRefreshError(result);
-      if (error) Dialog.alert("Could not refresh models", error);
+      if (error) Dialog.alert(translator.message("mobile.thread.settings.refreshFailed"), error);
     });
   };
   const [listLoaded, setListLoaded] = useState(false);
@@ -1163,10 +1164,10 @@ function ThreadSettingsMainContent(props: {
           <Text className="text-center text-sm text-foreground-muted">
             {session.providerFilter === FAVORITES_PROVIDER_FILTER &&
             session.searchQuery.trim().length === 0
-              ? "No favorite models"
+              ? translator.message("mobile.ui.noFavoriteModels")
               : hasActiveCatalogFilter
                 ? translator.message("mobile.thread.settings.noMatchingModels")
-                : "No available models"}
+                : translator.message("mobile.ui.noAvailableModels")}
           </Text>
         </View>
       );
@@ -1243,7 +1244,7 @@ function ThreadSettingsMainContent(props: {
                 />
                 {session.searchQuery.length > 0 ? (
                   <IconButton
-                    accessibilityLabel="Clear model search"
+                    accessibilityLabel={translator.message("mobile.ui.clearModelSearch")}
                     icon="xmark"
                     onPress={() => session.setSearchQuery("")}
                   />
@@ -1307,7 +1308,9 @@ function ThreadSettingsChoiceContent(props: {
                     {
                       id: T3_AUTO_REASONING_OPTION_ID,
                       label: translator.message("chat.traits.auto"),
-                      description: "Choose reasoning effort from the prompt.",
+                      description: translator.message(
+                        "mobile.ui.chooseReasoningEffortFromThePrompt",
+                      ),
                     },
                   ]
                 : []),
@@ -1337,8 +1340,8 @@ function ThreadSettingsChoiceContent(props: {
                   activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
                 ) {
                   Dialog.alert(
-                    "Reasoning controlled by prompt",
-                    'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                    translator.message("mobile.ui.reasoningControlledByPrompt"),
+                    translator.message("mobile.ui.yourPromptContainsUltrathinkInTheText"),
                   );
                   return;
                 }
@@ -1571,7 +1574,7 @@ function ThreadSettingsModelsScreen() {
           onOpenSubmenu={(submenu) => {
             const title =
               submenu.kind === "runtime"
-                ? "Runtime"
+                ? translator.message("mobile.thread.settings.runtime")
                 : (session.displayedDescriptors.find(
                     (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
                   )?.label ?? "Option");
@@ -1730,6 +1733,7 @@ export function ThreadSettingsPickerScreen(
 export function ExistingThreadSettingsRouteScreen({
   route,
 }: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   // Reads the same environmentId/threadId params as the Thread route beneath it.
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
@@ -1772,7 +1776,7 @@ export function ExistingThreadSettingsRouteScreen({
       )
       .catch((error: unknown) => {
         Dialog.alert(
-          "Could not copy transcript",
+          translator.message("settings.betterT3.mobile.transcript.failedTitle"),
           error instanceof Error ? error.message : String(error),
         );
       })

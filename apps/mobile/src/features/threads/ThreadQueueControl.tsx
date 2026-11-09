@@ -42,6 +42,7 @@ import {
   buildCancelQueuedRunCommand,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const REMOVE_ACTION_WIDTH = 76;
@@ -72,6 +73,7 @@ function QueuedRunSender(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { attribution, scheduledTaskId } = resolveUserMessagePresentation(props.message);
   const senderThreadId = attribution === "agent" ? props.message.senderThreadId : undefined;
   const senderShell = useQuietThreadShell(
@@ -87,15 +89,18 @@ function QueuedRunSender(props: {
       ? {
           icon: "calendar.badge.clock" as const,
           label:
-            tasks.data?.tasks.find((task) => task.id === scheduledTaskId)?.title ?? "Automation",
+            tasks.data?.tasks.find((task) => task.id === scheduledTaskId)?.title ??
+            translator.message("mobile.ui.automation"),
         }
       : attribution === "agent"
         ? {
             icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || "Agent",
+            label:
+              senderShell?.title.trim() ||
+              translator.message("settings.betterT3.preview.agent.agent"),
           }
         : attribution === "t3code"
-          ? { icon: null, label: "Sent by T3 Code" }
+          ? { icon: null, label: translator.message("mobile.ui.sentByT3Code") }
           : null;
   if (sender === null) return null;
   return (
@@ -120,6 +125,7 @@ function QueuedRunSender(props: {
 }
 
 export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
+  const translator = useMobileInterfaceTranslator();
   const { layout } = useAdaptiveWorkspaceLayout();
   const target = route.params;
   const navigation = useNavigation();
@@ -212,9 +218,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     >
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
-          <Text className="text-sm text-foreground-muted">Queue paused</Text>
+          <Text className="text-sm text-foreground-muted">
+            {translator.message("mobile.ui.queuePaused")}
+          </Text>
           <Button
-            label="Resume queue"
+            label={translator.message("mobile.ui.resumeQueue")}
             disabled={resuming || busyRunId !== null}
             onPress={async () => {
               if (busyRef.current) return;
@@ -232,7 +240,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       ) : null}
       {queuedRuns.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
-          No messages waiting in this queue.
+          {translator.message("mobile.ui.noMessagesWaitingInThisQueue")}
         </Text>
       ) : null}
       {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
@@ -246,7 +254,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           text,
         });
         const title =
-          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+          controls.displayText ||
+          (attachments.length > 0
+            ? translator.message("mobile.ui.attachments")
+            : translator.message("mobile.ui.queuedMessage"));
         return (
           <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
             <QueueRowSwipeable
@@ -264,7 +275,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       ? [
                           {
                             id: "steer",
-                            title: "Send now",
+                            title: translator.message("chat.queue.sendNow"),
                             attributes: { disabled: !controls.canSend },
                             image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
                           },
@@ -272,13 +283,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       : []),
                     {
                       id: "edit",
-                      title: "Edit",
+                      title: translator.message("common.edit"),
                       attributes: { disabled: !controls.canEdit },
                       image: Platform.OS === "ios" ? "pencil" : "edit",
                     },
                     {
                       id: "remove",
-                      title: "Remove",
+                      title: translator.message("mobile.settings.agents.remove"),
                       attributes: { disabled: !controls.canDismiss, destructive: true },
                     },
                   ]}
@@ -291,7 +302,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     accessibilityLabel={title}
                     accessibilityHint={
                       controls.canEdit
-                        ? "Opens this message in the composer for editing"
+                        ? translator.message("mobile.ui.opensThisMessageInTheComposerFor")
                         : (editBlockedReason ?? undefined)
                     }
                     disabled={!controls.canEdit}
@@ -324,7 +335,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     </View>
                     {controls.isEditing ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                        Editing
+                        {translator.message("mobile.ui.editing")}
                       </Text>
                     ) : null}
                   </Pressable>
@@ -345,7 +356,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         tintColorClassName="accent-primary-foreground"
                       />
                       <Text className="font-t3-medium text-sm text-primary-foreground">
-                        Send now
+                        {translator.message("chat.queue.sendNow")}
                       </Text>
                     </View>
                   </Pressable>
@@ -378,7 +389,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                 color={theme["--color-foreground"]}
                 hideBackButton
                 hideShadow={false}
-                title="Queued"
+                title={translator.message("mobile.thread.queued")}
                 titleColor={theme["--color-foreground"]}
                 titleFontSize={18}
                 titleFontWeight="800"
@@ -395,7 +406,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View collapsable={false} className="flex-1 bg-sheet">
         <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-        <AndroidSheetHeader title="Queued" onBack={() => navigation.goBack()} />
+        <AndroidSheetHeader
+          title={translator.message("mobile.thread.queued")}
+          onBack={() => navigation.goBack()}
+        />
         <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
       </View>
     </GestureHandlerRootView>
@@ -408,6 +422,7 @@ function QueueRowSwipeable(props: {
   readonly onRemove: () => void;
   readonly children: React.ReactNode;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   return (
     <ReanimatedSwipeable
@@ -438,7 +453,9 @@ function QueueRowSwipeable(props: {
           style={{ width: REMOVE_ACTION_WIDTH }}
         >
           <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
-          <Text className="pt-1 text-2xs font-t3-medium text-danger-foreground">Remove</Text>
+          <Text className="pt-1 text-2xs font-t3-medium text-danger-foreground">
+            {translator.message("mobile.settings.agents.remove")}
+          </Text>
         </Pressable>
       )}
     >

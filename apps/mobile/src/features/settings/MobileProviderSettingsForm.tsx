@@ -82,7 +82,7 @@ function MobileSelectField(props: {
           editable={!props.disabled}
           onChangeText={setManualDraft}
           onBlur={() => props.onCommit(manualDraft)}
-          placeholder={props.field.placeholder ?? "Model ID"}
+          placeholder={props.field.placeholder ?? translator.message("mobile.ui.modelId")}
           value={manualDraft}
           className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
         />

@@ -18,6 +18,7 @@ import { Button } from "../../components/ui/Button";
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
 const HOP_NOTE = { ok: "", failed: " · Failed", unchecked: " · Not checked" } as const;
@@ -50,6 +51,7 @@ export function ConnectionDiagnosisDetails(props: {
   readonly hostLabel: string;
   readonly diagnosis: ConnectionDiagnosis;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { diagnosis } = props;
   const { moreInfoUrl } = diagnosis;
   return (
@@ -68,7 +70,9 @@ export function ConnectionDiagnosisDetails(props: {
         ))}
       </View>
       <View className="gap-0.5">
-        <Text className="text-sm font-t3-bold text-foreground">What to try</Text>
+        <Text className="text-sm font-t3-bold text-foreground">
+          {translator.message("mobile.ui.whatToTry")}
+        </Text>
         {diagnosis.steps.map((step, index) => (
           <Text key={step} className="text-sm text-foreground-muted">
             {`${index + 1}. ${step}`}
@@ -79,7 +83,7 @@ export function ConnectionDiagnosisDetails(props: {
         {diagnosis.facts.map(([label, value]) => `${label}: ${value}`).join("\n")}
       </Text>
       <Button
-        label="Copy diagnostics"
+        label={translator.message("mobile.ui.copyDiagnostics")}
         icon="doc.on.doc"
         onPress={() => {
           copyTextWithHaptic(connectionDiagnosisText(props.hostLabel, diagnosis), {
@@ -89,7 +93,7 @@ export function ConnectionDiagnosisDetails(props: {
       />
       {moreInfoUrl ? (
         <Button
-          label="More info"
+          label={translator.message("mobile.ui.moreInfo")}
           icon="safari"
           tone="secondary"
           onPress={() => void Linking.openURL(moreInfoUrl).catch(() => undefined)}

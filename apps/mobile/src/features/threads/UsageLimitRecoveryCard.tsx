@@ -10,6 +10,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useDeadlinePassed } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function UsageLimitRecoveryCard({
   thread,
@@ -18,6 +19,7 @@ export function UsageLimitRecoveryCard({
   thread: EnvironmentThreadShell;
   environmentId: EnvironmentId;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +48,7 @@ export function UsageLimitRecoveryCard({
   async function toggle(action: "resume" | "snooze") {
     if (!resetAt || !runId || !canSchedule) return;
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
-      setError("The reset time has passed. Retry the thread manually.");
+      setError(translator.message("mobile.ui.theResetTimeHasPassedRetryThe"));
       return;
     }
     setPending(true);
@@ -65,7 +67,11 @@ export function UsageLimitRecoveryCard({
     setPending(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.couldNotChangeLimitRecovery"),
+      );
     }
   }
   return (
@@ -73,18 +79,26 @@ export function UsageLimitRecoveryCard({
       <Text className="text-sm text-warning-foreground">
         {resetAt
           ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
-          : "The provider did not report a reset time. Retry manually when your limit is available."}
+          : translator.message("mobile.ui.theProviderDidNotReportAReset")}
       </Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Button
-            label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
+            label={
+              scheduled
+                ? translator.message("mobile.ui.cancelAutoResume")
+                : translator.message("mobile.ui.resumeAtReset")
+            }
             tone="secondary"
             disabled={pending}
             onPress={() => void toggle("resume")}
           />
           <Button
-            label={snoozed ? "Wake now" : "Snooze until reset"}
+            label={
+              snoozed
+                ? translator.message("chat.thread.wakeNow")
+                : translator.message("mobile.ui.snoozeUntilReset")
+            }
             tone="secondary"
             disabled={pending || (!snoozed && resetPassed)}
             onPress={() => void toggle("snooze")}

@@ -4,6 +4,7 @@ import {
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
 import { relayOfflineReasonMessage } from "@t3tools/client-runtime/relay";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export interface AvailableCloudEnvironmentPresentation {
   readonly connectionError: string | null;
@@ -35,7 +36,7 @@ export function availableCloudEnvironmentPresentation(input: {
       connectionError: null,
       connectionErrorTraceId: null,
       connectionState: "available",
-      statusText: "Available · Relay online",
+      statusText: currentInterfaceTranslator().message("mobile.ui.availableRelayOnline"),
     };
   }
 
@@ -64,7 +65,7 @@ export function availableCloudEnvironmentPresentation(input: {
     connectionErrorTraceId: null,
     connectionState: "available",
     statusText: input.isStatusPending
-      ? "Available · Checking relay status..."
-      : "Available · Relay status unknown",
+      ? currentInterfaceTranslator().message("mobile.ui.availableCheckingRelayStatus")
+      : currentInterfaceTranslator().message("mobile.ui.availableRelayStatusUnknown"),
   };
 }

@@ -31,6 +31,7 @@ import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { WorkLogBlock } from "./work-log-layout";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
 type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">;
@@ -106,6 +107,7 @@ export function ThreadSubagentGroup(props: {
   readonly iconSubtleColor: ColorValue;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
@@ -199,10 +201,10 @@ export function ThreadSubagentGroup(props: {
                 accessibilityRole={target === null ? undefined : "link"}
                 accessibilityHint={
                   target !== null
-                    ? "Opens this agent's thread"
+                    ? translator.message("mobile.ui.opensThisAgentsThread")
                     : agent.remoteChild !== undefined
                       ? `Runs on ${agent.remoteChild.label}`
-                      : "Provider-managed agent"
+                      : translator.message("mobile.ui.providerManagedAgent")
                 }
                 disabled={target === null}
                 onPress={() => {

@@ -26,6 +26,7 @@ import {
   resolveMarkdownImageDisplaySize,
   resolveSvgImageSize,
 } from "./markdownImageSize";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
@@ -94,6 +95,7 @@ export function ThreadMarkdownImageView(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const withGallery = useFilePreviewGallery();
   const sourceIdentifier = useId();
   const mediaActions = useMediaActions(props.actionsSource);
@@ -141,9 +143,11 @@ export function ThreadMarkdownImageView(props: {
         <MediaActionsMenu media={mediaActions}>
           <Pressable
             accessibilityRole="imagebutton"
-            accessibilityLabel={props.alt ?? "Markdown image"}
+            accessibilityLabel={props.alt ?? translator.message("mobile.thread.markdownImage")}
             accessibilityHint={
-              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+              mediaActions.actions.length > 0
+                ? translator.message("mobile.ui.touchAndHoldForMediaActions")
+                : undefined
             }
             className="items-center justify-center rounded-[10px] bg-md-code-bg"
             style={frameStyle}
@@ -152,7 +156,7 @@ export function ThreadMarkdownImageView(props: {
               <Text className="px-3 text-center text-xs text-foreground-muted">
                 {props.unavailableDetail
                   ? `Image unavailable. ${props.unavailableDetail}`
-                  : "Image unavailable"}
+                  : translator.message("mobile.files.imageUnavailable")}
               </Text>
             ) : (
               <AppActivityIndicator />
@@ -164,9 +168,11 @@ export function ThreadMarkdownImageView(props: {
           <MediaActionsMenu media={mediaActions}>
             <Pressable
               accessibilityRole="imagebutton"
-              accessibilityLabel={props.alt ?? "Markdown image"}
+              accessibilityLabel={props.alt ?? translator.message("mobile.thread.markdownImage")}
               accessibilityHint={
-                mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+                mediaActions.actions.length > 0
+                  ? translator.message("mobile.ui.touchAndHoldForMediaActions")
+                  : undefined
               }
               onPress={() =>
                 props.onPressPreview(
@@ -247,12 +253,15 @@ function ThreadMarkdownImageRequest(props: {
 }
 
 function ThreadMarkdownImageLoading() {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View
       pointerEvents="none"
       style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
     >
-      <Text className="text-xs text-foreground-muted">Loading image…</Text>
+      <Text className="text-xs text-foreground-muted">
+        {translator.message("mobile.files.loadingImage")}
+      </Text>
     </View>
   );
 }

@@ -41,6 +41,8 @@ import {
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -58,16 +60,16 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 } {
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      title: currentInterfaceTranslator().message("mobile.home.loadingEnvironments"),
+      detail: currentInterfaceTranslator().message("mobile.home.checkingEnvironments"),
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment before creating a task.",
+      title: currentInterfaceTranslator().message("mobile.home.noEnvironments"),
+      detail: currentInterfaceTranslator().message("mobile.thread.addBeforeTask"),
       loading: false,
     };
   }
@@ -82,11 +84,11 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     return {
       title:
         catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
+          ? currentInterfaceTranslator().message("chat.environment.status.unsupported")
+          : currentInterfaceTranslator().message("mobile.home.environmentUnavailable"),
       detail:
         catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+        currentInterfaceTranslator().message("mobile.home.environmentOffline"),
       loading: false,
     };
   }
@@ -97,15 +99,15 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects from the saved environment.",
+      title: currentInterfaceTranslator().message("mobile.home.connectingEnvironment"),
+      detail: currentInterfaceTranslator().message("mobile.thread.loadingProjects"),
       loading: true,
     };
   }
 
   return {
-    title: "No projects found",
-    detail: "The connected environment did not report any projects.",
+    title: currentInterfaceTranslator().message("mobile.home.noProjects"),
+    detail: currentInterfaceTranslator().message("mobile.home.noProjectsDescription"),
     loading: false,
   };
 }
@@ -117,6 +119,7 @@ function NewTaskHeader(props: {
   readonly searchText: string;
   readonly onSearchTextChange: (text: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const goBack = () => {
     if (navigation.canGoBack()) navigation.goBack();
@@ -135,7 +138,7 @@ function NewTaskHeader(props: {
           props.canAddProject
             ? [
                 {
-                  accessibilityLabel: "Add project",
+                  accessibilityLabel: translator.message("mobile.project.add"),
                   icon: "plus",
                   onPress: () => navigation.dispatch(StackActions.push("AddProject")),
                 },
@@ -145,7 +148,7 @@ function NewTaskHeader(props: {
         search={{
           value: props.searchText,
           onChangeText: props.onSearchTextChange,
-          placeholder: "Search projects",
+          placeholder: translator.message("settings.application.scope.searchProjects"),
         }}
       />
     </>
@@ -153,6 +156,7 @@ function NewTaskHeader(props: {
 }
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
+  const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
   const [searchText, setSearchText] = useState("");
   const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
@@ -168,12 +172,14 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
-      ? "Choose a project for what you shared"
+      ? translator.message("mobile.ui.chooseAProjectForWhatYouShared")
       : incomingShare.attachments.length === 1
         ? `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`
         : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
     : null;
-  const screenTitle = incomingShare ? "Start a task" : "Choose project";
+  const screenTitle = incomingShare
+    ? translator.message("mobile.thread.startTaskTitle")
+    : translator.message("mobile.settings.harness.chooseProject");
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
   const listScopes = pickableProjectGroups(projectScopes).filter(
@@ -217,10 +223,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
         Dialog.alert(
-          "Could not change project",
+          translator.message("mobile.thread.changeProjectFailed"),
           error instanceof Error
             ? error.message
-            : "The shared content reservation could not be updated.",
+            : translator.message("mobile.thread.shareReservationFailed"),
         );
         return;
       }
@@ -257,10 +263,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not start without a project",
+          translator.message("mobile.ui.couldNotStartWithoutAProject"),
           error instanceof Error
             ? error.message
-            : "The folder for threads without a project could not be created.",
+            : translator.message("mobile.ui.theFolderForThreadsWithoutAProject"),
         );
       }
       return;
@@ -335,8 +341,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[28px] bg-grouped-card">
                 <NavigationRow
                   className="bg-grouped-card"
-                  title="No project"
-                  subtitle="Start a task without a project"
+                  title={translator.message("settings.skills.noProject")}
+                  subtitle={translator.message("mobile.ui.startATaskWithoutAProject")}
                   disabled={!canStartScratch}
                   onPress={() => void startScratch()}
                   leading={
@@ -353,7 +359,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="No project"
+                  accessibilityLabel={translator.message("settings.skills.noProject")}
                   disabled={!canStartScratch}
                   onPress={() => void startScratch()}
                   className={cn(
@@ -370,9 +376,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     />
                   </View>
                   <View className="min-w-0 flex-1">
-                    <Text className="text-base font-t3-bold leading-snug">No project</Text>
+                    <Text className="text-base font-t3-bold leading-snug">
+                      {translator.message("settings.skills.noProject")}
+                    </Text>
                     <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
-                      Start a task without a project
+                      {translator.message("mobile.ui.startATaskWithoutAProject")}
                     </Text>
                   </View>
                   <SymbolView
@@ -405,7 +413,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               {Platform.OS === "android" ? (
                 <>
                   <Button
-                    label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
+                    label={
+                      catalogState.hasReadyEnvironment
+                        ? translator.message("mobile.thread.addNewProject")
+                        : translator.message("mobile.home.addEnvironment")
+                    }
                     tone="primary"
                     onPress={() =>
                       catalogState.hasReadyEnvironment
@@ -415,7 +427,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   />
                   {canStartScratch ? (
                     <Button
-                      label="Start without a project"
+                      label={translator.message("mobile.ui.startWithoutAProject")}
                       tone="secondary"
                       onPress={() => void startScratch()}
                     />
@@ -424,7 +436,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               ) : !catalogState.hasReadyEnvironment ? (
                 <View className="mt-1">
                   <Button
-                    label="Add environment"
+                    label={translator.message("mobile.home.addEnvironment")}
                     tone="primary"
                     onPress={() => navigation.navigate("ConnectionsNew")}
                   />
@@ -433,14 +445,14 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 <>
                   <View className="mt-1">
                     <Button
-                      label="Add new project"
+                      label={translator.message("mobile.thread.addNewProject")}
                       tone="primary"
                       onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                     />
                   </View>
                   {canStartScratch ? (
                     <Button
-                      label="Start without a project"
+                      label={translator.message("mobile.ui.startWithoutAProject")}
                       tone="secondary"
                       onPress={() => void startScratch()}
                     />
@@ -451,10 +463,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           ) : visibleScopes.length === 0 ? (
             <View className="items-center gap-2 px-6 py-8">
               <Text className="text-center text-lg font-t3-bold text-foreground">
-                No matching projects
+                {translator.message("mobile.ui.noMatchingProjects")}
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
-                Try a different project name or workspace path.
+                {translator.message("mobile.ui.tryADifferentProjectNameOrWorkspace")}
               </Text>
             </View>
           ) : (

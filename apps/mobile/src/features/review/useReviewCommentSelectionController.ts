@@ -21,6 +21,7 @@ import {
 } from "./reviewCommentSelection";
 import type { NativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import type { ReviewSectionItem } from "./reviewModel";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function useReviewCommentSelectionController(input: {
   readonly environmentId?: EnvironmentId;
@@ -28,6 +29,7 @@ export function useReviewCommentSelectionController(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly nativeReviewDiffData: NativeReviewDiffData;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
   const navigation = useNavigation();
   const [sheetId] = useState(nextReviewSheetId);
@@ -76,7 +78,7 @@ export function useReviewCommentSelectionController(input: {
         onOpenComment: openReviewCommentSheet,
       }
     : pendingRange
-      ? { title: "Select range end", onOpenComment: null }
+      ? { title: translator.message("mobile.ui.selectRangeEnd"), onOpenComment: null }
       : null;
 
   const onPressLine = (

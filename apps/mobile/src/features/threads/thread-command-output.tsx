@@ -8,6 +8,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const FOLLOW_SLACK = 8;
 
@@ -24,6 +25,7 @@ export function ThreadCommandOutput(props: {
   readonly itemId: TurnItemId;
   readonly themeAppearance: "light" | "dark";
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { data, error } = useEnvironmentQuery(
     orchestrationEnvironment.v2.commandOutput({
       environmentId: props.environmentId,
@@ -41,7 +43,7 @@ export function ThreadCommandOutput(props: {
     const message = error
       ? `Couldn't load output: ${error}`
       : data === null
-        ? "Loading output…"
+        ? translator.message("mobile.ui.loadingOutput")
         : data.running
           ? null
           : "No output.";
@@ -54,7 +56,9 @@ export function ThreadCommandOutput(props: {
   return (
     <View className="pt-1.5">
       {data?.output.truncated ? (
-        <Text className="pb-0.5 text-3xs text-foreground-tertiary">Earlier output not shown</Text>
+        <Text className="pb-0.5 text-3xs text-foreground-tertiary">
+          {translator.message("mobile.ui.earlierOutputNotShown")}
+        </Text>
       ) : null}
       <ScrollView
         ref={scrollRef}

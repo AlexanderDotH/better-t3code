@@ -8,12 +8,14 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function ResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
   readonly actionsSource?: MediaActionsSource;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const sourceIdentifier = useId();
@@ -27,7 +29,9 @@ function ResolvedWorkspaceFileImagePreview(props: {
           accessibilityRole="button"
           accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
           accessibilityHint={
-            mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            mediaActions.actions.length > 0
+              ? translator.message("mobile.ui.touchAndHoldForMediaActions")
+              : undefined
           }
           disabled={loadError !== null}
           className="flex-1 p-4 active:bg-subtle-strong"
@@ -49,7 +53,9 @@ function ResolvedWorkspaceFileImagePreview(props: {
               resizeMode="contain"
               onLoadStart={() => setLoadError(null)}
               onError={(event) => {
-                setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+                setLoadError(
+                  event.nativeEvent.error || translator.message("mobile.files.imageRenderFailed"),
+                );
               }}
             />
           </PresentationSource>
@@ -60,7 +66,10 @@ function ResolvedWorkspaceFileImagePreview(props: {
           pointerEvents="none"
           className="absolute inset-0 items-center justify-center bg-card px-6"
         >
-          <EmptyState title="Image unavailable" detail={loadError} />
+          <EmptyState
+            title={translator.message("mobile.files.imageUnavailable")}
+            detail={loadError}
+          />
         </View>
       ) : null}
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
@@ -73,8 +82,14 @@ export function WorkspaceFileImagePreview(props: {
   readonly uri: string | null;
   readonly actionsSource?: MediaActionsSource;
 }) {
+  const translator = useMobileInterfaceTranslator();
   if (props.uri === null) {
-    return <FilePreviewLoading message="Preparing image preview..." background="card" />;
+    return (
+      <FilePreviewLoading
+        message={translator.message("mobile.ui.preparingImagePreview")}
+        background="card"
+      />
+    );
   }
 
   return (

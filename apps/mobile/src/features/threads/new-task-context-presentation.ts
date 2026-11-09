@@ -2,6 +2,7 @@ import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
 import type { ComposerDraftWorkspaceSelection } from "../../state/use-composer-drafts";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -18,11 +19,13 @@ export function resolveNewTaskWorkspaceSelection(input: {
 export function resolveNewTaskWorkspaceLabel(input: {
   readonly workspaceMode: WorkspaceMode;
   readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+}): string {
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return currentInterfaceTranslator().message("mobile.settings.projects.settings.newWorktree");
   }
-  return input.worktreePath ? "Current worktree" : "Current checkout";
+  return input.worktreePath
+    ? currentInterfaceTranslator().message("sidebar.branch.currentWorktree")
+    : currentInterfaceTranslator().message("settings.projects.detail.workspace.currentCheckout");
 }
 
 export function resolveNewTaskBranchWorktreePath(input: {

@@ -25,12 +25,14 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 import type { PullRequestStackState } from "./usePullRequestStack";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function PullRequestMergeControls(props: {
   readonly pr: PullRequestDetail;
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { pr, stack } = props;
   const terminology = sourceControlClients.get(pr.provider).changeRequest;
   const target = pullRequestTarget(props.params);
@@ -74,14 +76,14 @@ export function PullRequestMergeControls(props: {
       : !canMergeSingle
         ? stack.error
           ? "Couldn't check stack membership. Refresh before merging."
-          : "Checking stack membership…"
+          : translator.message("mobile.ui.checkingStackMembership")
         : null);
   const canMerge = !busy && method !== undefined && !reason;
   const label = method
     ? scope && scope.layers.length > 1
       ? `${MERGE_METHODS[method].title} stack (${scope.layers.length})`
       : MERGE_METHODS[method].title
-    : "Merge unavailable";
+    : translator.message("mobile.ui.mergeUnavailable");
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
@@ -134,8 +136,8 @@ export function PullRequestMergeControls(props: {
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Couldn't complete the merge action",
-        cause instanceof Error ? cause.message : "Try again.",
+        translator.message("mobile.ui.couldntCompleteTheMergeAction"),
+        cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
       );
     }
   };
@@ -157,7 +159,7 @@ export function PullRequestMergeControls(props: {
             ? `Stop the provider from automatically merging this ${terminology.singular}.`
             : `Merge #${pr.number} into ${pr.baseBranch} using ${method}.`;
     Dialog.alert(title, message, [
-      { text: "Cancel", style: "cancel" },
+      { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
       {
         text: action === "merge" ? label : title.replace("?", ""),
         onPress: () => void perform(action),
@@ -167,7 +169,13 @@ export function PullRequestMergeControls(props: {
   return (
     <View className="gap-2 border-t border-border-subtle p-3">
       <SplitButton
-        label={busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
+        label={
+          busy
+            ? translator.message("mobile.ui.working")
+            : !permissions.connected
+              ? translator.message("mobile.ui.reconnectToMerge")
+              : label
+        }
         accessibilityLabel={
           scope ? `${label}, ${scope.layers.length} stack layers through #${pr.number}` : label
         }
@@ -175,7 +183,7 @@ export function PullRequestMergeControls(props: {
         disabled={!canMerge}
         loading={busy || checkingStack}
         onPress={() => confirm("merge")}
-        menuTitle="Merge options"
+        menuTitle={translator.message("mobile.ui.mergeOptions")}
         actions={[
           ...methods.map((id) => ({
             id,
@@ -187,7 +195,9 @@ export function PullRequestMergeControls(props: {
             ? [
                 {
                   id: autoAction,
-                  title: pr.autoMergeEnabled ? "Disable auto-merge" : "Enable auto-merge",
+                  title: pr.autoMergeEnabled
+                    ? translator.message("pullRequest.detail.disableAutoMerge")
+                    : translator.message("pullRequest.detail.enableAutoMerge"),
                   image: "clock",
                 },
               ]
@@ -214,7 +224,11 @@ export function PullRequestMergeControls(props: {
         </Text>
       ) : null}
       {stack.error && stack.supportsStackActions ? (
-        <Button label="Retry stack lookup" tone="text" onPress={stack.refresh} />
+        <Button
+          label={translator.message("mobile.ui.retryStackLookup")}
+          tone="text"
+          onPress={stack.refresh}
+        />
       ) : null}
     </View>
   );

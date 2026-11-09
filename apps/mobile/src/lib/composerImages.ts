@@ -24,6 +24,7 @@ import { fitComposerImage, renderPhoto } from "./composerImageFit";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 import { writeFileAtomically } from "./atomic-file";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 export interface DraftComposerImageAttachment extends Omit<UploadChatImageAttachment, "dataUrl"> {
   readonly id: string;
@@ -276,7 +277,10 @@ export async function pickComposerFiles(input: {
   } catch (cause) {
     return {
       files: [],
-      error: cause instanceof Error ? cause.message : "Could not open the file picker.",
+      error:
+        cause instanceof Error
+          ? cause.message
+          : currentInterfaceTranslator().message("mobile.ui.couldNotOpenTheFilePicker"),
     };
   } finally {
     endHandoff();
@@ -393,7 +397,10 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "The photo library is unavailable right now.",
+      error:
+        error instanceof Error
+          ? error.message
+          : currentInterfaceTranslator().message("mobile.ui.thePhotoLibraryIsUnavailableRightNow"),
     };
   }
 
@@ -413,7 +420,10 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "Could not open the photo library.",
+      error:
+        error instanceof Error
+          ? error.message
+          : currentInterfaceTranslator().message("mobile.ui.couldNotOpenThePhotoLibrary"),
     };
   } finally {
     endHandoff();

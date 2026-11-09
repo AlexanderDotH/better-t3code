@@ -47,8 +47,10 @@ import { leaveSettingsPage } from "./settings-navigation";
 import { workspaceHasColumns } from "../workspace/workspace-selection-store";
 import { DEFAULT_SETTINGS_PAGE } from "../workspace/workspace-tab-navigation";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsProjectOverviewRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const [isRemoving, setIsRemoving] = useState(false);
   const removalPending = useRef(false);
@@ -88,7 +90,10 @@ export function SettingsProjectOverviewRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Projects" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen
+        title={translator.message("mobile.settings.projects")}
+        trailing={<AndroidSettingsEnvironmentFilter />}
+      >
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
@@ -98,12 +103,11 @@ export function SettingsProjectOverviewRouteScreen() {
         >
           {selectedProjectKey === null ? (
             <Text className="px-2 text-base text-foreground-muted">
-              Choose a project with the filter above to manage its name, checkouts and removal.
+              {translator.message("mobile.ui.chooseAProjectWithTheFilterAbove")}
             </Text>
           ) : !group || members.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
-              This project has no checkout on the selected connected environments. Change the filter
-              above.
+              {translator.message("mobile.ui.thisProjectHasNoCheckoutOnThe")}
             </Text>
           ) : (
             <ProjectOverviewContent
@@ -141,6 +145,7 @@ function ProjectOverviewContent(props: {
   readonly projectKey: string | null;
   readonly onProjectRemoved: (projectKey: string | null) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { isRemoving, setIsRemoving, startRemoval, finishRemoval } = props;
   const representative = props.members[0]!;
   const displayName = deriveProjectGroupLabel({ representative, members: props.members });
@@ -183,7 +188,10 @@ function ProjectOverviewContent(props: {
     setIsOrganizing(true);
     for (const member of allMembers) {
       if (!readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope)) {
-        Dialog.alert("Failed to update project", "This connection can no longer change it.");
+        Dialog.alert(
+          translator.message("mobile.ui.failedToUpdateProject"),
+          translator.message("mobile.ui.thisConnectionCanNoLongerChangeIt"),
+        );
         break;
       }
       const result = await organizeProject({
@@ -195,7 +203,9 @@ function ProjectOverviewContent(props: {
           const error = squashAtomCommandFailure(result);
           Dialog.alert(
             `Failed to update "${member.title}"`,
-            error instanceof Error ? error.message : "An error occurred.",
+            error instanceof Error
+              ? error.message
+              : translator.message("browser.files.errorOccurred"),
           );
         }
         break;
@@ -215,7 +225,7 @@ function ProjectOverviewContent(props: {
       (entry) => entry.environmentId === denied.environmentId,
     );
     Dialog.alert(
-      "Failed to remove project",
+      translator.message("mobile.ui.failedToRemoveProject"),
       `This connection cannot change projects in ${environment?.label ?? "this environment"}.`,
     );
     return false;
@@ -238,9 +248,15 @@ function ProjectOverviewContent(props: {
       unloadedThreadCount: readUnloadedThreadCount(members, threads),
     });
     Dialog.confirm({
-      title: plan.targetKind === "checkout" ? "Remove checkout" : "Remove project",
+      title:
+        plan.targetKind === "checkout"
+          ? translator.message("settings.projects.detail.removeCheckout.title")
+          : translator.message("settings.projects.detail.removeProject"),
       message: plan.confirmationMessage,
-      confirmText: plan.targetKind === "checkout" ? "Remove checkout" : "Remove project",
+      confirmText:
+        plan.targetKind === "checkout"
+          ? translator.message("settings.projects.detail.removeCheckout.title")
+          : translator.message("settings.projects.detail.removeProject"),
       destructive: true,
       onCancel: finishRemoval,
       onConfirm: () => {
@@ -258,7 +274,9 @@ function ProjectOverviewContent(props: {
                 const error = squashAtomCommandFailure(result);
                 Dialog.alert(
                   `Failed to remove "${member.title}"`,
-                  error instanceof Error ? error.message : "An error occurred.",
+                  error instanceof Error
+                    ? error.message
+                    : translator.message("browser.files.errorOccurred"),
                 );
               }
               return;
@@ -324,12 +342,14 @@ function ProjectOverviewContent(props: {
         </View>
       </View>
 
-      <SettingsSection title="Project">
+      <SettingsSection title={translator.message("mobile.navigation.project")}>
         <View className="gap-3 p-4">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+          <Text className="text-sm font-t3-medium text-foreground-muted">
+            {translator.message("settings.skills.name")}
+          </Text>
           <View className="flex-row items-center gap-3">
             <AppTextInput
-              accessibilityLabel="Project name"
+              accessibilityLabel={translator.message("settings.projects.detail.projectName")}
               className="min-h-11 min-w-0 flex-1 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
               value={draftName ?? displayName}
               onChangeText={setDraftName}
@@ -339,8 +359,8 @@ function ProjectOverviewContent(props: {
             />
             {canSave ? (
               <Button
-                label="Save"
-                accessibilityHint="Save project name"
+                label={translator.message("mobile.connection.save")}
+                accessibilityHint={translator.message("mobile.ui.saveProjectName")}
                 tone="secondary"
                 onPress={saveName}
               />
@@ -350,14 +370,14 @@ function ProjectOverviewContent(props: {
       </SettingsSection>
 
       {canOrganize ? (
-        <SettingsSection title="Organize">
+        <SettingsSection title={translator.message("mobile.ui.organize")}>
           <SettingsSwitchRow
             icon="pin"
-            label="Pin"
+            label={translator.message("mobile.thread.pin")}
             subtitle={
               offline
-                ? "Connect every machine with this project to change this."
-                : "Pinned projects come first in project pickers."
+                ? translator.message("mobile.ui.connectEveryMachineWithThisProjectTo")
+                : translator.message("mobile.ui.pinnedProjectsComeFirstInProjectPickers")
             }
             value={props.group.pinned}
             disabled={isOrganizing || offline}
@@ -365,11 +385,15 @@ function ProjectOverviewContent(props: {
           />
           <SettingsActionRow
             icon="archivebox"
-            label={props.group.archived ? "Unarchive project" : "Archive project"}
+            label={
+              props.group.archived
+                ? translator.message("mobile.ui.unarchiveProject")
+                : translator.message("mobile.ui.archiveProject")
+            }
             description={
               props.group.archived
-                ? "Hidden from project pickers. Threads and files are kept."
-                : "Hides the project from project pickers. Threads and files are kept."
+                ? translator.message("mobile.ui.hiddenFromProjectPickersThreadsAndFiles")
+                : translator.message("mobile.ui.hidesTheProjectFromProjectPickersThreads")
             }
             disabled={isOrganizing || offline}
             onPress={() => void organize({ archived: !props.group.archived })}
@@ -377,7 +401,7 @@ function ProjectOverviewContent(props: {
         </SettingsSection>
       ) : null}
 
-      <SettingsSection title="Checkouts">
+      <SettingsSection title={translator.message("mobile.ui.checkouts")}>
         {props.members.map((member, index) => {
           const environment = props.environments.find(
             (entry) => entry.environmentId === member.environmentId,
@@ -394,7 +418,7 @@ function ProjectOverviewContent(props: {
                     : "text-lg text-foreground"
                 }
               >
-                {environment?.label ?? "Environment"}
+                {environment?.label ?? translator.message("mobile.navigation.environment")}
               </Text>
               {environment?.displayUrl ? (
                 <Text className="text-sm leading-normal text-foreground-muted">
@@ -415,22 +439,22 @@ function ProjectOverviewContent(props: {
           );
         })}
       </SettingsSection>
-      <SettingsSection title="Danger">
+      <SettingsSection title={translator.message("settings.projects.detail.section.danger")}>
         <SettingsActionRow
           icon="trash"
           label={
             props.hasOtherMembers
-              ? "Remove checkout"
+              ? translator.message("settings.projects.detail.removeCheckout.title")
               : props.members.length > 1
-                ? "Remove this project everywhere"
-                : "Remove project"
+                ? translator.message("settings.projects.detail.removeEverywhere")
+                : translator.message("settings.projects.detail.removeProject")
           }
           description={
             props.hasOtherMembers
-              ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+              ? translator.message("mobile.ui.deletesTheSelectedMachinesCheckoutEntriesAnd")
               : props.members.length > 1
                 ? `Deletes all ${props.members.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : "Deletes the project entry and its threads. Files on disk are not touched."
+                : translator.message("settings.projects.detail.removeProjectDescription")
           }
           tone="danger"
           disabled={!canRemoveGroup || isRemoving}
@@ -447,6 +471,7 @@ function RemoveCheckoutAction(props: {
   readonly disabled: boolean;
   readonly onPress: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const canRemove = useEnvironmentScope(props.member.environmentId, AuthOrchestrationOperateScope);
   return (
     <Pressable
@@ -456,7 +481,9 @@ function RemoveCheckoutAction(props: {
       onPress={props.onPress}
       className="self-start rounded-full border border-border bg-card px-3 py-1.5 disabled:opacity-40"
     >
-      <Text className="font-t3-medium text-xs text-danger-foreground">Remove checkout</Text>
+      <Text className="font-t3-medium text-xs text-danger-foreground">
+        {translator.message("settings.projects.detail.removeCheckout.title")}
+      </Text>
     </Pressable>
   );
 }

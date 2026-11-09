@@ -13,6 +13,8 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { NewThreadSettingsSection, WorkingSectionSettings } from "./ThreadSettingsSections";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
   readonly mode: SidebarProjectGroupingMode;
@@ -21,22 +23,41 @@ const GROUPING_OPTIONS: ReadonlyArray<{
 }> = [
   {
     mode: "repository",
-    label: "Group by repository",
-    description: "Matching repositories appear as one project.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.settings.projectGrouping.repository");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.settings.projectGrouping.repositoryDescription",
+      );
+    },
   },
   {
     mode: "repository_path",
-    label: "Group by repository path",
-    description: "Keep monorepo paths separate.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.settings.projectGrouping.path");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.settings.projectGrouping.pathDescription",
+      );
+    },
   },
   {
     mode: "separate",
-    label: "Keep separate",
-    description: "Show every workspace as its own project.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.settings.projectGrouping.separate");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.settings.projectGrouping.separateDescription",
+      );
+    },
   },
 ];
 
 export function SettingsProjectGroupingRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -46,7 +67,7 @@ export function SettingsProjectGroupingRouteScreen() {
     : null;
 
   return (
-    <SettingsScreen title="General">
+    <SettingsScreen title={translator.message("mobile.settings.section.general")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -54,7 +75,7 @@ export function SettingsProjectGroupingRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Project grouping">
+        <SettingsSection title={translator.message("mobile.settings.projectGrouping")}>
           {GROUPING_OPTIONS.map((option, index) => (
             <SettingsChoiceRow
               key={option.mode}

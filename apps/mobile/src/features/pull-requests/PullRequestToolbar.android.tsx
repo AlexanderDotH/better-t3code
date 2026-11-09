@@ -10,12 +10,14 @@ import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "./PullRequestListFilters";
 import { openSettings } from "../settings/settings-navigation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /** PR search shares the thread list's Android header row. */
 export function PullRequestToolbar(props: {
   readonly filters: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { filters } = props;
   const workspace = useWorkspaceTabs()!;
@@ -64,16 +66,16 @@ export function PullRequestToolbar(props: {
         searchField={
           <SearchField
             inputRef={input}
-            accessibilityLabel="Search pull requests"
-            clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
+            accessibilityLabel={translator.message("pullRequest.search")}
+            clearAccessibilityLabel={translator.message("mobile.navigation.clearSearch")}
+            placeholder={translator.message("pullRequest.search")}
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
         }
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search pull requests"
+        searchAccessibilityLabel={translator.message("pullRequest.search")}
         titleAccessibilityLabel="T3 Code, Pull requests"
         onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         filter={
@@ -84,7 +86,7 @@ export function PullRequestToolbar(props: {
             >
               {(open) => (
                 <AndroidHeaderIconButton
-                  accessibilityLabel="Filter pull requests"
+                  accessibilityLabel={translator.message("pullRequest.filter.button")}
                   icon={
                     filters.customized
                       ? "line.3.horizontal.decrease.circle.fill"

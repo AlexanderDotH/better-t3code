@@ -35,6 +35,7 @@ import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -53,6 +54,7 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
 });
 
 export function useSelectedThreadGitActions(enabled = true) {
+  const translator = useMobileInterfaceTranslator();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -100,7 +102,7 @@ export function useSelectedThreadGitActions(enabled = true) {
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthOrchestrationOperateScope,
-            message: "This connection cannot update the thread's branch.",
+            message: translator.message("mobile.ui.thisConnectionCannotUpdateTheThreadsBranch"),
           }),
         ),
       );
@@ -141,7 +143,7 @@ export function useSelectedThreadGitActions(enabled = true) {
           target,
           {
             operation: "refresh_status",
-            label: "Refreshing source control status",
+            label: translator.message("mobile.ui.refreshingSourceControlStatus"),
           },
           execute,
         );
@@ -202,7 +204,11 @@ export function useSelectedThreadGitActions(enabled = true) {
       const error = Cause.squash(result.cause);
       const message = error instanceof Error ? error.message : "Git action failed.";
       setPendingConnectionError(message);
-      showGitActionResult({ type: "error", title: "Git action failed", description: message });
+      showGitActionResult({
+        type: "error",
+        title: translator.message("mobile.ui.gitActionFailed"),
+        description: message,
+      });
       return null;
     }
     return result.value;
@@ -218,7 +224,11 @@ export function useSelectedThreadGitActions(enabled = true) {
       const error = Cause.squash(result.cause);
       const message = error instanceof Error ? error.message : "Failed to refresh branches.";
       setPendingConnectionError(message);
-      showGitActionResult({ type: "error", title: "Git action failed", description: message });
+      showGitActionResult({
+        type: "error",
+        title: translator.message("mobile.ui.gitActionFailed"),
+        description: message,
+      });
       return null;
     }
     setPendingConnectionError(null);
@@ -349,7 +359,7 @@ export function useSelectedThreadGitActions(enabled = true) {
           type: "success",
           title:
             result.value.status === "skipped_up_to_date"
-              ? "Already up to date"
+              ? translator.message("git.actions.upToDate")
               : `Pulled latest on ${result.value.refName}`,
         });
         return result;

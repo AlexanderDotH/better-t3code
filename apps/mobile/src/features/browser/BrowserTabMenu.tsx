@@ -16,15 +16,38 @@ import { ControlPill } from "../../components/ui/ControlPill";
 import { Menu } from "../../components/ui/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const APPEARANCES = [
-  { id: "system", title: "System" },
-  { id: "light", title: "Light" },
-  { id: "dark", title: "Dark" },
+  {
+    id: "system",
+    get title() {
+      return currentInterfaceTranslator().message("mobile.appearance.system");
+    },
+  },
+  {
+    id: "light",
+    get title() {
+      return currentInterfaceTranslator().message("mobile.appearance.light");
+    },
+  },
+  {
+    id: "dark",
+    get title() {
+      return currentInterfaceTranslator().message("mobile.appearance.dark");
+    },
+  },
 ] as const;
 
 const VIEWPORTS = [
-  { id: "fill", title: "Fit to screen", setting: FILL_PREVIEW_VIEWPORT },
+  {
+    id: "fill",
+    get title() {
+      return currentInterfaceTranslator().message("mobile.ui.fitToScreen");
+    },
+    setting: FILL_PREVIEW_VIEWPORT,
+  },
   ...(["Phone", "Tablet", "Desktop"] as const).flatMap((category) => {
     const preset = PREVIEW_VIEWPORT_PRESETS.find((candidate) => candidate.category === category);
     if (!preset) return [];
@@ -49,6 +72,7 @@ export function BrowserTabMenu({
   readonly streaming: boolean;
   readonly onPaste?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
   const close = useAtomCommand(previewEnvironment.close, "browser tab close");
@@ -70,16 +94,28 @@ export function BrowserTabMenu({
 
   const closeAction: MenuAction = {
     id: "close",
-    title: "Close tab",
+    title: translator.message("mobile.ui.closeTab"),
     image: "xmark",
     attributes: { destructive: true, disabled: !canClose },
   };
   const actions: MenuAction[] = [
-    ...(onPaste ? [{ id: "paste", title: "Paste", image: "doc.on.clipboard" }] : []),
-    { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
+    ...(onPaste
+      ? [
+          {
+            id: "paste",
+            title: translator.message("chat.terminal.paste"),
+            image: "doc.on.clipboard",
+          },
+        ]
+      : []),
+    {
+      id: "hard-reload",
+      title: translator.message("browser.menu.hardReload"),
+      image: "arrow.clockwise.circle",
+    },
     {
       id: "appearance",
-      title: "Appearance",
+      title: translator.message("mobile.settings.section.appearance"),
       image: "circle.lefthalf.filled",
       subactions: APPEARANCES.map((option) => ({
         id: `appearance:${option.id}`,
@@ -92,14 +128,26 @@ export function BrowserTabMenu({
       title: `Zoom (${Math.round(zoomFactor * 100)}%)`,
       image: "plus.magnifyingglass",
       subactions: [
-        { id: "zoom:in", title: "Zoom in", image: "plus.magnifyingglass" },
-        { id: "zoom:out", title: "Zoom out", image: "minus.magnifyingglass" },
-        { id: "zoom:reset", title: "Actual size", image: "1.magnifyingglass" },
+        {
+          id: "zoom:in",
+          title: translator.message("browser.menu.zoomIn"),
+          image: "plus.magnifyingglass",
+        },
+        {
+          id: "zoom:out",
+          title: translator.message("browser.menu.zoomOut"),
+          image: "minus.magnifyingglass",
+        },
+        {
+          id: "zoom:reset",
+          title: translator.message("mobile.ui.actualSize"),
+          image: "1.magnifyingglass",
+        },
       ],
     },
     {
       id: "viewport",
-      title: "Viewport",
+      title: translator.message("mobile.ui.viewport"),
       image: "rectangle.and.arrow.up.right.and.arrow.down.left",
       subactions: VIEWPORTS.map((option) => ({
         id: `viewport:${option.id}`,
@@ -109,11 +157,19 @@ export function BrowserTabMenu({
     },
     {
       id: "site-data",
-      title: "Site data",
+      title: translator.message("mobile.ui.siteData"),
       image: "trash",
       subactions: [
-        { id: "clear:cookies", title: "Clear cookies", attributes: { destructive: true } },
-        { id: "clear:cache", title: "Clear cache", attributes: { destructive: true } },
+        {
+          id: "clear:cookies",
+          title: translator.message("browser.menu.clearCookies"),
+          attributes: { destructive: true },
+        },
+        {
+          id: "clear:cache",
+          title: translator.message("browser.menu.clearCache"),
+          attributes: { destructive: true },
+        },
       ],
     },
     closeAction,
@@ -121,13 +177,15 @@ export function BrowserTabMenu({
 
   const run = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     const result = await adjust({ environmentId, input: { ...target, ...change } });
-    if (result._tag === "Failure") Dialog.alert("Could not change this browser tab");
+    if (result._tag === "Failure")
+      Dialog.alert(translator.message("mobile.ui.couldNotChangeThisBrowserTab"));
   };
 
   const onAction = (id: string) => {
     if (id === "close") {
       void close({ environmentId, input: target }).then((result) => {
-        if (result._tag === "Failure") Dialog.alert("Could not close this browser tab");
+        if (result._tag === "Failure")
+          Dialog.alert(translator.message("mobile.ui.couldNotCloseThisBrowserTab"));
       });
       return;
     }
@@ -148,7 +206,8 @@ export function BrowserTabMenu({
       if (!option) return;
       void resize({ environmentId, input: { ...target, viewport: option.setting } }).then(
         (result) => {
-          if (result._tag === "Failure") Dialog.alert("Could not change the viewport");
+          if (result._tag === "Failure")
+            Dialog.alert(translator.message("mobile.ui.couldNotChangeTheViewport"));
         },
       );
     }
@@ -160,12 +219,15 @@ export function BrowserTabMenu({
       // the other state's actions.
       key={streaming ? "streaming" : "idle"}
       accessible
-      accessibilityLabel="Browser tab options"
+      accessibilityLabel={translator.message("mobile.ui.browserTabOptions")}
       accessibilityRole="button"
       actions={streaming ? actions : [closeAction]}
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
-      <ControlPill icon="ellipsis" accessibilityLabel="Browser tab options" />
+      <ControlPill
+        icon="ellipsis"
+        accessibilityLabel={translator.message("mobile.ui.browserTabOptions")}
+      />
     </Menu>
   );
 }

@@ -157,6 +157,8 @@ import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { workspaceDetailRouter } from "./features/workspace/workspace-detail-selection";
+import { useMobileInterfaceTranslator } from "./localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "./localization/currentInterfaceTranslator";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -242,112 +244,157 @@ const SETTINGS_SCREENS = {
   Settings: createNativeStackScreen({
     screen: SettingsRouteScreen,
     linking: "settings",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Settings",
+      title: currentInterfaceTranslator().message("mobile.settings.title"),
       ...(Platform.OS === "android" ? { animation: "none" as const } : {}),
       // Android draws its own app bar here. Hidden only from inside the screen, the native one
       // showed for the first frame of the Settings tab and pushed the page down.
       headerShown: Platform.OS !== "android",
       headerBackVisible: false,
-    },
+    }),
   }),
   SettingsEnvironments: createNativeStackScreen({
     screen: SettingsEnvironmentsRouteScreen,
     linking: "settings/environments",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Environments",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.environments"),
+    }),
   }),
   SettingsEnvironmentDetail: createNativeStackScreen({
     screen: SettingsEnvironmentDetailRouteScreen,
     linking: "settings/environments/:environmentId",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Environment" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.navigation.environment"),
+    }),
   }),
   // Old links to New threads and Agent behavior open Threads, which absorbed them.
   SettingsEnvironmentNewThreads: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
     linking: "settings/new-threads",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Threads" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.section.threads"),
+    }),
   }),
   SettingsEnvironmentSourceControl: createNativeStackScreen({
     screen: SettingsEnvironmentSourceControlRouteScreen,
     linking: "settings/source-control",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Source control" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("settings.application.title.sourceControl"),
+    }),
   }),
   SettingsEnvironmentAgentBehavior: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
     linking: "settings/agent-behavior",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Threads" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.section.threads"),
+    }),
   }),
   SettingsWorktrees: createNativeStackScreen({
     screen: SettingsWorktreesRouteScreen,
     linking: "settings/worktrees",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Worktrees" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.worktrees"),
+    }),
   }),
   SettingsLabs: createNativeStackScreen({
     screen: SettingsLabsRouteScreen,
     linking: "settings/labs",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Labs" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.labs"),
+    }),
   }),
   SettingsProviderAccounts: createNativeStackScreen({
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Providers" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.agents.providers"),
+    }),
   }),
   SettingsEnvironmentMaintenance: createNativeStackScreen({
     screen: SettingsEnvironmentMaintenanceRouteScreen,
     linking: "settings/maintenance",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Maintenance" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.maintenance"),
+    }),
   }),
   SettingsNotifications: createNativeStackScreen({
     screen: SettingsNotificationsRouteScreen,
     linking: "settings/notifications",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Notifications" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.ui.notifications"),
+    }),
   }),
   SettingsThreads: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
     linking: "settings/thread-preferences",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Threads" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.section.threads"),
+    }),
   }),
   SettingsAbout: createNativeStackScreen({
     screen: SettingsAboutRouteScreen,
     linking: "settings/about",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "About" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("settings.about.title"),
+    }),
   }),
   SettingsEnvironmentNew: createNativeStackScreen({
     screen: ConnectionsNewRouteScreen,
     linking: "settings/environment-new",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Add Environment",
-    },
+      title: currentInterfaceTranslator().message("settings.connections.addEnvironmentTitle"),
+    }),
   }),
   SettingsArchive: createNativeStackScreen({
     screen: ArchivedThreadsRouteScreen,
     linking: "settings/archive",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Archive",
-    },
+      title: currentInterfaceTranslator().message("mobile.thread.archive"),
+    }),
   }),
   SettingsNavigation: createNativeStackScreen({
     screen: SettingsNavigationRouteScreen,
     linking: "settings/navigation-tabs",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Navigation tabs" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.navigationTabs"),
+    }),
   }),
   SettingsAgents: createNativeStackScreen({
     screen: SettingsAgentEnvironmentsRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Agents" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.thread.agents"),
+    }),
   }),
   SettingsProjects: createNativeStackScreen({
     screen: SettingsProjectsRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Projects" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.projects"),
+    }),
   }),
   SettingsProjectIndexing: createNativeStackScreen({
     screen: SettingsProjectIndexingRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Project Indexing" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("projectIndexing.title"),
+    }),
   }),
   SettingsBetterT3: createNativeStackScreen({
     screen: SettingsBetterT3RouteScreen,
@@ -355,56 +402,65 @@ const SETTINGS_SCREENS = {
   }),
   SettingsBetterT3ResourceDiagnostics: createNativeStackScreen({
     screen: SettingsBetterT3ResourceDiagnosticsRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Resource diagnostics" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("settings.betterT3.mobile.diagnostics.title"),
+    }),
   }),
   SettingsBetterT3TranscriptPortability: createNativeStackScreen({
     screen: SettingsBetterT3TranscriptPortabilityRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Transcript portability" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("settings.betterT3.mobile.transcript.title"),
+    }),
   }),
   SettingsAppearance: createNativeStackScreen({
     screen: SettingsAppearanceRouteScreen,
     linking: "settings/appearance",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Appearance",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.section.appearance"),
+    }),
   }),
   SettingsProjectGrouping: createNativeStackScreen({
     screen: SettingsProjectGroupingRouteScreen,
     linking: "settings/project-grouping",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "General",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.section.general"),
+    }),
   }),
   SettingsOrganization: createNativeStackScreen({
     screen: SettingsProjectGroupingRouteScreen,
     linking: "settings/organization",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "General",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.section.general"),
+    }),
   }),
   SettingsProjectOverview: createNativeStackScreen({
     screen: SettingsProjectOverviewRouteScreen,
     linking: "settings/project",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Projects" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.projects"),
+    }),
   }),
   SettingsKeyboard: createNativeStackScreen({
     screen: SettingsKeyboardRouteScreen,
     linking: "settings/keyboard",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Keyboard",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.keyboard"),
+    }),
   }),
   SettingsMicrophone: createNativeStackScreen({
     screen: SettingsMicrophoneRouteScreen,
     linking: "settings/microphone",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Microphone",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.microphone"),
+    }),
   }),
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,
@@ -417,24 +473,33 @@ const SETTINGS_SCREENS = {
   SettingsScheduledTasks: createNativeStackScreen({
     screen: SettingsScheduledTasksRouteScreen,
     linking: "settings/scheduled-tasks",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Scheduled tasks",
+      title: currentInterfaceTranslator().message("mobile.settings.scheduledTasks"),
       headerTitleStyle: { fontSize: 16, fontWeight: "800" },
-    },
+    }),
   }),
   SettingsScheduledTaskNew: createNativeStackScreen({
     screen: SettingsScheduledTaskNewRouteScreen,
     linking: "settings/scheduled-tasks/new",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "New scheduled task" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.ui.newScheduledTask"),
+    }),
   }),
   SettingsScheduledTaskEdit: createNativeStackScreen({
     screen: SettingsScheduledTaskEditRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Edit scheduled task" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.ui.editScheduledTask"),
+    }),
   }),
   SettingsScheduledTaskBranch: createNativeStackScreen({
     screen: ScheduledTaskBranchPickerRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Base branch" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.thread.baseBranch"),
+    }),
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
@@ -451,48 +516,51 @@ const SETTINGS_SCREENS = {
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,
     linking: "settings/client-storage",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Client Storage",
-    },
+      title: currentInterfaceTranslator().message("mobile.ui.clientStorage"),
+    }),
   }),
   SettingsDiagnostics: createNativeStackScreen({
     screen: SettingsDiagnosticsRouteScreen,
     linking: "settings/diagnostics",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Diagnostics",
-    },
+      title: currentInterfaceTranslator().message("settings.betterT3.subgroup.diagnostics"),
+    }),
   }),
   // These params snapshot the tap time, local filters, and freshly aggregated pools.
   // A linking path would round-trip them as URL query strings and preserve stale values.
   SettingsUsageAccount: createNativeStackScreen({
     screen: UsageLimitAccountScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Account" },
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.settings.section.account"),
+    }),
   }),
   SettingsOpenSourceLicenses: createNativeStackScreen({
     screen: SettingsOpenSourceLicensesRouteScreen,
     linking: "settings/open-source-licenses",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Open source licenses",
-    },
+      title: currentInterfaceTranslator().message("mobile.ui.openSourceLicenses"),
+    }),
   }),
   SettingsOpenSourceLicense: createNativeStackScreen({
     screen: SettingsOpenSourceLicenseRouteScreen,
     linking: "settings/open-source-licenses/:entryKey",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "License notice",
-    },
+      title: currentInterfaceTranslator().message("mobile.ui.licenseNotice"),
+    }),
   }),
   SettingsUsage: createNativeStackScreen({
     screen: UsageRouteScreen,
     linking: "settings/usage",
-    options: {
+    options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Usage",
-    },
+      title: currentInterfaceTranslator().message("mobile.settings.usage"),
+    }),
   }),
   SettingsAuth: createNativeStackScreen({
     screen: SettingsAuthRouteScreen,
@@ -584,6 +652,7 @@ function RootStackLayout(props: {
 }
 
 function NotFoundScreen() {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
   const primaryBgStyle = StyleSheet.flatten(useResolveClassNames("bg-primary"));
@@ -610,13 +679,15 @@ function NotFoundScreen() {
       style={[{ flex: 1 }, screenBgStyle]}
     >
       <Text className="text-3xl font-t3-bold text-foreground" selectable>
-        Route not found
+        {translator.message("mobile.navigation.routeNotFound")}
       </Text>
       <Pressable
         style={returnHomeButtonStyle}
         onPress={() => navigation.dispatch(StackActions.replace("Home"))}
       >
-        <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
+        <Text className="text-base font-t3-bold text-primary-foreground">
+          {translator.message("mobile.navigation.returnHome")}
+        </Text>
       </Pressable>
     </ScrollView>
   );
@@ -762,26 +833,35 @@ const RootStackConfig = createWorkspaceStackNavigator({
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,
       linking: { path: "new", alias: ["new/project"] },
-      options: { ...GLASS_HEADER_OPTIONS, title: "Choose project" },
+      options: () => ({
+        ...GLASS_HEADER_OPTIONS,
+        title: currentInterfaceTranslator().message("mobile.settings.harness.chooseProject"),
+      }),
     }),
     NewTaskEnvironment: createNativeStackScreen({
       linking: "new/draft/environment",
       screen: NewTaskEnvironmentPickerRouteScreen,
-      options: { ...GLASS_HEADER_OPTIONS, title: "Environment" },
+      options: () => ({
+        ...GLASS_HEADER_OPTIONS,
+        title: currentInterfaceTranslator().message("mobile.navigation.environment"),
+      }),
     }),
     NewTaskBranch: createNativeStackScreen({
       linking: "new/draft/branch",
       screen: NewTaskBranchPickerRouteScreen,
-      options: { ...GLASS_HEADER_OPTIONS, title: "Branch" },
+      options: () => ({
+        ...GLASS_HEADER_OPTIONS,
+        title: currentInterfaceTranslator().message("mobile.git.branch"),
+      }),
     }),
     AddProject: createNativeStackScreen({
       linking: "new/add-project",
       screen: AddProjectSourceRoute,
 
-      options: {
+      options: () => ({
         ...GLASS_HEADER_OPTIONS,
-        title: "Add project",
-      },
+        title: currentInterfaceTranslator().message("mobile.project.add"),
+      }),
     }),
     AddProjectRepository: createNativeStackScreen({
       linking: "new/add-project/repository",
@@ -880,15 +960,18 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     KnowledgeGraph: createNativeStackScreen({
       screen: KnowledgeGraphRouteScreen,
-      options: { ...SOLID_HEADER_OPTIONS, title: "Knowledge Graph" },
+      options: () => ({
+        ...SOLID_HEADER_OPTIONS,
+        title: currentInterfaceTranslator().message("settings.betterT3.subgroup.knowledge-graph"),
+      }),
     }),
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,
       linking: `${THREAD_LINKING_PREFIX}/files`,
-      options: {
+      options: () => ({
         ...GLASS_HEADER_OPTIONS,
-        title: "Files",
-      },
+        title: currentInterfaceTranslator().message("mobile.files.title"),
+      }),
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
@@ -1001,29 +1084,29 @@ const RootStackConfig = createWorkspaceStackNavigator({
     SettingsLegal: createNativeStackScreen({
       screen: SettingsLegalRouteScreen,
       linking: "settings/legal",
-      options: {
+      options: () => ({
         ...LEGAL_DOCUMENT_HEADER_OPTIONS,
-        title: "Legal",
-      },
+        title: currentInterfaceTranslator().message("mobile.settings.legal"),
+      }),
     }),
     ConnectOnboarding: createNativeStackScreen({
       screen: ConnectOnboardingRouteScreen,
       linking: "connect-onboarding",
-      options: {
+      options: () => ({
         // Android root formSheets lack a native stack bar; the route provides AndroidSheetHeader.
         ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
-        title: "Set up T3 Connect",
+        title: currentInterfaceTranslator().message("mobile.connection.setupConnect"),
         gestureEnabled: true,
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: formSheetDetents(0.6, 0.95),
         sheetGrabberVisible: true,
-      },
+      }),
     }),
     Connections: createNativeStackScreen({
       screen: ConnectionsRouteScreen,
       linking: "connections",
-      options: {
-        title: "Environments",
+      options: () => ({
+        title: currentInterfaceTranslator().message("mobile.settings.environments"),
         ...(Platform.OS === "android"
           ? { presentation: "card" as const, headerShown: false }
           : {
@@ -1031,20 +1114,20 @@ const RootStackConfig = createWorkspaceStackNavigator({
               sheetAllowedDetents: [0.55, 0.7],
               sheetGrabberVisible: true,
             }),
-      },
+      }),
     }),
     ConnectionsNew: createNativeStackScreen({
       screen: ConnectionsNewRouteScreen,
       linking: "connections/new",
-      options: {
+      options: () => ({
         // Mount the iOS header immediately to avoid remounting the pairing form.
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        title: "Add Environment",
+        title: currentInterfaceTranslator().message("settings.connections.addEnvironmentTitle"),
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
         sheetCornerRadius: Platform.OS === "android" ? 28 : undefined,
-      },
+      }),
     }),
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,
@@ -1070,16 +1153,23 @@ function GuardedScreenLayout(props: {
 }
 
 function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const exit = navigation.canGoBack()
-    ? { label: "Go back", onPress: () => navigation.goBack() }
+    ? {
+        label: translator.message("sidebar.navigation.historyBack"),
+        onPress: () => navigation.goBack(),
+      }
     : props.routeName === "Home"
       ? // Home itself failed, and the Settings list renders inside it; open a Settings page.
         {
-          label: "Open settings",
+          label: translator.message("mobile.navigation.openSettings"),
           onPress: () => openSettings(navigation, DEFAULT_SETTINGS_PAGE),
         }
-      : { label: "Return home", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
+      : {
+          label: translator.message("mobile.navigation.returnHome"),
+          onPress: () => navigation.dispatch(StackActions.replace("Home")),
+        };
 
   return <RenderFailureView {...props} exit={exit} />;
 }

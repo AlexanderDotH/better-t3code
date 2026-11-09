@@ -1,3 +1,4 @@
+import { setCurrentInterfaceLocale } from "../../../localization/currentInterfaceTranslator";
 import {
   DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
   resolveBetterT3FeatureFlag,
@@ -20,6 +21,7 @@ import {
   use,
   useMemo,
   type ReactNode,
+  useLayoutEffect,
 } from "react";
 import { AccessibilityInfo, AppState, Appearance, Platform, useColorScheme } from "react-native";
 
@@ -236,6 +238,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const projectThreadPreviewSync = useProjectThreadPreviewSync();
   const interfaceLanguage = useInterfaceLanguageSync();
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Route options and helpers outside React read the language from this module.
+  useLayoutEffect(() => setCurrentInterfaceLocale(interfaceLanguage), [interfaceLanguage]);
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : null;

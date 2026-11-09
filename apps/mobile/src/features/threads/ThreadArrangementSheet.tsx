@@ -41,6 +41,7 @@ import {
 import { useThreadListNow } from "./use-thread-list-now";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const keyOf = (thread: EnvironmentThreadShell) => scopedThreadKey(thread.environmentId, thread.id);
 type Section = "pinned" | "active" | "snoozed" | "settled";
@@ -103,6 +104,7 @@ function DragHandle(props: {
   canMoveUp: boolean;
   canMoveDown: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const latest = useRef(props);
   /* oxlint-disable react/refs -- The pan gesture captures its callbacks once per `disabled` change; they read the latest handlers when native gesture events fire. */
   latest.current = props;
@@ -128,12 +130,16 @@ function DragHandle(props: {
         accessible
         accessibilityRole="adjustable"
         accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityHint="Move up and Move down reorder within this section. Other actions move between sections."
+        accessibilityHint={translator.message("mobile.ui.moveUpAndMoveDownReorderWithin")}
         accessibilityState={{ disabled: props.disabled }}
         accessibilityActions={[
           ...props.sectionActions,
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp
+            ? [{ name: "decrement", label: translator.message("mobile.thread.moveUp") }]
+            : []),
+          ...(props.canMoveDown
+            ? [{ name: "increment", label: translator.message("mobile.thread.moveDown") }]
+            : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (props.disabled) return;
@@ -163,6 +169,7 @@ function DragHandle(props: {
 }
 
 function ThreadArrangementSheet(props: { onClose: () => void }) {
+  const translator = useMobileInterfaceTranslator();
   const { appearance } = useAppearancePreferences();
   const { fontScale } = useWindowDimensions();
   const { rowHeight, headerHeight } = deriveThreadArrangementSizing({
@@ -394,12 +401,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
             <SafeAreaView style={{ flex: 1 }}>
               <SheetHeader
                 presentation="inline"
-                title="Arrange threads"
+                title={translator.message("mobile.ui.arrangeThreads")}
                 onClose={props.onClose}
-                accessibilityLabel="Close arrange threads"
+                accessibilityLabel={translator.message("mobile.ui.closeArrangeThreads")}
               />
               <Text className="px-5 pb-3 text-sm text-foreground-muted">
-                Drag to reorder, pin, or settle. Changes save when you drop.
+                {translator.message("mobile.ui.dragToReorderPinOrSettleChanges")}
               </Text>
               <View
                 onLayout={(event) => {
@@ -529,9 +536,9 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                           >
                             <Text className="text-sm text-foreground-muted">
                               {olderSettledShelf.loading
-                                ? "Loading"
+                                ? translator.message("ui.loading")
                                 : olderSettledShelf.failed
-                                  ? "Could not load older threads. Retry"
+                                  ? translator.message("sidebar.section.settledLoadFailed")
                                   : `Show more (${settledCount - visibleSettled.length} settled hidden)`}
                             </Text>
                           </Pressable>

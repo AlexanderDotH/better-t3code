@@ -162,7 +162,7 @@ function CloudEnvironmentRowsContent(
             <CopyTraceIdButton traceId={controller.relayDiscovery.errorTraceId} />
           ) : null}
           <Button
-            label="Try again"
+            label={translator.message("cloud.action.tryAgain")}
             tone="secondary"
             onPress={() => {
               void controller.refreshRelayEnvironments();
@@ -183,6 +183,7 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onOpen?: (() => void) | undefined;
   readonly onToggleError: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
@@ -217,7 +218,7 @@ function ConnectedCloudEnvironmentRow(props: {
         ? diagnosis
           ? { statusText: diagnosis.headline }
           : {}
-        : { statusText: "Off" })}
+        : { statusText: translator.message("settings.common.off") })}
       value={enabled}
     />
   );
@@ -280,6 +281,7 @@ function CloudEnvironmentRowShell(props: {
   readonly statusText?: string;
   readonly value: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const isRetrying =
     props.connectionState === "connecting" || props.connectionState === "reconnecting";
   const shouldPulse = isRetrying;
@@ -323,7 +325,11 @@ function CloudEnvironmentRowShell(props: {
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <ContentContainer
         className="min-w-0 flex-1 gap-0.5"
-        accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
+        accessibilityHint={
+          props.onRemove
+            ? translator.message("mobile.ui.longPressToRemoveFromThisDevice")
+            : undefined
+        }
         accessibilityRole={props.onOpen ? "button" : undefined}
         accessibilityLabel={
           props.onOpen
@@ -412,7 +418,11 @@ function CloudEnvironmentRowShell(props: {
                 ? `Remove ${props.label} from this device`
                 : undefined
           }
-          accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
+          accessibilityHint={
+            props.onRemove
+              ? translator.message("mobile.ui.longPressToRemoveFromThisDevice")
+              : undefined
+          }
           onPress={props.onOpen}
           onLongPress={props.onRemove}
           style={{

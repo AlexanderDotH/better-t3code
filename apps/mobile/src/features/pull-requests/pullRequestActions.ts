@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type ActionDetail = Pick<
   PullRequestDetail,
@@ -27,12 +28,30 @@ type ActionDetail = Pick<
 };
 
 export const MERGE_METHODS = {
-  squash: { title: "Squash and merge", description: "Combine the commits into one commit." },
-  merge: {
-    title: "Create a merge commit",
-    description: "Keep the commits and add a merge commit.",
+  squash: {
+    get title() {
+      return currentInterfaceTranslator().message("mobile.ui.squashAndMerge");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.combineTheCommitsIntoOneCommit");
+    },
   },
-  rebase: { title: "Rebase and merge", description: "Add the commits without a merge commit." },
+  merge: {
+    get title() {
+      return currentInterfaceTranslator().message("mobile.ui.createAMergeCommit");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.keepTheCommitsAndAddAMerge");
+    },
+  },
+  rebase: {
+    get title() {
+      return currentInterfaceTranslator().message("mobile.ui.rebaseAndMerge");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.addTheCommitsWithoutAMergeCommit");
+    },
+  },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
 export function pullRequestActionLabel(

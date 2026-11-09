@@ -36,6 +36,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -134,6 +135,7 @@ function WindowRow(props: {
 }
 
 function AccountInstanceLabel({ value }: { readonly value: string }) {
+  const translator = useMobileInterfaceTranslator();
   const [revealed, setRevealed] = useState(false);
   if (!value.includes("@")) {
     return (
@@ -146,7 +148,11 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
     <Pressable
       className="shrink active:opacity-60"
       accessibilityRole="button"
-      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      accessibilityLabel={
+        revealed
+          ? translator.message("mobile.ui.hideAccountLabel")
+          : translator.message("mobile.ui.revealAccountLabel")
+      }
       onPress={() => setRevealed((current) => !current)}
     >
       <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
@@ -169,6 +175,7 @@ export function AccountLimits(props: {
   readonly trailing?: ReactNode;
   readonly footer?: ReactNode;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { limits, now, dense = false } = props;
   const providerColor = useBarColor(props.driver);
   const color = normalizeProviderAccentColor(props.accentColor) ?? providerColor;
@@ -212,7 +219,9 @@ export function AccountLimits(props: {
           className="min-h-11 justify-center"
           onPress={() => void Linking.openURL(externalUsage.url).catch(() => undefined)}
         >
-          <Text className="text-sm font-t3-medium text-primary">Manage usage</Text>
+          <Text className="text-sm font-t3-medium text-primary">
+            {translator.message("mobile.ui.manageUsage")}
+          </Text>
         </Pressable>
       ) : null}
       {props.footer}
@@ -234,6 +243,7 @@ export function ResetCredits(props: {
   readonly now: number;
   readonly dense?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { environmentId, input, credits, now, dense = false } = props;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
@@ -248,7 +258,7 @@ export function ResetCredits(props: {
     : null;
   const summary =
     credits.availableCount === 0
-      ? "No reset credits banked"
+      ? translator.message("mobile.ui.noResetCreditsBanked")
       : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
           expiresIn ? ` · next expires in ${expiresIn}` : ""
         }`;
@@ -273,11 +283,11 @@ export function ResetCredits(props: {
   const confirm = () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Dialog.alert(
-      "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      translator.message("mobile.ui.useAResetCredit"),
+      translator.message("mobile.ui.thisRedeemsOneCreditOnYourAccount"),
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem() },
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
+        { text: translator.message("mobile.ui.useCredit"), onPress: () => void redeem() },
       ],
     );
   };
@@ -304,13 +314,15 @@ export function ResetCredits(props: {
                 : "text-sm font-t3-medium text-foreground"
             }
           >
-            {busy ? "Using…" : "Use reset"}
+            {busy
+              ? translator.message("mobile.ui.using")
+              : translator.message("mobile.ui.useReset")}
           </Text>
         </Pressable>
       ) : null}
       {!canManageProviders ? (
         <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
+          {translator.message("mobile.ui.thisConnectionCannotManageProviderAccounts")}
         </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}

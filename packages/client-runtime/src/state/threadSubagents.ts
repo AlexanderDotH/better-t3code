@@ -90,8 +90,21 @@ export function deriveThreadTurnSubagents(
   };
 }
 
+export interface SubagentPillLabels {
+  readonly done: (count: number) => string;
+  readonly doneAccessibility: (count: number) => string;
+  readonly working: (count: number, total: number) => string;
+}
+
+const ENGLISH_SUBAGENT_PILL_LABELS: SubagentPillLabels = {
+  done: (count) => `${count} done`,
+  doneAccessibility: (count) => `${count} ${count === 1 ? "agent" : "agents"} done`,
+  working: (count, total) => `${count} of ${total} agents working`,
+};
+
 export function resolveSubagentPillSegment(
   turn: ThreadTurnSubagents | null,
+  labels: SubagentPillLabels = ENGLISH_SUBAGENT_PILL_LABELS,
 ): SubagentPillSegment | null {
   if (turn === null) return null;
   // Finished agents stay reachable until a later turn replaces them; workflows always stay reachable.
@@ -107,11 +120,11 @@ export function resolveSubagentPillSegment(
   if (turn.liveCount > 0) {
     return {
       label: `${turn.liveCount}/${total}`,
-      accessibilityLabel: `${turn.liveCount} of ${total} agents working`,
+      accessibilityLabel: labels.working(turn.liveCount, total),
     };
   }
   return {
-    label: `${turn.settledCount} done`,
-    accessibilityLabel: `${turn.settledCount} ${turn.settledCount === 1 ? "agent" : "agents"} done`,
+    label: labels.done(turn.settledCount),
+    accessibilityLabel: labels.doneAccessibility(turn.settledCount),
   };
 }

@@ -26,6 +26,7 @@ import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type MenuAction = MenuProps["actions"][number];
 
@@ -34,6 +35,7 @@ export function useLinkedPullRequestActions(input: {
   readonly project: EnvironmentProject | null;
   readonly runtime: EnvironmentRuntimeState | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { thread, project, runtime } = input;
   const terminology = sourceControlClients.get(project?.repositoryIdentity?.provider).changeRequest;
   const capabilities = runtime?.serverConfig?.environment.capabilities;
@@ -61,7 +63,10 @@ export function useLinkedPullRequestActions(input: {
     const result = await pending;
     if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
     const cause = squashAtomCommandFailure(result);
-    Dialog.alert(failureTitle, cause instanceof Error ? cause.message : "Try again.");
+    Dialog.alert(
+      failureTitle,
+      cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
+    );
   };
 
   const setLinked = (
@@ -94,7 +99,7 @@ export function useLinkedPullRequestActions(input: {
       message: `Paste a ${singular} URL, or enter 123 / #123 for this thread's repository.`,
       placeholder: `${capitalizeTerm(singular)} URL or #42`,
       initialValue: "",
-      confirmText: "Link",
+      confirmText: translator.message("mobile.ui.link"),
       onConfirm: (reference) => {
         const resolved = resolveLinkPullRequestInput({
           reference,
@@ -118,13 +123,15 @@ export function useLinkedPullRequestActions(input: {
     const open = link.snapshot === null || link.snapshot.state === "open";
     const watching = link.watch !== undefined;
     return [
-      { id: "copy", title: "Copy link", image: "link" },
-      { id: "browser", title: "Open in browser", image: "safari" },
+      { id: "copy", title: translator.message("chat.composer.copyLink"), image: "link" },
+      { id: "browser", title: translator.message("mobile.files.openBrowser"), image: "safari" },
       ...((watching ? canWatch : canStartWatch) && open
         ? [
             {
               id: "watch",
-              title: watching ? "Stop watching" : "Watch for changes",
+              title: watching
+                ? translator.message("mobile.ui.stopWatching")
+                : translator.message("mobile.ui.watchForChanges"),
               image: watching ? "eye.slash" : "eye",
             },
           ]
@@ -133,7 +140,10 @@ export function useLinkedPullRequestActions(input: {
         ? [
             {
               id: "unlink",
-              title: link.source === "stack" ? "Dismiss from thread" : "Unlink from thread",
+              title:
+                link.source === "stack"
+                  ? translator.message("mobile.ui.dismissFromThread")
+                  : translator.message("mobile.ui.unlinkFromThread"),
               image: "xmark",
               attributes: { destructive: true },
             },

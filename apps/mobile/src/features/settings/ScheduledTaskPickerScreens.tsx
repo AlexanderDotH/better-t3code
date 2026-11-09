@@ -11,11 +11,15 @@ import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function MissingTaskDraft() {
+  const translator = useMobileInterfaceTranslator();
   return (
-    <SettingsScreen title="Scheduled task">
-      <Text className="p-5 text-base text-foreground-muted">Open a scheduled task form first.</Text>
+    <SettingsScreen title={translator.message("mobile.ui.scheduledTask")}>
+      <Text className="p-5 text-base text-foreground-muted">
+        {translator.message("mobile.ui.openAScheduledTaskFormFirst")}
+      </Text>
     </SettingsScreen>
   );
 }
@@ -105,6 +109,7 @@ export function ScheduledTaskModelPickerRouteScreen() {
 }
 
 export function ScheduledTaskBranchPickerRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { editor, setEditor } = useScheduledTaskEditor();
   const projects = useProjects();
@@ -128,7 +133,7 @@ export function ScheduledTaskBranchPickerRouteScreen() {
 
   return (
     <BranchPickerScreen
-      title="Base branch"
+      title={translator.message("mobile.thread.baseBranch")}
       project={project}
       branches={visibleBranches}
       selectedBranchName={editor.draft.baseRef}
@@ -137,7 +142,9 @@ export function ScheduledTaskBranchPickerRouteScreen() {
       loading={
         query.trim() !== debouncedQuery.trim() || (branches.isPending && branches.data === null)
       }
-      error={project ? branches.error : "This project is no longer available."}
+      error={
+        project ? branches.error : translator.message("settings.projects.detail.empty.removed")
+      }
       refreshing={branches.isFetchingNextPage}
       hasMore={branches.data?.nextCursor != null}
       onRefresh={branches.refresh}

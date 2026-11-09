@@ -17,6 +17,7 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 type GitCommitSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -24,6 +25,7 @@ type GitCommitSheetProps = StaticScreenProps<{
 }>;
 
 export function GitCommitSheet(_props: GitCommitSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -71,10 +73,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const header = (
     <SheetHeader
       presentation={android ? "inline" : "native"}
-      title="Commit changes"
+      title={translator.message("mobile.git.commitChanges")}
       subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
       onCancel={() => navigation.goBack()}
-      accessibilityLabel="Cancel commit"
+      accessibilityLabel={translator.message("mobile.ui.cancelCommit")}
     />
   );
 
@@ -105,28 +107,32 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         >
           {isDefaultRef ? (
             <Text className="text-sm text-warning-foreground">
-              You’re on the default branch. You can create a new branch when committing.
+              {translator.message("mobile.ui.youreOnTheDefaultBranchYouCan")}
             </Text>
           ) : null}
           <View className="gap-2">
-            <Text className="text-sm font-t3-medium text-foreground">Commit message</Text>
+            <Text className="text-sm font-t3-medium text-foreground">
+              {translator.message("mobile.git.commitMessage")}
+            </Text>
             <TextInput
               multiline
-              accessibilityLabel="Commit message"
+              accessibilityLabel={translator.message("mobile.git.commitMessage")}
               value={dialogCommitMessage}
               onChangeText={setDialogCommitMessage}
-              placeholder="Describe your changes…"
+              placeholder={translator.message("git.commit.messagePlaceholder")}
               textAlignVertical="top"
               className="min-h-24 rounded-xl bg-subtle px-4 py-3 text-base"
             />
             <Text className="text-xs text-foreground-muted">
-              Leave empty to generate a message automatically.
+              {translator.message("mobile.ui.leaveEmptyToGenerateAMessageAutomatically")}
             </Text>
           </View>
           <View>
             <View className="flex-row items-center justify-between gap-2 pb-2">
               <View className="flex-1 gap-1">
-                <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
+                <Text className="text-base font-t3-bold text-foreground">
+                  {translator.message("mobile.review.changedFiles")}
+                </Text>
                 <Text className="text-xs text-foreground-muted">
                   {selectedFiles.length} of {allFiles.length} selected · +
                   {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
@@ -134,7 +140,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               </View>
               {allFiles.length > 0 ? (
                 <Button
-                  label={allSelected ? "Deselect all" : "Select all"}
+                  label={
+                    allSelected
+                      ? translator.message("mobile.ui.deselectAll")
+                      : translator.message("mobile.settings.harness.selectAll")
+                  }
                   tone="text"
                   onPress={() =>
                     setExcludedFiles(
@@ -146,7 +156,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             </View>
             {allFiles.length === 0 ? (
               <Text className="py-4 text-sm text-foreground-muted">
-                No changed files to commit.
+                {translator.message("mobile.ui.noChangedFilesToCommit")}
               </Text>
             ) : (
               allFiles.map((file) => {
@@ -217,7 +227,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </View>
           <View className="gap-2">
             <Button
-              label="Commit changes"
+              label={translator.message("mobile.git.commitChanges")}
               icon="checkmark"
               tone="primary"
               fullWidth
@@ -225,7 +235,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               onPress={() => void runCommitAction(false)}
             />
             <Button
-              label="Commit on a new branch"
+              label={translator.message("mobile.ui.commitOnANewBranch")}
               icon="arrow.branch"
               tone="text"
               fullWidth

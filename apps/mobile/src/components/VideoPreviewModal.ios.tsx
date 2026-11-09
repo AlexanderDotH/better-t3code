@@ -16,6 +16,7 @@ import {
   isAudioSessionOwner,
   releaseAudioSession,
 } from "../lib/audioSession";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 export type { VideoPreviewSource } from "../lib/videoPreviewSource";
 
@@ -126,12 +127,12 @@ function NativeVideoPreview(props: {
       // AVKit gives no retry, so re-mint now; the minted URL may already be unusable.
       if (ready) reauthorize();
       Dialog.alert(
-        "Could not open video",
+        currentInterfaceTranslator().message("mobile.ui.couldNotOpenVideo"),
         ready
-          ? "This video couldn't be loaded or played. Check the connection, or touch and hold the video to save or share the original."
+          ? currentInterfaceTranslator().message("mobile.ui.thisVideoCouldntBeLoadedOrPlayed")
           : error instanceof Error
             ? error.message
-            : "Could not load this video.",
+            : currentInterfaceTranslator().message("mobile.ui.couldNotLoadThisVideo"),
       );
       onRequestClose();
     });

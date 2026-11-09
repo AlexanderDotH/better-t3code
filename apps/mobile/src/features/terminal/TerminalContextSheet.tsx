@@ -15,6 +15,7 @@ import { Sheet } from "../../components/ui/Sheet";
 import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function TerminalContextSheet(props: {
   text: string;
@@ -25,6 +26,7 @@ export function TerminalContextSheet(props: {
   onClose: () => void;
   onAttach: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const lines = props.text.replace(/\n+$/, "").split("\n");
   const [range, setRange] = useState({ start: 0, end: lines.length - 1 });
@@ -50,13 +52,16 @@ export function TerminalContextSheet(props: {
         context: { version: 1, records: [record] },
       })
     ) {
-      Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+      Dialog.alert(
+        translator.message("mobile.ui.tooManyContextItems"),
+        translator.message("mobile.ui.removeSomeContextFromTheDraftAnd"),
+      );
       return;
     }
     props.onAttach();
   };
   return (
-    <Sheet title="Terminal output" onClose={props.onClose}>
+    <Sheet title={translator.message("mobile.ui.terminalOutput")} onClose={props.onClose}>
       <ScrollView
         nestedScrollEnabled
         className="flex-1"
@@ -64,7 +69,7 @@ export function TerminalContextSheet(props: {
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
       >
         <Text className="pb-4 text-sm text-foreground-muted">
-          Tap the first and last line to select a range.
+          {translator.message("mobile.ui.tapTheFirstAndLastLineTo")}
         </Text>
         <View className="overflow-hidden rounded-xl bg-card-alt">
           {lines.map(
@@ -112,11 +117,11 @@ export function TerminalContextSheet(props: {
       >
         {tooLarge ? (
           <Text className="text-sm text-foreground-muted">
-            Select fewer lines to fit the context limit.
+            {translator.message("mobile.ui.selectFewerLinesToFitTheContext")}
           </Text>
         ) : null}
         <Button
-          label="Attach selected output"
+          label={translator.message("mobile.ui.attachSelectedOutput")}
           tone="primary"
           fullWidth
           disabled={!selectedText.trim() || tooLarge}

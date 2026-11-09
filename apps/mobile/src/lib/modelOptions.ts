@@ -24,6 +24,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 export type ModelOption = {
   readonly key: string;
@@ -210,18 +211,18 @@ export function describeUnavailableModelSelection(
       instanceId: selection.instanceId,
     });
     return {
-      title: "Provider not allowed",
+      title: currentInterfaceTranslator().message("mobile.ui.providerNotAllowed"),
       detail: `${disallowedProviderMessage(config?.managedPolicy?.organization, label)} Choose another model.`,
     };
   }
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
-        title: "Model turned off for this project",
-        detail: "Turn it back on from web or desktop, or choose another model.",
+        title: currentInterfaceTranslator().message("mobile.ui.modelTurnedOffForThisProject"),
+        detail: currentInterfaceTranslator().message("mobile.ui.turnItBackOnFromWebOr"),
       }
     : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
+        title: currentInterfaceTranslator().message("mobile.ui.antigravityModelUnavailable"),
+        detail: currentInterfaceTranslator().message("mobile.ui.setUpAntigravityOnWebOrDesktop"),
       };
 }
 

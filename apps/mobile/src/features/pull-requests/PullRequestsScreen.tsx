@@ -51,6 +51,7 @@ import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function PullRequestScrollView(props: ScrollViewProps) {
   return (
@@ -106,6 +107,7 @@ export function PullRequestsScreen(
     readonly renderFrame?: (filters: PullRequestFilterMenu | null, list: ReactNode) => ReactNode;
   } = {},
 ) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const primaryColumn = use(NativePrimaryColumnContext);
   const workspace = useWorkspaceTabs()!;
@@ -355,15 +357,15 @@ export function PullRequestsScreen(
             <View className="items-center py-5">
               <AppActivityIndicator
                 colorClassName="accent-icon"
-                accessibilityLabel="Loading more pull requests"
+                accessibilityLabel={translator.message("mobile.ui.loadingMorePullRequests")}
               />
             </View>
           ) : result.loadMoreError ? (
             <View className="items-center gap-2 px-8 py-4">
               <Text className="text-xs text-foreground-muted">{result.loadMoreError}</Text>
               <Button
-                label="Try again"
-                accessibilityLabel="Retry loading more pull requests"
+                label={translator.message("cloud.action.tryAgain")}
+                accessibilityLabel={translator.message("mobile.ui.retryLoadingMorePullRequests")}
                 onPress={() => void result.loadMore(true)}
               />
             </View>
@@ -371,8 +373,8 @@ export function PullRequestsScreen(
             // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
             <View className="items-center py-4">
               <Button
-                label="Load more"
-                accessibilityLabel="Load more pull requests"
+                label={translator.message("mobile.ui.loadMore")}
+                accessibilityLabel={translator.message("pullRequest.empty.loadMore")}
                 onPress={() => void result.loadMore()}
               />
             </View>
@@ -388,22 +390,24 @@ export function PullRequestsScreen(
               <EmptyState
                 title={
                   result.error
-                    ? "Couldn't load pull requests"
+                    ? translator.message("mobile.ui.couldntLoadPullRequests")
                     : targets.length && connectedTargets.length === 0
-                      ? "Environment offline"
+                      ? translator.message("mobile.ui.environmentOffline")
                       : targets.length
                         ? query
-                          ? "No results"
-                          : "No matching pull requests"
-                        : "Connect an environment"
+                          ? translator.message("mobile.home.noResults")
+                          : translator.message("mobile.ui.noMatchingPullRequests")
+                        : translator.message("mobile.ui.connectAnEnvironment")
                 }
                 detail={
                   result.error ??
                   (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
+                    ? translator.message("mobile.ui.reconnectToLoadPullRequestsThatArent")
                     : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
+                      ? translator.message(
+                          "mobile.ui.pullRequestsFromTheSelectedEnvironmentsProjects",
+                        )
+                      : translator.message("mobile.ui.addAnEnvironmentInSettingsToBrowse"))
                 }
                 variant="plain"
               />

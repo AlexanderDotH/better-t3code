@@ -2,6 +2,7 @@ import { Pressable, ScrollView } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadListFilters(
   props: Pick<
@@ -17,6 +18,7 @@ export function ThreadListFilters(
     readonly gutter: number;
   },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const selectedEnvironment = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
@@ -31,13 +33,15 @@ export function ThreadListFilters(
       contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 2, paddingBottom: 10, gap: 8 }}
     >
       <ListFilterMenu
-        label={selectedEnvironment?.label ?? "All environments"}
-        accessibilityLabel="Filter threads by environment"
+        label={
+          selectedEnvironment?.label ?? translator.message("mobile.navigation.allEnvironments")
+        }
+        accessibilityLabel={translator.message("mobile.ui.filterThreadsByEnvironment")}
         active={selectedEnvironment !== undefined}
         actions={[
           {
             id: "all",
-            title: "All environments",
+            title: translator.message("mobile.navigation.allEnvironments"),
             state: props.selectedEnvironmentId === null ? "on" : "off",
           },
           ...props.environments.map((environment) => ({
@@ -60,13 +64,13 @@ export function ThreadListFilters(
         }}
       />
       <ListFilterMenu
-        label={selectedProject?.label ?? "All projects"}
-        accessibilityLabel="Filter threads by project"
+        label={selectedProject?.label ?? translator.message("mobile.navigation.allProjects")}
+        accessibilityLabel={translator.message("sidebar.project.filter")}
         active={selectedProject !== undefined}
         actions={[
           {
             id: "all",
-            title: "All projects",
+            title: translator.message("mobile.navigation.allProjects"),
             state: props.selectedProjectKey === null ? "on" : "off",
           },
           ...props.projects.map((project) => ({
@@ -88,7 +92,7 @@ export function ThreadListFilters(
       {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Reset thread filters"
+          accessibilityLabel={translator.message("mobile.ui.resetThreadFilters")}
           className="h-8 w-8 items-center justify-center"
           onPress={() => {
             props.onEnvironmentChange(null);

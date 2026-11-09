@@ -25,6 +25,7 @@ import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
@@ -34,6 +35,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [searchQuery, setSearchQuery] = useState("");
   const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
@@ -67,7 +69,7 @@ export function ThreadFileNavigatorPane(props: {
   };
   const nativeHeaderRightBarButtonItems = [
     {
-      accessibilityLabel: "Close files",
+      accessibilityLabel: translator.message("mobile.ui.closeFiles"),
       icon: { name: "xmark", type: "sfSymbol" as const },
       identifier: "thread-file-navigator-close",
       onPress: toggleAuxiliaryPane,
@@ -91,7 +93,8 @@ export function ThreadFileNavigatorPane(props: {
           ? entriesQuery.error
           : fileAccess.isPending
             ? null
-            : (fileAccess.error ?? "This connection cannot read host files.")
+            : (fileAccess.error ??
+              translator.message("mobile.ui.thisConnectionCannotReadHostFiles"))
       }
       isPending={fileAccess.isPending || entriesQuery.isPending}
       isRefreshing={entriesQuery.isRefreshing}
@@ -129,7 +132,7 @@ export function ThreadFileNavigatorPane(props: {
               hideShadow={false}
               navigationItemStyle="editor"
               subtitle={props.projectName}
-              title="Files"
+              title={translator.message("mobile.files.title")}
               titleColor={foregroundColor}
               titleFontSize={17}
               titleFontWeight="700"
@@ -150,7 +153,7 @@ export function ThreadFileNavigatorPane(props: {
                     setSearchQuery(event.nativeEvent.text ?? "");
                   }}
                   placement="integratedButton"
-                  placeholder="Search files"
+                  placeholder={translator.message("mobile.files.search")}
                   textColor={foregroundColor}
                   tintColor={foregroundColor}
                 />
@@ -182,14 +185,16 @@ export function ThreadFileNavigatorPane(props: {
         ) : (
           <View className="h-12 flex-row items-center gap-2 px-3">
             <View className="min-w-0 flex-1">
-              <Text className="text-sm font-t3-bold text-foreground">Files</Text>
+              <Text className="text-sm font-t3-bold text-foreground">
+                {translator.message("mobile.files.title")}
+              </Text>
               <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                 {props.projectName}
               </Text>
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Refresh files"
+              accessibilityLabel={translator.message("mobile.files.refresh")}
               hitSlop={8}
               className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
               onPress={entriesQuery.refresh}
@@ -212,12 +217,12 @@ export function ThreadFileNavigatorPane(props: {
               type="monochrome"
             />
             <TextInput
-              accessibilityLabel="Search files"
+              accessibilityLabel={translator.message("mobile.files.search")}
               autoCapitalize="none"
               autoCorrect={false}
               clearButtonMode="while-editing"
               className="min-h-10 flex-1 rounded-xl py-2 text-sm"
-              placeholder="Search files"
+              placeholder={translator.message("mobile.files.search")}
               value={searchQuery}
               onChangeText={setSearchQuery}
             />

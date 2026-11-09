@@ -8,6 +8,7 @@ import type { PullRequestParams } from "./usePullRequestDiff";
 import type { PullRequestStackState } from "./usePullRequestStack";
 import { pullRequestListReviewStatus } from "./pullRequestList";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function PullRequestOverviewLoading({
   summary,
@@ -18,13 +19,14 @@ export function PullRequestOverviewLoading({
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const review = pullRequestListReviewStatus(summary);
   const conflicting = summary.mergeability === "conflicting";
   const clean = summary.mergeability === "mergeable";
   return (
     <View
       className="gap-5"
-      accessibilityLabel="Loading pull request details"
+      accessibilityLabel={translator.message("mobile.ui.loadingPullRequestDetails")}
       accessibilityState={{ busy: true }}
     >
       <PullRequestStackCard params={params} state={stack} />
@@ -33,12 +35,12 @@ export function PullRequestOverviewLoading({
           compact
           title={
             summary.checksState === "passing"
-              ? "Checks completed"
+              ? translator.message("mobile.ui.checksCompleted")
               : summary.checksState === "failing"
-                ? "Checks failing"
+                ? translator.message("mobile.ui.checksFailing")
                 : summary.checksState === "pending"
-                  ? "Checks running"
-                  : "Checks"
+                  ? translator.message("mobile.ui.checksRunning")
+                  : translator.message("pullRequest.filter.checks")
           }
           icon={
             summary.checksState === "passing"
@@ -59,7 +61,7 @@ export function PullRequestOverviewLoading({
         </PullRequestCardRow>
         <PullRequestCardRow
           compact
-          title={review?.accessibleLabel ?? "Reviews"}
+          title={review?.accessibleLabel ?? translator.message("mobile.ui.reviews")}
           icon={review?.icon ?? "bubble.left"}
           tint={review?.tint}
         >
@@ -72,7 +74,7 @@ export function PullRequestOverviewLoading({
               ? `Conflicts with ${summary.baseBranch}`
               : clean
                 ? `No conflicts with ${summary.baseBranch}`
-                : "Branch"
+                : translator.message("mobile.git.branch")
           }
           icon={
             conflicting ? PullRequestGlyph.conflicting : clean ? "checkmark.circle" : "arrow.branch"
@@ -97,7 +99,9 @@ export function PullRequestOverviewLoading({
         </View>
       ) : null}
       <View className="gap-3">
-        <PullRequestSectionHeading>Description</PullRequestSectionHeading>
+        <PullRequestSectionHeading>
+          {translator.message("pullRequest.description")}
+        </PullRequestSectionHeading>
         <View className="gap-3 py-1">
           <View className="h-4 w-full rounded bg-subtle-strong" />
           <View className="h-4 w-full rounded bg-subtle-strong" />

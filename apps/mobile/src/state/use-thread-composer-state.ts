@@ -116,6 +116,8 @@ import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
@@ -137,7 +139,10 @@ export function appendReviewCommentToDraft(input: {
       reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4),
     )
   ) {
-    Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+    Dialog.alert(
+      currentInterfaceTranslator().message("mobile.ui.tooManyContextItems"),
+      currentInterfaceTranslator().message("mobile.ui.removeSomeContextFromTheDraftAnd"),
+    );
     return;
   }
   if (input.attachments && input.attachments.length > 0) {
@@ -195,6 +200,7 @@ export function updateThreadDraftModelSelection(
 }
 
 export function useThreadComposerState() {
+  const translator = useMobileInterfaceTranslator();
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
@@ -423,7 +429,10 @@ export function useThreadComposerState() {
       edit.existingAttachments.length === 0 &&
       draft.attachments.length === 0
     ) {
-      Dialog.alert("Add a message", "A queued message cannot be left empty.");
+      Dialog.alert(
+        translator.message("mobile.ui.addAMessage"),
+        translator.message("mobile.ui.aQueuedMessageCannotBeLeftEmpty"),
+      );
       return;
     }
     if (
@@ -431,7 +440,7 @@ export function useThreadComposerState() {
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
       Dialog.alert(
-        "Too many attachments",
+        translator.message("mobile.ui.tooManyAttachments"),
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return;
@@ -454,8 +463,10 @@ export function useThreadComposerState() {
       finishSave(false);
       const error = squashAtomCommandFailure(prepared);
       Dialog.alert(
-        "Could not save the queued message",
-        error instanceof Error ? error.message : "Your edit is still in the composer.",
+        translator.message("mobile.ui.couldNotSaveTheQueuedMessage"),
+        error instanceof Error
+          ? error.message
+          : translator.message("mobile.ui.yourEditIsStillInTheComposer"),
       );
       return;
     }
@@ -490,8 +501,8 @@ export function useThreadComposerState() {
       // The run left the queue during the save; its exit already told the composer what happened.
       if (!finishSave(false)) return;
       Dialog.alert(
-        "Could not save the queued message",
-        "It may have already started. Your edit is still in the composer.",
+        translator.message("mobile.ui.couldNotSaveTheQueuedMessage"),
+        translator.message("mobile.ui.itMayHaveAlreadyStartedYourEdit"),
       );
       return;
     }
@@ -540,7 +551,7 @@ export function useThreadComposerState() {
     ) {
       setThreadComposerError(
         threadKey,
-        "Sending is paused while the original provider session is active elsewhere.",
+        translator.message("mobile.ui.sendingIsPausedWhileTheOriginalProvider"),
       );
       return null;
     }
@@ -573,7 +584,7 @@ export function useThreadComposerState() {
     // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
     if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
-        "Too many attachments",
+        translator.message("mobile.ui.tooManyAttachments"),
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return null;
@@ -581,7 +592,7 @@ export function useThreadComposerState() {
 
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
-      Dialog.alert("Too much context", contextBlockReason);
+      Dialog.alert(translator.message("mobile.ui.tooMuchContext"), contextBlockReason);
       return null;
     }
 
@@ -610,7 +621,10 @@ export function useThreadComposerState() {
       if (!readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope))
         return null;
       if (thread.activeProviderThreadId === null) {
-        Dialog.alert("Start a Codex thread first", "Send a message before you submit feedback.");
+        Dialog.alert(
+          translator.message("chat.feedback.startCodexFirst"),
+          translator.message("chat.feedback.sendMessageFirst"),
+        );
         return null;
       }
       const metadata = makeQueuedMessageMetadata();
@@ -748,7 +762,9 @@ export function useThreadComposerState() {
         appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
         setThreadComposerError(
           threadKey,
-          error instanceof Error ? error.message : "Failed to save the queued message.",
+          error instanceof Error
+            ? error.message
+            : translator.message("mobile.ui.failedToSaveTheQueuedMessage"),
         );
       },
     );

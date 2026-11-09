@@ -4,6 +4,7 @@ import {
 } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
 import { NumberField } from "../../../components/ui/NumberField";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export type AutoSettleDaysFieldProps = Pick<
   ComponentProps<typeof NumberField>,
@@ -11,12 +12,13 @@ export type AutoSettleDaysFieldProps = Pick<
 >;
 
 export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <NumberField
       {...props}
       min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
       max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      label="Days before auto-settle"
+      label={translator.message("mobile.ui.daysBeforeAutoSettle")}
       formatValue={(value) => `${value} ${value === 1 ? "day" : "days"}`}
     />
   );

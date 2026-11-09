@@ -17,6 +17,7 @@ import {
   pickSharedServerSettings,
   supportsSharedSettingsSync,
 } from "@t3tools/client-runtime/state/shared-settings";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
@@ -27,6 +28,7 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
  * lets the user push the reference out.
  */
 export function AutoSettleSettingsRows() {
+  const translator = useMobileInterfaceTranslator();
   const { environments } = useEnvironments();
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "server settings update",
@@ -83,13 +85,13 @@ export function AutoSettleSettingsRows() {
     <>
       <SettingsSwitchRow
         icon="arrow.triangle.branch"
-        label="Auto-settle merged threads"
+        label={translator.message("mobile.settings.autoSettleMergedThreads")}
         value={referenceSettings.sidebarAutoSettleOnMerge}
         onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
       />
       <SettingsSwitchRow
         icon="clock"
-        label="Auto-settle inactive threads"
+        label={translator.message("settings.application.title.autoSettleInactive")}
         subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}
         value={afterDays !== null}
         onValueChange={(value) =>
@@ -98,7 +100,9 @@ export function AutoSettleSettingsRows() {
       />
       {afterDays !== null ? (
         <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
-          <Text className="flex-1 text-lg text-foreground">Days before auto-settle</Text>
+          <Text className="flex-1 text-lg text-foreground">
+            {translator.message("mobile.ui.daysBeforeAutoSettle")}
+          </Text>
           <TextInput
             className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
             keyboardType="number-pad"
@@ -107,14 +111,16 @@ export function AutoSettleSettingsRows() {
             onChangeText={setDaysDraft}
             onBlur={commitDays}
             onSubmitEditing={commitDays}
-            accessibilityLabel="Days before auto-settle"
+            accessibilityLabel={translator.message("mobile.ui.daysBeforeAutoSettle")}
           />
         </View>
       ) : null}
       {mismatches.length > 0 ? (
         <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
           <View className="min-w-0 flex-1">
-            <Text className="text-lg text-foreground">Settings differ</Text>
+            <Text className="text-lg text-foreground">
+              {translator.message("mobile.ui.settingsDiffer")}
+            </Text>
             <Text className="text-sm text-foreground-muted">
               {mismatches.map((mismatch) => mismatch.label).join(", ")}
             </Text>
@@ -141,7 +147,9 @@ export function AutoSettleSettingsRows() {
             }}
             className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
           >
-            <Text className="text-base font-t3-medium text-foreground">Apply to all</Text>
+            <Text className="text-base font-t3-medium text-foreground">
+              {translator.message("mobile.ui.applyToAll")}
+            </Text>
           </Pressable>
         </View>
       ) : null}

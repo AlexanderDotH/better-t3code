@@ -21,6 +21,7 @@ import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { resolveCloudPublicConfig } from "./publicConfig";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 function readRelayUrl(): string | null {
   return resolveCloudPublicConfig().relay.url;
@@ -114,7 +115,11 @@ function requireRelayUrl(): Effect.Effect<string, CloudEnvironmentLinkError> {
   const relayUrl = readRelayUrl();
   return relayUrl
     ? Effect.succeed(relayUrl)
-    : Effect.fail(new CloudEnvironmentLinkError({ message: "Relay URL is not configured." }));
+    : Effect.fail(
+        new CloudEnvironmentLinkError({
+          message: currentInterfaceTranslator().message("mobile.ui.relayUrlIsNotConfigured"),
+        }),
+      );
 }
 
 function endpointOrigin(httpBaseUrl: string) {
@@ -132,12 +137,16 @@ function ensureLinkedEnvironmentMatches(input: {
 }): Effect.Effect<void, CloudEnvironmentLinkError> {
   if (input.link.environmentId !== input.expectedEnvironmentId) {
     return new CloudEnvironmentLinkError({
-      message: "Relay returned credentials for a different environment.",
+      message: currentInterfaceTranslator().message(
+        "mobile.ui.relayReturnedCredentialsForADifferentEnvironment",
+      ),
     });
   }
   if (input.link.endpoint.providerKind !== input.expectedProviderKind) {
     return new CloudEnvironmentLinkError({
-      message: "Relay returned credentials for a different endpoint provider.",
+      message: currentInterfaceTranslator().message(
+        "mobile.ui.relayReturnedCredentialsForADifferentEndpoint",
+      ),
     });
   }
   return Effect.void;
@@ -160,7 +169,9 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
 ): Effect.fn.Return<void, CloudEnvironmentLinkError, LinkEnvironmentToCloudRequirements> {
   if (!input.connection.bearerToken) {
     return yield* new CloudEnvironmentLinkError({
-      message: "Only a locally paired bearer connection can be linked to the cloud.",
+      message: currentInterfaceTranslator().message(
+        "mobile.ui.onlyALocallyPairedBearerConnectionCan",
+      ),
     });
   }
   const localBearerToken = input.connection.bearerToken;

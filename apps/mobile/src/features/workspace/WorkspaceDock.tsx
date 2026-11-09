@@ -5,8 +5,10 @@ import { GlassSurface } from "../../components/ui/GlassSurface";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WORKSPACE_DOCK } from "./workspace-tabs-state";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
+  const translator = useMobileInterfaceTranslator();
   const workspace = useWorkspaceTabs()!;
   return (
     <View
@@ -27,7 +29,11 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
               <Pressable
                 key={tab}
                 accessibilityRole="tab"
-                accessibilityLabel={tab === "threads" ? "Threads" : "Pull requests"}
+                accessibilityLabel={
+                  tab === "threads"
+                    ? translator.message("mobile.settings.section.threads")
+                    : translator.message("mobile.ui.pullRequests")
+                }
                 accessibilityState={{ selected }}
                 onPress={() => {
                   if (selected) return;
@@ -59,7 +65,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="New chat"
+          accessibilityLabel={translator.message("mobile.ui.newChat")}
           onPress={props.onNewTask}
           className="flex-1 items-center justify-center"
         >

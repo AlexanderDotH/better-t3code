@@ -8,6 +8,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ComposerFeedback({
   submission,
@@ -16,6 +17,7 @@ export function ComposerFeedback({
   readonly submission: CodexFeedbackSubmission;
   readonly onDismiss: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const notice = codexFeedbackNotice(submission);
   if (!notice) return null;
   return (
@@ -27,7 +29,7 @@ export function ComposerFeedback({
           </Text>
           {submission.status !== "uploading" ? (
             <Pressable
-              accessibilityLabel="Dismiss feedback notice"
+              accessibilityLabel={translator.message("mobile.ui.dismissFeedbackNotice")}
               accessibilityRole="button"
               hitSlop={12}
               onPress={onDismiss}
@@ -49,7 +51,7 @@ export function ComposerFeedback({
         ) : null}
         {submission.status === "sent" ? (
           <Button
-            label="Copy ID"
+            label={translator.message("chat.feedback.copyId")}
             tone="text"
             onPress={() =>
               copyTextWithHaptic(submission.feedbackId, { target: "Codex feedback thread ID" })

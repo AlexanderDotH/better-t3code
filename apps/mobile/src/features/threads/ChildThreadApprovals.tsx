@@ -13,8 +13,10 @@ import { AppText } from "../../components/ui/AppText";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PendingApprovalCard } from "./PendingApprovalCard";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
+  const translator = useMobileInterfaceTranslator();
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const [responding, setResponding] = useState(false);
@@ -39,7 +41,9 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             const failure = squashAtomCommandFailure(result);
             setError(
-              failure instanceof Error ? failure.message : "Failed to submit approval decision.",
+              failure instanceof Error
+                ? failure.message
+                : translator.message("mobile.ui.failedToSubmitApprovalDecision"),
             );
           }
           setResponding(false);

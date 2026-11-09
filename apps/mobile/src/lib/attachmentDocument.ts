@@ -17,6 +17,7 @@ import { localAttachmentPreviewAtom, localAttachmentPreviewState } from "./local
 import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
 import { refreshAssetUrl, useFreshAssetUrl, useRefreshAssetUrl } from "../state/assets";
 import { attachmentDocumentPresentation } from "./attachmentDocumentPresentation";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 
@@ -81,6 +82,7 @@ export function useAttachmentDocument(input: {
   readonly environmentId: EnvironmentId | null;
   readonly attachment: FileBackedComposerAttachment | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const kind = filePreviewKind(input, { richDocuments: false });
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
@@ -153,8 +155,8 @@ export function useAttachmentDocument(input: {
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not share file",
-        cause instanceof Error ? cause.message : "Please try again.",
+        translator.message("mobile.ui.couldNotShareFile"),
+        cause instanceof Error ? cause.message : translator.message("mobile.ui.pleaseTryAgain"),
       );
     }
   };

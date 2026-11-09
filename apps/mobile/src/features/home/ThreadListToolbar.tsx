@@ -18,6 +18,7 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceConnectionState } from "../../state/workspace";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadListToolbar(props: {
   readonly searchQuery: string;
@@ -30,6 +31,7 @@ export function ThreadListToolbar(props: {
   readonly onLayout?: (event: LayoutChangeEvent) => void;
   readonly onRequestVisibility?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs();
   const isTabActive = workspace?.isTabActive;
@@ -81,9 +83,9 @@ export function ThreadListToolbar(props: {
   const searchField = (
     <SearchField
       inputRef={searchRef}
-      accessibilityLabel="Search threads"
-      clearAccessibilityLabel="Clear search"
-      placeholder="Search"
+      accessibilityLabel={translator.message("mobile.navigation.searchThreads")}
+      clearAccessibilityLabel={translator.message("mobile.navigation.clearSearch")}
+      placeholder={translator.message("mobile.archive.searchShort")}
       value={props.searchQuery}
       onChangeText={onSearchQueryChange}
     />
@@ -92,7 +94,7 @@ export function ThreadListToolbar(props: {
     <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
       {(open) => (
         <AndroidHeaderIconButton
-          accessibilityLabel="Filter threads"
+          accessibilityLabel={translator.message("mobile.ui.filterThreads")}
           icon={filterIcon}
           onPress={open}
         />
@@ -111,7 +113,7 @@ export function ThreadListToolbar(props: {
         searchField={searchField}
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search threads"
+        searchAccessibilityLabel={translator.message("mobile.navigation.searchThreads")}
         titleAccessibilityLabel="T3 Code, Threads"
         onOpenEnvironments={props.onOpenEnvironments}
         filter={filterButton}

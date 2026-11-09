@@ -61,7 +61,7 @@ function WorkspaceRootTitle(props: {
     ? translator.message("mobile.settings.title")
     : enabled.length
       ? tabTitles[state.selectedTab]
-      : "Navigation";
+      : translator.message("browser.chrome.navigation");
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
@@ -147,7 +147,7 @@ function WorkspaceRootContent() {
                 ? translator.message("mobile.settings.title")
                 : enabled.length
                   ? tabTitles[state.selectedTab]
-                  : "Navigation",
+                  : translator.message("browser.chrome.navigation"),
               headerShown: true,
               headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
               headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
@@ -175,7 +175,9 @@ function WorkspaceRootContent() {
                 ? [
                     {
                       accessibilityLabel:
-                        state.selectedTab === "threads" ? "Search threads" : "Search pull requests",
+                        state.selectedTab === "threads"
+                          ? translator.message("mobile.navigation.searchThreads")
+                          : translator.message("pullRequest.search"),
                       icon: "magnifyingglass" as const,
                       onPress: () => {
                         dispatchHardwareKeyboardCommand("focusSearch");
@@ -184,7 +186,7 @@ function WorkspaceRootContent() {
                   ]
                 : []),
               {
-                accessibilityLabel: "Settings",
+                accessibilityLabel: translator.message("mobile.settings.title"),
                 icon: "gearshape",
                 onPress: () => selectTab("settings"),
               },

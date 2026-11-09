@@ -13,6 +13,7 @@ import { useScaledTextRole } from "../../features/settings/appearance/useScaledT
 import { useToolbarLayout } from "./useToolbarLayout";
 import { useControlTheme } from "./useControlTheme";
 import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -49,6 +50,7 @@ export function AndroidScreenHeader(props: {
   /** One row with the subtitle after the title, for screens short on height. */
   readonly compact?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { colors } = useControlTheme();
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
@@ -83,7 +85,7 @@ export function AndroidScreenHeader(props: {
             <View collapsable={false} className="flex-row items-center">
               {props.onBack ? (
                 <IconButton
-                  accessibilityLabel="Navigate up"
+                  accessibilityLabel={translator.message("mobile.accessibility.navigateUp")}
                   icon="arrow.left"
                   tintColorClassName="accent-header-foreground"
                   onPress={props.onBack}
@@ -192,7 +194,7 @@ export function AndroidScreenHeader(props: {
                 >
                   {(open) => (
                     <IconButton
-                      accessibilityLabel="More actions"
+                      accessibilityLabel={translator.message("mobile.ui.moreActions")}
                       icon="ellipsis"
                       tintColorClassName="accent-header-foreground"
                       onPress={open}

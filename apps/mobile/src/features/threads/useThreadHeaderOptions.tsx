@@ -12,6 +12,7 @@ import {
   useThreadGitCenterHeaderItems,
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
@@ -24,6 +25,7 @@ export function useThreadHeaderOptions(props: {
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const usesDuoHeader = usesNativeWorkspaceColumns && isDuoDevice(deviceType);
@@ -44,7 +46,7 @@ export function useThreadHeaderOptions(props: {
     ...(props.onReturnToThread
       ? [
           withNativeGlassHeaderItem({
-            accessibilityLabel: "Return to chat",
+            accessibilityLabel: translator.message("mobile.files.returnToChat"),
             icon: { name: "chevron.left", type: "sfSymbol" as const },
             identifier: "thread-left-return",
             onPress: props.onReturnToThread,
@@ -56,10 +58,10 @@ export function useThreadHeaderOptions(props: {
     ...(!usesDuoHeader && !props.draft
       ? [
           withNativeGlassHeaderItem({
-            accessibilityLabel: "New task",
+            accessibilityLabel: translator.message("mobile.navigation.newTask"),
             icon: { name: "square.and.pencil", type: "sfSymbol" as const },
             identifier: "thread-left-new-task",
-            label: "New task",
+            label: translator.message("mobile.navigation.newTask"),
             onPress: startNewTask,
             type: "button" as const,
           }),
@@ -69,7 +71,7 @@ export function useThreadHeaderOptions(props: {
   const canGoBack = navigation.canGoBack();
   const compactHomeHeaderItems: NativeHeaderItems = [
     withNativeGlassHeaderItem({
-      accessibilityLabel: "Go to threads list",
+      accessibilityLabel: translator.message("mobile.thread.goToList"),
       icon: { name: "list.bullet", type: "sfSymbol" as const },
       identifier: "thread-left-home",
       onPress: () => navigation.dispatch(StackActions.replace("Home")),

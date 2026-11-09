@@ -9,6 +9,7 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
@@ -270,8 +271,8 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "non-text",
-      title: "Non-text file",
-      message: "Diff preview is not available for this file format.",
+      title: currentInterfaceTranslator().message("mobile.ui.nonTextFile"),
+      message: currentInterfaceTranslator().message("mobile.ui.diffPreviewIsNotAvailableForThis"),
       actionLabel: null,
     };
   }
@@ -282,9 +283,9 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "large",
-      title: "Large diff",
-      message: "Large diffs are not rendered by default.",
-      actionLabel: "Load diff",
+      title: currentInterfaceTranslator().message("mobile.ui.largeDiff"),
+      message: currentInterfaceTranslator().message("mobile.ui.largeDiffsAreNotRenderedByDefault"),
+      actionLabel: currentInterfaceTranslator().message("mobile.ui.loadDiff"),
     };
   }
 

@@ -18,12 +18,14 @@ import {
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsAboutRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="About">
+    <SettingsScreen title={translator.message("settings.about.title")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -38,6 +40,7 @@ export function SettingsAboutRouteScreen() {
 }
 
 function AppSettingsSection() {
+  const translator = useMobileInterfaceTranslator();
   const [checkState, setCheckState] = useState<{
     readonly state: AppUpdateCheckState;
     // "Up to date" is a confirmation that fades back to idle.
@@ -66,7 +69,8 @@ function AppSettingsSection() {
     await settlePromise(() =>
       runAppUpdateCheck({
         applyMode: "immediate",
-        onFailure: (message) => Dialog.alert("Update failed", message),
+        onFailure: (message) =>
+          Dialog.alert(translator.message("settings.connections.serverUpdateFailed"), message),
         onStateChange: (state) =>
           setCheckState({
             state,
@@ -88,15 +92,15 @@ function AppSettingsSection() {
 
   const statusLabel =
     updateState === "checking"
-      ? "Checking…"
+      ? translator.message("cloud.environment.checking")
       : updateState === "downloading"
-        ? "Downloading…"
+        ? translator.message("serverUpdate.stage.downloading")
         : updateState === "ready"
-          ? "Update ready"
+          ? translator.message("mobile.settings.update.ready")
           : updateState === "restarting"
-            ? "Restarting…"
+            ? translator.message("serverUpdate.stage.restarting")
             : updateState === "current"
-              ? "Up to date"
+              ? translator.message("git.workbench.upToDate")
               : null;
 
   const versionRow = (
@@ -108,7 +112,9 @@ function AppSettingsSection() {
         type="monochrome"
         weight="regular"
       />
-      <Text className="flex-1 text-lg text-foreground">Version</Text>
+      <Text className="flex-1 text-lg text-foreground">
+        {translator.message("mobile.settings.versionLabel")}
+      </Text>
       <View className="items-end">
         <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
         {statusLabel ? (
@@ -119,15 +125,27 @@ function AppSettingsSection() {
   );
 
   return (
-    <SettingsSection title="App">
-      <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
-      <SettingsRow icon="stethoscope" label="Diagnostics" target="SettingsDiagnostics" />
+    <SettingsSection title={translator.message("mobile.settings.section.app")}>
+      <SettingsRow
+        icon="internaldrive"
+        label={translator.message("mobile.ui.clientStorage")}
+        target="SettingsClientStorage"
+      />
+      <SettingsRow
+        icon="stethoscope"
+        label={translator.message("settings.betterT3.subgroup.diagnostics")}
+        target="SettingsDiagnostics"
+      />
       <SettingsRow
         icon="doc.on.doc"
-        label="Open source licenses"
+        label={translator.message("mobile.ui.openSourceLicenses")}
         target="SettingsOpenSourceLicenses"
       />
-      <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
+      <SettingsRow
+        icon="doc.text"
+        label={translator.message("mobile.settings.legal")}
+        fullScreenTarget="SettingsLegal"
+      />
       {updateCheckAvailable ? (
         <Pressable
           accessibilityLabel={`Version ${versionLabel}`}

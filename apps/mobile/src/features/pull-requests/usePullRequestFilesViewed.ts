@@ -10,8 +10,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { viewedOverlay, type ViewedState } from "./pullRequestFilesViewed";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullRequestDetail | null) {
+  const translator = useMobileInterfaceTranslator();
   const registry = use(RegistryContext);
   const target = pullRequestTarget(params);
   const scopeKey = pullRequestReviewKey(params);
@@ -69,7 +71,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       return {
         ...current,
         presses: rest,
-        error: cause instanceof Error ? cause.message : "Could not update viewed files.",
+        error:
+          cause instanceof Error
+            ? cause.message
+            : translator.message("mobile.ui.couldNotUpdateViewedFiles"),
       };
     });
     refresh();

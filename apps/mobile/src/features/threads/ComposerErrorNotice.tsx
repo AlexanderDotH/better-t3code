@@ -1,10 +1,12 @@
 import { View } from "react-native";
 import { Notice } from "../../components/ui/Notice";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ComposerErrorNotice(props: {
   readonly message: string;
   readonly onDismiss: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="px-4 pb-3">
       <Notice
@@ -13,7 +15,7 @@ export function ComposerErrorNotice(props: {
         iconTone="danger"
         floating
         onDismiss={props.onDismiss}
-        dismissLabel="Dismiss error"
+        dismissLabel={translator.message("chat.composer.dismissError")}
       />
     </View>
   );

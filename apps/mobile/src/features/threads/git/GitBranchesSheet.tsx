@@ -109,18 +109,18 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
         >
           <View className="bg-card android:gap-3 android:rounded-[20px] android:p-4 ios:gap-2 ios:rounded-[18px] ios:border ios:border-border ios:px-4 ios:py-4">
             <Text className="android:text-foreground android:text-base android:font-t3-medium ios:text-foreground-secondary ios:text-2xs ios:font-t3-bold ios:tracking-[1px] ios:uppercase">
-              New branch
+              {translator.message("mobile.git.newBranch")}
             </Text>
             <TextInput
               value={newBranchName}
               onChangeText={setNewBranchName}
               placeholder="feature/mobile-polish"
-              accessibilityLabel="New branch name"
+              accessibilityLabel={translator.message("git.branches.newName")}
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             <SheetActionButton
               icon="plus"
-              label="Create & checkout"
+              label={translator.message("mobile.git.createCheckout")}
               tone="primary"
               disabled={!canChangeThreadBranch || busy || newBranchName.trim().length === 0}
               onPress={() => {
@@ -137,31 +137,35 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
           <View className="bg-card android:gap-3 android:rounded-[20px] android:p-4 ios:gap-2 ios:rounded-[18px] ios:border ios:border-border ios:px-4 ios:py-4">
             <Text className="android:text-foreground android:text-base android:font-t3-medium ios:text-foreground-secondary ios:text-2xs ios:font-t3-bold ios:tracking-[1px] ios:uppercase">
-              New worktree
+              {translator.message("mobile.settings.projects.settings.newWorktree")}
             </Text>
             {Platform.OS === "android" ? (
-              <Text className="text-foreground-secondary text-sm">Base branch</Text>
+              <Text className="text-foreground-secondary text-sm">
+                {translator.message("mobile.thread.baseBranch")}
+              </Text>
             ) : null}
             <TextInput
               value={worktreeBaseBranch}
               onChangeText={setWorktreeBaseBranchOverride}
               placeholder="main"
-              accessibilityLabel="Worktree base branch"
+              accessibilityLabel={translator.message("mobile.ui.worktreeBaseBranch")}
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             {Platform.OS === "android" ? (
-              <Text className="text-foreground-secondary text-sm">New branch</Text>
+              <Text className="text-foreground-secondary text-sm">
+                {translator.message("mobile.git.newBranch")}
+              </Text>
             ) : null}
             <TextInput
               value={worktreeBranchName}
               onChangeText={setWorktreeBranchName}
               placeholder="feature/mobile-thread"
-              accessibilityLabel="Worktree branch name"
+              accessibilityLabel={translator.message("mobile.ui.worktreeBranchName")}
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             <SheetActionButton
               icon="square.split.2x1"
-              label="Create worktree"
+              label={translator.message("mobile.git.createWorktree")}
               tone="primary"
               disabled={
                 !canChangeThreadBranch ||
@@ -186,27 +190,27 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
           <View className="gap-2">
             <Text className="text-foreground-secondary android:px-4 android:pb-1 android:pt-3 android:text-sm android:font-t3-medium ios:text-2xs ios:font-t3-bold ios:tracking-[1px] ios:uppercase">
-              Existing branches
+              {translator.message("mobile.git.existingBranches")}
             </Text>
             {branchesLoading ? (
               <Text className="text-foreground-secondary text-sm font-medium android:px-4">
-                Loading branches...
+                {translator.message("mobile.ui.loadingBranches")}
               </Text>
             ) : null}
             {!branchesLoading && availableBranches.length === 0 ? (
               <Text className="text-foreground-secondary text-sm font-medium android:px-4">
-                No local branches found.
+                {translator.message("mobile.git.noBranches")}
               </Text>
             ) : null}
             {availableBranches.map((branch) => {
               const disabled = disabledExistingBranches.has(branch.name);
               const subtitle = branch.worktreePath
                 ? branch.worktreePath === currentWorktreePath
-                  ? "Checked out in this thread"
-                  : "Checked out in another worktree"
+                  ? translator.message("mobile.git.checkedOutHere")
+                  : translator.message("mobile.git.checkedOutElsewhere")
                 : branch.isDefault
-                  ? "Default branch"
-                  : "Local branch";
+                  ? translator.message("mobile.git.defaultBranch")
+                  : translator.message("mobile.git.localBranch");
 
               return (
                 <Pressable

@@ -85,7 +85,7 @@ export function SettingsListScreen(props: {
                     value: workspace.state.tabs.settings.query,
                     onChangeText: (query) =>
                       workspace.dispatch({ type: "query", tab: "settings", query }),
-                    placeholder: "Search settings",
+                    placeholder: translator.message("settings.application.search.aria"),
                   }
                 : undefined
             }
@@ -114,9 +114,9 @@ function ConfiguredSettingsRouteScreen() {
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const accountLabel = !isLoaded
-    ? "Checking"
+    ? translator.message("mobile.ui.checking")
     : !isSignedIn
-      ? "Sign in"
+      ? translator.message("mobile.settings.signIn")
       : (user?.primaryEmailAddress?.emailAddress ?? "Signed in");
 
   return (
@@ -125,7 +125,7 @@ function ConfiguredSettingsRouteScreen() {
         {
           id: "account",
           icon: "person.crop.circle",
-          label: "T3 Account",
+          label: translator.message("mobile.ui.t3Account"),
           value: accountLabel,
           disabled: !isLoaded,
           onPress: () => navigation.navigate("SettingsAuth"),
@@ -137,7 +137,7 @@ function ConfiguredSettingsRouteScreen() {
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
-          label: "Notifications",
+          label: translator.message("mobile.ui.notifications"),
           target: "SettingsNotifications",
         },
       ]}
@@ -224,7 +224,7 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
         ) : (
           <EmptyState
             variant="plain"
-            title="No results"
+            title={translator.message("mobile.home.noResults")}
             detail={`No settings match “${query.trim()}”.`}
           />
         )}

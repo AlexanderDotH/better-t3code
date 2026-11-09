@@ -63,6 +63,7 @@ import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
@@ -74,6 +75,7 @@ function ReviewHeader(
     readonly onReturnToThread: () => void;
   },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const presentation = useReviewHeaderPresentation(props);
   const sectionAction = (section: ReviewSectionItem | null, title: string): AppBarMenuItem => ({
@@ -92,14 +94,17 @@ function ReviewHeader(
       onBack={props.onReturnToThread}
       hideBottomBorder
       options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
-      backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
+      backInSplitView={{
+        accessibilityLabel: translator.message("mobile.review.backToChat"),
+        icon: "chevron.left",
+      }}
       actions={
         props.showChangedFilesToggle
           ? [
               {
                 accessibilityLabel: panes.auxiliaryPaneVisible
-                  ? "Hide changed files"
-                  : "Show changed files",
+                  ? translator.message("mobile.review.hideChangedFiles")
+                  : translator.message("mobile.review.showChangedFiles"),
                 icon: "sidebar.right",
                 selected: panes.auxiliaryPaneVisible,
                 onPress: toggleAuxiliaryPane,
@@ -112,7 +117,7 @@ function ReviewHeader(
         ...(props.showSectionToolbar
           ? [
               {
-                title: "Select diff",
+                title: translator.message("mobile.ui.selectDiff"),
                 icon: presentation.menuIcon,
                 items: [
                   {
@@ -128,7 +133,7 @@ function ReviewHeader(
                     ? [
                         {
                           id: "turns",
-                          title: "Turn",
+                          title: translator.message("mobile.review.turn"),
                           items: props.sectionMenu.turns.map((section) => ({
                             id: `section:${section.id}`,
                             title: section.title,
@@ -152,6 +157,7 @@ function ReviewHeader(
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View
       className={cn(
@@ -159,7 +165,9 @@ const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
         Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-warning-border",
       )}
     >
-      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">Partial diff</Text>
+      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">
+        {translator.message("mobile.review.partialDiff")}
+      </Text>
       <Text className="text-xs leading-normal text-warning-foreground">{props.notice}</Text>
     </View>
   );
@@ -302,6 +310,7 @@ function ReviewFileNavigator({
   onSelectFile,
   ref,
 }: ReviewFileNavigatorProps) {
+  const translator = useMobileInterfaceTranslator();
   const theme = useUniwindTheme();
   const sheetColor = theme["--color-sheet"];
   const foregroundColor = theme["--color-foreground"];
@@ -379,7 +388,7 @@ function ReviewFileNavigator({
               hideShadow={false}
               navigationItemStyle="editor"
               subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
-              title="Changed files"
+              title={translator.message("mobile.review.changedFiles")}
               titleColor={foregroundColor}
               titleFontSize={17}
               titleFontWeight="700"
@@ -399,14 +408,16 @@ function ReviewFileNavigator({
     >
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Changed files"
+          title={translator.message("mobile.review.changedFiles")}
           subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
           hideBottomBorder
         />
       ) : (
         <View className="border-b border-border" style={{ paddingTop: headerInset }}>
           <View className="px-4 py-3">
-            <Text className="text-sm font-t3-bold text-foreground">Changed files</Text>
+            <Text className="text-sm font-t3-bold text-foreground">
+              {translator.message("mobile.review.changedFiles")}
+            </Text>
             <Text className="text-xs text-foreground-muted">
               {files.length} {files.length === 1 ? "file" : "files"}
             </Text>
@@ -424,6 +435,7 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
@@ -648,7 +660,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
             Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-border",
           )}
         >
-          <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
+          <Text className="text-sm font-t3-bold text-foreground">
+            {translator.message("mobile.review.unavailable")}
+          </Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
         </View>,
       );
@@ -792,14 +806,16 @@ export function ReviewSheet(props: ReviewSheetProps) {
                         : "border-b border-border bg-card px-4 py-5"
                     }
                   >
-                    <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                    <Text className="text-sm font-t3-bold text-foreground">
+                      {translator.message("mobile.review.noDiffs")}
+                    </Text>
                     <Text
                       className={cn(
                         "text-xs leading-normal text-foreground-muted",
                         Platform.OS === "android" && "mt-2 text-center",
                       )}
                     >
-                      This thread has no ready turn diffs and the worktree diff is empty.
+                      {translator.message("mobile.review.noDiffsDescription")}
                     </Text>
                   </View>
                 )
@@ -811,7 +827,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   )}
                 >
                   <AppActivityIndicator size="small" />
-                  <Text className="text-xs text-foreground-muted">Loading diff…</Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {translator.message("mobile.review.loadingDiff")}
+                  </Text>
                 </View>
               ) : parsedDiff.kind === "empty" ? (
                 <View
@@ -821,14 +839,16 @@ export function ReviewSheet(props: ReviewSheetProps) {
                       : "border-b border-border bg-card px-4 py-5"
                   }
                 >
-                  <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
+                  <Text className="text-sm font-t3-bold text-foreground">
+                    {translator.message("mobile.review.noChanges")}
+                  </Text>
                   <Text
                     className={cn(
                       "text-xs leading-normal text-foreground-muted",
                       Platform.OS === "android" && "mt-2 text-center",
                     )}
                   >
-                    {selectedSection.subtitle ?? "This diff is empty."}
+                    {selectedSection.subtitle ?? translator.message("mobile.review.emptyDiff")}
                   </Text>
                 </View>
               ) : parsedDiff.kind === "raw" ? (
@@ -855,7 +875,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   )}
                 >
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    Native diff view unavailable. Showing the raw patch.
+                    {translator.message("mobile.ui.nativeDiffViewUnavailableShowingTheRaw")}
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                     <Text selectable className="font-mono text-xs leading-relaxed text-foreground">

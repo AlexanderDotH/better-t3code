@@ -1,17 +1,18 @@
 import type { useReviewHeaderPresentation as useIosReviewHeaderPresentation } from "./useReviewHeaderPresentation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
-// oxlint-disable-next-line t3code/no-hookless-use-function -- Android stub of a hook; the iOS file calls hooks.
 export function useReviewHeaderPresentation(
   props: Parameters<typeof useIosReviewHeaderPresentation>[0],
 ): ReturnType<typeof useIosReviewHeaderPresentation> {
+  const translator = useMobileInterfaceTranslator();
   return {
-    title: "Review changes",
-    subtitle: props.androidSubtitle || "Select a diff",
+    title: translator.message("mobile.review.changes"),
+    subtitle: props.androidSubtitle || translator.message("mobile.ui.selectADiff"),
     gitMenu: null,
     menuIcon: "ellipsis.circle",
     refreshAction: {
       id: "refresh",
-      title: "Refresh current diff",
+      title: translator.message("mobile.review.refreshDiff"),
       disabled: !props.selectedSection || props.selectedSection.isLoading,
       onPress: () => {
         void props.onRefresh();

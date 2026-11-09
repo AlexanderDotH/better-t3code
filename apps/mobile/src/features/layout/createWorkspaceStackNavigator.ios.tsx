@@ -64,6 +64,7 @@ import {
   WorkspaceSlotOptionsContext,
   slotScreenOptions,
 } from "../../native/v5-workspace-context";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type ViewProps = ComponentProps<typeof NativeStackView>;
 type Descriptor = ViewProps["descriptors"][string];
@@ -164,6 +165,7 @@ function ColumnScreen(props: {
 function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
+  const translator = useMobileInterfaceTranslator();
   const {
     layout,
     panes,
@@ -453,7 +455,7 @@ function WorkspaceColumns(
                       pointerEvents="box-none"
                     >
                       <WorkspacePaneDivider
-                        accessibilityLabel="Resize inspector"
+                        accessibilityLabel={translator.message("mobile.ui.resizeInspector")}
                         currentWidth={inspectorWidth}
                         resizeDirection={-1}
                         onResizeStart={() => {

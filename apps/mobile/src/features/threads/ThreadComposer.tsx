@@ -153,6 +153,7 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
@@ -325,15 +326,27 @@ const COMPOSER_ATTACHMENT_ENTERING =
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
 const FOLLOW_UP_ACTION_LABEL = {
-  queue: "Queue",
-  steer: "Steer now",
-  restart: "Restart turn",
+  get queue() {
+    return currentInterfaceTranslator().message("mobile.ui.queueLabel");
+  },
+  get steer() {
+    return currentInterfaceTranslator().message("mobile.ui.steerNow");
+  },
+  get restart() {
+    return currentInterfaceTranslator().message("mobile.ui.restartTurn");
+  },
 } as const;
 
 const FOLLOW_UP_ACTION_SUBTITLE = {
-  queue: "Run after the current turn",
-  steer: "Interrupt what the agent is doing",
-  restart: "Start the turn over with this message",
+  get queue() {
+    return currentInterfaceTranslator().message("mobile.ui.runAfterTheCurrentTurn");
+  },
+  get steer() {
+    return currentInterfaceTranslator().message("mobile.ui.interruptWhatTheAgentIsDoing");
+  },
+  get restart() {
+    return currentInterfaceTranslator().message("mobile.ui.startTheTurnOverWithThisMessage");
+  },
 } as const;
 
 function SendActionButton(props: {
@@ -343,6 +356,7 @@ function SendActionButton(props: {
   readonly disabled: boolean;
   readonly onSend: (followUp?: ActiveTurnComposerAction) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { presentation } = props;
   const button = (
     <ComposerActionButton
@@ -362,7 +376,7 @@ function SendActionButton(props: {
   );
   return (
     <Menu
-      accessibilityLabel="Choose how to send this message"
+      accessibilityLabel={translator.message("mobile.ui.chooseHowToSendThisMessage")}
       shouldOpenOnLongPress
       actions={actions.map((action) => ({
         id: action,
@@ -618,7 +632,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     if (AsyncResult.isFailure(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not improve prompt",
+        translator.message("mobile.ui.couldNotImprovePrompt"),
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -704,7 +718,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
     onShowUsageLimits(report);
     if (!report) {
-      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert(
+        translator.message("mobile.ui.usageLimitsUnavailable"),
+        translator.message("mobile.ui.thisProviderDoesNotCurrentlyReportLimits"),
+      );
     }
     return report !== null;
   };
@@ -739,7 +756,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
-    label: props.selectedThread.title || "Untitled thread",
+    label: props.selectedThread.title || translator.message("mobile.ui.untitledThread"),
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
@@ -785,12 +802,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
-    (queuedEdit?.saving === true ? "Saving…" : null) ??
+    (queuedEdit?.saving === true ? translator.message("mobile.settings.agents.saving") : null) ??
     props.sendBlockedReason ??
     (activeHarness && !draft.messageReply
       ? translator.message("chat.harness.sendingPaused")
       : null) ??
-    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    (pendingPastedTextAttachmentCount > 0
+      ? translator.message("mobile.ui.attachingPastedText")
+      : null) ??
     attachmentBlockReason ??
     (composerMode === "deep-plan" && !draft.messageReply
       ? resolveDeepPlanningAvailability({
@@ -995,7 +1014,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     <View className="min-w-0 shrink flex-row items-center">
       {props.serverConfig?.environment.capabilities.agentWorkflowVersion !== undefined ? (
         <ComposerActionButton
-          accessibilityLabel="Improve prompt"
+          accessibilityLabel={translator.message("mobile.thread.improvePrompt")}
           icon="sparkles"
           disabled={!canImprovePrompt || isSubmissionLocked || !draftMessage.trim()}
           onPress={() => void improveDraft()}
@@ -1223,7 +1242,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
         {modelUnavailable ? (
           <Button
-            label="Model unavailable. Open model settings."
+            label={translator.message("mobile.ui.modelUnavailableOpenModelSettings")}
             tone="text"
             onPress={openSettings}
           />
@@ -1377,8 +1396,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         insertPaste();
                       } else {
                         Dialog.alert(
-                          "Pasted text is too large for this message",
-                          "Remove some text or an attachment, then paste again.",
+                          translator.message("mobile.ui.pastedTextIsTooLargeForThis"),
+                          translator.message("mobile.ui.removeSomeTextOrAnAttachmentThen"),
                         );
                       }
                       return;
@@ -1473,7 +1492,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={translator.message("mobile.ui.stopAgent")}
                     icon="stop.fill"
                     variant="danger"
                     disabled={!props.canOperateThread}
@@ -1482,7 +1501,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : showResumeAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Resume thread"
+                    accessibilityLabel={translator.message("mobile.ui.resumeThread")}
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
@@ -1542,7 +1561,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   {showStopAction ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={translator.message("mobile.ui.stopAgent")}
                       icon="stop.fill"
                       variant="danger"
                       disabled={!props.canOperateThread}
@@ -1551,7 +1570,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Resume thread"
+                      accessibilityLabel={translator.message("mobile.ui.resumeThread")}
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
                       onPress={() => void handleResumeQueue()}
@@ -1573,7 +1592,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
         {props.connectionState === "connected" && !props.canOperateThread ? (
           <Text className="pt-2 text-xs text-foreground-muted">
-            This connection cannot control this task. You can still edit your draft.
+            {translator.message("mobile.ui.thisConnectionCannotControlThisTaskYou")}
           </Text>
         ) : null}
       </Animated.View>

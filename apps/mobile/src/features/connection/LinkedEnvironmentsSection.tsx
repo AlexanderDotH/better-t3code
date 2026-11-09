@@ -12,6 +12,7 @@ import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function LinkedEnvironmentsSection(props: {
   readonly environmentId: EnvironmentId;
@@ -56,7 +57,7 @@ export function LinkedEnvironmentsSection(props: {
                   ? health.detail
                   : health.expiresInDays !== null
                     ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}`
-                    : "Reachable";
+                    : currentInterfaceTranslator().message("mobile.ui.reachable");
           return (
             <View key={link.environmentId} className="gap-0.5 p-4">
               <Text className="text-base font-t3-bold text-foreground">{link.label}</Text>

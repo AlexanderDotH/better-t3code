@@ -9,6 +9,7 @@ import { useEnvironmentQuery } from "../../../state/query";
 import { serverEnvironment } from "../../../state/server";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "../usePullRequestDiff";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export function useReviewGuidesEnabled(params: PullRequestParams) {
   const settings = useAtomValue(
@@ -18,6 +19,7 @@ export function useReviewGuidesEnabled(params: PullRequestParams) {
 }
 
 export function useReviewGuide(params: PullRequestParams, visible = true) {
+  const translator = useMobileInterfaceTranslator();
   const target = pullRequestTarget(params);
   const enabled = useReviewGuidesEnabled(params);
   const query = useEnvironmentQuery(enabled ? composerPullRequests.reviewGuide(target) : null);
@@ -51,7 +53,11 @@ export function useReviewGuide(params: PullRequestParams, visible = true) {
     setStarting(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "Could not start the review guide.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.couldNotStartTheReviewGuide"),
+      );
     }
   };
   return { ...query, enabled, canWrite, running, write, startError: error };

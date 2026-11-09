@@ -53,6 +53,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { CopyTextButton } from "./CopyTextButton";
 import { ThreadForkButton } from "./ThreadForkButton";
 import { useThreadForkAction } from "./use-thread-fork-action";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ProposedPlanCard(props: {
   readonly environmentId: EnvironmentId;
@@ -61,6 +62,7 @@ export function ProposedPlanCard(props: {
   readonly plan: Extract<OrchestrationV2TurnItem, { readonly type: "proposed_plan" }>;
   readonly renderMarkdown: (text: string) => ReactNode;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const config = useEnvironmentServerConfig(props.environmentId);
   const thread = useThreadShell(scopeThreadRef(props.environmentId, props.plan.threadId));
@@ -186,7 +188,7 @@ export function ProposedPlanCard(props: {
       })
       .catch((error: unknown) => {
         Dialog.alert(
-          "Could not implement plan",
+          translator.message("mobile.ui.couldNotImplementPlan"),
           error instanceof Error ? error.message : String(error),
         );
       })
@@ -215,7 +217,7 @@ export function ProposedPlanCard(props: {
     const relativePath = path.trim();
     if (!canWrite || !props.workspaceRoot || inFlight.current) return;
     if (!relativePath) {
-      Dialog.alert("Enter a workspace path");
+      Dialog.alert(translator.message("chat.plan.enterWorkspacePath"));
       return;
     }
     inFlight.current = true;
@@ -229,10 +231,13 @@ export function ProposedPlanCard(props: {
       setSaving(false);
     });
     if (result._tag === "Success") {
-      Dialog.alert("Plan saved to workspace", result.value.relativePath);
+      Dialog.alert(translator.message("chat.plan.saved"), result.value.relativePath);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      Dialog.alert("Could not save plan", error instanceof Error ? error.message : String(error));
+      Dialog.alert(
+        translator.message("chat.plan.saveFailed"),
+        error instanceof Error ? error.message : String(error),
+      );
     }
   };
 
@@ -240,9 +245,12 @@ export function ProposedPlanCard(props: {
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="flex-row items-center gap-2">
         <Text accessibilityRole="header" className="flex-1 font-t3-bold text-base text-foreground">
-          {proposedPlanTitle(props.markdown) ?? "Proposed plan"}
+          {proposedPlanTitle(props.markdown) ?? translator.message("mobile.subagent.proposedPlan")}
         </Text>
-        <CopyTextButton accessibilityLabel="Copy plan" text={contents} />
+        <CopyTextButton
+          accessibilityLabel={translator.message("mobile.ui.copyPlan")}
+          text={contents}
+        />
         {forkAction ? (
           <ThreadForkButton
             boundary={{ kind: "proposed-plan", planId: PlanId.make(props.plan.planId) }}
@@ -255,12 +263,16 @@ export function ProposedPlanCard(props: {
       {props.renderMarkdown(stripDisplayedPlanMarkdown(props.markdown))}
       <View className="flex-row flex-wrap gap-2">
         <Button
-          label={implementing ? "Starting..." : "Implement"}
+          label={
+            implementing
+              ? translator.message("mobile.ui.starting")
+              : translator.message("mobile.thread.implement")
+          }
           disabled={!available || implementing}
           onPress={() => void implement(false)}
         />
         <Button
-          label="New thread"
+          label={translator.message("sidebar.thread.new")}
           tone="secondary"
           disabled={!available || implementing}
           onPress={() => void implement(true)}
@@ -276,24 +288,27 @@ export function ProposedPlanCard(props: {
           />
         ) : null}
         <Button
-          label="Refine"
+          label={translator.message("chat.composer.refine")}
           tone="secondary"
           disabled={!available || implementing}
           onPress={refine}
         />
 
         <Button
-          label={saving ? "Saving..." : "Save to workspace"}
+          label={
+            saving
+              ? translator.message("mobile.ui.saving")
+              : translator.message("chat.plan.saveWorkspace")
+          }
           tone="secondary"
           disabled={!canWrite || !props.workspaceRoot || saving}
           onPress={() =>
             Dialog.prompt({
-              title: "Save plan to workspace",
+              title: translator.message("chat.plan.saveTitle"),
               // The write replaces an existing file, and the RPC has no create-only mode.
-              message:
-                "Enter a path relative to the thread's workspace. A file already at that path is replaced.",
+              message: translator.message("mobile.ui.enterAPathRelativeToTheThreads"),
               initialValue: lastPath,
-              confirmText: "Save",
+              confirmText: translator.message("mobile.connection.save"),
               onConfirm: (path) => void save(path),
             })
           }

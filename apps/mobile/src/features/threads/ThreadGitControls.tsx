@@ -29,6 +29,7 @@ import {
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -155,7 +156,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       ? {
           ...action,
           disabled: true,
-          hint: "This connection cannot change source control.",
+          hint: translator.message("mobile.ui.thisConnectionCannotChangeSourceControl"),
         }
       : action;
   })();
@@ -207,8 +208,8 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ) {
       if (props.hasThread === false) {
         Dialog.alert(
-          "Choose a feature branch",
-          "Switch branches before publishing changes from this draft.",
+          translator.message("mobile.ui.chooseAFeatureBranch"),
+          translator.message("mobile.ui.switchBranchesBeforePublishingChangesFromThis"),
         );
         return;
       }
@@ -387,7 +388,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           {
             description:
               props.hasThread === false
-                ? "Available after the first message"
+                ? translator.message("mobile.ui.availableAfterTheFirstMessage")
                 : translator.message("mobile.git.reviewChangesDetail"),
             disabled: !model.isRepo || props.hasThread === false,
             icon: { name: "text.bubble", type: "sfSymbol" },
@@ -398,9 +399,9 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           ...(props.onMergeBack
             ? [
                 {
-                  description: "Bring this thread's latest turn into its source",
+                  description: translator.message("mobile.ui.bringThisThreadsLatestTurnIntoIts"),
                   icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
-                  label: "Merge back to source",
+                  label: translator.message("mobile.ui.mergeBackToSource"),
                   onPress: props.onMergeBack,
                   type: "action" as const,
                 },
@@ -409,7 +410,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           {
             description:
               props.hasThread === false
-                ? "Available after the first message"
+                ? translator.message("mobile.ui.availableAfterTheFirstMessage")
                 : translator.message("mobile.git.moreDetail"),
             disabled: props.hasThread === false,
             icon: { name: "ellipsis", type: "sfSymbol" },
@@ -581,7 +582,7 @@ function threadGitMenuDefinition(
   model: ReturnType<typeof useThreadGitControlModel>,
 ): AppBarMenu {
   return {
-    title: "Git controls",
+    title: currentInterfaceTranslator().message("mobile.ui.gitControls"),
     icon: "point.topleft.down.curvedto.point.bottomright.up",
     separateBackground: false,
     items: [
@@ -605,24 +606,24 @@ function threadGitMenuDefinition(
       },
       {
         id: "git-review",
-        title: "Review changes",
+        title: currentInterfaceTranslator().message("mobile.review.changes"),
         icon: "text.bubble",
         disabled: !model.isRepo || props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Turn diffs and worktree changes",
+            ? currentInterfaceTranslator().message("mobile.ui.availableAfterTheFirstMessage")
+            : currentInterfaceTranslator().message("mobile.git.reviewChangesDetail"),
         onPress: model.openReview,
       },
       {
         id: "git-more",
-        title: "More",
+        title: currentInterfaceTranslator().message("mobile.git.more"),
         icon: "ellipsis",
         disabled: props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Commit, files, branches",
+            ? currentInterfaceTranslator().message("mobile.ui.availableAfterTheFirstMessage")
+            : currentInterfaceTranslator().message("mobile.git.moreDetail"),
         onPress: model.openGitInspector,
       },
     ],

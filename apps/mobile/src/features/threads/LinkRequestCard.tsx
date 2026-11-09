@@ -38,6 +38,8 @@ import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoi
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 /** The same five levels as web's access picker: read-only, then the runtime modes. */
 const ACCESS_CHOICES: ReadonlyArray<{
@@ -47,8 +49,14 @@ const ACCESS_CHOICES: ReadonlyArray<{
 }> = [
   {
     access: "read-only",
-    label: "Read only",
-    description: "Read projects and threads. Cannot start, message or change anything.",
+    get label() {
+      return currentInterfaceTranslator().message("settings.connections.readOnly");
+    },
+    get description() {
+      return currentInterfaceTranslator().message(
+        "mobile.ui.readProjectsAndThreadsCannotStartMessage",
+      );
+    },
   },
   ...RUNTIME_MODE_CHOICES.map((choice) => ({ ...choice, access: choice.mode })),
 ];
@@ -102,6 +110,7 @@ function PendingLinkRequest(props: {
   readonly environmentId: EnvironmentId;
   readonly item: LinkRequestItem;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { item } = props;
   const [open, setOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
@@ -134,7 +143,7 @@ function PendingLinkRequest(props: {
       <View className="gap-1">
         <Text className="font-t3-bold text-base text-foreground">
           {picksMachine(item)
-            ? "Link a machine to this environment"
+            ? translator.message("mobile.ui.linkAMachineToThisEnvironment")
             : `Link ${target} to this environment`}
         </Text>
         {item.reason.trim() ? (
@@ -158,7 +167,11 @@ function PendingLinkRequest(props: {
       {canAnswer ? (
         <>
           <Button
-            label={picksMachine(item) ? "Choose machine…" : "Review link…"}
+            label={
+              picksMachine(item)
+                ? translator.message("mobile.ui.chooseMachine")
+                : translator.message("mobile.ui.reviewLink")
+            }
             disabled={declining}
             onPress={() => setOpen(true)}
             tone="primary"
@@ -173,13 +186,15 @@ function PendingLinkRequest(props: {
               className="px-1 py-1 active:opacity-60 disabled:opacity-50"
               onPress={() => void decline()}
             >
-              <Text className="font-sans text-xs text-foreground-muted">Decline</Text>
+              <Text className="font-sans text-xs text-foreground-muted">
+                {translator.message("mobile.thread.decline")}
+              </Text>
             </Pressable>
           </View>
         </>
       ) : (
         <Text className="font-sans text-xs text-foreground-muted">
-          Only a session that manages access here can answer this.
+          {translator.message("mobile.ui.onlyASessionThatManagesAccessHere")}
         </Text>
       )}
       {open ? (
@@ -229,6 +244,7 @@ function LinkRequestSheet(props: {
   readonly item: LinkRequestItem;
   readonly onClose: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { item } = props;
   const insets = useSafeAreaInsets();
   const pickMachine = picksMachine(item);
@@ -332,11 +348,10 @@ function LinkRequestSheet(props: {
       >
         <View className="gap-1">
           <Text className="font-t3-bold text-lg text-foreground">
-            {pickMachine ? "Link a machine" : `Link ${targetName}`}
+            {pickMachine ? translator.message("mobile.ui.linkAMachine") : `Link ${targetName}`}
           </Text>
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            Agents here can then launch, message and wait on threads there. It appears in that
-            machine's Connections, where it can be revoked.
+            {translator.message("mobile.ui.agentsHereCanThenLaunchMessageAnd")}
           </Text>
           {!pickMachine && item.url !== undefined ? (
             <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>
@@ -345,7 +360,7 @@ function LinkRequestSheet(props: {
           ) : null}
         </View>
         {pickMachine ? (
-          <SettingsSection title="Machine">
+          <SettingsSection title={translator.message("mobile.ui.machine")}>
             {machines.map((machine, index) => (
               <MachineRow
                 key={machine.environmentId}
@@ -360,8 +375,8 @@ function LinkRequestSheet(props: {
               />
             ))}
             <SettingsChoiceRow
-              label="Another address…"
-              description="Link a machine this app does not know, by its https or Tailscale address."
+              label={translator.message("mobile.ui.anotherAddress")}
+              description={translator.message("mobile.ui.linkAMachineThisAppDoesNot")}
               selected={selected === ANOTHER_ADDRESS}
               separated={machines.length > 0}
               disabled={busy}
@@ -375,7 +390,7 @@ function LinkRequestSheet(props: {
         {needsAddress && !(item.url !== undefined && item.environmentId === undefined) ? (
           <View className="gap-2">
             <TextInput
-              accessibilityLabel="Address"
+              accessibilityLabel={translator.message("mobile.ui.address")}
               placeholder="https://machine.tailnet.ts.net"
               value={address}
               onChangeText={setAddress}
@@ -403,8 +418,8 @@ function LinkRequestSheet(props: {
             {canMint ? null : (
               <View className="gap-2">
                 <TextInput
-                  accessibilityLabel="Pairing code"
-                  placeholder="Paste the code"
+                  accessibilityLabel={translator.message("mobile.connection.pairingCode")}
+                  placeholder={translator.message("mobile.ui.pasteTheCode")}
                   value={pairingCode}
                   onChangeText={setPairingCode}
                   editable={!busy}
@@ -420,7 +435,7 @@ function LinkRequestSheet(props: {
                 </Text>
               </View>
             )}
-            <SettingsSection title="What agents here may do there">
+            <SettingsSection title={translator.message("mobile.ui.whatAgentsHereMayDoThere")}>
               {ACCESS_CHOICES.map((choice, index) => (
                 <SettingsChoiceRow
                   key={choice.access}
@@ -434,8 +449,7 @@ function LinkRequestSheet(props: {
               ))}
             </SettingsSection>
             <Text className="font-sans text-xs text-foreground-muted">
-              An agent here never gets more there than its own mode here either. Threads it starts
-              there cannot change that environment's own threads, projects or settings.
+              {translator.message("mobile.ui.anAgentHereNeverGetsMoreThere")}
             </Text>
           </>
         )}
@@ -449,13 +463,25 @@ function LinkRequestSheet(props: {
           </Text>
         ) : null}
         <Button
-          label={busy ? "Linking…" : useExisting ? "Use this link" : "Link"}
+          label={
+            busy
+              ? translator.message("mobile.ui.linking")
+              : useExisting
+                ? translator.message("mobile.ui.useThisLink")
+                : translator.message("mobile.ui.link")
+          }
           disabled={busy || !ready}
           onPress={() => void submit()}
           tone="primary"
           fullWidth
         />
-        <Button label="Cancel" tone="secondary" disabled={busy} onPress={props.onClose} fullWidth />
+        <Button
+          label={translator.message("mobile.settings.projects.settings.cancel")}
+          tone="secondary"
+          disabled={busy}
+          onPress={props.onClose}
+          fullWidth
+        />
       </ScrollView>
     </Modal>
   );
@@ -471,7 +497,7 @@ function MachineRow(props: {
 }) {
   const { machine } = props;
   const status = machine.linked
-    ? "Linked"
+    ? currentInterfaceTranslator().message("settings.harness.linked")
     : machine.connected
       ? null
       : machine.connectOnly

@@ -800,7 +800,9 @@ export function HomeScreen(props: HomeScreenProps) {
             }
           >
             <Text className="text-sm text-foreground-muted">
-              {group.expanded ? "Show fewer" : `Show ${group.hiddenCount} more`}
+              {group.expanded
+                ? translator.message("mobile.ui.showFewer")
+                : `Show ${group.hiddenCount} more`}
             </Text>
           </Pressable>
         ) : null}

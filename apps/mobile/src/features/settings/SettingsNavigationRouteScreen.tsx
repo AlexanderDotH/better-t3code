@@ -24,8 +24,10 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { resolveWorkspaceTabOrder } from "../workspace/workspace-tabs-state";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsNavigationRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const tabLabels = useWorkspaceTabLabels();
   const insets = useSafeAreaInsets();
   const order = useNavigationTabOrder();
@@ -38,7 +40,7 @@ export function SettingsNavigationRouteScreen() {
   const ready = customizable && AsyncResult.isSuccess(preferences) && !preferences.waiting;
   const save = useAtomSet(updateMobilePreferencesAtom);
   return (
-    <SettingsScreen title="Navigation tabs">
+    <SettingsScreen title={translator.message("mobile.settings.navigationTabs")}>
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-4 px-5 pt-4"
@@ -46,10 +48,10 @@ export function SettingsNavigationRouteScreen() {
       >
         <Text className="px-2 text-sm text-foreground-muted">
           {customizable
-            ? "Phones show the first four enabled sections; Android tablet rails show all enabled sections. Remaining sections appear at the top of Settings. Hidden sections appear only here. Settings always stays last. Saved on this device."
-            : "Tab customization becomes available when there are six sections, including Settings."}
+            ? translator.message("mobile.ui.phonesShowTheFirstFourEnabledSections")
+            : translator.message("mobile.ui.tabCustomizationBecomesAvailableWhenThereAre")}
         </Text>
-        <SettingsSection title="Tab order">
+        <SettingsSection title={translator.message("mobile.ui.tabOrder")}>
           {order.map((tab, index) => (
             <View key={tab} className="flex-row items-center gap-3 px-4 py-3">
               <SymbolView
@@ -61,15 +63,18 @@ export function SettingsNavigationRouteScreen() {
                 <Text>{tabLabels[tab]}</Text>
                 <Text className="text-xs text-foreground-muted">
                   {hidden.includes(tab)
-                    ? "Hidden"
+                    ? translator.message("mobile.ui.hidden")
                     : enabled.indexOf(tab) < capacity
                       ? `Tab ${enabled.indexOf(tab) + 1}`
-                      : "In Settings"}
+                      : translator.message("mobile.ui.inSettings")}
                 </Text>
               </View>
               <IconButton
                 icon={hidden.includes(tab) ? "eye.slash" : "eye"}
-                accessibilityLabel={`${hidden.includes(tab) ? "Show" : "Hide"} ${tabLabels[tab]}`}
+                accessibilityLabel={translator.message(
+                  hidden.includes(tab) ? "mobile.ui.showTab" : "mobile.ui.hideTab",
+                  { tab: tabLabels[tab] },
+                )}
                 disabled={!ready}
                 onPress={() =>
                   save({
@@ -118,7 +123,7 @@ export function SettingsNavigationRouteScreen() {
           ))}
         </SettingsSection>
         <Button
-          label="Reset tabs"
+          label={translator.message("mobile.ui.resetTabs")}
           tone="text"
           disabled={!ready}
           onPress={() => save({ navigationTabOrder: [], hiddenNavigationTabs: [] })}

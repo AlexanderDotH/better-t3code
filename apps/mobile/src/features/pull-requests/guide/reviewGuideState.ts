@@ -1,4 +1,5 @@
 import type { PullRequestReviewGuideResult } from "@t3tools/contracts";
+import { currentInterfaceTranslator } from "../../../localization/currentInterfaceTranslator";
 
 export function reviewGuideState(data: PullRequestReviewGuideResult | null) {
   const guide = data?.guide ?? null;
@@ -24,18 +25,20 @@ export function guideNoticeState(state: {
   if (state.running) {
     return {
       kind: "writing" as const,
-      title: "Rewriting guide",
+      title: currentInterfaceTranslator().message("mobile.ui.rewritingGuide"),
       description: guide
-        ? "You can keep reading this guide while the agent writes the update."
-        : "An agent is reading the change and writing the tour. You can leave and come back when it’s ready.",
-      action: guide ? "Rewriting…" : "Writing guide…",
+        ? currentInterfaceTranslator().message("mobile.ui.youCanKeepReadingThisGuideWhile")
+        : currentInterfaceTranslator().message("mobile.ui.anAgentIsReadingTheChangeAnd"),
+      action: guide
+        ? currentInterfaceTranslator().message("mobile.ui.rewriting")
+        : currentInterfaceTranslator().message("mobile.ui.writingGuide"),
     };
   }
   const error = state.startError ?? failure;
   if (error) {
     return {
       kind: "failed" as const,
-      title: "Could not write guide",
+      title: currentInterfaceTranslator().message("mobile.ui.couldNotWriteGuide"),
       description: error,
       action: "Try again",
     };
@@ -43,7 +46,7 @@ export function guideNoticeState(state: {
   if (state.error) {
     return {
       kind: "unavailable" as const,
-      title: "Could not refresh guide",
+      title: currentInterfaceTranslator().message("mobile.ui.couldNotRefreshGuide"),
       description: state.error,
       action: "Try again",
     };
@@ -51,24 +54,23 @@ export function guideNoticeState(state: {
   if (!state.data) {
     return {
       kind: "loading" as const,
-      title: "Review guide",
-      description: "Checking for a saved guide…",
+      title: currentInterfaceTranslator().message("mobile.ui.reviewGuide"),
+      description: currentInterfaceTranslator().message("mobile.ui.checkingForASavedGuide"),
       action: "Loading guide…",
     };
   }
   if (stale) {
     return {
       kind: "stale" as const,
-      title: "New changes since this guide",
-      description: "You can read the previous guide, or rewrite it for the latest changes.",
+      title: currentInterfaceTranslator().message("mobile.ui.newChangesSinceThisGuide"),
+      description: currentInterfaceTranslator().message("mobile.ui.youCanReadThePreviousGuideOr"),
       action: "Rewrite guide",
     };
   }
   return {
     kind: guide ? ("ready" as const) : ("empty" as const),
-    title: "Review guide",
-    description:
-      "Get a tour of the change, with code excerpts and notes on what needs a closer look.",
+    title: currentInterfaceTranslator().message("mobile.ui.reviewGuide"),
+    description: currentInterfaceTranslator().message("mobile.ui.getATourOfTheChangeWith"),
     action: "Write guide",
   };
 }

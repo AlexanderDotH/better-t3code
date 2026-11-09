@@ -12,6 +12,7 @@ import {
   type SkillDescriptor,
   type SkillTarget,
 } from "@t3tools/contracts";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export function supportsEnvironmentAgentSettings(
   capabilities: ExecutionEnvironmentCapabilities | null | undefined,
@@ -65,7 +66,7 @@ export function providerStatusLabel(provider: ServerProvider): string {
   return provider.status === "ready"
     ? provider.version
       ? `Ready · ${provider.version}`
-      : "Ready"
+      : currentInterfaceTranslator().message("settings.projects.memory.status.ready")
     : (provider.message ?? provider.status);
 }
 
@@ -78,7 +79,9 @@ export function providerRateLimitLabel(
     const minutes = Math.ceil(rateLimit.retryAfterSeconds / 60);
     return `Rate limited · Retry in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
   }
-  return rateLimit.status === "exhausted" ? "Rate limit exhausted" : "Rate limited";
+  return rateLimit.status === "exhausted"
+    ? currentInterfaceTranslator().message("mobile.ui.rateLimitExhausted")
+    : currentInterfaceTranslator().message("mobile.ui.rateLimited");
 }
 
 export function providerAuthMutationAccess(
@@ -128,7 +131,11 @@ export function mobileProviderAuthEventPresentation(
     case "failed":
       return { kind: "error", message: event.failure.reason };
     case "cancelled":
-      return { kind: "error", message: event.reason ?? "Sign-in was cancelled." };
+      return {
+        kind: "error",
+        message:
+          event.reason ?? currentInterfaceTranslator().message("mobile.ui.signInWasCancelled"),
+      };
   }
 }
 
@@ -166,13 +173,17 @@ export function providerAuthenticationPresentation(
     return {
       action: hasSavedKey ? "disconnect" : requiresKey ? "connect" : "none",
       actionLabel,
-      credentialActionLabel: hasSavedKey ? "Replace API key" : "Save API key",
+      credentialActionLabel: hasSavedKey
+        ? currentInterfaceTranslator().message("mobile.ui.replaceApiKey")
+        : currentInterfaceTranslator().message("mobile.ui.saveApiKey"),
       credentialLabel: "API key (optional)",
       ...(credential.placeholder ? { credentialPlaceholder: credential.placeholder } : {}),
       detail:
         provider.message ??
         provider.auth.label ??
-        (requiresKey ? "This endpoint requires an API key." : "No API key required."),
+        (requiresKey
+          ? currentInterfaceTranslator().message("mobile.ui.thisEndpointRequiresAnApiKey")
+          : currentInterfaceTranslator().message("mobile.ui.noApiKeyRequired")),
       providerLabel,
       method,
     };
@@ -184,7 +195,9 @@ export function providerAuthenticationPresentation(
       .join(" · ");
     return {
       action: capabilities.canDisconnect ? "disconnect" : "none",
-      actionLabel: capabilities.canDisconnect ? "Disconnect" : "",
+      actionLabel: capabilities.canDisconnect
+        ? currentInterfaceTranslator().message("mobile.settings.agents.disconnect")
+        : "",
       ...(credential
         ? {
             credentialActionLabel: `Replace ${credential.label}`,
@@ -207,7 +220,11 @@ export function providerAuthenticationPresentation(
     : undefined;
   return {
     action: reconnect ? "reconnect" : "connect",
-    actionLabel: credentialActionLabel ?? (reconnect ? "Reconnect" : "Connect"),
+    actionLabel:
+      credentialActionLabel ??
+      (reconnect
+        ? currentInterfaceTranslator().message("chat.environment.reconnect")
+        : currentInterfaceTranslator().message("mobile.settings.agents.connect")),
     ...(credentialActionLabel ? { credentialActionLabel } : {}),
     ...(credentialLabel ? { credentialLabel } : {}),
     ...(credential?.placeholder ? { credentialPlaceholder: credential.placeholder } : {}),

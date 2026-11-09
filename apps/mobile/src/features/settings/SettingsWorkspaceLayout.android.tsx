@@ -7,10 +7,12 @@ import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context
 import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
 import { SettingsListScreen } from "./SettingsRouteScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const SETTINGS_LIST_ROUTE = { key: "settings-sidebar", name: "Settings" };
 
 export function SettingsWorkspaceLayout(props: { readonly children: ReactNode }) {
+  const translator = useMobileInterfaceTranslator();
   const root = useAndroidWorkspaceRoot();
   const { layout } = useAdaptiveWorkspaceLayout();
   const split = root?.settingsOpen === true && layout.usesSplitView;
@@ -43,9 +45,11 @@ export function SettingsWorkspaceLayout(props: { readonly children: ReactNode })
         {emptyDetail ? (
           <View className="absolute inset-0">
             <NavigationRouteContext value={route}>
-              <SettingsScreen title="Settings" workspaceRoot>
+              <SettingsScreen title={translator.message("mobile.settings.title")} workspaceRoot>
                 <View className="flex-1 items-center justify-center p-6">
-                  <AppText className="text-foreground-muted">Select a setting</AppText>
+                  <AppText className="text-foreground-muted">
+                    {translator.message("mobile.ui.selectASetting")}
+                  </AppText>
                 </View>
               </SettingsScreen>
             </NavigationRouteContext>

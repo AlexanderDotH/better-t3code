@@ -6,6 +6,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
 import { createAudioPlaybackSession } from "../../lib/audioSession";
 import { usePlaybackAudioPlayer } from "../voice-input/usePlaybackAudioPlayer";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function timestamp(seconds: number) {
   const value = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
@@ -13,6 +14,7 @@ function timestamp(seconds: number) {
 }
 
 export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
+  const translator = useMobileInterfaceTranslator();
   const player = usePlaybackAudioPlayer(props.uri);
   const status = useAudioPlayerStatus(player);
   const [playbackRequested, setPlaybackRequested] = useState(false);
@@ -49,13 +51,17 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
         <Button
           label="−15s"
           tone="text"
-          accessibilityLabel="Back 15 seconds"
+          accessibilityLabel={translator.message("mobile.ui.back15Seconds")}
           disabled={!status.isLoaded}
           onPress={() => seek(Math.max(0, status.currentTime - 15))}
         />
         <Button
           label={
-            playbackRequested || status.playing ? "Pause" : !status.isLoaded ? "Loading…" : "Play"
+            playbackRequested || status.playing
+              ? translator.message("common.pause")
+              : !status.isLoaded
+                ? translator.message("common.loading")
+                : translator.message("sidebar.script.editor.icon.play")
           }
           tone="secondary"
           disabled={!status.isLoaded && !playbackRequested}
@@ -76,7 +82,7 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
         <Button
           label="+15s"
           tone="text"
-          accessibilityLabel="Forward 15 seconds"
+          accessibilityLabel={translator.message("mobile.ui.forward15Seconds")}
           disabled={!status.isLoaded}
           onPress={() => seek(Math.min(status.duration, status.currentTime + 15))}
         />
@@ -84,10 +90,14 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
       {status.error || seekError ? (
         <View className="items-center gap-3">
           <Text className="text-center text-foreground">
-            This audio could not be played. Try again or save it to open in another app.
+            {translator.message("mobile.ui.thisAudioCouldNotBePlayedTry")}
           </Text>
           <View className="items-center">
-            <Button label="Try again" tone="secondary" onPress={props.onRetry} />
+            <Button
+              label={translator.message("cloud.action.tryAgain")}
+              tone="secondary"
+              onPress={props.onRetry}
+            />
           </View>
         </View>
       ) : null}

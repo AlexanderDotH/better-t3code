@@ -19,6 +19,7 @@ import {
   releaseAudioSession,
 } from "../../lib/audioSession";
 import { usePlaybackAudioPlayer } from "../voice-input/usePlaybackAudioPlayer";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type PreviewProps = {
   readonly source: FilePreviewSource;
@@ -60,6 +61,7 @@ function timestamp(seconds: number) {
 }
 
 function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<string | null> }) {
+  const translator = useMobileInterfaceTranslator();
   // An empty source keeps native buffering off until the user explicitly plays.
   const player = usePlaybackAudioPlayer(null);
   const status = useAudioPlayerStatus(player);
@@ -188,7 +190,11 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            playing ? "Pause audio" : error || status.error ? "Retry audio" : "Play audio"
+            playing
+              ? translator.message("mobile.ui.pauseAudio")
+              : error || status.error
+                ? translator.message("mobile.ui.retryAudio")
+                : translator.message("mobile.ui.playAudio")
           }
           accessibilityState={{ busy }}
           onPress={toggle}
@@ -210,9 +216,9 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
           </View>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
             {error || status.error
-              ? "Unavailable · tap play to retry"
+              ? translator.message("mobile.ui.unavailableTapPlayToRetry")
               : busy
-                ? "Loading…"
+                ? translator.message("common.loading")
                 : `${timestamp(status.currentTime)} / ${status.isLoaded ? timestamp(status.duration) : "--:--"}`}
           </Text>
         </View>

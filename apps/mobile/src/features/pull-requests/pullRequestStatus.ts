@@ -8,31 +8,40 @@ import type {
 } from "@t3tools/contracts";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const STATES = {
   open: {
-    label: "Open",
+    get label() {
+      return currentInterfaceTranslator().message("common.open");
+    },
     icon: PullRequestGlyph.pullRequest,
     tint: "accent-adaptive-emerald-600-400",
     text: "text-adaptive-emerald-600-400",
     background: "bg-adaptive-emerald-500-a12-a16",
   },
   merged: {
-    label: "Merged",
+    get label() {
+      return currentInterfaceTranslator().message("pullRequest.state.merged");
+    },
     icon: PullRequestGlyph.merged,
     tint: "accent-adaptive-violet-600-400",
     text: "text-adaptive-violet-600-400",
     background: "bg-adaptive-violet-500-a12-a16",
   },
   closed: {
-    label: "Closed",
+    get label() {
+      return currentInterfaceTranslator().message("pullRequest.state.closed");
+    },
     icon: PullRequestGlyph.closed,
     tint: "accent-danger-foreground",
     text: "text-danger-foreground",
     background: "bg-danger",
   },
   draft: {
-    label: "Draft",
+    get label() {
+      return currentInterfaceTranslator().message("pullRequest.filter.draft");
+    },
     icon: PullRequestGlyph.draft,
     tint: "accent-icon-muted",
     text: "text-foreground-muted",
@@ -54,37 +63,57 @@ export function pullRequestConflict(pr: {
   readonly baseBranch?: string | undefined;
 }) {
   if (pr.state !== "open" || pr.isDraft || pr.mergeability !== "conflicting") return null;
-  return { label: pr.baseBranch ? `Conflicts with ${pr.baseBranch}` : "Has conflicts" };
+  return {
+    label: pr.baseBranch
+      ? `Conflicts with ${pr.baseBranch}`
+      : currentInterfaceTranslator().message("pullRequest.state.hasConflicts"),
+  };
 }
 
 export function checkStatus(check: PullRequestCheck) {
   switch (check.status) {
     case "success":
       return {
-        label: "Passed",
+        label: currentInterfaceTranslator().message("pullRequest.checkStatus.passed"),
         icon: "checkmark.circle",
         tint: "accent-adaptive-emerald-600-400",
       } as const;
     case "failure":
       return {
-        label: "Failed",
+        label: currentInterfaceTranslator().message("mobile.agentActivity.failed"),
         icon: "exclamationmark.circle",
         tint: "accent-danger-foreground",
       } as const;
     case "action-required":
       return {
-        label: "Action required",
+        label: currentInterfaceTranslator().message("mobile.ui.actionRequired"),
         icon: "exclamationmark.circle",
         tint: "accent-warning-foreground",
       } as const;
     case "pending":
-      return { label: "Pending", icon: "clock", tint: "accent-warning-foreground" } as const;
+      return {
+        label: currentInterfaceTranslator().message("mobile.thread.pending"),
+        icon: "clock",
+        tint: "accent-warning-foreground",
+      } as const;
     case "cancelled":
-      return { label: "Cancelled", icon: "minus", tint: "accent-icon-muted" } as const;
+      return {
+        label: currentInterfaceTranslator().message("pullRequest.checkStatus.cancelled"),
+        icon: "minus",
+        tint: "accent-icon-muted",
+      } as const;
     case "skipped":
-      return { label: "Skipped", icon: "slash.circle", tint: "accent-icon-muted" } as const;
+      return {
+        label: currentInterfaceTranslator().message("pullRequest.checkStatus.skipped"),
+        icon: "slash.circle",
+        tint: "accent-icon-muted",
+      } as const;
     case "neutral":
-      return { label: "Neutral", icon: "minus", tint: "accent-icon-muted" } as const;
+      return {
+        label: currentInterfaceTranslator().message("pullRequest.checkStatus.neutral"),
+        icon: "minus",
+        tint: "accent-icon-muted",
+      } as const;
   }
 }
 
@@ -105,7 +134,7 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   if (required)
     return {
       label: `${required} need attention`,
-      title: "Checks need attention",
+      title: currentInterfaceTranslator().message("mobile.ui.checksNeedAttention"),
       count: `${required} awaiting action`,
       icon: "exclamationmark.circle",
       tint: "accent-warning-foreground",
@@ -113,7 +142,7 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   if (pending)
     return {
       label: `${pending} pending`,
-      title: "Checks running",
+      title: currentInterfaceTranslator().message("mobile.ui.checksRunning"),
       count: `${pending} pending`,
       icon: "clock",
       tint: "accent-warning-foreground",
@@ -121,14 +150,21 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   if (passed)
     return {
       label: `${passed} of ${pr.checks.length} passed`,
-      title: passed === pr.checks.length ? "All checks passed" : "Checks completed",
+      title:
+        passed === pr.checks.length
+          ? currentInterfaceTranslator().message("pullRequest.checksSummary.allPassed")
+          : currentInterfaceTranslator().message("mobile.ui.checksCompleted"),
       count,
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   return {
-    label: pr.checks.length ? `${pr.checks.length} completed` : "No checks reported",
-    title: pr.checks.length ? "Checks completed" : "No checks reported",
+    label: pr.checks.length
+      ? `${pr.checks.length} completed`
+      : currentInterfaceTranslator().message("pullRequest.checksSummary.none"),
+    title: pr.checks.length
+      ? currentInterfaceTranslator().message("mobile.ui.checksCompleted")
+      : currentInterfaceTranslator().message("pullRequest.checksSummary.none"),
     count,
     icon: "minus",
     tint: "accent-icon-muted",
@@ -175,7 +211,7 @@ export function pullRequestReviewSummary(
   );
   if (requested.length)
     return {
-      title: "Changes requested",
+      title: currentInterfaceTranslator().message("pullRequest.review.changesRequested"),
       count: `${requested.length} ${requested.length === 1 ? "reviewer" : "reviewers"}`,
       icon: "xmark.circle.fill",
       tint: "accent-danger-foreground",
@@ -186,7 +222,7 @@ export function pullRequestReviewSummary(
       title:
         approved.length === 1 && approved[0]?.author
           ? `Approved by ${approved[0].author.login}`
-          : "Reviews approved",
+          : currentInterfaceTranslator().message("mobile.ui.reviewsApproved"),
       count: `${approved.length} approved`,
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
@@ -195,15 +231,19 @@ export function pullRequestReviewSummary(
   const commented = reviews.filter((review) => review.reviewState === "COMMENTED");
   if (commented.length && !pr.reviewers.length)
     return {
-      title: "Reviews",
+      title: currentInterfaceTranslator().message("mobile.ui.reviews"),
       count: `${commented.length} commented`,
       icon: "bubble.left",
       tint: "accent-icon-muted",
       reviews,
     } as const;
   return {
-    title: pr.reviewers.length ? "Awaiting review" : "Request a review",
-    count: pr.reviewers.length ? `${pr.reviewers.length} requested` : "None assigned",
+    title: pr.reviewers.length
+      ? currentInterfaceTranslator().message("mobile.ui.awaitingReview")
+      : currentInterfaceTranslator().message("pullRequest.reviewer.request"),
+    count: pr.reviewers.length
+      ? `${pr.reviewers.length} requested`
+      : currentInterfaceTranslator().message("mobile.ui.noneAssigned"),
     icon: "person.2",
     tint: "accent-icon-muted",
     reviews,
@@ -216,7 +256,9 @@ export function pullRequestBranchSummary(
   if (pr.mergeability === "conflicting") return "Has conflicts";
   if (pr.baseComparison === "behind") return `${pr.behindBy ?? ""} behind ${pr.baseBranch}`.trim();
   if (pr.baseComparison === "up-to-date") return "Up to date";
-  return pr.mergeability === "mergeable" ? "No conflicts" : "Not reported";
+  return pr.mergeability === "mergeable"
+    ? currentInterfaceTranslator().message("mobile.ui.noConflicts")
+    : currentInterfaceTranslator().message("mobile.ui.notReported");
 }
 
 export function pullRequestChecksStatus(state: PullRequestChecksState) {

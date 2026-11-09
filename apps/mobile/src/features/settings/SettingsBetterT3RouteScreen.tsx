@@ -760,7 +760,7 @@ export function SettingsBetterT3RouteScreen() {
           {translator.message("settings.betterT3.description")}
         </Text>
 
-        <SettingsSection card title="Usage limits and pacing">
+        <SettingsSection card title={translator.message("mobile.ui.usageLimitsAndPacing")}>
           <BetterT3SettingsSubgroup
             title={translator.message(
               getBetterT3SettingsSubgroupForTarget("usage-pacing")?.titleMessageId ??
@@ -770,8 +770,8 @@ export function SettingsBetterT3RouteScreen() {
           >
             <SettingsSwitchRow
               icon="clock"
-              label="Show usage pace"
-              subtitle="Daily quota allowance and pace guidance, saved on this device."
+              label={translator.message("mobile.ui.showUsagePace")}
+              subtitle={translator.message("mobile.ui.dailyQuotaAllowanceAndPaceGuidanceSaved")}
               disabled={!deviceAvailable}
               value={devicePreferences?.usagePacingEnabled ?? true}
               onValueChange={(usagePacingEnabled) => savePreferences({ usagePacingEnabled })}
@@ -786,8 +786,8 @@ export function SettingsBetterT3RouteScreen() {
           >
             <SettingsSwitchRow
               icon="lock"
-              label="Hard daily budget"
-              subtitle="Stop requests at the daily allowance, including catch-up. Uses the selected environment's calendar day and applies to all its clients. Blocks requests if weekly usage cannot be verified. Provider reporting can delay the stop."
+              label={translator.message("mobile.ui.hardDailyBudget")}
+              subtitle={translator.message("mobile.ui.stopRequestsAtTheDailyAllowanceIncluding")}
               disabled={!environmentAvailable}
               value={serverConfig?.settings.usageHardBudgetEnabled ?? false}
               onValueChange={(usageHardBudgetEnabled) => {
@@ -805,7 +805,7 @@ export function SettingsBetterT3RouteScreen() {
             <SettingsSwitchRow
               icon="clock"
               label="8-hour workday"
-              subtitle="Starts with first observed usage each day. Turn off for a full 24-hour calendar day. Weekends are included."
+              subtitle={translator.message("mobile.ui.startsWithFirstObservedUsageEachDay")}
               disabled={!deviceAvailable || devicePreferences?.usagePacingEnabled === false}
               value={(devicePreferences?.usagePacingWorkdayHours ?? 8) === 8}
               onValueChange={(enabled) =>

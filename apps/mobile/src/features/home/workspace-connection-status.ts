@@ -1,3 +1,4 @@
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 import type { WorkspaceState } from "../../state/workspaceModel";
 
 export interface WorkspaceConnectionStatusPresentation {
@@ -17,21 +18,29 @@ function shouldShowWorkspaceConnectionStatus(state: WorkspaceState): boolean {
 }
 
 function workspaceConnectionStatusLabel(state: WorkspaceState): string {
-  if (state.networkStatus === "offline") return "You are offline";
+  const translator = currentInterfaceTranslator();
+  if (state.networkStatus === "offline")
+    return translator.message("mobile.connection.offlineTitle");
   if (state.hasReadyEnvironment && state.hasSyncingConnectedEnvironment) {
-    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
+    return translator.message(
+      state.hasLoadedShellSnapshot ? "mobile.ui.syncingThreads" : "mobile.ui.loadingThreads",
+    );
   }
   if (state.connectingEnvironments.length === 1) {
-    return `Reconnecting to ${state.connectingEnvironments[0]!.environmentLabel}`;
+    return translator.message("mobile.thread.reconnecting", {
+      environment: state.connectingEnvironments[0]!.environmentLabel,
+    });
   }
   if (state.connectingEnvironments.length > 1) {
     return `Reconnecting ${state.connectingEnvironments.length} environments`;
   }
   if (state.connectionError !== null) return state.connectionError;
   if (state.hasPendingShellSnapshot) {
-    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
+    return translator.message(
+      state.hasLoadedShellSnapshot ? "mobile.ui.syncingThreads" : "mobile.ui.loadingThreads",
+    );
   }
-  return "Not connected";
+  return translator.message("mobile.ui.notConnected");
 }
 
 export function workspaceConnectionStatusPresentation(

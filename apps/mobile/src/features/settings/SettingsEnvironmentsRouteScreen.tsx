@@ -105,11 +105,11 @@ export function SettingsEnvironmentsRouteScreen() {
       trailing={
         Platform.OS === "android" && relaySession ? (
           <AndroidAnchoredMenu
-            title="Environment options"
+            title={translator.message("mobile.ui.environmentOptions")}
             actions={[
               {
                 id: "refresh",
-                title: "Refresh cloud environments",
+                title: translator.message("mobile.ui.refreshCloudEnvironments"),
                 attributes: { disabled: isRefreshingCloud },
               },
             ]}
@@ -119,7 +119,7 @@ export function SettingsEnvironmentsRouteScreen() {
           >
             {(open) => (
               <AndroidHeaderIconButton
-                accessibilityLabel="Environment options"
+                accessibilityLabel={translator.message("mobile.ui.environmentOptions")}
                 icon="ellipsis"
                 onPress={open}
               />

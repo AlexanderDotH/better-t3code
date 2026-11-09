@@ -11,6 +11,7 @@ import {
   type PullRequestListStatsInput,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export const PR_LIST_PAGE_SIZE = 30;
 export type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -467,29 +468,29 @@ export function pullRequestListReviewStatus(
 ) {
   if (entry.reviewDecision === "changes-requested")
     return {
-      label: "Changes",
-      accessibleLabel: "Changes requested",
+      label: currentInterfaceTranslator().message("mobile.git.changes"),
+      accessibleLabel: currentInterfaceTranslator().message("pullRequest.review.changesRequested"),
       icon: "person.fill.xmark",
       tint: "accent-danger-foreground",
     } as const;
   if (entry.reviewDecision === "approved")
     return {
-      label: "Approved",
-      accessibleLabel: "Reviews approved",
+      label: currentInterfaceTranslator().message("pullRequest.reviewOutcome.approved"),
+      accessibleLabel: currentInterfaceTranslator().message("mobile.ui.reviewsApproved"),
       icon: "person.fill.checkmark",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   if (entry.viewerReviewRequested)
     return {
-      label: "Your review",
-      accessibleLabel: "Your review requested",
+      label: currentInterfaceTranslator().message("mobile.ui.yourReview"),
+      accessibleLabel: currentInterfaceTranslator().message("mobile.ui.yourReviewRequested"),
       icon: "person.badge.clock",
       tint: "accent-warning-foreground",
     } as const;
   if (entry.reviewDecision === "review-required")
     return {
-      label: "Review",
-      accessibleLabel: "Review required",
+      label: currentInterfaceTranslator().message("pullRequest.filter.review"),
+      accessibleLabel: currentInterfaceTranslator().message("pullRequest.filter.review.required"),
       icon: "person.badge.clock",
       tint: "accent-icon-muted",
     } as const;

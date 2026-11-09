@@ -87,10 +87,14 @@ export function ModelRowContent(
               </View>
             ) : null}
             {props.option.isHidden ? (
-              <Text className="text-xs text-foreground-muted">Hidden</Text>
+              <Text className="text-xs text-foreground-muted">
+                {translator.message("mobile.ui.hidden")}
+              </Text>
             ) : null}
             {props.option.isUnavailable ? (
-              <Text className="text-xs text-foreground">Unavailable</Text>
+              <Text className="text-xs text-foreground">
+                {translator.message("mobile.settings.projects.settings.unavailable")}
+              </Text>
             ) : null}
           </View>
           {props.option.subtitle ? (
@@ -106,7 +110,10 @@ export function ModelRowContent(
       </Pressable>
       {props.onToggleHidden ? (
         <Pressable
-          accessibilityLabel={`${props.option.isHidden ? "Show" : "Hide"} model: ${props.option.providerLabel}, ${props.option.label}`}
+          accessibilityLabel={translator.message(
+            props.option.isHidden ? "mobile.ui.showModelNamed" : "mobile.ui.hideModelNamed",
+            { provider: props.option.providerLabel, model: props.option.label },
+          )}
           accessibilityRole="button"
           accessibilityState={{ disabled: props.hiddenUpdatePending === true }}
           className="min-h-11 min-w-11 items-center justify-center"

@@ -2,12 +2,13 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export type EnvironmentRecoveryAction =
-  | { readonly kind: "retry"; readonly label: "Retry now" }
-  | { readonly kind: "edit"; readonly label: "Edit connection" }
-  | { readonly kind: "pair"; readonly label: "Pair again" }
-  | { readonly kind: "sign-in"; readonly label: "Sign in again" };
+  | { readonly kind: "retry"; readonly label: string }
+  | { readonly kind: "edit"; readonly label: string }
+  | { readonly kind: "pair"; readonly label: string }
+  | { readonly kind: "sign-in"; readonly label: string };
 
 interface EnvironmentRecoveryInput {
   readonly phase: EnvironmentConnectionPhase;
@@ -25,23 +26,34 @@ export function environmentRecoveryAction(
     return null;
   }
   if (input.retry.mode === "automatic") {
-    return input.retry.at === null ? null : { kind: "retry", label: "Retry now" };
+    return input.retry.at === null
+      ? null
+      : {
+          kind: "retry",
+          label: currentInterfaceTranslator().message("mobile.connection.retryNow"),
+        };
   }
   if (input.retry.mode === "manual") {
     if (input.failureReason === "authentication") {
       return input.isRelayManaged
-        ? { kind: "sign-in", label: "Sign in again" }
-        : { kind: "pair", label: "Pair again" };
+        ? { kind: "sign-in", label: currentInterfaceTranslator().message("mobile.ui.signInAgain") }
+        : { kind: "pair", label: currentInterfaceTranslator().message("mobile.ui.pairAgain") };
     }
     if (input.failureReason === "configuration" && !input.isRelayManaged) {
-      return { kind: "edit", label: "Edit connection" };
+      return {
+        kind: "edit",
+        label: currentInterfaceTranslator().message("mobile.ui.editConnection"),
+      };
     }
     return null;
   }
   if (input.phase === "connecting" || input.phase === "reconnecting") {
     return null;
   }
-  return { kind: "retry", label: "Retry now" };
+  return {
+    kind: "retry",
+    label: currentInterfaceTranslator().message("mobile.connection.retryNow"),
+  };
 }
 
 export function environmentSummaryRecoveryAction(

@@ -2,6 +2,7 @@ import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-sort-options";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
@@ -47,7 +48,9 @@ export interface HomeListFilterMenuCopy {
 }
 
 const DEFAULT_HOME_LIST_FILTER_MENU_COPY: HomeListFilterMenuCopy = {
-  title: "Thread list options",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.navigation.threadListOptions");
+  },
   environment: "Environment",
   allEnvironments: "All environments",
   allEnvironmentsDescription: "Show threads from every environment",

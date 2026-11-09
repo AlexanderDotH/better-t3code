@@ -29,6 +29,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { isZipFile, ZipArchiveView } from "./ZipArchiveView";
 import { AttachmentDocumentBody, nativeViewerKind } from "./AttachmentDocumentBody";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type AttachmentFileRouteParams = {
   readonly environmentId?: string;
@@ -44,6 +45,7 @@ export type AttachmentFileRouteParams = {
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 
 export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const iconColor = useUniwindTheme()["--color-icon"];
@@ -100,7 +102,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     const message = pendingNativeError.current;
     pendingNativeError.current = null;
     if (nativeViewer === null) {
-      if (message) Dialog.alert("Could not open document", message);
+      if (message) Dialog.alert(translator.message("mobile.ui.couldNotOpenDocument"), message);
       return;
     }
     if (message) {
@@ -121,7 +123,10 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     renderedMode
       ? ({
           id: "preview",
-          title: renderedMode === "table" ? "Table" : "Preview",
+          title:
+            renderedMode === "table"
+              ? translator.message("mobile.ui.table")
+              : translator.message("mobile.files.preview"),
           icon: renderedMode === "table" ? "tablecells" : "eye",
           inline: true,
           onPress: () => setRendered(true),
@@ -130,7 +135,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     renderedMode
       ? ({
           id: "source",
-          title: "Source",
+          title: translator.message("mobile.files.source"),
           icon: "doc.text",
           inline: true,
           onPress: () => setRendered(false),
@@ -139,7 +144,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     content && activeMode === "source"
       ? ({
           id: "word-wrap",
-          title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
+          title: appearance.codeWordBreak
+            ? translator.message("mobile.ui.disableWordWrap")
+            : translator.message("mobile.ui.enableWordWrap"),
           icon: "text.alignleft",
           inline: false,
           onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
@@ -148,7 +155,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     content
       ? ({
           id: "copy",
-          title: content.truncated ? "Copy preview" : "Copy contents",
+          title: content.truncated
+            ? translator.message("mobile.ui.copyPreview")
+            : translator.message("mobile.ui.copyContents"),
           icon: "doc.on.doc",
           inline: false,
           onPress: () => copyTextWithHaptic(content.text),
@@ -157,7 +166,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     uri
       ? ({
           id: "share",
-          title: sharing ? "Opening share sheet…" : "Save or share",
+          title: sharing
+            ? translator.message("mobile.ui.openingShareSheet2")
+            : translator.message("mobile.ui.saveOrShare"),
           icon: "square.and.arrow.up",
           inline: false,
           onPress: () => void share(),
@@ -166,7 +177,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     uri
       ? ({
           id: "open-viewer",
-          title: "Open in file viewer",
+          title: translator.message("mobile.ui.openInFileViewer"),
           icon: "arrow.up.left.and.arrow.down.right",
           inline: false,
           onPress: () => {
@@ -178,7 +189,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     draftKey
       ? ({
           id: "remove",
-          title: "Remove from draft",
+          title: translator.message("mobile.ui.removeFromDraft"),
           icon: "trash",
           inline: false,
           destructive: true,
@@ -197,7 +208,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const handleAndroidMenuAction = (event: { nativeEvent: { event: string } }) => {
     menuActions.find(({ id }) => id === event.nativeEvent.event)?.onPress();
   };
-  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
+  const subtitle = `${draftKey ? translator.message("mobile.ui.draftAttachment") : translator.message("chat.reply.attachment")}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
   const refresh = useRefreshAssetUrl(environmentId, resource);
   const capabilities = useEnvironmentServerConfig(environmentId)?.environment.capabilities;
 
@@ -249,16 +260,22 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
             <Menu
               actions={androidMenuActions}
               isAnchoredToRight
-              title="File actions"
+              title={translator.message("mobile.files.actions")}
               onPressAction={handleAndroidMenuAction}
             >
-              <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
+              <AndroidHeaderIconButton
+                accessibilityLabel={translator.message("mobile.files.actions")}
+                icon="ellipsis"
+              />
             </Menu>
           }
         />
       ) : null}
       <Toolbar placement="right">
-        <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+        <Toolbar.Menu
+          accessibilityLabel={translator.message("mobile.files.actions")}
+          icon="ellipsis"
+        >
           {renderedMode ? (
             <Toolbar.Menu inline>
               {menuActions

@@ -34,6 +34,7 @@ import {
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestAction } from "./usePullRequestAction";
 import { usePullRequestAgentActions } from "./usePullRequestAgentActions";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type RowProps = { readonly pr: PullRequestDetail; readonly params: PullRequestParams };
 const STATUS_ACTIONS: readonly PullRequestAction[] = [
@@ -107,6 +108,7 @@ export function PullRequestStatusMenu(props: RowProps) {
 }
 
 export function PullRequestChecksRow(props: RowProps) {
+  const translator = useMobileInterfaceTranslator();
   const [expanded, setExpanded] = useState(false);
   const checks = pullRequestChecksSummary(props.pr);
   const action = usePullRequestAction(props.params, props.pr);
@@ -132,11 +134,15 @@ export function PullRequestChecksRow(props: RowProps) {
         >
           {props.pr.state === "open" &&
           props.pr.checks.some((check) => check.status === "failure") ? (
-            <PullRequestAgentRow {...props} task="feedback" title="Fix failing checks" />
+            <PullRequestAgentRow
+              {...props}
+              task="feedback"
+              title={translator.message("mobile.ui.fixFailingChecks")}
+            />
           ) : null}
           {action.available("approve-workflows") ? (
             <PullRequestCardRow
-              title="Approve workflows"
+              title={translator.message("mobile.ui.approveWorkflows")}
               icon="checkmark"
               detail={`${props.pr.workflowApprovalsRequired} waiting for approval`}
               onPress={() =>
@@ -166,10 +172,12 @@ export function PullRequestChecksRow(props: RowProps) {
               );
             })}
           {!props.pr.checks.length ? (
-            <Text className="px-4 py-3 text-xs text-foreground-muted">No checks reported.</Text>
+            <Text className="px-4 py-3 text-xs text-foreground-muted">
+              {translator.message("pullRequest.checks.none")}
+            </Text>
           ) : null}
           <PullRequestCardRow
-            title="Open checks on provider"
+            title={translator.message("mobile.ui.openChecksOnProvider")}
             icon="arrow.up.right"
             onPress={() =>
               void Linking.openURL(
@@ -184,12 +192,15 @@ export function PullRequestChecksRow(props: RowProps) {
 }
 
 export function PullRequestBranchRow(props: RowProps) {
+  const translator = useMobileInterfaceTranslator();
   const action = usePullRequestAction(props.params, props.pr);
   const agent = usePullRequestAgentActions(props.params, props.pr);
   const methods = action.available("update-branch") ? allowedUpdateMethods(props.pr) : [];
   const canResolve =
     agent.canAsk && props.pr.state === "open" && props.pr.mergeability === "conflicting";
-  const summary = action.busy ? "Updating…" : pullRequestBranchSummary(props.pr);
+  const summary = action.busy
+    ? translator.message("mobile.ui.updating")
+    : pullRequestBranchSummary(props.pr);
   const clean = props.pr.mergeability === "mergeable";
   const conflicting = props.pr.mergeability === "conflicting";
   const row = (
@@ -199,7 +210,7 @@ export function PullRequestBranchRow(props: RowProps) {
           ? `Conflicts with ${props.pr.baseBranch}`
           : clean
             ? `No conflicts with ${props.pr.baseBranch}`
-            : "Branch"
+            : translator.message("mobile.git.branch")
       }
       icon={
         conflicting ? PullRequestGlyph.conflicting : clean ? "checkmark.circle" : "arrow.branch"
@@ -224,7 +235,7 @@ export function PullRequestBranchRow(props: RowProps) {
   if (!methods.length && !canResolve) return row;
   return (
     <Menu
-      title="Branch"
+      title={translator.message("mobile.git.branch")}
       actions={[
         ...(canResolve ? [agent.menuAction("conflicts")] : []),
         ...methods.map((id) => ({ id, title: `Update with ${id}`, image: "arrow.up.circle" })),
@@ -241,6 +252,7 @@ export function PullRequestBranchRow(props: RowProps) {
 }
 
 export function PullRequestReviewersRow(props: RowProps) {
+  const translator = useMobileInterfaceTranslator();
   const [expanded, setExpanded] = useState(false);
   const navigation = useNavigation();
   const activity = useEnvironmentQuery(
@@ -280,7 +292,7 @@ export function PullRequestReviewersRow(props: RowProps) {
           {summary.reviews.map((review) => (
             <View
               key={review.id}
-              accessibilityLabel={`${review.author?.login ?? "Unknown reviewer"}, ${review.reviewState === "APPROVED" ? "Approved" : review.reviewState === "CHANGES_REQUESTED" ? "Changes requested" : "Commented"}`}
+              accessibilityLabel={`${review.author?.login ?? "Unknown reviewer"}, ${review.reviewState === "APPROVED" ? translator.message("pullRequest.reviewOutcome.approved") : review.reviewState === "CHANGES_REQUESTED" ? translator.message("pullRequest.review.changesRequested") : translator.message("mobile.ui.commented")}`}
               className="min-h-14 flex-row items-center gap-3 px-4 py-2"
             >
               <SymbolView
@@ -302,7 +314,7 @@ export function PullRequestReviewersRow(props: RowProps) {
               />
               <PullRequestAvatar actor={review.author} size={32} />
               <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
-                {review.author?.login ?? "Unknown reviewer"}
+                {review.author?.login ?? translator.message("mobile.ui.unknownReviewer")}
               </Text>
             </View>
           ))}
@@ -326,13 +338,13 @@ export function PullRequestReviewersRow(props: RowProps) {
             ))}
           {canRequest ? (
             <PullRequestCardRow
-              title="Request review"
+              title={translator.message("mobile.ui.requestReview")}
               icon="person.badge.plus"
               onPress={() => navigation.navigate("PullRequestReviewers", props.params)}
             />
           ) : (
             <PullRequestCardRow
-              title="View reviewers on provider"
+              title={translator.message("mobile.ui.viewReviewersOnProvider")}
               icon="arrow.up.right"
               onPress={() => void Linking.openURL(props.pr.url)}
             />

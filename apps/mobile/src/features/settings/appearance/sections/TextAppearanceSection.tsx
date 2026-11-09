@@ -36,7 +36,7 @@ export function TextAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="plusminus"
-        label="Render math"
+        label={translator.message("mobile.ui.renderMath")}
         value={mathRenderingEnabled}
         onValueChange={setMathRenderingEnabled}
       />

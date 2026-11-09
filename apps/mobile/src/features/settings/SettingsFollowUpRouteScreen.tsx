@@ -10,6 +10,8 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   readonly behavior: FollowUpBehavior;
@@ -18,17 +20,26 @@ const FOLLOW_UP_OPTIONS: ReadonlyArray<{
 }> = [
   {
     behavior: "queue",
-    label: "Queue",
-    description: "Your message waits and runs after the current turn finishes.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.queue");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.yourMessageWaitsAndRunsAfterThe");
+    },
   },
   {
     behavior: "steer",
-    label: "Steer",
-    description: "Your message reaches the agent right away, changing what it is working on.",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.ui.steer");
+    },
+    get description() {
+      return currentInterfaceTranslator().message("mobile.ui.yourMessageReachesTheAgentRightAway");
+    },
   },
 ];
 
 export function SettingsFollowUpRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -45,7 +56,7 @@ export function SettingsFollowUpRouteScreen() {
       contentContainerClassName="gap-3 px-5 pt-4"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
     >
-      <SettingsSection title="While the agent is running">
+      <SettingsSection title={translator.message("mobile.ui.whileTheAgentIsRunning")}>
         {FOLLOW_UP_OPTIONS.map((option, index) => (
           <SettingsChoiceRow
             key={option.behavior}
@@ -59,8 +70,7 @@ export function SettingsFollowUpRouteScreen() {
         ))}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Long-press the send button to use the other option for a single message. With a hardware
-        keyboard, hold Command while sending.
+        {translator.message("mobile.ui.longPressTheSendButtonToUse")}
       </Text>
     </ScrollView>
   );

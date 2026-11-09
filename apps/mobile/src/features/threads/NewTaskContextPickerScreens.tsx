@@ -67,6 +67,7 @@ function EnvironmentPickerRow(props: {
   isLast: boolean;
   onPress: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [expanded, setExpanded] = useState(false);
   const { presentation } = useEnvironmentPresentation(props.environmentId);
   const { diagnosis, state } = useConnectionDiagnosis(props.environmentId, presentation);
@@ -74,7 +75,9 @@ function EnvironmentPickerRow(props: {
   const connection = presentation?.connection;
   const status =
     diagnosis?.headline ??
-    (connection ? environmentStatusText({ ...connection, error: null }) : "Offline");
+    (connection
+      ? environmentStatusText({ ...connection, error: null })
+      : translator.message("chat.environment.status.offline"));
   return (
     <View className={cn("bg-grouped-card", !props.isLast && "border-b border-border-subtle")}>
       <View className="flex-row items-center">
@@ -108,7 +111,10 @@ function EnvironmentPickerRow(props: {
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${expanded ? "Hide" : "Show"} connection details for ${props.title}`}
+          accessibilityLabel={translator.message(
+            expanded ? "mobile.ui.hideConnectionDetailsFor" : "mobile.ui.showConnectionDetailsFor",
+            { title: props.title },
+          )}
           accessibilityState={{ expanded }}
           onPress={() => setExpanded(!expanded)}
           className="min-h-11 min-w-11 items-center justify-center active:opacity-65"
@@ -134,7 +140,7 @@ function EnvironmentPickerRow(props: {
           ) : null}
           {connection?.phase !== "connected" ? (
             <Button
-              label="Reconnect now"
+              label={translator.message("mobile.ui.reconnectNow")}
               onPress={() => onReconnectEnvironment(props.environmentId)}
             />
           ) : null}
@@ -302,8 +308,10 @@ export function NewTaskBranchPickerRouteScreen() {
       if (navigation.isFocused() && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not switch branch",
-          error instanceof Error ? error.message : "The branch could not be checked out.",
+          translator.message("mobile.thread.switchBranchFailed"),
+          error instanceof Error
+            ? error.message
+            : translator.message("mobile.thread.checkoutFailed"),
         );
       }
       return;
@@ -418,7 +426,7 @@ export function BranchPickerScreen(props: {
     >
       <ToggleRow
         onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from remote"
+        title={translator.message("mobile.ui.startFromRemote")}
         value={props.worktree.startFromOrigin}
       />
     </View>
@@ -454,7 +462,11 @@ export function BranchPickerScreen(props: {
           </Text>
           {!props.loading && props.error ? (
             <View className="self-center">
-              <Button label="Try again" tone="secondary" onPress={props.onRefresh} />
+              <Button
+                label={translator.message("cloud.action.tryAgain")}
+                tone="secondary"
+                onPress={props.onRefresh}
+              />
             </View>
           ) : null}
         </View>
@@ -503,7 +515,7 @@ export function BranchPickerScreen(props: {
             inputRef={searchRef}
             autoFocus={false}
             accessibilityLabel={translator.message("mobile.thread.findBranch")}
-            clearAccessibilityLabel="Clear branch search"
+            clearAccessibilityLabel={translator.message("mobile.ui.clearBranchSearch")}
             onChangeText={props.onQueryChange}
             placeholder={translator.message("mobile.thread.findBranch")}
             value={props.query}

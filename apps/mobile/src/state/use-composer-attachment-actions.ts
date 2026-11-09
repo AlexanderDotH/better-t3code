@@ -20,12 +20,14 @@ import {
   type ComposerDraftInsertion,
 } from "./use-composer-drafts";
 import { startComposerDraftOperation } from "./composerDraftOperations";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 export function useComposerAttachmentActions(props: {
   readonly draftKey: string | null;
   readonly serverConfig: ServerConfig | null | undefined;
   readonly locked?: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const reservedNames = useRef(new Map<string, Set<string>>());
   const capabilities = props.serverConfig?.environment.capabilities;
   const append = async (
@@ -79,7 +81,10 @@ export function useComposerAttachmentActions(props: {
     if (!key || props.locked) return;
     const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) {
-      Dialog.alert("Could not attach file", "This server does not support file attachments.");
+      Dialog.alert(
+        translator.message("mobile.ui.couldNotAttachFile"),
+        translator.message("mobile.ui.thisServerDoesNotSupportFileAttachments"),
+      );
       return;
     }
     const insertion = captureComposerDraftInsertion(key);
@@ -108,8 +113,8 @@ export function useComposerAttachmentActions(props: {
         report("Could not paste images", null, await append(key, signal, images, insertion));
       } catch (error) {
         Dialog.alert(
-          "Could not paste images",
-          error instanceof Error ? error.message : "Try again.",
+          translator.message("mobile.ui.couldNotPasteImages"),
+          error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
         );
       }
     });
@@ -139,8 +144,8 @@ export function useComposerAttachmentActions(props: {
         report("Could not attach pasted text", null, rejected);
       } catch (error) {
         Dialog.alert(
-          "Could not attach pasted text",
-          error instanceof Error ? error.message : "Try again.",
+          translator.message("mobile.ui.couldNotAttachPastedText"),
+          error instanceof Error ? error.message : translator.message("settings.panels.tryAgain"),
         );
       }
     });

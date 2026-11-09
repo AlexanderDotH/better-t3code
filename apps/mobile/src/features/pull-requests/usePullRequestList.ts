@@ -25,6 +25,7 @@ import {
   type EnvironmentPullRequestListEntry,
   type PullRequestListPages,
 } from "./pullRequestList";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type ListTarget = { readonly environmentId: EnvironmentId; readonly input: PullRequestListInput };
 type Read = <A>(atom: Atom.Atom<A>) => A;
@@ -155,6 +156,7 @@ const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
   AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
 export function usePullRequestList(targets: readonly ListTarget[]) {
+  const translator = useMobileInterfaceTranslator();
   const registry = use(RegistryContext);
   const scopeKey = JSON.stringify(targets);
   const sources = useAtomValue(sourcesFamily(scopeKey));
@@ -308,11 +310,14 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           {
             environmentId: target.environmentId,
             projectTitle: "",
-            message: cause instanceof Error ? cause.message : "Couldn't load pull requests.",
+            message:
+              cause instanceof Error
+                ? cause.message
+                : translator.message("mobile.ui.couldntLoadPullRequests2"),
           },
         ];
       }),
-    [sources],
+    [sources, translator],
   );
   const listing = useMemo(
     () => ({ ...data, entries, errors: [...data.errors, ...errors] }),

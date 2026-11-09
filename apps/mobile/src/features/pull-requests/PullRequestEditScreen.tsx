@@ -16,6 +16,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestSheetContent } from "./PullRequestSheetContent";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type PullRequestEditParams = PullRequestParams &
   (
@@ -30,6 +31,7 @@ export type PullRequestEditParams = PullRequestParams &
   );
 
 export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEditParams>) {
+  const translator = useMobileInterfaceTranslator();
   const params = route.params;
   const navigation = useNavigation();
   const target = pullRequestTarget(params);
@@ -102,7 +104,11 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "The provider refused the change.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : translator.message("mobile.ui.theProviderRefusedTheChange"),
+      );
       return;
     }
     // updateComment refreshes the activity on its own; a title or body lives on the detail.
@@ -111,10 +117,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   };
   const title =
     params.field === "title"
-      ? "Edit title"
+      ? translator.message("pullRequest.detail.editTitle")
       : params.field === "body"
-        ? "Edit description"
-        : "Edit comment";
+        ? translator.message("pullRequest.description.edit")
+        : translator.message("pullRequest.editComment");
   return (
     <PullRequestSheetContent
       busy={busy}
@@ -124,7 +130,11 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         <Button
           fullWidth
           tone="contrast"
-          label={busy ? "Saving…" : "Save"}
+          label={
+            busy
+              ? translator.message("mobile.settings.agents.saving")
+              : translator.message("mobile.connection.save")
+          }
           loading={busy}
           disabled={!allowed || unchanged || invalid || original === null}
           onPress={() => void save()}
@@ -140,9 +150,13 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
             ? `${capitalizeTerm(singular)} title`
             : params.field === "body"
               ? `${capitalizeTerm(singular)} description`
-              : "Comment"
+              : translator.message("mobile.review.comment")
         }
-        placeholder={params.field === "title" ? "Title" : "Write in Markdown…"}
+        placeholder={
+          params.field === "title"
+            ? translator.message("mobile.ui.title")
+            : translator.message("mobile.ui.writeInMarkdown")
+        }
         placeholderTextColorClassName="accent-foreground-muted"
         maxLength={params.field === "title" ? 1024 : 65536}
         value={value}

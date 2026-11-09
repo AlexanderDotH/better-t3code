@@ -6,6 +6,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { useSideChats } from "../../state/entities";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * The thread's side chats, started on web or desktop. Each opens as a normal thread, so its
@@ -15,6 +16,7 @@ export function ThreadSideChatsRow(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const sideChats = useSideChats({ environmentId: props.environmentId, threadId: props.threadId });
   const openLinkedThread = useOpenLinkedThread();
   if (sideChats.length === 0) return null;
@@ -25,7 +27,9 @@ export function ThreadSideChatsRow(props: {
         size={12}
         tintColorClassName="accent-foreground-muted"
       />
-      <Text className="text-xs text-foreground-muted">Side chats</Text>
+      <Text className="text-xs text-foreground-muted">
+        {translator.message("mobile.ui.sideChats")}
+      </Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
         <View className="flex-row gap-1 pr-4">
           {sideChats.map((sideChat) => {

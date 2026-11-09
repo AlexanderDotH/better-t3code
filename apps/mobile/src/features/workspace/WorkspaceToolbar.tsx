@@ -19,10 +19,24 @@ import { WorkspaceSearchField } from "./WorkspaceSearchField";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WORKSPACE_TOOLBAR, type WorkspaceTab } from "./workspace-tabs-state";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 const TABS: ReadonlyArray<{ id: WorkspaceTab; label: string; icon: AppSymbolName }> = [
-  { id: "threads", label: "Threads", icon: "text.bubble" },
-  { id: "pullRequests", label: "PRs", icon: PullRequestGlyph.pullRequest },
+  {
+    id: "threads",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.settings.section.threads");
+    },
+    icon: "text.bubble",
+  },
+  {
+    id: "pullRequests",
+    get label() {
+      return currentInterfaceTranslator().message("mobile.navigation.prs");
+    },
+    icon: PullRequestGlyph.pullRequest,
+  },
 ];
 
 function ToolbarButton(props: {
@@ -50,6 +64,7 @@ export function WorkspaceToolbar(props: {
   readonly sidebar?: boolean;
   readonly onNewTask: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const workspace = useWorkspaceTabs();
   const input = useRef<TextInputInstance>(null);
   const [focusRequest, setFocusRequest] = useState(0);
@@ -130,7 +145,12 @@ export function WorkspaceToolbar(props: {
                 focusSearch();
               }}
             />
-            <ToolbarButton label="Cancel search" icon="xmark" size={48} onPress={cancelSearch} />
+            <ToolbarButton
+              label={translator.message("mobile.ui.cancelSearch")}
+              icon="xmark"
+              size={48}
+              onPress={cancelSearch}
+            />
           </View>
         ) : null}
         {showNavigation ? <WorkspaceDock onNewTask={props.onNewTask} /> : null}

@@ -18,6 +18,7 @@ import { useSyncExternalStore } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
@@ -142,6 +143,7 @@ export function Host() {
 }
 
 function DialogPresentation(props: DialogPresentationProps) {
+  const translator = useMobileInterfaceTranslator();
   const { themeVariables: colors } = useAppearancePreferences();
   const titleTypography = useScaledTextRole("title");
   const bodyTypography = useScaledTextRole("footnote");
@@ -153,7 +155,11 @@ function DialogPresentation(props: DialogPresentationProps) {
     props.onConfirm(value);
   };
   const actions = props.alertActions ?? [
-    { text: props.request.cancelText ?? "Cancel", onPress: props.onCancel },
+    {
+      text:
+        props.request.cancelText ?? translator.message("mobile.settings.projects.settings.cancel"),
+      onPress: props.onCancel,
+    },
     {
       text: props.request.confirmText,
       style: props.request.destructive ? ("destructive" as const) : ("default" as const),

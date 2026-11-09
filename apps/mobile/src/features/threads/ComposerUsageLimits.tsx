@@ -5,6 +5,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AccountLimits } from "../usage/UsageLimitsSection";
 import { UsageResetMenu } from "../usage/ResetManagementDialog";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 
@@ -19,12 +20,13 @@ export function ComposerUsageLimits({
   readonly maxHeight: number;
   readonly onClose: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const now = Date.parse(report.createdAt);
   const close = (
     <View className="flex-row items-center gap-2">
       <UsageResetMenu report={report} environmentId={environmentId} />
       <Pressable
-        accessibilityLabel="Dismiss usage limits"
+        accessibilityLabel={translator.message("mobile.ui.dismissUsageLimits")}
         accessibilityRole="button"
         hitSlop={12}
         onPress={onClose}
@@ -69,7 +71,9 @@ export function ComposerUsageLimits({
         })}
         {report.accounts.length === 0 ? (
           <View className="flex-row items-center gap-3 px-4 pt-3">
-            <Text className="min-w-0 flex-1 text-base text-foreground">Usage limits</Text>
+            <Text className="min-w-0 flex-1 text-base text-foreground">
+              {translator.message("mobile.ui.usageLimits")}
+            </Text>
             {close}
           </View>
         ) : null}

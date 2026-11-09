@@ -50,7 +50,7 @@ export function SettingsClientStorageRouteScreen() {
     Dialog.confirm({
       title: `Clear cache for ${label}?`,
       message: translator.message("mobile.settings.storage.clearEnvironmentDescription"),
-      confirmText: "Clear Cache",
+      confirmText: translator.message("mobile.settings.storage.clearCache"),
       destructive: true,
       onConfirm: () =>
         clearCache({ type: "environment", environmentId: environment.environmentId }),
@@ -61,14 +61,14 @@ export function SettingsClientStorageRouteScreen() {
     Dialog.confirm({
       title: translator.message("mobile.settings.storage.clearAllTitle"),
       message: translator.message("mobile.settings.storage.clearAllDescription"),
-      confirmText: "Clear All Caches",
+      confirmText: translator.message("mobile.settings.storage.clearAll"),
       destructive: true,
       onConfirm: () => clearCache({ type: "all" }),
     });
   };
 
   return (
-    <SettingsScreen title="Client Storage">
+    <SettingsScreen title={translator.message("mobile.ui.clientStorage")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -152,8 +152,7 @@ export function SettingsClientStorageRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Clearing caches never removes environment connections, credentials, account data, or
-            appearance preferences.
+            {translator.message("mobile.settings.storage.safety")}
           </Text>
           {AsyncResult.isFailure(summaryResult) || AsyncResult.isFailure(clearResult) ? (
             <Text selectable className="px-2 text-sm text-danger-foreground">

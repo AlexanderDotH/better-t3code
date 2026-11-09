@@ -38,6 +38,7 @@ import { SourceText } from "@t3tools/mobile-source-text";
 import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 import { createSourceLineScroll } from "./source-file-scroll";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -153,13 +154,16 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
+  const translator = useMobileInterfaceTranslator();
   if (props.status === "highlighting") {
     return <LoadingStrip />;
   }
   if (props.status === "error") {
     return (
       <View className="border-b border-border bg-card px-4 py-2">
-        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">Plain text</Text>
+        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">
+          {translator.message("mobile.files.plainText")}
+        </Text>
       </View>
     );
   }

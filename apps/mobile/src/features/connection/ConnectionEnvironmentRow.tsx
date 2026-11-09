@@ -108,8 +108,10 @@ export function ConnectionEnvironmentRow(props: {
     }
     const error = Cause.squash(result.cause);
     Dialog.alert(
-      "Could not update environment",
-      error instanceof Error ? error.message : "The environment could not be updated.",
+      translator.message("mobile.connection.updateFailed"),
+      error instanceof Error
+        ? error.message
+        : translator.message("mobile.connection.updateFailedDescription"),
     );
   };
 
@@ -121,8 +123,13 @@ export function ConnectionEnvironmentRow(props: {
           accessibilityRole="button"
           accessibilityLabel={
             props.opensDetails
-              ? `Manage ${props.environment.environmentLabel}`
-              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+              ? translator.message("mobile.ui.manageEnvironment", {
+                  name: props.environment.environmentLabel,
+                })
+              : translator.message(
+                  props.expanded ? "mobile.ui.collapseDetailsFor" : "mobile.ui.expandDetailsFor",
+                  { name: props.environment.environmentLabel },
+                )
           }
           onPress={props.onToggle}
         >
@@ -213,8 +220,13 @@ export function ConnectionEnvironmentRow(props: {
           accessibilityRole="button"
           accessibilityLabel={
             props.opensDetails
-              ? `Manage ${props.environment.environmentLabel}`
-              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+              ? translator.message("mobile.ui.manageEnvironment", {
+                  name: props.environment.environmentLabel,
+                })
+              : translator.message(
+                  props.expanded ? "mobile.ui.collapseDetailsFor" : "mobile.ui.expandDetailsFor",
+                  { name: props.environment.environmentLabel },
+                )
           }
           onPress={props.onToggle}
           style={{
@@ -248,7 +260,7 @@ export function ConnectionEnvironmentRow(props: {
           ) : null}
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
-              Managed by T3 Connect. Tunnel details update automatically.
+              {translator.message("mobile.ui.managedByT3ConnectTunnelDetailsUpdate")}
             </Text>
           ) : (
             <>
@@ -288,14 +300,14 @@ export function ConnectionEnvironmentRow(props: {
                 </View>
               )}
               <IconButton
-                accessibilityLabel="Reconnect environment"
+                accessibilityLabel={translator.message("mobile.ui.reconnectEnvironment")}
                 icon="arrow.clockwise"
                 variant="tonal"
                 disabled={!enabled}
                 onPress={() => props.onReconnect(props.environment.environmentId)}
               />
               <IconButton
-                accessibilityLabel="Remove environment"
+                accessibilityLabel={translator.message("mobile.ui.removeEnvironment")}
                 icon="trash"
                 variant="danger"
                 onPress={() => props.onRemove(props.environment.environmentId)}
@@ -322,7 +334,7 @@ export function ConnectionEnvironmentRow(props: {
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Reconnect environment"
+                accessibilityLabel={translator.message("mobile.ui.reconnectEnvironment")}
                 accessibilityState={{ disabled: !enabled }}
                 className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70 disabled:opacity-40"
                 disabled={!enabled}
@@ -338,7 +350,7 @@ export function ConnectionEnvironmentRow(props: {
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Remove environment"
+                accessibilityLabel={translator.message("mobile.ui.removeEnvironment")}
                 className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70"
                 onPress={() => props.onRemove(props.environment.environmentId)}
               >

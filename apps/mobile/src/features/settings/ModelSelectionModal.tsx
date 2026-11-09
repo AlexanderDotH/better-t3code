@@ -49,10 +49,12 @@ export function ModelSelectionModal(props: {
       .map((option) => ({
         ...option,
         isSelectable: option.isUnavailable !== true,
-        unavailableReason: option.isUnavailable ? "Model unavailable" : null,
+        unavailableReason: option.isUnavailable
+          ? translator.message("mobile.ui.modelUnavailable")
+          : null,
       }));
     return props.optionPredicate ? available.filter(props.optionPredicate) : available;
-  }, [props.config, props.current, props.optionPredicate, purpose]);
+  }, [props.config, props.current, props.optionPredicate, purpose, translator]);
   const selectedKey = props.current
     ? `${props.current.instanceId}:${props.current.model}`
     : "default";
@@ -143,7 +145,7 @@ export function ModelSelectionModal(props: {
           {props.auxiliaryModels?.length ? (
             <View className="mb-4 overflow-hidden rounded-[24px] bg-card">
               <Text className="px-4 py-3 text-sm font-t3-medium text-foreground-muted">
-                AssemblyAI Gateway
+                {translator.message("mobile.ui.assemblyaiGateway")}
               </Text>
               {props.auxiliaryModels.map((model) => (
                 <Pressable

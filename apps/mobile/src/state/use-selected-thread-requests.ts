@@ -48,6 +48,7 @@ import { useSelectedThreadPendingRequests } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
 import { readEnvironmentScope } from "./session";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 const EMPTY_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
@@ -164,6 +165,7 @@ function collectAnsweredRequestDrafts(
 }
 
 export function useSelectedThreadRequests() {
+  const translator = useMobileInterfaceTranslator();
   const respondToApproval = useAtomCommand(
     threadEnvironment.respondToApproval,
     "thread approval response",
@@ -360,8 +362,8 @@ export function useSelectedThreadRequests() {
         )
       ) {
         Dialog.alert(
-          "Attachments are not ready",
-          "Wait for uploads to finish, or retry failed uploads.",
+          translator.message("mobile.ui.attachmentsAreNotReady"),
+          translator.message("mobile.ui.waitForUploadsToFinishOrRetry"),
         );
         return;
       }

@@ -4,6 +4,7 @@ import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * The Android header row above each workspace tab's list. Both tabs draw this same row, so
@@ -22,13 +23,14 @@ export function WorkspaceListToolbarRow(props: {
   /** Stays trailing while searching, so it never moves and still narrows the results. */
   readonly filter: ReactNode;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { height } = useToolbarLayout();
   return (
     <View className="flex-row items-center gap-1" style={{ minHeight: height }}>
       {props.searching ? (
         <>
           <AndroidHeaderIconButton
-            accessibilityLabel="Close search"
+            accessibilityLabel={translator.message("mobile.ui.closeSearch")}
             icon="arrow.left"
             onPress={props.onCloseSearch}
           />

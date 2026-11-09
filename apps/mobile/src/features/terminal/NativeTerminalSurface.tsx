@@ -26,6 +26,7 @@ import {
 } from "./terminalTheme";
 import { useTerminalSurfaceBuffer } from "./useTerminalSurfaceBuffer";
 import { createTerminalOutputWriter } from "./terminalOutputWriter";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 interface TerminalInputEvent {
   readonly data: string;
@@ -80,6 +81,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   ref,
   ...props
 }: ReadyTerminalSurfaceProps) {
+  const translator = useMobileInterfaceTranslator();
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInputInstance>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
@@ -186,7 +188,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
           onPress={() => props.onInput("\u0003")}
         >
           <Text className="text-2xs font-t3-bold" style={{ color: theme.foreground }}>
-            Ctrl-C
+            {translator.message("mobile.ui.ctrlC")}
           </Text>
         </Pressable>
       </View>
