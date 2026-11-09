@@ -1437,7 +1437,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {Platform.OS === "android" ? (
+                {Platform.OS === "android" || compactEditor.isExpanded ? (
                   <ScrollView
                     horizontal
                     className="min-w-0 flex-1"

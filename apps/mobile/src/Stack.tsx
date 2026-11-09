@@ -339,27 +339,27 @@ const SETTINGS_SCREENS = {
   }),
   SettingsAgents: createNativeStackScreen({
     screen: SettingsAgentEnvironmentsRouteScreen,
-    options: { title: "Agents" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Agents" },
   }),
   SettingsProjects: createNativeStackScreen({
     screen: SettingsProjectsRouteScreen,
-    options: { title: "Projects" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Projects" },
   }),
   SettingsProjectIndexing: createNativeStackScreen({
     screen: SettingsProjectIndexingRouteScreen,
-    options: { title: "Project Indexing" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Project Indexing" },
   }),
   SettingsBetterT3: createNativeStackScreen({
     screen: SettingsBetterT3RouteScreen,
-    options: { title: "BetterT3" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Better T3" },
   }),
   SettingsBetterT3ResourceDiagnostics: createNativeStackScreen({
     screen: SettingsBetterT3ResourceDiagnosticsRouteScreen,
-    options: { title: "BetterT3ResourceDiagnostics" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Resource diagnostics" },
   }),
   SettingsBetterT3TranscriptPortability: createNativeStackScreen({
     screen: SettingsBetterT3TranscriptPortabilityRouteScreen,
-    options: { title: "BetterT3TranscriptPortability" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Transcript portability" },
   }),
   SettingsAppearance: createNativeStackScreen({
     screen: SettingsAppearanceRouteScreen,
