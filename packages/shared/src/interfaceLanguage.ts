@@ -72,9 +72,13 @@ export function resolveInterfaceLocale(
 
 type InterfaceMessageValues = Readonly<Record<string, string | number>>;
 
+// Hermes has no Intl.PluralRules, and the catalogs only distinguish one and other.
+function isSingularCount(language: ResolvedInterfaceLanguage, count: number): boolean {
+  return language === "fr" ? Math.abs(count) < 2 : Math.abs(count) === 1;
+}
+
 function selectMessageTemplate(
   language: ResolvedInterfaceLanguage,
-  locale: string,
   key: InterfaceMessageKey,
   values: InterfaceMessageValues,
 ): string {
@@ -82,7 +86,7 @@ function selectMessageTemplate(
   if (typeof template === "string") return template;
   const count = values.count;
   if (typeof count !== "number") return template.other;
-  return new Intl.PluralRules(locale).select(count) === "one" ? template.one : template.other;
+  return isSingularCount(language, count) ? template.one : template.other;
 }
 
 function interpolateMessage(template: string, values: InterfaceMessageValues): string {
@@ -104,13 +108,13 @@ export interface InterfaceTranslator {
 export function createInterfaceTranslator(resolved: ResolvedInterfaceLocale): InterfaceTranslator {
   return {
     message: (key, values = {}) =>
-      interpolateMessage(
-        selectMessageTemplate(resolved.language, resolved.locale, key, values),
-        values,
-      ),
+      interpolateMessage(selectMessageTemplate(resolved.language, key, values), values),
     number: (value, options) => new Intl.NumberFormat(resolved.locale, options).format(value),
+    // Hermes has no Intl.ListFormat.
     list: (values, options = { style: "long", type: "conjunction" }) =>
-      new Intl.ListFormat(resolved.locale, options).format(values),
+      typeof Intl.ListFormat === "function"
+        ? new Intl.ListFormat(resolved.locale, options).format(values)
+        : values.join(", "),
     date: (value, options) =>
       new Intl.DateTimeFormat(resolved.locale, { dateStyle: "medium", ...options }).format(value),
   };
@@ -153,7 +157,7 @@ export function pseudoLocalizeInterfaceMessage(
   key: InterfaceMessageKey,
   values: InterfaceMessageValues = {},
 ): string {
-  const template = selectMessageTemplate("en", "en-US", key, values);
+  const template = selectMessageTemplate("en", key, values);
   const pseudoTemplate = template.replace(/(^|}})([^{}]*)(?={{|$)/g, (segment) =>
     pseudoLocalizeLiteral(segment),
   );

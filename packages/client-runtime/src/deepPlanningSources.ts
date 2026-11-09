@@ -392,6 +392,7 @@ export async function transferDeepPlanSources(input: {
   readonly threadId: ThreadId;
   readonly runId: DeepPlanRunId;
   readonly additionalSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
+  readonly includeProjectChats?: boolean;
   readonly apiForEnvironment: (
     environmentId: EnvironmentId,
   ) => DeepPlanningSourceApi | null | Promise<DeepPlanningSourceApi | null>;
@@ -419,22 +420,29 @@ export async function transferDeepPlanSources(input: {
     return api;
   };
   const targetApi = await getApi(input.environmentId);
-  const defaultCatalog = await exportDeepPlanSourceCatalog({
-    environmentId: input.environmentId,
-    projectId: input.projectId,
-    api: targetApi,
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
-  const catalogs: FrozenDeepPlanSourceCatalog[] = [defaultCatalog];
+  const defaultCatalog =
+    input.includeProjectChats === false
+      ? null
+      : await exportDeepPlanSourceCatalog({
+          environmentId: input.environmentId,
+          projectId: input.projectId,
+          api: targetApi,
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+  const catalogs: FrozenDeepPlanSourceCatalog[] = defaultCatalog ? [defaultCatalog] : [];
   const defaultSourceRefs = new Set(
-    defaultCatalog.sources.map((source) => deepPlanSourceRefKey(source.origin)),
+    defaultCatalog?.sources.map((source) => deepPlanSourceRefKey(source.origin)),
   );
   const groups = new Map<
     string,
     { environmentId: EnvironmentId; projectId: ProjectId; threadIds: ThreadId[] }
   >();
   for (const ref of uniqueDeepPlanSourceRefs(input.additionalSourceRefs ?? [])) {
-    if (ref.environmentId === input.environmentId && ref.projectId === input.projectId) {
+    if (
+      defaultCatalog &&
+      ref.environmentId === input.environmentId &&
+      ref.projectId === input.projectId
+    ) {
       if (!defaultSourceRefs.has(deepPlanSourceRefKey(ref))) {
         throw new DeepPlanSourceTransferError(
           "unavailable",
@@ -478,7 +486,9 @@ export async function transferDeepPlanSources(input: {
       targetApi.initializeSources({
         threadId: input.threadId,
         runId: input.runId,
-        localExportId: defaultCatalog.exportId,
+        ...(defaultCatalog
+          ? { localExportId: defaultCatalog.exportId }
+          : { includeProjectChats: false }),
         snapshots: sources,
       }),
     input.signal,

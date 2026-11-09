@@ -19,6 +19,16 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
     { one: "{{count}} Projektchat", other: "{{count}} Projektchats" },
     { one: "{{count}} discussion du projet", other: "{{count}} discussions du projet" },
   ],
+  "chat.deepPlan.noProjectChats": [
+    "No project chats",
+    "Keine Projektchats",
+    "Aucune discussion du projet",
+  ],
+  "chat.deepPlan.includeProjectChats": [
+    "Include all chats from this project",
+    "Alle Chats dieses Projekts einbeziehen",
+    "Inclure toutes les discussions de ce projet",
+  ],
   "chat.deepPlan.extraSources": [
     { one: "{{count}} added chat", other: "{{count}} added chats" },
     { one: "{{count}} hinzugefügter Chat", other: "{{count}} hinzugefügte Chats" },
@@ -215,6 +225,11 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Project chats are included automatically. Add chats from other projects or environments.",
     "Projektchats werden automatisch einbezogen. Füge Chats aus anderen Projekten oder Umgebungen hinzu.",
     "Les discussions du projet sont incluses automatiquement. Ajoutez des discussions d’autres projets ou environnements.",
+  ],
+  "chat.deepPlan.manualSelectionHint": [
+    "Only the chats you select are used. Without chats, Deep Plan works from your request and the codebase.",
+    "Nur die ausgewählten Chats werden verwendet. Ohne Chats plant Deep Plan anhand deiner Anfrage und der Codebasis.",
+    "Seules les discussions sélectionnées sont utilisées. Sans discussion, Deep Plan s’appuie sur votre demande et le code.",
   ],
   "chat.deepPlan.analysisPending": [
     "Waiting for source analysis",

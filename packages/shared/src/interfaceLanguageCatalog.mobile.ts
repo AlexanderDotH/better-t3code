@@ -2,6 +2,59 @@ import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.type
 
 /** Mobile-only copy lives here. Shared settings and Knowledge Graph copy stay in their domain catalogs. */
 export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "mobile.navigation.chats": ["Chats", "Chats", "Discussions"],
+  "mobile.navigation.pulls": ["Pulls", "PRs", "PR"],
+  "mobile.navigation.prs": ["PRs", "PRs", "PR"],
+  "mobile.thread.declineWithFeedback": [
+    "Send feedback to decline this request",
+    "Sende Feedback, um diese Anfrage abzulehnen",
+    "Envoyez un commentaire pour refuser cette demande",
+  ],
+  "mobile.thread.declineAndRedirect": [
+    "Send a message to decline and redirect the agent",
+    "Sende eine Nachricht, um abzulehnen und den Agenten umzulenken",
+    "Envoyez un message pour refuser et réorienter l’agent",
+  ],
+  "mobile.thread.copyThread": ["Copy thread", "Chat kopieren", "Copier la discussion"],
+  "mobile.thread.copyThreadId": [
+    "Copy thread ID",
+    "Chat-ID kopieren",
+    "Copier l’ID de la discussion",
+  ],
+  "mobile.thread.workedFor": [
+    "Worked for {{duration}}",
+    "Gearbeitet für {{duration}}",
+    "A travaillé pendant {{duration}}",
+  ],
+  "mobile.thread.worked": ["Worked", "Gearbeitet", "A travaillé"],
+  "mobile.thread.stoppedAfter": [
+    "You stopped after {{duration}}",
+    "Von dir gestoppt nach {{duration}}",
+    "Arrêté par vous après {{duration}}",
+  ],
+  "mobile.thread.stoppedResponse": [
+    "You stopped this response",
+    "Du hast diese Antwort gestoppt",
+    "Vous avez arrêté cette réponse",
+  ],
+  "mobile.thread.goal": ["Goal", "Ziel", "Objectif"],
+  "mobile.thread.limited": ["Limited", "Limitiert", "Limité"],
+  "mobile.thread.earlierWork": ["Earlier work", "Frühere Arbeit", "Travail antérieur"],
+  "mobile.thread.request": ["Request", "Anfrage", "Demande"],
+  "mobile.thread.waiting": ["Waiting", "Wartet", "En attente"],
+  "mobile.settings.agentSettings": ["Agent settings", "Agent-Einstellungen", "Réglages des agents"],
+  "mobile.settings.scheduledTasks": ["Scheduled tasks", "Geplante Aufgaben", "Tâches planifiées"],
+  "mobile.settings.worktrees": ["Worktrees", "Worktrees", "Worktrees"],
+  "mobile.settings.labs": ["Labs", "Labs", "Labo"],
+  "mobile.settings.maintenance": ["Maintenance", "Wartung", "Maintenance"],
+  "mobile.settings.navigationTabs": [
+    "Navigation tabs",
+    "Navigationsleiste",
+    "Onglets de navigation",
+  ],
+  "mobile.settings.keyboard": ["Keyboard", "Tastatur", "Clavier"],
+  "mobile.settings.microphone": ["Microphone", "Mikrofon", "Microphone"],
+  "mobile.usage.limits": ["Limits", "Limits", "Limites"],
   "mobile.settings.endpoint.saveAndFetchModels": [
     "Save and fetch models",
     "Speichern und Modelle abrufen",
@@ -1951,6 +2004,8 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "mobile.thread.startFromOrigin": ["Start from origin", "Von origin starten", "Partir d’origin"],
   "mobile.thread.findBranch": ["Find a branch", "Branch suchen", "Rechercher une branche"],
   "mobile.thread.baseBranch": ["Base branch", "Basis-Branch", "Branche de base"],
+  "mobile.thread.fetchOn": ["Fetch on", "Fetch an", "Fetch activé"],
+  "mobile.thread.fetchOff": ["Fetch off", "Fetch aus", "Fetch désactivé"],
   "mobile.thread.branch": ["Branch", "Branch", "Branche"],
   "mobile.thread.loadingBranches": [
     "Loading branches…",
@@ -2278,6 +2333,53 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "La bifurcation commence ici",
   ],
   "mobile.thread.forkedFrom": ["Forked from", "Geforkt von", "Bifurqué depuis"],
+  "mobile.thread.forkSourceFallback": ["another thread", "einem anderen Thread", "un autre fil"],
+  "mobile.thread.forkSourceOpen": [
+    "Opens the source thread",
+    "Öffnet den Quell-Thread",
+    "Ouvre le fil source",
+  ],
+  "mobile.thread.forkFailed": [
+    "Could not fork chat",
+    "Chat konnte nicht geforkt werden",
+    "Impossible de bifurquer la discussion",
+  ],
+  "mobile.thread.forkFailedDetail": [
+    "The chat could not be forked.",
+    "Der Chat konnte nicht geforkt werden.",
+    "La discussion n’a pas pu être bifurquée.",
+  ],
+  "mobile.thread.forkUnavailable": [
+    "This chat is not available on this device yet.",
+    "Dieser Chat ist auf diesem Gerät noch nicht verfügbar.",
+    "Cette discussion n’est pas encore disponible sur cet appareil.",
+  ],
+  "mobile.thread.forkProjectUnavailable": [
+    "This chat's project is not available.",
+    "Das Projekt dieses Chats ist nicht verfügbar.",
+    "Le projet de cette discussion n’est pas disponible.",
+  ],
+  "mobile.thread.forkBaseBranchPending": [
+    "Wait for the project's base branch before forking into a new worktree.",
+    "Warte auf den Basis-Branch des Projekts, bevor du in einen neuen Worktree forkst.",
+    "Attendez la branche de base du projet avant de bifurquer vers un nouveau worktree.",
+  ],
+  "mobile.thread.forkCreated": ["Fork created", "Fork erstellt", "Bifurcation créée"],
+  "mobile.thread.forkNotSynced": [
+    "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+    "Die Thread-Daten haben dieses Gerät nicht erreicht. Verbinde dich neu und öffne den Thread aus der Thread-Liste.",
+    "Les données du fil n’ont pas atteint cet appareil. Reconnectez-vous et ouvrez-le depuis la liste des fils.",
+  ],
+  "mobile.thread.retryFailed": [
+    "Could not retry response",
+    "Antwort konnte nicht erneut versucht werden",
+    "Impossible de réessayer la réponse",
+  ],
+  "mobile.thread.retryFailedDetail": [
+    "The response could not be retried.",
+    "Die Antwort konnte nicht erneut versucht werden.",
+    "La réponse n’a pas pu être réessayée.",
+  ],
   "mobile.thread.openAudio": ["Open audio", "Audio öffnen", "Ouvrir l’audio"],
   "mobile.thread.imageUnavailable": [
     "Image unavailable",

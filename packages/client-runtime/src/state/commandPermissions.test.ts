@@ -15,6 +15,8 @@ import {
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
+  CommandId,
+  MessageId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
@@ -143,23 +145,25 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect.each([WS_METHODS.scheduledTasksDelete, ORCHESTRATION_V2_WS_METHODS.stopWorkflow])(
-    "uses the target grant for both availability and execution of %s",
-    (method) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const registry = yield* setup;
-          const permissions = createCommandPermissions(runtime, method);
-          registry.set(sessions(env), AsyncResult.success(grant(true)));
-          expect(registry.get(permissions.permissionAtom(env))).toBe(true);
-          expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
-          yield* permissions.authorize(registry, env);
-          registry.set(sessions(other), AsyncResult.success(grant(false)));
-          expect(registry.get(permissions.permissionAtom(other))).toBe(false);
-          const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
-          expect(denied._tag).toBe("EnvironmentAuthorizationError");
-        }),
-      ),
+  it.effect.each([
+    WS_METHODS.scheduledTasksDelete,
+    ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+  ])("uses the target grant for both availability and execution of %s", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const permissions = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+        expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
+        yield* permissions.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(permissions.permissionAtom(other))).toBe(false);
+        const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
+        expect(denied._tag).toBe("EnvironmentAuthorizationError");
+      }),
+    ),
   );
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
@@ -497,6 +501,11 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     let writes = 0;
     const session = {
       client: {
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: () =>
+          Effect.sync(() => {
+            writes++;
+            return { sequence: 1 };
+          }),
         [WS_METHODS.scheduledTasksDelete]: () =>
           Effect.sync(() => {
             writes++;
@@ -524,6 +533,14 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
       action: "commit",
     }).pipe(Stream.runDrain, Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
+    const retry = yield* requestGuarded(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
+      type: "message.retry",
+      commandId: CommandId.make("retry"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      runId: null,
+    }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
+    expect(retry._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
 );

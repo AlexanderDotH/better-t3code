@@ -10,6 +10,7 @@ import {
 } from "./model.ts";
 import { PlanId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { DeepPlanRunReference } from "./deepPlanning.ts";
 
 export const PLAN_PARALLELISM_REVIEW_DRIVER_KINDS = [
   CODEX_DRIVER_KIND,
@@ -35,6 +36,7 @@ export type PlanParallelismReviewCount = typeof PlanParallelismReviewCount.Type;
 
 export const PlanParallelismReviewInput = Schema.Struct({
   threadId: ThreadId,
+  deepPlan: Schema.optional(DeepPlanRunReference),
   planId: PlanId,
   expectedPlanUpdatedAt: IsoDateTime,
   implementationProviderInstanceId: ProviderInstanceId,

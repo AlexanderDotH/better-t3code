@@ -1747,6 +1747,22 @@ describe("ClientSettings composer collapse", () => {
   });
 });
 
+describe("ClientSettings composer layout", () => {
+  it("keeps existing installations on current and preserves either choice through reload", () => {
+    expect(decodeClientSettings({}).composerLayout).toBe("current");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("composerLayout");
+    for (const composerLayout of ["classic", "current"] as const) {
+      const patch = decodeClientSettingsPatch({ composerLayout });
+      expect(patch).toEqual({ composerLayout });
+      const stored = encodeClientSettings(decodeClientSettings(patch));
+      expect(decodeClientSettings(JSON.parse(JSON.stringify(stored))).composerLayout).toBe(
+        composerLayout,
+      );
+    }
+    expect(() => decodeClientSettingsPatch({ composerLayout: "better-t3" })).toThrow();
+  });
+});
+
 describe("ServerSettings thread settlement", () => {
   it("defaults merge settlement on and inactivity settlement to three days", () => {
     const settings = decodeServerSettings({});

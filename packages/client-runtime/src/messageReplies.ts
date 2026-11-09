@@ -1,4 +1,10 @@
-import type { MessageId, MessageReplyReference, SubagentId } from "@t3tools/contracts";
+import type {
+  MessageId,
+  MessageReplyReference,
+  OrchestrationV2MessageReply,
+  SubagentId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 type MessageReplyRole = "user" | "assistant" | "system" | "reasoning";
 
@@ -178,4 +184,49 @@ export function getMessageReplyPreview(
       .join("")
       .trimEnd() + "…"
   );
+}
+
+type MessageReplyTopic = Pick<OrchestrationV2MessageReply, "replyTopicId" | "sourceThreadId">;
+
+/** Replying inside a topic, or to one of its messages, continues that topic. */
+export function resolveMessageReplyTarget(input: {
+  readonly reference: MessageReplyReference;
+  readonly currentReply: MessageReplyTopic | null | undefined;
+  readonly createTopicId: () => SubagentId;
+}): { readonly replyTo: MessageReplyReference; readonly replyTopicId: SubagentId } {
+  const existingTopicId = input.reference.replyTopicId ?? input.currentReply?.replyTopicId;
+  return existingTopicId === undefined
+    ? { replyTo: input.reference, replyTopicId: input.createTopicId() }
+    : {
+        replyTo: { ...input.reference, replyTopicId: existingTopicId },
+        replyTopicId: existingTopicId,
+      };
+}
+
+export type MessageReplyDispatch =
+  | { readonly kind: "start"; readonly sourceThreadId: ThreadId }
+  | { readonly kind: "continue"; readonly threadId: ThreadId }
+  | { readonly kind: "unavailable" };
+
+/** A topic continues on its existing reply thread; only a new topic starts one from the source. */
+export function resolveMessageReplyDispatch(input: {
+  readonly threadId: ThreadId;
+  readonly currentReply: MessageReplyTopic | null | undefined;
+  readonly replyTo: MessageReplyReference;
+  readonly replyTopicId: SubagentId;
+  readonly threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly messageReply?: MessageReplyTopic | undefined;
+  }>;
+}): MessageReplyDispatch {
+  const sourceThreadId = input.currentReply?.sourceThreadId ?? input.threadId;
+  if (input.replyTo.replyTopicId !== input.replyTopicId) return { kind: "start", sourceThreadId };
+  if (input.currentReply?.replyTopicId === input.replyTopicId)
+    return { kind: "continue", threadId: input.threadId };
+  const topicThread = input.threads.find(
+    (thread) =>
+      thread.messageReply?.replyTopicId === input.replyTopicId &&
+      thread.messageReply.sourceThreadId === sourceThreadId,
+  );
+  return topicThread ? { kind: "continue", threadId: topicThread.id } : { kind: "unavailable" };
 }

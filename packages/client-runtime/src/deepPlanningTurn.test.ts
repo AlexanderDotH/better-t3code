@@ -221,6 +221,22 @@ describe("DeepPlan turn preparation", () => {
     expect(transferDeepPlanSources).not.toHaveBeenCalled();
   });
 
+  it("reuses a run without project chats only while that choice is unchanged", async () => {
+    const target = api();
+    const withoutProjectChats = run({ includeProjectChats: false });
+    target.getRun.mockResolvedValue(withoutProjectChats);
+    expect(await prepare(target, { includeProjectChats: false })).toBe(withoutProjectChats);
+    expect(transferDeepPlanSources).not.toHaveBeenCalled();
+    target.getRun
+      .mockReset()
+      .mockResolvedValueOnce(withoutProjectChats)
+      .mockResolvedValueOnce(run({ id: nextRunId }));
+    expect((await prepare(target)).id).toBe(nextRunId);
+    expect(transferDeepPlanSources).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: nextRunId, includeProjectChats: true }),
+    );
+  });
+
   it("pauses an old unapproved run before capturing changed source selections", async () => {
     const target = api();
     target.getRun.mockResolvedValueOnce(run()).mockResolvedValueOnce(run({ id: nextRunId }));
@@ -507,6 +523,11 @@ describe("Deep Plan continuation", () => {
       "thread.runtime-mode.set",
       "message.dispatch",
     ]);
+    expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
+      type: "thread.interaction-mode.set",
+      threadId: paused.approval!.implementationThreadId,
+      interactionMode: "default",
+    });
     expect(target.dispatchCommand.mock.calls.at(-1)?.[0]).toMatchObject({
       threadId: paused.approval!.implementationThreadId,
       modelSelection: paused.approval!.implementation,

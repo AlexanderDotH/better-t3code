@@ -324,6 +324,8 @@ export const DeepPlanRun = Schema.Struct({
   approval: Schema.NullOr(DeepPlanApproval),
   approvalKey: Schema.NullOr(TrimmedNonEmptyString),
   sources: Schema.Array(DeepPlanSourceSnapshot),
+  // Absent until sources are captured, and on runs from servers that always included them.
+  includeProjectChats: Schema.optional(Schema.Boolean),
   sourceCoverage: Schema.Array(DeepPlanSourceCoverage),
   stepStates: Schema.Array(DeepPlanStepState),
   finalValidation: DeepPlanFinalValidation,
@@ -428,6 +430,7 @@ export type AgentDeepPlanMutation = typeof AgentDeepPlanMutation.Type;
 export const DeepPlanSourcesSetMutation = Schema.Struct({
   type: Schema.Literal("sources-set"),
   sources: Schema.Array(DeepPlanSourceSnapshot),
+  includeProjectChats: Schema.optional(Schema.Boolean),
 });
 export const DeepPlanSourceCoverageMutation = Schema.Struct({
   type: Schema.Literal("source-coverage"),

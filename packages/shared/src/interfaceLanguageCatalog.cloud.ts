@@ -41,26 +41,6 @@ export const cloudInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "T3-Connect-Umgebungen konnten nicht geladen werden",
     "Impossible de charger les environnements T3 Connect",
   ],
-  "cloud.environment.availableRelayOnline": [
-    "Available · Relay online",
-    "Verfügbar · Relay online",
-    "Disponible · Relais en ligne",
-  ],
-  "cloud.environment.availableRelayOffline": [
-    "Available · Relay offline",
-    "Verfügbar · Relay offline",
-    "Disponible · Relais hors ligne",
-  ],
-  "cloud.environment.availableRelayChecking": [
-    "Available · Checking relay status…",
-    "Verfügbar · Relay-Status wird geprüft…",
-    "Disponible · Vérification du relais…",
-  ],
-  "cloud.environment.availableRelayUnavailable": [
-    "Available · Relay status unavailable",
-    "Verfügbar · Relay-Status nicht verfügbar",
-    "Disponible · État du relais indisponible",
-  ],
   "cloud.environment.relayOnline": ["Relay online", "Relay online", "Relais en ligne"],
   "cloud.environment.relayOffline": ["Relay offline", "Relay offline", "Relais hors ligne"],
   "cloud.environment.relayChecking": [
@@ -73,6 +53,24 @@ export const cloudInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Relay-Status nicht verfügbar",
     "État du relais indisponible",
   ],
+  "cloud.environment.routeAddedTitle": [
+    "T3 Connect route added",
+    "T3-Connect-Route hinzugefügt",
+    "Route T3 Connect ajoutée",
+  ],
+  "cloud.environment.routeAddedDescription": [
+    "{{environment}} falls back to T3 Connect when its other routes are unreachable.",
+    "{{environment}} weicht auf T3 Connect aus, wenn die anderen Routen nicht erreichbar sind.",
+    "{{environment}} bascule sur T3 Connect lorsque ses autres routes sont inaccessibles.",
+  ],
+  "cloud.environment.notAdded": ["Not added", "Nicht hinzugefügt", "Non ajouté"],
+  "cloud.environment.savedWithoutRelay": [
+    "Saved without T3 Connect",
+    "Ohne T3 Connect gespeichert",
+    "Enregistré sans T3 Connect",
+  ],
+  "cloud.environment.addRoute": ["Add route", "Route hinzufügen", "Ajouter une route"],
+  "cloud.environment.checking": ["Checking…", "Wird geprüft…", "Vérification…"],
   "cloud.environment.connect": ["Connect", "Verbinden", "Connecter"],
   "cloud.environment.connecting": ["Connecting…", "Verbindung…", "Connexion…"],
   "cloud.connection.connected": ["Connected", "Verbunden", "Connecté"],
@@ -718,30 +716,30 @@ export const cloudInterfaceCatalog = defineLocalizedInterfaceCatalog({
   ],
 
   "sshPassword.failureFallback": [
-    "SSH password prompt failed.",
-    "Die SSH-Passwortabfrage ist fehlgeschlagen.",
-    "La demande de mot de passe SSH a échoué.",
+    "SSH verification prompt failed.",
+    "Die SSH-Bestätigungsabfrage ist fehlgeschlagen.",
+    "La demande de vérification SSH a échoué.",
   ],
   "sshPassword.expired": [
-    "This SSH password prompt expired. Try connecting again.",
-    "Diese SSH-Passwortabfrage ist abgelaufen. Stelle die Verbindung erneut her.",
-    "Cette demande de mot de passe SSH a expiré. Essayez de vous reconnecter.",
+    "This SSH verification prompt expired. Try connecting again.",
+    "Diese SSH-Bestätigungsabfrage ist abgelaufen. Stelle die Verbindung erneut her.",
+    "Cette demande de vérification SSH a expiré. Essayez de vous reconnecter.",
   ],
   "sshPassword.title": [
-    "SSH Password Required",
-    "SSH-Passwort erforderlich",
-    "Mot de passe SSH requis",
+    "SSH verification required",
+    "SSH-Bestätigung erforderlich",
+    "Vérification SSH requise",
   ],
   "sshPassword.description": [
-    "T3 needs your SSH password to connect to {{target}}. The password is passed to the local SSH process for this connection attempt and is not saved by T3 Code.",
-    "T3 benötigt dein SSH-Passwort, um eine Verbindung mit {{target}} herzustellen. Das Passwort wird für diesen Verbindungsversuch an den lokalen SSH-Prozess übergeben und nicht von T3 Code gespeichert.",
-    "T3 a besoin de votre mot de passe SSH pour se connecter à {{target}}. Le mot de passe est transmis au processus SSH local pour cette tentative de connexion et n’est pas enregistré par T3 Code.",
+    "Enter the password or verification code required by {{target}}. T3 Code passes your response to the local SSH process and keeps it in memory to reuse for this host. T3 Code does not write it to disk.",
+    "Gib das Passwort oder den Bestätigungscode ein, den {{target}} verlangt. T3 Code übergibt deine Antwort an den lokalen SSH-Prozess und behält sie im Arbeitsspeicher, um sie für diesen Host wiederzuverwenden. T3 Code schreibt sie nicht auf die Festplatte.",
+    "Saisissez le mot de passe ou le code de vérification demandé par {{target}}. T3 Code transmet votre réponse au processus SSH local et la conserve en mémoire pour la réutiliser avec cet hôte. T3 Code ne l’écrit pas sur le disque.",
   ],
   "sshPassword.expiredLabel": ["Expired", "Abgelaufen", "Expiré"],
   "sshPassword.keysHint": [
-    "Use SSH keys to avoid repeated password prompts on new SSH sessions.",
-    "Verwende SSH-Schlüssel, um wiederholte Passwortabfragen bei neuen SSH-Sitzungen zu vermeiden.",
-    "Utilisez des clés SSH pour éviter les demandes répétées de mot de passe lors de nouvelles sessions SSH.",
+    "SSH keys may replace a password, but your server can still require a verification code.",
+    "SSH-Schlüssel können ein Passwort ersetzen, dein Server kann aber trotzdem einen Bestätigungscode verlangen.",
+    "Les clés SSH peuvent remplacer un mot de passe, mais votre serveur peut tout de même exiger un code de vérification.",
   ],
 
   "desktopUpdate.openNotesFailed": [

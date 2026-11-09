@@ -25,7 +25,6 @@ import {
   awaitDeepPlanSourceOperation,
   deepPlanSourceRefKey,
   transferDeepPlanSources,
-  uniqueDeepPlanSourceRefs,
   type DeepPlanningSourceApi,
   type DeepPlanSourceTransferProgress,
 } from "./deepPlanningSources.ts";
@@ -46,25 +45,36 @@ function importsComplete(run: DeepPlanRun): boolean {
   );
 }
 
-function sameAdditionalSources(input: {
-  readonly run: DeepPlanRun;
+interface DeepPlanSourceScope {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
-  readonly additionalSourceRefs: ReadonlyArray<DeepPlanSourceRef>;
-}): boolean {
-  const outsideCurrentProject = (ref: DeepPlanSourceRef) =>
-    ref.environmentId !== input.environmentId || ref.projectId !== input.projectId;
-  const frozen = new Set(
-    input.run.sources
-      .filter((source) => outsideCurrentProject(source.origin))
-      .map((source) => deepPlanSourceRefKey(source.origin)),
-  );
-  const selected = uniqueDeepPlanSourceRefs(
-    input.additionalSourceRefs.filter(outsideCurrentProject),
-  );
+  readonly includeProjectChats: boolean;
+}
+
+function chosenSourceKeys(
+  scope: DeepPlanSourceScope,
+  refs: ReadonlyArray<DeepPlanSourceRef>,
+): ReadonlyArray<string> {
+  const implied = (ref: DeepPlanSourceRef) =>
+    scope.includeProjectChats &&
+    ref.environmentId === scope.environmentId &&
+    ref.projectId === scope.projectId;
+  return [...new Set(refs.filter((ref) => !implied(ref)).map(deepPlanSourceRefKey))].sort();
+}
+
+function sameSourceSelection(
+  run: DeepPlanRun,
+  scope: DeepPlanSourceScope,
+  refs: ReadonlyArray<DeepPlanSourceRef>,
+): boolean {
   return (
-    frozen.size === selected.length &&
-    selected.every((ref) => frozen.has(deepPlanSourceRefKey(ref)))
+    (run.includeProjectChats !== false) === scope.includeProjectChats &&
+    JSON.stringify(
+      chosenSourceKeys(
+        scope,
+        run.sources.map((source) => source.origin),
+      ),
+    ) === JSON.stringify(chosenSourceKeys(scope, refs))
   );
 }
 
@@ -93,6 +103,7 @@ async function prepareDeepPlan(input: {
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
   readonly additionalSourceRefs?: ReadonlyArray<DeepPlanSourceRef> | undefined;
+  readonly includeProjectChats?: boolean | undefined;
   readonly existingRun?: DeepPlanRun | null | undefined;
   readonly runId?: DeepPlanRunId | undefined;
   readonly createId: () => string;
@@ -113,17 +124,17 @@ async function prepareDeepPlan(input: {
   });
   if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
   const additionalSourceRefs = input.additionalSourceRefs ?? [];
+  const includeProjectChats = input.includeProjectChats !== false;
   if (
     current &&
     !current.approval &&
     (current.phase === "planning" || current.phase === "awaitingApproval") &&
     importsComplete(current) &&
-    sameAdditionalSources({
-      run: current,
-      environmentId: input.environmentId,
-      projectId: input.projectId,
+    sameSourceSelection(
+      current,
+      { environmentId: input.environmentId, projectId: input.projectId, includeProjectChats },
       additionalSourceRefs,
-    })
+    )
   )
     return current;
   if (current?.approval && current.phase !== "completed") {
@@ -161,6 +172,7 @@ async function prepareDeepPlan(input: {
       threadId: input.threadId,
       runId,
       additionalSourceRefs,
+      includeProjectChats,
       apiForEnvironment: (environmentId) =>
         environmentId === input.environmentId ? api : input.apiForEnvironment(environmentId),
       ...(input.signal ? { signal: input.signal } : {}),
@@ -222,15 +234,15 @@ export async function prepareDeepPlanForTurn(
 ): Promise<DeepPlanRun> {
   if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
   const key = preparationKey(input.environmentId, input.threadId);
+  const scope = {
+    environmentId: input.environmentId,
+    projectId: input.projectId,
+    includeProjectChats: input.includeProjectChats !== false,
+  };
   const selectionKey = JSON.stringify([
     input.projectId,
-    uniqueDeepPlanSourceRefs(input.additionalSourceRefs ?? [])
-      .filter(
-        (source) =>
-          source.environmentId !== input.environmentId || source.projectId !== input.projectId,
-      )
-      .map(deepPlanSourceRefKey)
-      .sort(),
+    scope.includeProjectChats,
+    chosenSourceKeys(scope, input.additionalSourceRefs ?? []),
   ]);
   const active = preparations.get(key);
   if (active) {
@@ -278,6 +290,7 @@ async function continueDeepPlan(input: {
       projectId: input.projectId,
       threadId: run.threadId,
       additionalSourceRefs: run.sources.map((source) => source.origin),
+      includeProjectChats: run.includeProjectChats !== false,
       existingRun: run,
       apiForEnvironment: input.apiForEnvironment,
       createId: input.createId,
@@ -315,7 +328,7 @@ async function continueDeepPlan(input: {
     await api.dispatchCommand({
       type: "thread.interaction-mode.set",
       commandId: CommandId.make(input.createId()),
-      threadId: run.threadId,
+      threadId: run.approval?.implementationThreadId ?? run.threadId,
       interactionMode: run.approval ? "default" : "plan",
     });
   }

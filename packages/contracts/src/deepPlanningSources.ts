@@ -197,6 +197,8 @@ export type DeepPlanReadExportChunkResult = typeof DeepPlanReadExportChunkResult
 export const DeepPlanInitializeSourcesInput = Schema.Struct({
   ...DeepPlanRunFields,
   localExportId: Schema.optional(DeepPlanExportId),
+  // Absent means every retained current-project chat is a required source.
+  includeProjectChats: Schema.optional(Schema.Boolean),
   snapshots: Schema.Array(DeepPlanSourceSnapshot),
 });
 export type DeepPlanInitializeSourcesInput = typeof DeepPlanInitializeSourcesInput.Type;

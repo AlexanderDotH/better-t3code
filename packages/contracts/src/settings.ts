@@ -453,6 +453,8 @@ export const LoadBalancingWeights = Schema.Record(
 export const ContextWindowSelector = Schema.Literals(["native", "better-t3"]);
 export type ContextWindowSelector = typeof ContextWindowSelector.Type;
 
+const ComposerLayout = Schema.Literals(["current", "classic"]);
+
 export const UsagePacingWorkdayHours = Schema.Literals([8, 24]);
 export type UsagePacingWorkdayHours = typeof UsagePacingWorkdayHours.Type;
 
@@ -637,6 +639,7 @@ export const ClientSettingsSchema = Schema.Struct({
   contextWindowSelector: ContextWindowSelector.pipe(
     Schema.withDecodingDefault(Effect.succeed("better-t3" as const)),
   ),
+  composerLayout: ComposerLayout.pipe(Schema.withDecodingDefault(Effect.succeed("current"))),
   // Desktop resting composer: scrolling an existing thread's conversation
   // settles the composer into its single-line layout. Losing focus never does.
   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -669,8 +672,8 @@ export const ClientSettingsSchema = Schema.Struct({
   threadDetailsItems: Schema.Record(Schema.String, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  // Opt-in for the removed legacy sidebar. Still read so those users land in
-  // the boring sidebar; the boring sidebar toggle clears it.
+  // Mirrors Better T3's `chat.classicSidebar` feature. The classic sidebar
+  // shows only while both are on.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
@@ -2807,6 +2810,7 @@ export const ClientSettingsPatch = Schema.Struct({
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   responseMetricsEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowSelector: Schema.optionalKey(ContextWindowSelector),
+  composerLayout: Schema.optionalKey(ComposerLayout),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),

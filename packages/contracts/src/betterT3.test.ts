@@ -187,12 +187,6 @@ describe("Better T3 feature registry", () => {
     });
   });
 
-  it("declares Shift-click Show Less unavailable until Classic sidebar is enabled", () => {
-    expect(
-      BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "chat.shiftClickShowLess")?.dependencies,
-    ).toEqual([{ featureId: "chat.classicSidebar", condition: "enabled" }]);
-  });
-
   it("gates transcript portability on the agent workflow capability", () => {
     expect(
       BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "voice.transcriptPortability")

@@ -363,6 +363,11 @@ export const desktopInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Anmerkung und Screenshot anhängen (Eingabetaste)",
     "Joindre l’annotation et la capture d’écran (Entrée)",
   ],
+  "desktop.preview.annotation.attachAndSendTitle": [
+    "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter.",
+    "Anmerkung und Screenshot anhängen (Eingabetaste). Mit Cmd/Strg+Enter senden.",
+    "Joindre l’annotation et la capture d’écran (Entrée). Envoyer avec Cmd/Ctrl+Entrée.",
+  ],
   "desktop.preview.annotation.capturing": ["Capturing…", "Aufnahme läuft…", "Capture en cours…"],
   "desktop.preview.annotation.font": ["Font", "Schriftart", "Police"],
   "desktop.preview.annotation.fontSize": ["Font size", "Schriftgröße", "Taille de police"],

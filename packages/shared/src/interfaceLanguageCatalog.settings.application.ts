@@ -44,6 +44,22 @@ export const settingsApplicationInterfaceCatalog = defineLocalizedInterfaceCatal
     "Projet indisponible",
   ],
   "settings.application.scope.allProjects": ["All projects", "Alle Projekte", "Tous les projets"],
+  "settings.application.scope.searchProjects": [
+    "Search projects",
+    "Projekte durchsuchen",
+    "Rechercher des projets",
+  ],
+  "settings.application.scope.searchEnvironments": [
+    "Search environments",
+    "Umgebungen durchsuchen",
+    "Rechercher des environnements",
+  ],
+  "settings.application.scope.noMatches": [
+    "No matches found.",
+    "Keine Treffer gefunden.",
+    "Aucun résultat trouvé.",
+  ],
+  "settings.application.scope.archived": ["Archived", "Archiviert", "Archivé"],
   "settings.application.section.general": ["General", "Allgemein", "Général"],
   "settings.application.section.projects": ["Projects", "Projekte", "Projets"],
   "settings.application.section.appearance": ["Appearance", "Darstellung", "Apparence"],

@@ -41,7 +41,7 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Ursprüngliche Nachricht ist nicht verfügbar",
     "Le message d’origine est indisponible",
   ],
-  "chat.reply.you": ["You", "Du", "Vous"],
+  "chat.reply.you": ["You", "dich", "vous"],
   "chat.reply.assistant": ["Assistant", "Assistent", "Assistant"],
   "chat.reply.attachment": ["Attachment", "Anhang", "Pièce jointe"],
   "chat.reply.topic": ["Reply topic", "Antwortthema", "Sujet de réponse"],
@@ -61,6 +61,17 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.reply.status.failed": ["Reply failed", "Antwort fehlgeschlagen", "Échec de la réponse"],
   "chat.reply.stop": ["Stop reply", "Antwort stoppen", "Arrêter la réponse"],
   "chat.reply.retry": ["Retry reply", "Antwort erneut versuchen", "Réessayer la réponse"],
+  "chat.reply.count": [
+    { one: "{{count}} reply", other: "{{count}} replies" },
+    { one: "{{count}} Antwort", other: "{{count}} Antworten" },
+    { one: "{{count}} réponse", other: "{{count}} réponses" },
+  ],
+  "chat.reply.openSideChat": ["Open side chat", "Side-Chat öffnen", "Ouvrir le chat annexe"],
+  "chat.reply.actionFailed": [
+    "Couldn’t update this reply.",
+    "Diese Antwort konnte nicht aktualisiert werden.",
+    "Impossible de mettre à jour cette réponse.",
+  ],
   "chat.reply.continue": ["Continue reply topic", "Antwortthema fortsetzen", "Poursuivre le sujet"],
   "chat.reply.sendFailed": [
     "Couldn’t send reply. Your draft is saved.",
@@ -366,6 +377,24 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "{{project}}, um zu beginnen",
     "{{project}} pour commencer",
   ],
+  "chat.fork.fromMessage": [
+    "Fork chat from here",
+    "Chat ab hier forken",
+    "Forker le chat à partir d’ici",
+  ],
+  "chat.fork.fromPlan": [
+    "Fork from this plan",
+    "Ab diesem Plan forken",
+    "Forker à partir de ce plan",
+  ],
+  "chat.fork.busy": ["Forking chat", "Chat wird geforkt", "Fork du chat en cours"],
+  "chat.fork.creating": ["Creating fork", "Fork wird erstellt", "Création du fork"],
+  "chat.fork.reconnect": [
+    "Reconnect to fork this chat",
+    "Verbinde dich neu, um diesen Chat zu forken",
+    "Reconnectez-vous pour forker ce chat",
+  ],
+  "chat.agent.openPanel": ["Open Agents panel", "Agents-Panel öffnen", "Ouvrir le panneau Agents"],
   "chat.timeline.forkStartsHere": ["Fork starts here", "Fork beginnt hier", "Le fork commence ici"],
   "chat.timeline.revertMessage": [
     "Revert to this message",
@@ -1054,6 +1083,16 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.composer.mode": ["Mode", "Modus", "Mode"],
   "chat.composer.mode.chat": ["Chat", "Chat", "Discussion"],
   "chat.composer.mode.plan": ["Plan", "Plan", "Plan"],
+  "chat.composer.mode.enablePlanning": [
+    "Enable Plan Mode in Settings → Better T3 to use planning modes.",
+    "Aktiviere den Planmodus unter Einstellungen → Better T3, um Planungsmodi zu verwenden.",
+    "Activez le mode Plan dans Paramètres → Better T3 pour utiliser les modes de planification.",
+  ],
+  "chat.composer.mode.planningUnsupported": [
+    "This provider does not support planning modes.",
+    "Dieser Provider unterstützt keine Planungsmodi.",
+    "Ce fournisseur ne prend pas en charge les modes de planification.",
+  ],
   "chat.composer.access": ["Access", "Zugriff", "Accès"],
   "chat.composer.access.supervised": ["Supervised", "Überwacht", "Supervisé"],
   "chat.composer.access.autoAccept": ["Ruled", "Regeln", "Règles"],
