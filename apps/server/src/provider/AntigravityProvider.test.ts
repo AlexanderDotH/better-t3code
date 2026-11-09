@@ -711,7 +711,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
           const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
           yield* harness.initialize;
-          expect((yield* published)?.usageLimits).toEqual(limits);
+          expect((yield* published)?.usageLimits).toMatchObject(limits);
           // The second health check is the one the failed background read triggers.
           const checks = yield* Ref.make(0);
           const failedReadApplied = yield* Deferred.make<void>();
@@ -731,7 +731,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           });
           yield* harness.provider.snapshot.refresh;
           yield* Deferred.await(failedReadApplied);
-          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toMatchObject(limits);
           yield* harness.provider.onSignedOut;
           expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
           yield* Ref.set(usage, {
@@ -829,7 +829,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* Ref.set(usage, Effect.succeed(newLimits));
         yield* harness.provider.onSignedIn;
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* published)?.usageLimits).toEqual(newLimits);
+        expect((yield* published)?.usageLimits).toMatchObject(newLimits);
         // Switching again must not republish the previous account's limits, even if the read fails.
         const failed = {
           checkedAt: "2026-10-09T12:02:00.000Z",

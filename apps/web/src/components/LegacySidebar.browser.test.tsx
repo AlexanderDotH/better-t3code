@@ -70,14 +70,17 @@ it("clears Completed after visiting and leaving a chat despite an older local wa
       .elementLocator(row.element().closest("[data-thread-item]")!)
       .getByText("Completed", { exact: true });
   await expect.element(status()).toBeVisible();
-  await row.click();
+  row.element().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   await expect.element(page.getByText("Answer 0 for completed.")).toBeVisible();
   await expect.element(status()).not.toBeInTheDocument();
-  await page.getByTestId("thread-title-other").click();
+  page
+    .getByTestId("thread-title-other")
+    .element()
+    .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   await expect.element(page.getByText("Answer 0 for other.")).toBeVisible();
   await expect.element(status()).not.toBeInTheDocument();
   using _menu = vi.spyOn(ensureLocalApi().contextMenu, "show").mockResolvedValue("mark-unread");
-  // A dispatched event does not wait on Playwright's actionability budget on slow CI runners.
+  // Dispatched events avoid Playwright waiting on the main thread while the chat route renders.
   row
     .element()
     .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
@@ -86,7 +89,7 @@ it("clears Completed after visiting and leaving a chat despite an older local wa
     expect(row.element().closest("[data-thread-item]")?.textContent).toContain("Completed");
   });
   await expect.element(status()).toBeVisible();
-  await row.click();
+  row.element().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   await expect.element(page.getByText("Answer 0 for completed.")).toBeVisible();
   await expect.element(status()).not.toBeInTheDocument();
 });
