@@ -433,6 +433,26 @@ it.effect("rejects updates by another implementing agent or model", () =>
   }),
 );
 
+it.effect("plans without chat sources and keeps that choice across a pause", () =>
+  Effect.gen(function* () {
+    const started = yield* startDeepPlanRun({ ...startCommand, sources: undefined });
+    const pausedWhileCollecting = yield* update(started, { type: "pause" });
+    expect((yield* update(pausedWhileCollecting, { type: "resume" })).phase).toBe("collecting");
+    const planning = yield* update(started, {
+      type: "sources-set",
+      sources: [],
+      includeProjectChats: false,
+    });
+    expect(planning).toMatchObject({ phase: "planning", includeProjectChats: false });
+    const changed = yield* update(planning, { type: "sources-set", sources: [] }).pipe(Effect.flip);
+    expect(changed.detail).toContain("immutable");
+    const paused = yield* update(planning, { type: "pause" });
+    const resumed = yield* update(decodeRun(encodeRun(paused)), { type: "resume" });
+    expect(resumed.phase).toBe("planning");
+    expect((yield* update(resumed, { type: "publish-plan", plan })).phase).toBe("awaitingApproval");
+  }),
+);
+
 it.effect("restores an approved run and its idempotency history after pausing", () =>
   Effect.gen(function* () {
     const approved = yield* approvedRun;

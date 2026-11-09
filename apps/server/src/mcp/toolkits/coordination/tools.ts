@@ -38,7 +38,10 @@ const ProjectAgentListTool = Tool.make("project_agent_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.projectCoordination"),
+  );
 
 const ProjectAgentClaimTool = Tool.make("project_agent_claim", {
   description:
@@ -53,7 +56,10 @@ const ProjectAgentClaimTool = Tool.make("project_agent_claim", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.projectCoordination"),
+  );
 
 const ProjectAgentSendTool = Tool.make("project_agent_send", {
   description:
@@ -68,7 +74,10 @@ const ProjectAgentSendTool = Tool.make("project_agent_send", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.projectCoordination"),
+  );
 
 const ProjectAgentInboxTool = Tool.make("project_agent_inbox", {
   description:
@@ -83,7 +92,10 @@ const ProjectAgentInboxTool = Tool.make("project_agent_inbox", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("coordination"));
+  .annotate(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hasThreadCapability("coordination", "agent.projectCoordination"),
+  );
 
 export const CoordinationToolkit = Toolkit.make(
   ProjectAgentListTool,

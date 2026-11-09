@@ -57,10 +57,8 @@ import {
 export {
   assistantTextFromCompletedItem,
   buildGeneralSubagentPrompt,
-  generalSubagentApprovalAction,
   parseGeneralSubagentFinalResult,
 } from "./GeneralSubagentPolicy.ts";
-export type { GeneralSubagentApprovalAction } from "./GeneralSubagentPolicy.ts";
 export interface GeneralSubagentCaller {
   readonly parentThreadId: ThreadId;
   readonly callerProviderInstanceId: ProviderInstanceId;
@@ -223,7 +221,10 @@ const make = Effect.gen(function* () {
     const selected = resolveGeneralSubagentSelection({
       providers: yield* providers.getProviders,
       callerProviderInstanceId: input.callerProviderInstanceId,
-      parentModelSelection: run.resolvedModelSelection ?? projection.thread.modelSelection,
+      parentModelSelection:
+        input.deepPlanExecution?.modelSelection ??
+        run.resolvedModelSelection ??
+        projection.thread.modelSelection,
       request: input,
     });
     if (selected.status !== "resolved") return yield* new GeneralSubagentError(selected);
@@ -251,6 +252,7 @@ const make = Effect.gen(function* () {
         ...(input.deepPlanExecution === undefined
           ? {}
           : { deepPlanExecution: input.deepPlanExecution }),
+        generalSubagent: true,
         modelSelection: selected.selection,
         runtimeMode: projection.thread.runtimeMode,
         interactionMode: input.deepPlanExecution?.readOnly ? "plan" : "default",

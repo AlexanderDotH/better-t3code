@@ -1217,7 +1217,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
   );
 
   it.effect(
-    "requires every frozen current-project chat and rejects subset and empty manifests",
+    "requires every frozen current-project chat and rejects subsets unless chats are excluded",
     () =>
       Effect.gen(function* () {
         const sources = yield* DeepPlanSources;
@@ -1259,6 +1259,23 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           (yield* sources.initializeSources({ ...input, snapshots: exported.sources })).sources
             .length,
           2,
+        );
+        const withoutProjectChats = { threadId, includeProjectChats: false };
+        assert.deepStrictEqual(
+          (yield* sources.initializeSources({
+            ...withoutProjectChats,
+            runId: DeepPlanRunId.make(`${threadId}-no-chats-run`),
+            snapshots: [],
+          })).sources,
+          [],
+        );
+        assert.deepStrictEqual(
+          (yield* sources.initializeSources({
+            ...withoutProjectChats,
+            runId: DeepPlanRunId.make(`${threadId}-selected-chats-run`),
+            snapshots: subset.sources,
+          })).coverage.map((coverage) => coverage.status),
+          ["ready"],
         );
       }),
   );

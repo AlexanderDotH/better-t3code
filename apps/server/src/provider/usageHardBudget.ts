@@ -3,9 +3,19 @@ import { dailyUsagePace } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
+
+export class UsageHardBudgetError extends Schema.TaggedError<UsageHardBudgetError>()(
+  "UsageHardBudgetError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export function usageHardBudgetBlockReason(
   limits: ServerProviderUsageLimits | undefined,

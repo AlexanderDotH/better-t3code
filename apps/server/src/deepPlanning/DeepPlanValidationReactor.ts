@@ -14,7 +14,9 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { isRuntimeReconcileCommandId } from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import { canContinueDeepPlan, deepPlanContinuationCommand } from "./DeepPlanContinuation.ts";
 import { DeepPlanWorkflow } from "./DeepPlanWorkflow.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
@@ -69,6 +71,7 @@ function awaitsFinalValidation(run: DeepPlanRun): boolean {
 
 const make = Effect.gen(function* () {
   const engine = yield* OrchestratorV2;
+  const eventSink = yield* EventSinkV2;
   const workflow = yield* DeepPlanWorkflow;
   const dispatcher = yield* DeepPlanValidationDispatcher;
   const activation = yield* ServerActivation;
@@ -159,7 +162,11 @@ const make = Effect.gen(function* () {
       for (const [threadId, run] of pendingRuns) {
         if ((run.approval?.implementationThreadId ?? threadId) !== event.threadId) continue;
         if (event.payload.status === "completed") yield* worker.enqueue(threadId);
-        else if (["failed", "cancelled", "interrupted"].includes(event.payload.status)) {
+        // Startup continues the plan; a restart is not a reason to pause it.
+        else if (
+          ["failed", "cancelled", "interrupted"].includes(event.payload.status) &&
+          !isRuntimeReconcileCommandId(stored.commandId)
+        ) {
           yield* workflow.withRunLock(
             run.id,
             Effect.gen(function* () {
@@ -195,8 +202,10 @@ const make = Effect.gen(function* () {
     start: Effect.fn("DeepPlanValidationReactor.start")(function* () {
       if (started) return;
       started = true;
-      yield* forkParked(Stream.runForEach(engine.streamStoredEvents, consume));
       const snapshot = yield* engine.getShellSnapshot().pipe(Effect.orDie);
+      yield* forkParked(
+        Stream.runForEach(eventSink.stream({ afterSequence: snapshot.snapshotSequence }), consume),
+      );
       const runs = snapshot.threads.flatMap((thread) => (thread.deepPlan ? [thread.deepPlan] : []));
       for (const run of runs) {
         if (!awaitsFinalValidation(run) && !canContinueDeepPlan(run, "plan")) continue;

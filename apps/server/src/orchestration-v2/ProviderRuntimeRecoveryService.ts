@@ -50,6 +50,12 @@ export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRun
   }
 }
 
+const RUNTIME_RECONCILE_COMMAND_PREFIX = "command:runtime-reconcile:";
+
+/** Events this service commits after process loss, not a provider or user outcome. */
+export const isRuntimeReconcileCommandId = (commandId: CommandId | null): boolean =>
+  commandId?.startsWith(RUNTIME_RECONCILE_COMMAND_PREFIX) === true;
+
 export interface ProviderRuntimeRecoverySummary {
   readonly terminalizedRuns: number;
   readonly stoppedSessions: number;
@@ -270,7 +276,7 @@ export const make = Effect.gen(function* () {
       ]);
       const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
       const commandId = CommandId.make(
-        `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
+        `${RUNTIME_RECONCILE_COMMAND_PREFIX}${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
       const allocateEventId = () =>
         ids.allocate.event({ threadId: projection.thread.id, commandId }).pipe(

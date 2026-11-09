@@ -88,6 +88,7 @@ const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
   nativeSubagents: { toolName: "spawn_agent", maxRecommendedSubagents: 8 },
+  fetchWorkers: { maxRecommendedWorkers: 8, commandExecutionPolicy: "deny" },
   reportsContextWindow: true,
 } as const;
 

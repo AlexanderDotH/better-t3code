@@ -1,3 +1,4 @@
+import * as ProjectAgentMessageDelivery from "../projectAgent/ProjectAgentMessageDelivery.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -160,6 +161,7 @@ function layerExecutorFor(input: {
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,
+        Layer.mock(ProjectAgentMessageDelivery.ProjectAgentMessageDelivery)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},

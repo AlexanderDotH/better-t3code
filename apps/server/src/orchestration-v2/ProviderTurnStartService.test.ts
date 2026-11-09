@@ -53,6 +53,7 @@ import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TurnPromptContext from "./TurnPromptContext.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -283,6 +284,9 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly turnPrompt?: Effect.Success<
+    ReturnType<TurnPromptContext.TurnPromptContext["Service"]["prepare"]>
+  >;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -303,6 +307,9 @@ function makeLocalCommandHarness(input: {
   };
 }) {
   const settledRuns: Array<string> = [];
+  const promptRequests: Array<
+    Parameters<TurnPromptContext.TurnPromptContext["Service"]["prepare"]>[0]
+  > = [];
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
   const runId = RunId.make("run-native-account-command");
@@ -959,8 +966,20 @@ function makeLocalCommandHarness(input: {
         }),
       ),
     ),
+    // Outermost, as in production: the service is optional, so nothing type-checks this path.
+    Layer.provide(
+      input.turnPrompt === undefined
+        ? Layer.empty
+        : Layer.succeed(TurnPromptContext.TurnPromptContext, {
+            prepare: (request) => {
+              promptRequests.push(request);
+              return Effect.succeed(input.turnPrompt!);
+            },
+          }),
+    ),
   );
   return {
+    promptRequests,
     settledRuns,
     getThreadRecords,
     getTurnStartContext,
@@ -1210,6 +1229,81 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
     expect(harness.startRootRun.mock.calls[0]?.[0].providerThread.nativeThreadRef?.nativeId).toBe(
       "existing-native-conversation",
     );
+  }),
+);
+
+const preparedPrompt = {
+  text: "EXPANDED",
+  projectContext: "INDEX",
+  memory: "MEMORY",
+  projectMemoryMode: "off",
+} as const;
+
+effectIt.effect.each([
+  {
+    name: "a new native conversation",
+    text: "Fix it",
+    prompt: preparedPrompt,
+    previousTurn: undefined,
+    expected: "MEMORY\n\nINDEX\n\nEXPANDED",
+  },
+  {
+    name: "a resumed native conversation",
+    text: "Fix it",
+    prompt: preparedPrompt,
+    previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    expected: "INDEX\n\nEXPANDED",
+  },
+  {
+    name: "a provider command",
+    text: "/status",
+    prompt: { ...preparedPrompt, text: "/status", projectContext: undefined },
+    previousTurn: undefined,
+    expected: "/status",
+  },
+  {
+    name: "a skill command expanded away from its slash",
+    text: "/lint",
+    prompt: preparedPrompt,
+    previousTurn: undefined,
+    expected: "MEMORY\n\nINDEX\n\nEXPANDED",
+  },
+] as const)("assembles the provider prompt for $name", ({ text, prompt, previousTurn, expected }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text,
+      turnPrompt: prompt,
+      failReadsAfterRunning: true,
+      ...(previousTurn === undefined ? {} : { previousTurn }),
+    });
+    // Commands the auth layer does not recognize continue to the provider.
+    harness.tryHandlePromptCommand.mockImplementation(() => Effect.succeed(false));
+    if (previousTurn !== undefined) {
+      const current = harness.projection();
+      harness.setProjection({
+        ...current,
+        attempts: [
+          ...current.attempts,
+          {
+            ...current.attempts[0]!,
+            id: current.providerTurns[0]!.runAttemptId!,
+            runId: RunId.make("previous-accepted-run"),
+          },
+        ],
+      });
+    }
+
+    yield* harness.start;
+
+    expect(harness.promptRequests).toMatchObject([
+      { text, workspaceRoot: "/tmp/native-account-project", expandSkills: true },
+    ]);
+    const opened = harness.open.mock.calls[0] as unknown as ReadonlyArray<{
+      readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+    }>;
+    expect(opened[0]?.runtimePolicy.projectMemoryMode).toBe("off");
+    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(expected);
+    expect(harness.startRootRun.mock.calls[0]?.[0].runtimePolicy.projectMemoryMode).toBe("off");
   }),
 );
 

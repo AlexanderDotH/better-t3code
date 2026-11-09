@@ -20,6 +20,8 @@ export interface McpCredentialRequest {
   readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
   readonly deepPlan?: McpInvocationContext.McpDeepPlanContext;
   readonly workspaceOnly?: boolean;
+  /** False withholds project-agent coordination. Defaults to granted. */
+  readonly coordinationEnabled?: boolean;
   readonly projectMemoryEnabled?: boolean;
   readonly previewEnabled?: boolean;
   readonly workspaceWriteEnabled?: boolean;
@@ -42,6 +44,11 @@ export interface McpSessionRegistryShape {
   readonly bindDeepPlan: (
     threadId: ThreadId,
     binding: McpInvocationContext.McpDeepPlanContext | undefined,
+    /** Turn-derived grants; an omitted field keeps what the credential was issued with. */
+    access?: {
+      readonly workspaceWriteEnabled?: boolean;
+      readonly projectMemoryEnabled?: boolean;
+    },
   ) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
@@ -135,7 +142,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         capabilities: new Set<McpInvocationContext.McpCapability>([
           "workspace",
           ...(request.workspaceWriteEnabled === true ? (["workspace-write"] as const) : []),
-          ...(request.workspaceOnly === true ? [] : (["coordination"] as const)),
+          ...(request.workspaceOnly === true || request.coordinationEnabled === false
+            ? []
+            : (["coordination"] as const)),
           ...(request.deepPlan !== undefined && request.messageReply === undefined
             ? (["deep-plan"] as const)
             : []),
@@ -210,28 +219,39 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
-    bindDeepPlan: Effect.fn("McpSessionRegistry.bindDeepPlan")(function* (threadId, binding) {
-      yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(records);
-        for (const [tokenHash, record] of records) {
-          if (record.scope.thread.threadId !== threadId || record.scope.messageReply !== undefined)
-            continue;
-          const capabilities = new Set(record.scope.capabilities);
-          const { deepPlan: _previous, ...scope } = record.scope;
-          if (binding === undefined) capabilities.delete("deep-plan");
-          else capabilities.add("deep-plan");
-          next.set(tokenHash, {
-            ...record,
-            scope: {
-              ...scope,
-              capabilities,
-              ...(binding === undefined ? {} : { deepPlan: binding }),
-            },
-          });
-        }
-        return { records: next };
-      });
-    }),
+    bindDeepPlan: Effect.fn("McpSessionRegistry.bindDeepPlan")(
+      function* (threadId, binding, access) {
+        yield* SynchronizedRef.update(state, ({ records }) => {
+          const next = new Map(records);
+          for (const [tokenHash, record] of records) {
+            if (
+              record.scope.thread.threadId !== threadId ||
+              record.scope.messageReply !== undefined
+            )
+              continue;
+            const capabilities = new Set(record.scope.capabilities);
+            const { deepPlan: _previous, ...scope } = record.scope;
+            if (binding === undefined) capabilities.delete("deep-plan");
+            else capabilities.add("deep-plan");
+            if (access?.workspaceWriteEnabled === true) capabilities.add("workspace-write");
+            else if (access?.workspaceWriteEnabled === false)
+              capabilities.delete("workspace-write");
+            next.set(tokenHash, {
+              ...record,
+              scope: {
+                ...scope,
+                capabilities,
+                ...(binding === undefined ? {} : { deepPlan: binding }),
+                ...(access?.projectMemoryEnabled === undefined
+                  ? {}
+                  : { projectMemoryEnabled: access.projectMemoryEnabled }),
+              },
+            });
+          }
+          return { records: next };
+        });
+      },
+    ),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);

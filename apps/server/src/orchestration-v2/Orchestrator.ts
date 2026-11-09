@@ -1,4 +1,5 @@
 import { buildMessageReplyHandoff } from "../messageReplies/MessageReplyPrompt.ts";
+import { GENERAL_SUBAGENT_TIMEOUT } from "../subagents/GeneralSubagentPolicy.ts";
 import {
   contextPrefixFingerprint,
   contextUsageRatio,
@@ -28,6 +29,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  resolveResultlessRetryTarget,
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
@@ -94,6 +96,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -488,6 +491,18 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
+/** Shells list a run cancelled before it started as latest; only executed work makes a guard stale. */
+function ranAfterIdleGuard(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  latestRunId: RunId | null,
+): boolean {
+  const latest = latestExecutedRun(runs);
+  if (latestRunId === null || latest === null) return latest !== null;
+  if (latest.id === latestRunId) return false;
+  const seen = runs.find((run) => run.id === latestRunId);
+  return seen === undefined || runRanAfter(latest, seen);
+}
+
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
@@ -578,6 +593,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "message.reply.start":
     case "thread.deep-plan.start":
     case "thread.deep-plan.update":
+    case "message.retry":
     case "message.dispatch":
     case "notification.delivery.accept":
     case "thread.context-compaction.update":
@@ -663,6 +679,28 @@ function delegatedTasksStopEffect(command: {
       type: "delegated-tasks.stop",
       ...(command.reason === undefined ? {} : { reason: command.reason }),
     },
+  };
+}
+
+function generalSubagentDeadlineEffect(input: {
+  readonly commandId: CommandId;
+  readonly parentThreadId: ThreadId;
+  readonly childThreadId: ThreadId;
+  readonly taskId: NodeId;
+  readonly now: DateTime.Utc;
+}): PendingOrchestrationEffectV2 {
+  return {
+    id: `effect:${input.commandId}:general-subagent.deadline`,
+    commandId: input.commandId,
+    threadId: input.childThreadId,
+    request: {
+      type: "general-subagent.deadline",
+      parentThreadId: input.parentThreadId,
+      taskId: input.taskId,
+    },
+    availableAt: DateTime.add(input.now, {
+      milliseconds: Duration.toMillis(GENERAL_SUBAGENT_TIMEOUT),
+    }),
   };
 }
 
@@ -5493,6 +5531,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    retrying = false,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     if (projection.thread.messageReply !== undefined)
@@ -5565,7 +5604,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.messages.findLast((message) => message.role === "user")?.id !==
             (command.idleGuard.latestUserMessageId ?? undefined)) ||
         (command.idleGuard.latestRunId !== undefined &&
-          latestExecutedRun(projection.runs)?.id !== (command.idleGuard.latestRunId ?? undefined)))
+          ranAfterIdleGuard(projection.runs, command.idleGuard.latestRunId)))
     )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -5979,7 +6018,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Proposed plan ${command.sourcePlanRef?.planId} belongs to a different project.`,
       });
     }
-    if (sourcePlan !== null && sourcePlan.status !== "active") {
+    if (!retrying && sourcePlan !== null && sourcePlan.status !== "active") {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -5987,7 +6026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const completeSourcePlan = (occurredAt: DateTime.Utc) =>
-      sourcePlan === null
+      sourcePlan === null || retrying
         ? Effect.void
         : emit(
             events,
@@ -8047,6 +8086,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               },
             }),
         ...(command.fetchWorker === undefined ? {} : { fetchWorker: command.fetchWorker }),
+        ...(command.generalSubagent === undefined
+          ? {}
+          : { generalSubagent: command.generalSubagent }),
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {
@@ -8171,6 +8213,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : { type: "defer_start", workspaceStrategy: command.workspaceStrategy },
       } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
       yield* dispatchMessage(childMessageCommand, events, effects);
+      if (command.generalSubagent === true) {
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          generalSubagentDeadlineEffect({
+            commandId: command.commandId,
+            parentThreadId: command.parentThreadId,
+            childThreadId,
+            taskId: taskNodeId,
+            now,
+          }),
+        ]);
+      }
 
       const childProjection = yield* getProjectionWithPendingEvents(childThreadId, events);
       const childRun = childProjection.runs[0];
@@ -13617,6 +13671,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           pendingHistoryEdit: undefined,
           deepPlanExecution: undefined,
           fetchWorker: undefined,
+          generalSubagent: undefined,
           deepPlan: null,
           harnessSync: null,
           messageReply: {
@@ -13657,32 +13712,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdAt: DateTime.formatIso(message.createdAt),
           updatedAt: DateTime.formatIso(message.updatedAt),
         });
-        const recent = yield* projectionStore
-          .getThreadSnapshotWindow(command.threadId, { rowLimit: 64 })
-          .pipe(mapDispatchError(command));
-        const mainMessages = recent.projection.visibleTurnItems
-          .flatMap(({ item }) =>
-            item.type === "user_message" || item.type === "assistant_message"
-              ? [
-                  {
-                    id: item.messageId,
-                    role: item.type === "user_message" ? ("user" as const) : ("assistant" as const),
-                    text: item.text,
-                    attachments: item.attachments,
-                    context: item.type === "user_message" ? item.context : undefined,
-                    turnId: null,
-                    streaming: item.type === "assistant_message" && item.streaming,
-                    createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
-                    updatedAt: DateTime.formatIso(item.updatedAt),
-                  },
-                ]
-              : [],
-          )
-          .slice(-32);
+        const recentConversation = (threadId: ThreadId) =>
+          projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 64 }).pipe(
+            mapDispatchError(command),
+            Effect.map((recent) =>
+              recent.projection.visibleTurnItems
+                .flatMap(({ item }) =>
+                  item.type === "user_message" || item.type === "assistant_message"
+                    ? [
+                        {
+                          id: item.messageId,
+                          role:
+                            item.type === "user_message"
+                              ? ("user" as const)
+                              : ("assistant" as const),
+                          text: item.text,
+                          attachments: item.attachments,
+                          context: item.type === "user_message" ? item.context : undefined,
+                          turnId: null,
+                          streaming: item.type === "assistant_message" && item.streaming,
+                          createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+                          updatedAt: DateTime.formatIso(item.updatedAt),
+                        },
+                      ]
+                    : [],
+                )
+                .slice(-32),
+            ),
+          );
+        const mainMessages = yield* recentConversation(command.threadId);
+        const topicRoot =
+          sourceTopic?.messageReply === undefined
+            ? null
+            : yield* projectionStore
+                .getVisibleConversationMessage(command.threadId, sourceTopic.messageReply.messageId)
+                .pipe(mapDispatchError(command));
+        const rootReplyTo =
+          topicRoot === null || topicRoot.role === "system"
+            ? command.replyTo
+            : { messageId: topicRoot.id, role: topicRoot.role, text: topicRoot.text };
+        const topicMessages = sourceTopic == null ? [] : yield* recentConversation(sourceTopic.id);
         const handoff = buildMessageReplyHandoff({
           replyTo: command.replyTo,
-          rootReplyTo: command.replyTo,
-          sourceMessages: [asReplyMessage(source)],
+          rootReplyTo,
+          sourceMessages: [
+            asReplyMessage(source),
+            ...(topicRoot === null ? [] : [asReplyMessage(topicRoot)]),
+          ],
           currentMessage: {
             id: command.messageId,
             role: "user",
@@ -13694,7 +13770,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: DateTime.formatIso(now),
           },
           mainMessages,
-          topicMessages: [],
+          topicMessages,
         });
         yield* dispatchMessage(
           {
@@ -13730,10 +13806,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandType: command.type,
             cause: "The Deep Plan thread is unavailable.",
           });
-        const snapshot = yield* projectionStore.getShellSnapshot().pipe(mapDispatchError(command));
-        const owners = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-          (candidate) => candidate.deepPlan?.threadId === candidate.id,
-        );
+        // Most updates cannot conflict with another plan; this read spans every thread.
+        const snapshot =
+          command.type === "thread.deep-plan.start" || command.mutation.type === "approve"
+            ? yield* projectionStore.getShellSnapshot().pipe(mapDispatchError(command))
+            : null;
+        const owners =
+          snapshot === null
+            ? []
+            : [...snapshot.threads, ...snapshot.archivedThreads].filter(
+                (candidate) => candidate.deepPlan?.threadId === candidate.id,
+              );
         if (
           command.type === "thread.deep-plan.start" &&
           owners.some(
@@ -13925,6 +14008,104 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.project.adopt-folder":
         yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
+      case "message.retry": {
+        const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        const target = resolveResultlessRetryTarget(projection);
+        if (
+          isProviderNativeSubagentThread(projection.thread) ||
+          target === null ||
+          target.messageId !== command.messageId ||
+          target.runId !== command.runId
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This message is no longer an idle, resultless retry target.",
+          });
+        }
+        const originalMessage = projection.messages.find(
+          (message) => message.id === target.messageId,
+        )!;
+        const originalItem = projection.turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === target.messageId,
+        )!;
+        if (
+          yield* projectionStore
+            .hasRetryAssistantOutput({
+              threadId: command.threadId,
+              runId: target.runId,
+              createdAt: originalMessage.createdAt,
+              afterOrdinal: originalItem.ordinal,
+            })
+            .pipe(mapDispatchError(command))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This message already has assistant output and cannot be retried.",
+          });
+        }
+        const sourceRun = projection.runs.find((run) => run.id === target.runId);
+        const fetchMode =
+          command.fetchMode === undefined ? originalMessage.fetchMode : command.fetchMode;
+        const retryCommand: Extract<OrchestrationV2Command, { type: "message.dispatch" }> = {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: target.messageId,
+          createdBy: originalMessage.createdBy,
+          creationSource: originalMessage.creationSource,
+          text: originalMessage.text,
+          attachments: originalMessage.attachments,
+          ...(originalMessage.context === undefined ? {} : { context: originalMessage.context }),
+          ...(originalMessage.replyTo === undefined ? {} : { replyTo: originalMessage.replyTo }),
+          ...(originalMessage.replyTopicId === undefined
+            ? {}
+            : { replyTopicId: originalMessage.replyTopicId }),
+          ...(fetchMode == null ? {} : { fetchMode }),
+          modelSelection:
+            command.modelSelection ?? sourceRun?.modelSelection ?? projection.thread.modelSelection,
+          ...(sourceRun?.sourcePlanRef === undefined
+            ? {}
+            : { sourcePlanRef: sourceRun.sourcePlanRef }),
+          ...(sourceRun?.deepPlanRunId === undefined
+            ? {}
+            : { deepPlanRunId: sourceRun.deepPlanRunId }),
+          ...(sourceRun?.additionalContext === undefined
+            ? {}
+            : { additionalContext: sourceRun.additionalContext }),
+          dispatchMode: { type: "start_immediately" },
+        };
+        yield* dispatchMessage(retryCommand, events, effects, true);
+        yield* Ref.update(events, (events) =>
+          events.map((event) => {
+            if (event.type === "message.updated" && event.payload.id === originalMessage.id) {
+              const { fetchMode: _fetch, ...original } = originalMessage;
+              return {
+                ...event,
+                payload: {
+                  ...original,
+                  updatedAt: event.payload.updatedAt,
+                  ...(fetchMode == null ? {} : { fetchMode }),
+                },
+              };
+            }
+            if (
+              event.type === "turn-item.updated" &&
+              event.payload.type === "user_message" &&
+              event.payload.messageId === originalMessage.id
+            ) {
+              return {
+                ...event,
+                payload: { ...originalItem, updatedAt: event.payload.updatedAt },
+              };
+            }
+            return event;
+          }),
+        );
+        yield* recordSubagentFollowup(retryCommand, events).pipe(mapDispatchError(command));
+        break;
+      }
       case "message.dispatch": {
         // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
         const thread = yield* projectionStore

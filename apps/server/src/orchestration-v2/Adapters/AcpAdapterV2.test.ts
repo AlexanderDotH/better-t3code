@@ -2162,7 +2162,7 @@ describe("AcpAdapterV2", () => {
   );
 
   // regression: #21499 turns blocked only on T3 thread waits must show as waiting
-  it.effect.each(["agent_message_chunk"] as const)(
+  it.effect.each(["agent_message_chunk", "agent_thought_chunk"] as const)(
     "keeps named ACP %s open while deriving thread wait execution state",
     (sessionUpdate) =>
       Effect.gen(function* () {
@@ -2227,8 +2227,23 @@ describe("AcpAdapterV2", () => {
                         status: "completed",
                       },
                     ] satisfies Array<EffectAcpSchema.SessionUpdate>;
-                    for (const update of updates)
+                    yield* handler!({
+                      sessionId: "mock-session-1",
+                      update: { sessionUpdate, content: { type: "text", text: "" } },
+                    });
+                    yield* TestClock.setTime(250);
+                    for (const update of updates) {
                       yield* handler!({ sessionId: "mock-session-1", update });
+                      yield* TestClock.setTime(1000);
+                    }
+                    yield* handler!({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate,
+                        messageId: "named-stream",
+                        content: { type: "text", text: ". Done." },
+                      },
+                    });
                     return { stopReason: "end_turn" as const };
                   }),
               }),
@@ -2292,6 +2307,16 @@ describe("AcpAdapterV2", () => {
           );
         }
         assert.deepEqual(states, [true, false, true, false]);
+        const completed = events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(
+          completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.responseMetrics?.timeToFirstTokenMs
+            : undefined,
+          250,
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

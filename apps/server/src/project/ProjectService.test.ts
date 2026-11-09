@@ -309,11 +309,22 @@ it.layer(layerTest)("ProjectService", (it) => {
         [projectId],
       );
 
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const keptProjectId = ProjectId.make("project:service-test-kept");
+      yield* settings.updateSettings({
+        projectChatSettings: {
+          [projectId]: { modelSelection, runtimeMode: "full-access" },
+          [keptProjectId]: { runtimeMode: "approval-required" },
+        },
+      });
       const deleted = yield* service.delete({
         commandId: CommandId.make("command:project:delete"),
         projectId,
       });
       assert.isNotNull(deleted.deletedAt);
+      assert.deepEqual((yield* settings.getSettings).projectChatSettings, {
+        [keptProjectId]: { runtimeMode: "approval-required" },
+      });
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
       assert.isTrue(Option.isSome(yield* service.getById(projectId, { includeDeleted: true })));
       assert.deepEqual((yield* service.snapshot).projects, []);

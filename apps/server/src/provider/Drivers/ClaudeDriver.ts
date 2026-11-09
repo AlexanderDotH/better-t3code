@@ -1,6 +1,7 @@
 import {
   loadClaudeGatewayCatalog,
   resolveClaudeGatewayDiscoveredModelProfile,
+  resolveClaudeGatewayModelProfile,
   type ClaudeGatewayCatalog,
 } from "./ClaudeGatewayCatalog.ts";
 import type { ClaudeDiscoveredModel } from "./ClaudeDiscoveredModels.ts";
@@ -183,6 +184,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       continuationGroupKey,
     });
 
+    const gatewayCatalog = yield* loadClaudeGatewayCatalog({
+      environment: processEnv,
+      homePath: yield* HostProcess.HomeDirectory,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    // Discovered model values become aliases once a capability probe has run.
+    let currentGatewayCatalog = gatewayCatalog;
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
@@ -193,7 +204,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         enabled,
         config,
       },
-      { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        scopedLimitNames,
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        resolveGatewayProfile: (model) =>
+          resolveClaudeGatewayModelProfile(currentGatewayCatalog, model),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -265,14 +281,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       stateDir,
       processEnv,
     );
-    const gatewayCatalog = yield* loadClaudeGatewayCatalog({
-      environment: processEnv,
-      homePath: yield* HostProcess.HomeDirectory,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
     const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
       Effect.map((result) => ({
         ...result.capabilities,
@@ -281,6 +289,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           result.capabilities.models ?? [],
         ),
       })),
+      Effect.tap(({ gatewayCatalog: enriched }) =>
+        Effect.sync(() => {
+          currentGatewayCatalog = enriched;
+        }),
+      ),
     );
 
     const checkProvider = catalogService.refreshInBackground.pipe(

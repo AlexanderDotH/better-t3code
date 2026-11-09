@@ -1,7 +1,8 @@
-import type {
-  ProviderUsageLimitsUpdate,
-  ServerProviderUsageLimits,
-  ServerProviderUsageWindow,
+import {
+  MAX_USAGE_PACE_SAMPLES,
+  type ProviderUsageLimitsUpdate,
+  type ServerProviderUsageLimits,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
@@ -72,7 +73,7 @@ export function applyUsageLimitsUpdate(input: {
         : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
-      merged.set(window.id, next);
+      merged.set(window.id, withUsageHistory(next, input.checkedAt, existing, previous?.checkedAt));
       changed = true;
     }
   }
@@ -99,6 +100,51 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
+// Weekly pace needs a day-start baseline, so each weekly window keeps its observed percentages.
+function withUsageHistory(
+  window: ServerProviderUsageWindow,
+  checkedAt: string,
+  previous?: ServerProviderUsageWindow,
+  previousCheckedAt?: string,
+): ServerProviderUsageWindow {
+  if (window.kind !== "weekly") return window;
+  if (window.usageHistorySource === "codex" && window.usageHistory?.length) return window;
+  // Codex history comes from its transcripts; live ticks only keep it while the epoch holds.
+  if (window.usageHistorySource === "codex" || previous?.usageHistorySource === "codex") {
+    return {
+      ...window,
+      usageHistorySource: "codex",
+      usageHistory:
+        previous?.usageHistorySource === "codex" &&
+        previous.resetsAt === window.resetsAt &&
+        previous.windowDurationMins === window.windowDurationMins &&
+        previous.usedPercent <= window.usedPercent
+          ? (previous.usageHistory ?? [])
+          : [],
+    };
+  }
+  const sameWindow =
+    previous?.kind === window.kind &&
+    previous.resetsAt === window.resetsAt &&
+    previous.usedPercent <= window.usedPercent;
+  const history = sameWindow
+    ? (previous.usageHistory ??
+      (previousCheckedAt ? [{ at: previousCheckedAt, usedPercent: previous.usedPercent }] : []))
+    : [];
+  const last = history.at(-1);
+  // A late probe must not invent a usage increase at an earlier time.
+  if (last && Date.parse(checkedAt) < Date.parse(last.at)) {
+    return { ...window, usageHistory: [] };
+  }
+  const usageHistory =
+    last?.usedPercent === window.usedPercent
+      ? history
+      : [...history, { at: checkedAt, usedPercent: window.usedPercent }].slice(
+          -MAX_USAGE_PACE_SAMPLES,
+        );
+  return { ...window, usageHistory };
+}
+
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
@@ -116,5 +162,16 @@ export function resolveUsageLimitsAfterProbe(input: {
   ) {
     return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
   }
-  return probed;
+  if (!probed || probed.unavailable) return probed;
+  return {
+    ...probed,
+    windows: probed.windows.map((window) =>
+      withUsageHistory(
+        window,
+        probed.checkedAt,
+        published?.windows.find((previous) => previous.id === window.id),
+        published?.checkedAt,
+      ),
+    ),
+  };
 }

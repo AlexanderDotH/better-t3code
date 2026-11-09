@@ -456,6 +456,13 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  readonly hasRetryAssistantOutput: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId | null;
+    readonly createdAt: DateTime.Utc;
+    readonly afterOrdinal: number;
+  }) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
@@ -5463,6 +5470,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const hasRetryAssistantOutput: ProjectionStoreV2Shape["hasRetryAssistantOutput"] = Effect.fn(
+      "ProjectionStore.hasRetryAssistantOutput",
+    )(function* (input) {
+      const createdAt = DateTime.formatIso(input.createdAt);
+      const rows = yield* sql<{ present: number }>`SELECT
+        EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
+          WHERE thread_id = ${input.threadId} AND role = 'assistant'
+            AND ${
+              input.runId === null ? sql`created_at >= ${createdAt}` : sql`run_id = ${input.runId}`
+            })
+        OR EXISTS(SELECT 1 FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${input.threadId} AND type = 'assistant_message'
+            AND ${input.runId === null ? sql`ordinal > ${input.afterOrdinal}` : sql`run_id = ${input.runId}`}) AS present
+      `.pipe(Effect.mapError(controlReadError(input.threadId)));
+      return rows[0]?.present === 1;
+    });
+
     const getMessageCount: ProjectionStoreV2Shape["getMessageCount"] = (threadId) =>
       sql<{
         count: number;
@@ -7405,6 +7429,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
+      hasRetryAssistantOutput: readOnReader(hasRetryAssistantOutput),
       getSubagentCount: readOnReader(getSubagentCount),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       freezeConversationItems: readOnReader(freezeConversationItems),

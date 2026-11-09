@@ -1,3 +1,5 @@
+import { MAX_USAGE_PACE_SAMPLES } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
@@ -63,7 +65,11 @@ describe("applyUsageLimitsUpdate", () => {
   it("marks a first sparse update as unavailable", () => {
     expect(
       applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
-    ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
+    ).toEqual({
+      checkedAt,
+      windows: [{ ...weekly, usageHistory: [{ at: checkedAt, usedPercent: 20 }] }],
+      unavailable: { reason: "probeFailed" },
+    });
   });
 
   it("preserves reset credits when a streamed window update changes usage", () => {
@@ -83,6 +89,76 @@ describe("applyUsageLimitsUpdate", () => {
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  it("retains observed weekly usage through probes and updates, resetting with the quota", () => {
+    const initial = { ...weekly, resetsAt: "2026-09-10T12:00:00.000Z" };
+    const first = resolveUsageLimitsAfterProbe({
+      published: undefined,
+      probed: { checkedAt, windows: [initial] },
+    })!;
+    const changedAt = "2026-09-03T13:00:00.000Z";
+    const changed = applyUsageLimitsUpdate({
+      previous: first,
+      checkedAt: changedAt,
+      update: { windows: [{ ...initial, usedPercent: 22 }] },
+    })!;
+    expect(changed.windows[0]?.usageHistory).toEqual([
+      { at: checkedAt, usedPercent: 20 },
+      { at: changedAt, usedPercent: 22 },
+    ]);
+    const probed = resolveUsageLimitsAfterProbe({
+      published: changed,
+      probed: { checkedAt: "2026-09-03T14:00:00.000Z", windows: [{ ...initial, usedPercent: 22 }] },
+    })!;
+    expect(probed.windows[0]?.usageHistory).toEqual(changed.windows[0]?.usageHistory);
+    const resetAt = "2026-09-03T15:00:00.000Z";
+    const reset = applyUsageLimitsUpdate({
+      previous: probed,
+      checkedAt: resetAt,
+      update: { windows: [{ ...initial, usedPercent: 0 }] },
+    })!;
+    expect(reset.windows[0]?.usageHistory).toEqual([{ at: resetAt, usedPercent: 0 }]);
+
+    let bounded = first;
+    for (let index = 1; index <= MAX_USAGE_PACE_SAMPLES + 2; index += 1) {
+      bounded = applyUsageLimitsUpdate({
+        previous: bounded,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(checkedAt) + index * 60_000)),
+        update: { windows: [{ ...initial, usedPercent: 20 + index / 100 }] },
+      })!;
+    }
+    expect(bounded.windows[0]?.usageHistory).toHaveLength(MAX_USAGE_PACE_SAMPLES);
+  });
+
+  it("keeps Codex transcript history for the same quota epoch only", () => {
+    const native = {
+      ...weekly,
+      resetsAt: "2026-09-10T12:00:00.000Z",
+      usageHistorySource: "codex" as const,
+      usageHistory: [{ at: "2026-09-03T08:04:00.000Z", usedPercent: 20, hasUsage: true }],
+    };
+    const previous = { checkedAt, windows: [native] };
+    const live = { ...native, usedPercent: 21, usageHistory: undefined };
+    expect(
+      applyUsageLimitsUpdate({ previous, checkedAt, update: { windows: [live] } })?.windows[0]
+        ?.usageHistory,
+    ).toEqual(native.usageHistory);
+    expect(
+      resolveUsageLimitsAfterProbe({ published: previous, probed: { checkedAt, windows: [live] } })
+        ?.windows[0]?.usageHistory,
+    ).toEqual(native.usageHistory);
+    for (const window of [
+      { ...live, usedPercent: 0 },
+      { ...live, resetsAt: "2026-09-17T12:00:00.000Z" },
+    ]) {
+      expect(
+        resolveUsageLimitsAfterProbe({
+          published: previous,
+          probed: { checkedAt, windows: [window] },
+        })?.windows[0]?.usageHistory,
+      ).toEqual([]);
+    }
+  });
+
   it("uses read order for windows while taking metadata from the successful probe", () => {
     const live = {
       checkedAt: "2026-09-03T12:00:05.000Z",

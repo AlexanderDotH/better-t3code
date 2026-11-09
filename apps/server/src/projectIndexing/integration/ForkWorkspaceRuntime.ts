@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { ServerConfig } from "../../config.ts";
+import * as DecisionGeneration from "../../decisionGeneration/DecisionGeneration.ts";
+import * as TurnPromptContext from "../../orchestration-v2/TurnPromptContext.ts";
 import * as KnowledgeGraphLive from "../../knowledge-graph/KnowledgeGraphLive.ts";
 import * as KnowledgeGraphScopeCatalog from "../../knowledge-graph/runtime/KnowledgeGraphScopeCatalog.ts";
 import * as KnowledgeGraphWatcherMultiplexer from "../../knowledge-graph/runtime/KnowledgeGraphWatcherMultiplexer.ts";
@@ -36,8 +38,13 @@ export const mcpConfigurationLayer = McpConfigEngineLive.pipe(
     McpConfigurationReconcilerLive.pipe(Layer.provideMerge(McpRuntimeRegistryLive)),
   ),
 );
+const skills = SkillEngineLive.pipe(Layer.provideMerge(mcpConfigurationLayer));
+// Built below the orchestration runtime, so nothing in it may require OrchestratorV2.
+export const turnPromptContextLayer = TurnPromptContext.layer.pipe(
+  Layer.provide(Layer.mergeAll(skills, indexing, memory, DecisionGeneration.layer)),
+);
 const services = Layer.mergeAll(
-  SkillEngineLive.pipe(Layer.provideMerge(mcpConfigurationLayer)),
+  skills,
   indexing,
   KnowledgeGraphLive.layer,
   ProjectMemoryPolicy.layer,

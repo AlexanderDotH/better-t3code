@@ -20,7 +20,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 
 export const KnowledgeGraphScopeResolutionReason = Schema.Literals([
@@ -350,7 +350,7 @@ export const layer = Layer.effect(
   KnowledgeGraphScopeCatalog,
   Effect.gen(function* () {
     const environment = yield* ServerEnvironment.ServerEnvironment;
-    const projections = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
     const projects = yield* ProjectStoreV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

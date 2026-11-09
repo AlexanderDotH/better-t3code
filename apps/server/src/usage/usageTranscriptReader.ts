@@ -29,10 +29,10 @@ export interface TranscriptParsePosition {
   readonly state: unknown;
 }
 
-export interface TranscriptParseResult {
-  readonly records: readonly UsageRecord[];
+export interface TranscriptParseResult<Row = UsageRecord> {
+  readonly records: readonly Row[];
   /** Unterminated tail records stay outside records/position so the next scan rereads them. */
-  readonly tailRecords: readonly UsageRecord[];
+  readonly tailRecords: readonly Row[];
   /** Includes tentative tail diagnostics; position.state only includes committed lines. */
   readonly malformedRecords: number;
   readonly position: TranscriptParsePosition;
@@ -161,12 +161,12 @@ export function transcriptLineGate(markers: readonly [string, ...string[]]) {
 }
 
 /** Returns null on read failure; caching it as empty would hide usage until size/mtime changes. */
-export async function readTranscriptRecords<State>(
+export async function readTranscriptRecords<State, Row = UsageRecord>(
   filePath: string,
-  format: TranscriptUsageFormat<State>,
+  format: TranscriptUsageFormat<State, Row>,
   resumeFrom?: TranscriptParsePosition,
   options?: { readonly streamingThresholdBytes?: number },
-): Promise<TranscriptParseResult | null> {
+): Promise<TranscriptParseResult<Row> | null> {
   const streamingThresholdBytes = options?.streamingThresholdBytes ?? STREAMING_THRESHOLD_BYTES;
   const compressed = filePath.endsWith(".jsonl.zst");
   let handle: NodeFSP.FileHandle;
@@ -208,12 +208,12 @@ export async function readTranscriptRecords<State>(
     };
 
     const mightCarryUsage = transcriptLineGate(format.usageMarkers);
-    const parseLine = (lineBuffer: Buffer, lineState: State, out: UsageRecord[]): void => {
+    const parseLine = (lineBuffer: Buffer, lineState: State, out: Row[]): void => {
       if (!mightCarryUsage(lineBuffer)) return;
       for (const record of format.parseLine(toLineString(lineBuffer), lineState)) out.push(record);
     };
 
-    const records: UsageRecord[] = [];
+    const records: Row[] = [];
     let resumeOffset = start;
     let scanOffset = start;
     let pendingChunks: Buffer[] = [];
@@ -238,7 +238,7 @@ export async function readTranscriptRecords<State>(
       }
       streaming.write(decoder!.write(segment));
     };
-    const finish = (lineState: State, out: UsageRecord[]) => {
+    const finish = (lineState: State, out: Row[]) => {
       if (streaming) {
         streaming.write(decoder!.end());
         const projected = streaming.finish();
@@ -285,7 +285,7 @@ export async function readTranscriptRecords<State>(
 
     // Parse unfinished tails against copied state so the next scan can replay from resumeOffset.
     const encodedState = encodeState === undefined ? null : encodeState(state);
-    const tailRecords: UsageRecord[] = [];
+    const tailRecords: Row[] = [];
     const tailState =
       decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
     finish(tailState, tailRecords);

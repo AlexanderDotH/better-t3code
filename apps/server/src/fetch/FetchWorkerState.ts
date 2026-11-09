@@ -1,5 +1,4 @@
 import {
-  type IsoDateTime,
   type MessageId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -65,17 +64,6 @@ export interface FetchRunResult {
   readonly providerInstanceId: ModelSelection["instanceId"];
   readonly providerDriver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
-}
-
-export interface FetchHandoffInput {
-  readonly threadId: ThreadId;
-  readonly runId: string;
-}
-
-export interface FetchInterruptInput {
-  readonly threadId: ThreadId;
-  readonly turnId?: TurnId;
-  readonly requestedAt: IsoDateTime;
 }
 
 export interface ActiveFetchRun {

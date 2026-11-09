@@ -159,6 +159,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  readonly generalSubagentsEnabled?: boolean;
+  readonly projectCoordinationEnabled?: boolean;
 }
 
 /**
@@ -301,11 +303,16 @@ export const requireCoordinationMcpCapability = Effect.fn("mcp.requireCoordinati
   },
 );
 
-export const hasThreadCapability = (capability: McpCapability) => (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.thread !== undefined && scope.capabilities.has(capability);
-};
+export const hasThreadCapability =
+  (capability: McpCapability, feature?: "agent.generalSubagents" | "agent.projectCoordination") =>
+  (): boolean => {
+    const fiber = Fiber.getCurrent();
+    const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+    if (scope?.thread === undefined || !scope.capabilities.has(capability)) return false;
+    if (feature === "agent.generalSubagents") return scope.generalSubagentsEnabled !== false;
+    if (feature === "agent.projectCoordination") return scope.projectCoordinationEnabled !== false;
+    return true;
+  };
 
 export const hasProjectMemoryCapability = (): boolean => {
   const fiber = Fiber.getCurrent();

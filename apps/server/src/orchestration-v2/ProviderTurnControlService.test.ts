@@ -236,6 +236,7 @@ it.effect(
           getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
+          hasRetryAssistantOutput: () => Effect.die("unused retry output read"),
           getSubagentCount: () => Effect.die("unused subagent count"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
           freezeConversationItems: () =>

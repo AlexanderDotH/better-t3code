@@ -23,6 +23,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PositiveInt,
+  ProjectMemoryMode,
   ProviderUserInputAnswers,
   ProviderSessionId,
   ProviderThreadId,
@@ -52,6 +53,8 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   commandExecutionPolicy: Schema.optional(Schema.Literal("deny")),
+  /** T3 project memory replaces a provider's native memory unless the project chose "provider". */
+  projectMemoryMode: Schema.optional(ProjectMemoryMode),
   /**
    * The administrator's ceiling, when a managed policy sets one. `runtimeMode` is already under
    * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
