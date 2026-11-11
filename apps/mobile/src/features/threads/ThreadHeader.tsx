@@ -1,6 +1,7 @@
 import { minuteTick } from "@t3tools/client-runtime/clock";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useMemo, useSyncExternalStore } from "react";
+import { minuteTickToEpochMs } from "../../lib/clock";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
@@ -22,7 +23,7 @@ function useWorkingHeaderSubtitle(startedAt: string | null): string | null {
     minuteTick.getSnapshot,
   );
   if (startedAt === null) return null;
-  const elapsedMinutes = Math.floor((Date.parse(minute) - Date.parse(startedAt)) / 60_000);
+  const elapsedMinutes = Math.floor((minuteTickToEpochMs(minute) - Date.parse(startedAt)) / 60_000);
   return Number.isFinite(elapsedMinutes) && elapsedMinutes >= 1
     ? `${translator.message("chat.timeline.workingFor")} ${formatDuration(elapsedMinutes * 60_000)}`
     : translator.message("chat.timeline.working");
