@@ -69,6 +69,7 @@ export interface DeepPlanSourceAnalysisBatch extends GeneralSubagentSpawnResult 
 }
 
 export interface GeneralSubagentCoordinatorShape {
+  /** The caller holds the run's lock, which is not reentrant. */
   readonly analyzeDeepPlanSources: (
     input: GeneralSubagentCaller & {
       readonly binding: McpDeepPlanContext;
@@ -384,64 +385,59 @@ const make = Effect.gen(function* () {
     }),
     analyzeDeepPlanSources: Effect.fn("GeneralSubagentCoordinator.analyzeDeepPlanSources")(
       function* (input) {
-        return yield* workflow.withRunLock(
-          input.binding.runId,
-          Effect.gen(function* () {
-            const run = yield* workflow
-              .getRun({ threadId: input.binding.runThreadId, runId: input.binding.runId })
-              .pipe(Effect.mapError(failure));
-            const projection = yield* parent(input);
-            const active: DeepPlanSourceAnalysisBatch[] = [];
-            for (const task of projection.subagents) {
-              if (
-                task.childThreadId === null ||
-                !["pending", "running", "waiting"].includes(task.status)
-              )
-                continue;
-              const child = yield* orchestration
-                .getThreadRecords(task.childThreadId, [])
-                .pipe(Effect.mapError(failure));
-              const grant = child.thread.deepPlanExecution;
-              if (grant?.runId === input.binding.runId && grant.sourceAnalysis)
-                active.push({
-                  ...identity(task, child.thread.modelSelection),
-                  sourceIds: grant.sourceAnalysis.sourceIds,
-                });
-            }
-            const summarized = new Set(
-              run?.sourceCoverage
-                .filter((entry) => entry.status === "summarized")
-                .map((entry) => entry.sourceId),
-            );
-            const pending = input.sources.filter((source) => !summarized.has(source.sourceId));
-            const created = yield* Effect.forEach(
-              selectDeepPlanSourceBatches(
-                pending,
-                active.map((agent) => agent.sourceIds),
-              ),
-              (batch) =>
-                spawn({
-                  ...input,
-                  task: buildDeepPlanSourceBatchTask(input.binding, batch),
-                  name: "Deep Plan source analysis",
-                  deepPlanExecution: {
-                    ...input.binding,
-                    readOnly: true,
-                    sourceAnalysis: {
-                      workerThreadId: input.parentThreadId,
-                      sourceIds: batch.map((source) => source.sourceId),
-                    },
-                  },
-                }).pipe(
-                  Effect.map((agent) => ({
-                    ...agent,
-                    sourceIds: batch.map((source) => source.sourceId),
-                  })),
-                ),
-            );
-            return [...active, ...created];
-          }),
+        const run = yield* workflow
+          .getRun({ threadId: input.binding.runThreadId, runId: input.binding.runId })
+          .pipe(Effect.mapError(failure));
+        const projection = yield* parent(input);
+        const active: DeepPlanSourceAnalysisBatch[] = [];
+        for (const task of projection.subagents) {
+          if (
+            task.childThreadId === null ||
+            !["pending", "running", "waiting"].includes(task.status)
+          )
+            continue;
+          const child = yield* orchestration
+            .getThreadRecords(task.childThreadId, [])
+            .pipe(Effect.mapError(failure));
+          const grant = child.thread.deepPlanExecution;
+          if (grant?.runId === input.binding.runId && grant.sourceAnalysis)
+            active.push({
+              ...identity(task, child.thread.modelSelection),
+              sourceIds: grant.sourceAnalysis.sourceIds,
+            });
+        }
+        const summarized = new Set(
+          run?.sourceCoverage
+            .filter((entry) => entry.status === "summarized")
+            .map((entry) => entry.sourceId),
         );
+        const pending = input.sources.filter((source) => !summarized.has(source.sourceId));
+        const created = yield* Effect.forEach(
+          selectDeepPlanSourceBatches(
+            pending,
+            active.map((agent) => agent.sourceIds),
+          ),
+          (batch) =>
+            spawn({
+              ...input,
+              task: buildDeepPlanSourceBatchTask(input.binding, batch),
+              name: "Deep Plan source analysis",
+              deepPlanExecution: {
+                ...input.binding,
+                readOnly: true,
+                sourceAnalysis: {
+                  workerThreadId: input.parentThreadId,
+                  sourceIds: batch.map((source) => source.sourceId),
+                },
+              },
+            }).pipe(
+              Effect.map((agent) => ({
+                ...agent,
+                sourceIds: batch.map((source) => source.sourceId),
+              })),
+            ),
+        );
+        return [...active, ...created];
       },
     ),
   });

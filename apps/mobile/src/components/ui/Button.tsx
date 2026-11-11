@@ -12,7 +12,7 @@ export interface ButtonProps {
   readonly disabled?: boolean;
   readonly accessibilityHint?: string;
   readonly loading?: boolean;
-  readonly tone?: "primary" | "secondary" | "danger" | "text" | "contrast";
+  readonly tone?: "primary" | "secondary" | "danger" | "text" | "contrast" | "deep-plan";
   readonly fullWidth?: boolean;
 }
 
@@ -22,6 +22,7 @@ const TONE_CLASS_NAMES = {
   secondary: ["bg-secondary", "text-secondary-foreground"],
   danger: ["bg-danger", "text-danger-foreground"],
   text: ["bg-transparent", "text-primary-text"],
+  "deep-plan": ["bg-warning", "text-warning-foreground"],
 } as const;
 
 export function Button(props: ButtonProps) {

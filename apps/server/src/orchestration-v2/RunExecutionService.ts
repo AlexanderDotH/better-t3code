@@ -1,5 +1,6 @@
 import { applyAgentEnhancementsToProviderInput } from "../provider/enhancements/AgentPromptPolicy.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
+import { makeResponseMetricsTracker } from "./responseMetrics.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -1319,6 +1320,7 @@ export const layer: Layer.Layer<
           return true;
         });
         const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
+        const trackResponseMetrics = makeResponseMetricsTracker();
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
@@ -1406,6 +1408,13 @@ export const layer: Layer.Layer<
               return { event, accepted };
             }),
           ),
+          Stream.map(({ event, accepted }) =>
+            (accepted ? trackResponseMetrics(event) : [event]).map((event) => ({
+              event,
+              accepted,
+            })),
+          ),
+          Stream.flattenIterable,
           Stream.tap(({ event, accepted }) =>
             Effect.gen(function* () {
               if (!accepted) return;

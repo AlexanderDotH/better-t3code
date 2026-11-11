@@ -1,4 +1,3 @@
-import { useStableCallback } from "../../hooks/useStableCallback";
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
@@ -18,7 +17,6 @@ import {
   type ReactNode,
   useContext,
   useEffect,
-  useReducer,
   useRef,
   useState,
 } from "react";
@@ -59,22 +57,16 @@ declare module "@tanstack/react-router" {
 interface SettingsSearchTargetContextValue {
   readonly targetId: string | null;
   readonly highlightTarget: boolean;
-  readonly visibilityRevision: number;
   readonly requestKey: object;
   readonly onTargetHandled: () => void;
-  readonly requestTarget: (targetId: string) => void;
-  readonly retryTarget: () => void;
 }
 
 const noop = () => undefined;
 const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
   targetId: null,
   highlightTarget: true,
-  visibilityRevision: 0,
   requestKey: {},
   onTargetHandled: noop,
-  requestTarget: noop,
-  retryTarget: noop,
 });
 
 export function SettingsSearchTargetProvider({
@@ -90,30 +82,11 @@ export function SettingsSearchTargetProvider({
 }) {
   const [externalRequest, setExternalRequest] = useState({ targetId });
   if (externalRequest.targetId !== targetId) setExternalRequest({ targetId });
-  const [requestedTarget, setRequestedTarget] = useState<{
-    readonly targetId: string | null;
-    readonly externalRequest: object;
-  } | null>(null);
-  const [visibilityRevision, retryTarget] = useReducer((revision: number) => revision + 1, 0);
-  const requestTarget = useStableCallback((nextTargetId: string) => {
-    setRequestedTarget({ targetId: nextTargetId, externalRequest });
-  });
-  const handleTarget = useStableCallback(() => {
-    if (requestedTarget?.targetId) {
-      setRequestedTarget({ ...requestedTarget, targetId: null });
-    }
-    if (requestedTarget?.targetId == null || targetId !== null) onTargetHandled();
-  });
   const value = {
-    targetId:
-      requestedTarget?.targetId ??
-      (requestedTarget?.externalRequest === externalRequest ? null : targetId),
-    highlightTarget: requestedTarget?.targetId != null || highlightTarget,
-    visibilityRevision,
-    requestKey: requestedTarget?.targetId != null ? requestedTarget : externalRequest,
-    onTargetHandled: handleTarget,
-    requestTarget,
-    retryTarget,
+    targetId,
+    highlightTarget,
+    requestKey: externalRequest,
+    onTargetHandled,
   };
   return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
 }
@@ -157,15 +130,7 @@ export function useSettingsSearchTargetId(): string | null {
 }
 
 /** Requests an inline jump through the same reveal and mount lifecycle as a hash link. */
-export function useRequestSettingsSearchTarget(): (targetId: string) => void {
-  return useContext(SettingsSearchTargetContext).requestTarget;
-}
-
 /** Retry a pending jump after its subgroup has committed visible content. */
-export function useRetrySettingsSearchTarget(): () => void {
-  return useContext(SettingsSearchTargetContext).retryTarget;
-}
-
 export function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
   const context = useContext(SettingsSearchTargetContext);
   const handledRequest = useRef<object | null>(null);

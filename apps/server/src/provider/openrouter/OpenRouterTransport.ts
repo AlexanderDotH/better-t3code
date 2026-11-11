@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import type { OpenRouterSettings } from "@t3tools/contracts";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -17,8 +18,10 @@ import {
 } from "./OpenRouterDecisions.ts";
 import {
   decodeOpenRouterModelCatalog,
+  decodeOpenRouterZdrModels,
   mergeOpenRouterCustomModels,
   OpenRouterModelCatalogError,
+  restrictOpenRouterCatalogToZdr,
   type OpenRouterCatalogModel,
 } from "./OpenRouterModelCatalog.ts";
 import {
@@ -30,6 +33,7 @@ import {
   buildOpenRouterResponsesRequest,
   decodeOpenRouterResponsesSse,
 } from "./OpenRouterResponses.ts";
+import { openRouterRoutingRestrictions } from "./OpenRouterRouting.ts";
 import { OpenRouterProtocolError } from "./OpenRouterSse.ts";
 
 export const OPENROUTER_API_ORIGIN = "https://openrouter.ai/api/v1";
@@ -91,6 +95,7 @@ const isHttpError = Schema.is(OpenRouterHttpError);
 export interface OpenRouterTransport {
   readonly listModels: (
     customModels: ReadonlyArray<string>,
+    options?: { readonly requireZdr?: boolean },
   ) => Effect.Effect<ReadonlyArray<OpenRouterCatalogModel>, OpenRouterTransportError>;
   readonly streamRound: (
     request: OpenRouterRoundRequest,
@@ -167,6 +172,7 @@ const makeRequest = Effect.fn("OpenRouterTransport.makeRequest")(function* (
 const statusError = (
   operation: OpenRouterHttpError["operation"],
   response: HttpClientResponse.HttpClientResponse,
+  routingSettings?: OpenRouterSettings,
 ): OpenRouterAuthenticationError | OpenRouterHttpError => {
   const status = response.status;
   const retryAfterSeconds = parseRetryAfterSeconds(response.headers["retry-after"]);
@@ -179,6 +185,8 @@ const statusError = (
           : "OpenRouter rejected authentication for this inference request. Use a standard inference API key, not a Management API key",
     });
   }
+  const routingRestrictions =
+    routingSettings === undefined ? [] : openRouterRoutingRestrictions(routingSettings);
   const details =
     status === 402
       ? (["credits", "OpenRouter credits are exhausted"] as const)
@@ -189,7 +197,9 @@ const statusError = (
               "not-found",
               operation === "models"
                 ? "OpenRouter model catalog endpoint was not found"
-                : "OpenRouter could not route the selected model with the required request capabilities",
+                : routingRestrictions.length > 0
+                  ? `OpenRouter has no endpoint for this model that meets these routing settings: ${routingRestrictions.join(", ")}. Change them in the OpenRouter provider settings or choose another model.`
+                  : "OpenRouter could not route the selected model with the required request capabilities",
             ] as const)
           : status === 408 || status === 524
             ? (["timeout", "OpenRouter request timed out"] as const)
@@ -214,9 +224,10 @@ const statusError = (
 const requireSuccess = Effect.fn("OpenRouterTransport.requireSuccess")(function* (
   operation: OpenRouterHttpError["operation"],
   response: HttpClientResponse.HttpClientResponse,
+  routingSettings?: OpenRouterSettings,
 ) {
   if (response.status >= 200 && response.status < 300) return response;
-  return yield* statusError(operation, response);
+  return yield* statusError(operation, response, routingSettings);
 });
 
 const abortSignalEffect = (signal: AbortSignal): Effect.Effect<void> =>
@@ -297,25 +308,49 @@ export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(func
     return yield* executeOnce(request, apiKey);
   });
 
-  const listModels: OpenRouterTransport["listModels"] = (customModels) =>
-    execute({
-      operation: "models",
-      method: "GET",
-      url: `${OPENROUTER_API_ORIGIN}/models?output_modalities=all`,
+  const listCatalog = execute({
+    operation: "models",
+    method: "GET",
+    url: `${OPENROUTER_API_ORIGIN}/models?output_modalities=all`,
+  }).pipe(
+    Effect.flatMap((response) => requireSuccess("models", response)),
+    Effect.flatMap(decodeUnknownJson),
+    Effect.mapError((error): OpenRouterTransportError =>
+      isTransportSecurityError(error) || isAuthenticationError(error) || isHttpError(error)
+        ? error
+        : new OpenRouterHttpError({
+            operation: "models",
+            category: "transport",
+            message: "OpenRouter model catalog response is not valid JSON",
+          }),
+    ),
+    Effect.flatMap(decodeOpenRouterModelCatalog),
+  );
+
+  // Only refines which models are offered; if it fails, a routing 404 still names the setting.
+  const listZdrModels = execute({
+    operation: "models",
+    method: "GET",
+    url: `${OPENROUTER_API_ORIGIN}/endpoints/zdr`,
+  }).pipe(
+    Effect.flatMap((response) => requireSuccess("models", response)),
+    Effect.flatMap(decodeUnknownJson),
+    Effect.flatMap(decodeOpenRouterZdrModels),
+    Effect.option,
+  );
+
+  const listModels: OpenRouterTransport["listModels"] = (customModels, options) =>
+    Effect.all([listCatalog, options?.requireZdr ? listZdrModels : Effect.succeedNone], {
+      concurrency: "unbounded",
     }).pipe(
-      Effect.flatMap((response) => requireSuccess("models", response)),
-      Effect.flatMap(decodeUnknownJson),
-      Effect.mapError((error): OpenRouterTransportError =>
-        isTransportSecurityError(error) || isAuthenticationError(error) || isHttpError(error)
-          ? error
-          : new OpenRouterHttpError({
-              operation: "models",
-              category: "transport",
-              message: "OpenRouter model catalog response is not valid JSON",
-            }),
+      Effect.map(([catalog, zdrModels]) =>
+        mergeOpenRouterCustomModels(
+          Option.isSome(zdrModels)
+            ? restrictOpenRouterCatalogToZdr(catalog, zdrModels.value)
+            : catalog,
+          customModels,
+        ),
       ),
-      Effect.flatMap(decodeOpenRouterModelCatalog),
-      Effect.map((models) => mergeOpenRouterCustomModels(models, customModels)),
     );
 
   const streamRound: OpenRouterTransport["streamRound"] = (round) => {
@@ -335,7 +370,7 @@ export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(func
           }`,
           body,
         });
-        const success = yield* requireSuccess(operation, response);
+        const success = yield* requireSuccess(operation, response, round.settings);
         const decoded =
           operation === "chat-completions"
             ? decodeOpenRouterChatCompletionSse(success.stream)

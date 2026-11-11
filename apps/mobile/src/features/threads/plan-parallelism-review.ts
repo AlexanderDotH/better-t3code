@@ -1,4 +1,18 @@
-import type { PlanId } from "@t3tools/contracts";
+import { getDeepPlanProposalBlockReason } from "@t3tools/client-runtime/deep-planning";
+import {
+  resolvePlanParallelismReviewDescriptor,
+  type PlanParallelismReviewDescriptor,
+} from "@t3tools/client-runtime/plan-implementation";
+import type {
+  DeepPlanRun,
+  DeepPlanRunReference,
+  EnvironmentId,
+  ModelSelection,
+  PlanId,
+  ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
+
 export interface MobileProposedPlan {
   readonly id: PlanId;
   readonly updatedAt: string;
@@ -7,77 +21,37 @@ export interface MobileProposedPlan {
   readonly implementationThreadId?: ThreadId | null;
   readonly createdAt?: string;
   readonly turnId?: string | null;
-}
-import type {
-  ModelSelection,
-  PlanParallelismReviewResult,
-  ServerProvider,
-  ThreadId,
-} from "@t3tools/contracts";
-import { isPlanParallelismReviewDriverKind } from "@t3tools/contracts";
-
-export interface MobilePlanParallelismReviewDescriptor {
-  readonly threadId: ThreadId;
-  readonly plan: Pick<MobileProposedPlan, "id" | "updatedAt">;
-  readonly implementationProvider: ServerProvider;
-  readonly reviewerSelection: ModelSelection;
+  readonly deepPlan?: DeepPlanRunReference;
 }
 
 export function resolveMobilePlanParallelismReviewDescriptor(input: {
   readonly enabled: boolean;
+  readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly plan: MobileProposedPlan | null;
+  readonly deepPlanRun?: DeepPlanRun | null | undefined;
   readonly implementationProvider: ServerProvider | null;
   readonly reviewerSelection: ModelSelection | null;
   readonly providers: ReadonlyArray<ServerProvider>;
-}): MobilePlanParallelismReviewDescriptor | null {
-  const capability = input.implementationProvider?.nativeSubagents;
+}): PlanParallelismReviewDescriptor | null {
+  const { deepPlanRun, plan, reviewerSelection } = input;
   if (
-    !input.enabled ||
-    !input.plan ||
-    input.plan.implementedAt !== null ||
-    !input.implementationProvider?.enabled ||
-    !input.implementationProvider.installed ||
-    input.implementationProvider.availability === "unavailable" ||
-    !capability ||
-    capability.maxRecommendedSubagents < 2 ||
-    !input.reviewerSelection
+    plan?.implementedAt !== null ||
+    !reviewerSelection ||
+    getDeepPlanProposalBlockReason(plan, deepPlanRun) !== null
   ) {
     return null;
   }
-  const reviewer = input.providers.find(
-    (provider) => provider.instanceId === input.reviewerSelection?.instanceId,
-  );
-  if (
-    !reviewer?.enabled ||
-    !reviewer.installed ||
-    reviewer.status !== "ready" ||
-    reviewer.availability === "unavailable" ||
-    !isPlanParallelismReviewDriverKind(reviewer.driver)
-  ) {
-    return null;
-  }
-  return {
+  return resolvePlanParallelismReviewDescriptor({
+    enabled: input.enabled,
+    environmentId: input.environmentId,
     threadId: input.threadId,
-    plan: input.plan,
+    // The server checks a Deep Plan against its run, so the turn item's timestamp reads as stale.
+    plan: plan.deepPlan && deepPlanRun ? { ...plan, updatedAt: deepPlanRun.updatedAt } : plan,
     implementationProvider: input.implementationProvider,
-    reviewerSelection: input.reviewerSelection,
-  };
-}
-
-export function validateMobilePlanParallelismReview(
-  descriptor: MobilePlanParallelismReviewDescriptor,
-  result: PlanParallelismReviewResult,
-): number | null {
-  const ceiling = Math.floor(
-    descriptor.implementationProvider.nativeSubagents?.maxRecommendedSubagents ?? 0,
-  );
-  return result.planId === descriptor.plan.id &&
-    result.planUpdatedAt === descriptor.plan.updatedAt &&
-    result.implementationProviderInstanceId === descriptor.implementationProvider.instanceId &&
-    Number.isInteger(result.recommendedSubagents) &&
-    result.recommendedSubagents >= 2 &&
-    result.recommendedSubagents <= ceiling
-    ? result.recommendedSubagents
-    : null;
+    reviewerProvider: input.providers.find(
+      (provider) => provider.instanceId === reviewerSelection.instanceId,
+    ),
+    reviewerSelection,
+  });
 }

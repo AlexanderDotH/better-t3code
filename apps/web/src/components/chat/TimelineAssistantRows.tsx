@@ -60,24 +60,28 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   const messageText =
     text ||
     (row.message.streaming || audioAttachments.length > 0 ? "" : translate("chat.timeline.empty"));
-  const meta = row.showAssistantMeta ? (
-    <AssistantMessageMeta
-      className={better ? "better-chat-meta" : "mt-1.5"}
-      projectedItem={row.projectedItem}
-      message={row.message}
-      showCopyButton={row.showAssistantCopyButton}
-      copyStreaming={row.assistantCopyStreaming}
-      alwaysVisible={better}
-    />
-  ) : row.showAssistantTimestamp ? (
-    <AssistantMessageMeta
-      className={better ? "better-chat-meta" : "mt-1.5"}
-      message={row.message}
-      showCopyButton={false}
-      copyStreaming={row.assistantCopyStreaming}
-      alwaysVisible={better}
-    />
-  ) : null;
+  const liveMetrics = Boolean(
+    row.message.streaming && row.message.runId && ctx.responseMetrics?.has(row.message.runId),
+  );
+  const meta =
+    row.showAssistantMeta || liveMetrics ? (
+      <AssistantMessageMeta
+        className={better ? "better-chat-meta" : "mt-1.5"}
+        projectedItem={row.projectedItem}
+        message={liveText === null ? row.message : { ...row.message, text }}
+        showCopyButton={row.showAssistantCopyButton}
+        copyStreaming={row.assistantCopyStreaming}
+        revealOnHover
+      />
+    ) : row.showAssistantTimestamp ? (
+      <AssistantMessageMeta
+        className={better ? "better-chat-meta" : "mt-1.5"}
+        message={row.message}
+        showCopyButton={false}
+        copyStreaming={row.assistantCopyStreaming}
+        revealOnHover
+      />
+    ) : null;
 
   const bubble = (
     <div
@@ -167,7 +171,6 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     </div>
   );
 
-  // Better T3 keeps the meta outside the bubble; the wrapper widens the hover target that reveals it.
   return better ? (
     <div className="better-chat-message">
       {bubble}
@@ -253,7 +256,6 @@ export function AssistantMetaTimelineRow({
         message={row.message}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
-        alwaysVisible
       />
     </div>
   );
@@ -265,24 +267,26 @@ function AssistantMessageMeta({
   message,
   showCopyButton,
   copyStreaming,
-  alwaysVisible = false,
+  revealOnHover = false,
 }: {
   className?: string;
   projectedItem?: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
   message: ChatMessage;
   showCopyButton: boolean;
   copyStreaming: boolean;
-  alwaysVisible?: boolean;
+  revealOnHover?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
+  const live = message.runId
+    ? ctx.responseMetrics?.get(message.runId)?.liveStartedAt !== undefined
+    : false;
 
   return (
     <div
+      data-response-metrics-live={live || undefined}
+      data-message-hover-details={revealOnHover || undefined}
       className={cn(
         "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums transition-opacity duration-200",
-        alwaysVisible
-          ? "opacity-100"
-          : "opacity-0 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/assistant:opacity-100",
         className,
       )}
     >
@@ -292,7 +296,7 @@ function AssistantMessageMeta({
         </span>
       ) : null}
       {/* Better T3 shows these in the bubble's overlay instead. */}
-      {ctx.chatVisualMode !== "better-t3" ? (
+      {ctx.chatVisualMode !== "better-t3" && !message.streaming ? (
         <div className="flex shrink-0 items-center gap-0.5 empty:hidden">
           <AssistantForkAction message={message} projectedItem={projectedItem} />
           <AssistantCopyButton
@@ -316,8 +320,11 @@ function AssistantMessageMeta({
           </TooltipPopup>
         </Tooltip>
       )}
-      {!message.streaming && message.runId && ctx.responseMetrics ? (
-        <ResponseMetricsDetails snapshot={ctx.responseMetrics.get(message.runId) ?? null} />
+      {message.runId && ctx.responseMetrics ? (
+        <ResponseMetricsDetails
+          snapshot={ctx.responseMetrics.get(message.runId) ?? null}
+          message={message}
+        />
       ) : null}
     </div>
   );

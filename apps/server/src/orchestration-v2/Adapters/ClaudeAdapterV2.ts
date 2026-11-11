@@ -2830,6 +2830,7 @@ export function claudeEffectiveQueryPolicyKey(
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
+  deepPlan?: DeepPlanInstructionContext,
 ): string {
   return JSON.stringify({
     runtimePolicy: claudeRuntimeQueryPolicyKey({
@@ -2839,6 +2840,8 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    // The system prompt carries these, so a live query must not keep another phase's.
+    deepPlanInstructions: buildDeepPlanInstructions(deepPlan),
   });
 }
 
@@ -10436,7 +10439,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 },
               }
             : baseMcpOverrides;
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(
+            queryPolicy,
+            mcpOverrides,
+            mcpSession?.deepPlan,
+          );
           const compiledSelection = compileSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);

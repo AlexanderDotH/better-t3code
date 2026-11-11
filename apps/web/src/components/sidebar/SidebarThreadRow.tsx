@@ -42,6 +42,7 @@ import {
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
+  StarIcon,
   ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -588,6 +589,9 @@ type SidebarThreadRowProps = {
   onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
+  onPin: (threadRef: ScopedThreadRef) => void;
+  /** The boring sidebar shows pins as favorites, with a star on every row. */
+  showFavoriteToggle: boolean;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
 };
@@ -652,6 +656,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     onUnsettle,
     onUnsnooze,
     onUnpin,
+    onPin,
     openPullRequestsInRightPanel,
     renamingTitle,
     thread,
@@ -909,6 +914,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
+  const handlePinClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onPin(threadRef);
+  };
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
   };
@@ -1104,28 +1114,49 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
     props.pinningSupported && canOperateThread && !sortable?.isDragging ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={translator.message("sidebar.thread.unpin")}
-              onClick={handleUnpinClick}
-              className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      props.showFavoriteToggle ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={translator.message("sidebar.classic.removeFavorite")}
+                aria-pressed
+                data-testid={`sidebar-favorite-${thread.id}`}
+                onClick={handleUnpinClick}
+                style={{ color: "var(--color-yellow-500)" }}
+                className="ms-1.5 inline-flex shrink-0 cursor-pointer items-center self-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              />
+            }
+          >
+            <StarIcon aria-hidden className="size-3.5 shrink-0 fill-current" />
+          </TooltipTrigger>
+          <TooltipPopup>{translator.message("sidebar.classic.removeFavorite")}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={translator.message("sidebar.thread.unpin")}
+                onClick={handleUnpinClick}
+                className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              />
+            }
+          >
+            <PinIcon
+              aria-hidden
+              className="size-3 shrink-0 group-hover/unpin:hidden group-focus-visible/unpin:hidden"
             />
-          }
-        >
-          <PinIcon
-            aria-hidden
-            className="size-3 shrink-0 group-hover/unpin:hidden group-focus-visible/unpin:hidden"
-          />
-          <PinOffIcon
-            aria-hidden
-            className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
-          />
-        </TooltipTrigger>
-        <TooltipPopup>{translator.message("sidebar.thread.unpin")}</TooltipPopup>
-      </Tooltip>
+            <PinOffIcon
+              aria-hidden
+              className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
+            />
+          </TooltipTrigger>
+          <TooltipPopup>{translator.message("sidebar.thread.unpin")}</TooltipPopup>
+        </Tooltip>
+      )
     ) : (
       <PinIcon
         aria-label={translator.message("sidebar.thread.pinned")}
@@ -1134,6 +1165,36 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       />
     )
   ) : null;
+
+  const favoriteButton =
+    props.showFavoriteToggle &&
+    !props.isPinned &&
+    props.pinningSupported &&
+    canOperateThread &&
+    !sortable?.isDragging ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={translator.message("sidebar.classic.addFavorite")}
+              aria-pressed={false}
+              data-testid={`sidebar-favorite-${thread.id}`}
+              onClick={handlePinClick}
+              className="ms-1.5 hidden shrink-0 cursor-pointer items-center self-center rounded-sm text-muted-foreground/65 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/sidebar-row:inline-flex group-any-hover/sidebar-row:inline-flex"
+            />
+          }
+        >
+          <StarIcon aria-hidden className="size-3.5 shrink-0" />
+        </TooltipTrigger>
+        <TooltipPopup>{translator.message("sidebar.classic.addFavorite")}</TooltipPopup>
+      </Tooltip>
+    ) : null;
+
+  // With the star on, it stays at the row's far right and the row actions sit just before it.
+  const favoriteControl = props.showFavoriteToggle ? (pinIndicator ?? favoriteButton) : null;
+  const leadingPinIndicator = props.showFavoriteToggle ? null : pinIndicator;
+  const rowActionsOffset = favoriteControl === null ? undefined : "right-3.5";
 
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
@@ -1261,7 +1322,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {title}
               {multiline ? titleLineIcons : null}
-              {pinIndicator}
+              {leadingPinIndicator}
               {multiline ? null : terminalStatusIcon}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
@@ -1342,6 +1403,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         className={cn(
                           "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                           isWoke && "group-any-hover/sidebar-row:static",
+                          rowActionsOffset,
                         )}
                       >
                         <AlarmClockOffIcon className="mb-px size-3" />
@@ -1359,6 +1421,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             className={cn(
                               "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                               isWoke && "group-any-hover/sidebar-row:static",
+                              rowActionsOffset,
                             )}
                           />
                         }
@@ -1381,6 +1444,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             className={cn(
                               "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                               isWoke && "group-any-hover/sidebar-row:static",
+                              rowActionsOffset,
                             )}
                           />
                         }
@@ -1392,6 +1456,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       </TooltipPopup>
                     </Tooltip>
                   )}
+                  {favoriteControl}
                   {jumpHintLabel ? <JumpHintBadge label={jumpHintLabel} /> : null}
                 </span>
               )}
@@ -1451,7 +1516,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
-              {pinIndicator}
+              {leadingPinIndicator}
               {props.projectDisplayName ? (
                 <span
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
@@ -1537,6 +1602,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         // the status label after the pointer leaves. Use focus-visible instead.
                         "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
                         snoozeMenuOpen && "pointer-events-auto static opacity-100",
+                        rowActionsOffset,
                       )}
                     >
                       {hasUnsentDraft ? (
@@ -1588,6 +1654,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       ) : null}
                     </span>
                   ) : null}
+                  {favoriteControl}
                   {jumpHintLabel ? <JumpHintBadge label={jumpHintLabel} /> : null}
                 </span>
               )}

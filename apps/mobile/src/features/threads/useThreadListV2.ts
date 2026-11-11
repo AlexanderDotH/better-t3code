@@ -61,6 +61,8 @@ export function useThreadListV2(input: {
   readonly activeReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys: ReadonlySet<string>;
   readonly settledLimit: number;
+  /** Grouped lists fold settled rows per project, so the row limit would hide whole projects. */
+  readonly listAllLoadedSettled?: boolean;
   readonly now: string;
   readonly pendingOrder: LayoutInput["pendingOrder"];
   readonly shelfPreferencesLoaded: boolean;
@@ -178,7 +180,7 @@ export function useThreadListV2(input: {
         settlementEnvironmentIds: input.settlementEnvironmentIds,
         snoozeEnvironmentIds: input.snoozeEnvironmentIds,
         queuedThreadKeys: input.queuedThreadKeys,
-        settledLimit: input.settledLimit,
+        ...(input.listAllLoadedSettled === true ? {} : { settledLimit: input.settledLimit }),
         now: layoutTime,
         workingShelfEnabled,
         workingShelfExpanded: input.workingShelfExpanded,
@@ -213,6 +215,7 @@ export function useThreadListV2(input: {
       input.snoozeEnvironmentIds,
       input.queuedThreadKeys,
       input.settledLimit,
+      input.listAllLoadedSettled,
       layoutTime,
       workingShelfEnabled,
       input.workingShelfExpanded,

@@ -105,14 +105,23 @@ const make = Effect.gen(function* () {
     function* (input) {
       const row = yield* engine.getThreadShell(input.threadId);
       if (row === null || row.deletedAt !== null) return null;
-      if (input.runId !== undefined && row.deepPlan?.id === input.runId) return row.deepPlan;
+      if (row.deepPlan?.threadId === row.id)
+        return input.runId === undefined || input.runId === row.deepPlan.id ? row.deepPlan : null;
+      const ownerId = row.deepPlan?.threadId ?? row.deepPlanExecution?.runThreadId;
+      if (ownerId !== undefined) {
+        const owner = yield* engine.getThreadShell(ownerId);
+        const run = owner?.deepPlan;
+        const runId = row.deepPlan?.id ?? row.deepPlanExecution?.runId;
+        if (owner?.deletedAt === null && run?.threadId === owner.id && run.id === runId)
+          return input.runId === undefined || input.runId === run.id ? run : null;
+      }
       const snapshot = yield* engine.getShellSnapshot();
-      const run =
-        snapshot.threads.find(
-          (thread) =>
-            thread.deletedAt === null &&
-            thread.deepPlan?.approval?.implementationThreadId === input.threadId,
-        )?.deepPlan ?? row.deepPlan;
+      const run = snapshot.threads.find(
+        (thread) =>
+          thread.deletedAt === null &&
+          thread.deepPlan?.threadId === thread.id &&
+          thread.deepPlan?.approval?.implementationThreadId === input.threadId,
+      )?.deepPlan;
       return run != null && (input.runId === undefined || input.runId === run.id) ? run : null;
     },
     Effect.mapError(dispatchError),

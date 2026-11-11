@@ -57,6 +57,8 @@ import type {
   NativeProviderTurnRecord,
 } from "./NativeProviderTypes.ts";
 
+const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
+
 export type * from "./NativeProviderTypes.ts";
 
 const NATIVE_PROVIDER_TEXT_FLUSH_INTERVAL_MS = 50;
@@ -373,18 +375,23 @@ export const makeNativeProviderAdapter = Effect.fn("makeNativeProviderAdapter")(
         "NativeProviderAdapter.ensureThread",
       )(function* (request) {
         if (thread && !request.forceNewNativeThread) return thread!;
-        if (request.existingProviderThread && !request.forceNewNativeThread)
+        if (
+          request.existingProviderThread?.nativeThreadRef?.nativeId &&
+          !request.forceNewNativeThread
+        )
           return yield* load(request.existingProviderThread);
         const nativeId = yield* randomUuidV4.pipe(
           Effect.mapError((cause) => protocolError("Could not allocate provider history", cause)),
         );
         const time = yield* DateTime.now;
         thread = {
-          id: ids.derive.providerThread({
-            driver,
-            providerInstanceId: definition.instanceId,
-            nativeThreadId: nativeId,
-          }),
+          id:
+            request.existingProviderThread?.id ??
+            ids.derive.providerThread({
+              driver,
+              providerInstanceId: definition.instanceId,
+              nativeThreadId: nativeId,
+            }),
           driver,
           providerInstanceId: definition.instanceId,
           providerSessionId: input.providerSessionId,
@@ -967,14 +974,15 @@ export const makeNativeProviderAdapter = Effect.fn("makeNativeProviderAdapter")(
                   definition.limits.maxToolOutputBytes * definition.limits.maxParallelToolCalls,
               },
               program.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapterRequestError({
-                      provider: driver,
-                      method: "turn/run",
-                      detail: "Provider turn failed",
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  isProviderAdapterRequestError(cause)
+                    ? cause
+                    : new ProviderAdapterRequestError({
+                        provider: driver,
+                        method: "turn/run",
+                        detail: cause.message,
+                        cause,
+                      }),
                 ),
               ),
             )

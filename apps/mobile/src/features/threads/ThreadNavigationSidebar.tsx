@@ -626,6 +626,8 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-project-settled":
+        return null;
       case "v2-older-projects-shelf":
         return (
           <ThreadListV2OlderProjectsShelfHeader

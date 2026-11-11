@@ -1942,11 +1942,8 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.timeline.outputTokens": ["Output", "Ausgabe", "Sortie"],
   "chat.timeline.totalTokens": ["Total", "Gesamt", "Total"],
   "chat.tokens.title": ["{{direction}} tokens", "{{direction}}-Tokens", "Jetons · {{direction}}"],
-  "chat.tokens.scope": [
-    "Reported chat usage",
-    "Gemeldete Chat-Nutzung",
-    "Utilisation signalée du chat",
-  ],
+  "chat.tokens.inShort": ["in", "rein", "entrée"],
+  "chat.tokens.outShort": ["out", "raus", "sortie"],
   "chat.tokens.mainAgent": ["Main agent", "Hauptagent", "Agent principal"],
   "chat.tokens.subagents": [
     "Subagents ({{count}})",
@@ -1973,10 +1970,11 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Utilisation signalée par {{reported}} sous-agents sur {{count}}.",
   ],
   "chat.tokens.partial": [
-    "Partial total: the provider has not reported every counter. A dash means unavailable.",
-    "Teilsumme: Der Provider hat nicht alle Zähler gemeldet. Ein Strich bedeutet nicht verfügbar.",
-    "Total partiel : le fournisseur n’a pas signalé tous les compteurs. Un tiret indique une valeur indisponible.",
+    "Partial total: the provider has not reported every counter yet.",
+    "Teilsumme: Der Provider hat noch nicht alle Zähler gemeldet.",
+    "Total partiel : le fournisseur n’a pas encore signalé tous les compteurs.",
   ],
+  "chat.tokens.unsplit": ["Not broken down", "Nicht aufgeschlüsselt", "Non détaillé"],
   "chat.tokens.unclassified": [
     "{{count}} additional subagent tokens have no input/output breakdown.",
     "{{count}} weitere Subagent-Tokens ohne Input-/Output-Aufschlüsselung.",

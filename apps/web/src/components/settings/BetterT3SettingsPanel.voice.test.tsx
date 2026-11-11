@@ -101,7 +101,6 @@ vi.mock("../chat/ProviderModelPicker", () => ({
 import { BetterT3SettingsContent } from "./BetterT3SettingsPanel";
 import { buildBetterT3ControlStates } from "./BetterT3SettingsPanel.logic";
 import { VoiceInputSettings } from "./VoiceInputSettings";
-import { Collapsible } from "../ui/collapsible";
 
 const translate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
 
@@ -149,12 +148,6 @@ it("shows each voice setting once and keeps credentials, models, and projects in
   try {
     await act(() => {
       renderer = create(content("remote"));
-    });
-    await act(async () => {
-      await renderer!.root
-        .findAllByType(Collapsible)
-        .find((node) => node.props["data-better-t3-subgroup"] === "voice-translation")!
-        .props.onOpenChange(true);
     });
     expect(fixture.updateSettings).not.toHaveBeenCalled();
     const voiceRegion = renderer!.root.findByProps({ id: "better-t3-group-voice", role: "region" });

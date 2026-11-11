@@ -96,7 +96,9 @@ export function ProposedPlanCard(props: {
       updatedAt: DateTime.formatIso(props.plan.updatedAt),
       planMarkdown: props.markdown,
       implementedAt: null,
+      ...(deepPlanReference ? { deepPlan: deepPlanReference } : {}),
     },
+    deepPlanRun: projection?.projection.thread.deepPlan,
     implementationProvider,
     reviewerSelection: config?.settings.parallelPlanReviewModelSelection ?? null,
     providers: config?.providers ?? [],
@@ -280,7 +282,7 @@ export function ProposedPlanCard(props: {
         {parallelEnabled && suggestedParallelism >= 2 ? (
           <Button
             label={`Use ${suggestedParallelism} agents`}
-            tone="secondary"
+            tone={deepPlanReference ? "deep-plan" : "secondary"}
             disabled={!available || implementing}
             onPress={() =>
               void implement(false, { kind: "subagents", count: suggestedParallelism })

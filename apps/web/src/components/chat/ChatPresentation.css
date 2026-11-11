@@ -700,15 +700,47 @@ html[data-theme-id=""]
 
 @media (hover: hover) and (pointer: fine) {
   .better-chat-actions::before,
-  .better-chat-action-buttons,
-  .better-chat-message .better-chat-meta {
+  .better-chat-action-buttons {
     opacity: 0;
   }
 
+  [data-message-hover-details]:not([data-response-metrics-live]) {
+    /* Lets `height` animate to `auto`; browsers without it simply open in one step. */
+    interpolate-size: allow-keywords;
+    height: 0;
+    margin-block-start: 0;
+    overflow: clip;
+    overflow-clip-margin: 3px;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Outranks the presentation's opacity-only transition, so closing animates too. */
+  [data-timeline-row-kind="message"][data-timeline-row-id]
+    [data-message-hover-details]:not([data-response-metrics-live]) {
+    transition:
+      height 140ms ease-out,
+      margin-block-start 140ms ease-out,
+      opacity 100ms ease-out;
+  }
+
   .better-chat-actions:is(:hover, :focus-within)::before,
-  .better-chat-actions:is(:hover, :focus-within) > .better-chat-action-buttons,
-  .better-chat-message:is(:hover, :focus-within) .better-chat-meta {
+  .better-chat-actions:is(:hover, :focus-within) > .better-chat-action-buttons {
     opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* The short delay keeps a pointer merely crossing the chat from shifting it. */
+  [data-timeline-row-kind="message"]:is(:hover, :focus-within)
+    [data-message-hover-details]:not([data-response-metrics-live]) {
+    height: auto;
+    margin-block-start: 6px;
+    opacity: 1;
+    pointer-events: auto;
+    transition:
+      height 180ms cubic-bezier(0.22, 1, 0.36, 1) 120ms,
+      margin-block-start 180ms cubic-bezier(0.22, 1, 0.36, 1) 120ms,
+      opacity 180ms ease-out 140ms;
   }
 }
 
@@ -725,6 +757,12 @@ html[data-theme-id=""]
   > .better-chat-action-buttons,
 [data-chat-presentation="better-t3"][data-presentation-motion="true"] .better-chat-meta:hover {
   transition-duration: 160ms;
+}
+
+[data-chat-presentation="better-t3"][data-presentation-motion="false"]
+  [data-timeline-row-kind="message"]
+  [data-message-hover-details]:not([data-response-metrics-live]) {
+  transition: none;
 }
 
 [data-chat-presentation="better-t3"][data-presentation-motion="false"] .better-chat-actions::before,
@@ -1198,6 +1236,11 @@ html[data-theme-id=""]
 }
 
 @media (prefers-reduced-motion: reduce) {
+  [data-timeline-row-kind="message"][data-timeline-row-id][data-timeline-row-id]
+    [data-message-hover-details]:not([data-response-metrics-live]) {
+    transition: none;
+  }
+
   .better-chat-thinking[data-motion] .better-chat-thinking-lobe,
   .better-chat-thinking[data-motion] .better-chat-thinking-character::before {
     animation: none;

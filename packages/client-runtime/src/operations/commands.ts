@@ -734,6 +734,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   if (requestedMode === "start") {
     return yield* dispatch({
       type: "message.dispatch",
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
       ...featureMetadata,
       commandId,
       createdBy: "user",
@@ -763,6 +765,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       : ({ type: "start_immediately" } as const);
   return yield* dispatch({
     type: "message.dispatch",
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
     ...featureMetadata,
     commandId,
     createdBy: "user",

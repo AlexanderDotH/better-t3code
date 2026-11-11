@@ -513,6 +513,7 @@ const MessageReplyFields = {
 const BetterT3MessageDispatchFields = {
   ...MessageReplyFields,
   deepPlanRunId: Schema.optional(DeepPlanRunId),
+  deepPlanContinuation: Schema.optional(Schema.Literal(true)),
   fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   idleGuard: Schema.optional(
     Schema.Struct({
@@ -3410,6 +3411,8 @@ export const OrchestrationV2Command = Schema.Union([
     attachments: Schema.Array(ChatAttachment),
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
+    runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(ProviderInteractionMode),
     sourcePlanRef: Schema.optional(
       Schema.Struct({
         threadId: ThreadId,

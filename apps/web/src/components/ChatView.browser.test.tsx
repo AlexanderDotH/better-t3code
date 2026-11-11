@@ -16,10 +16,13 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  emitThreadEvent,
   installFakeEnvironment,
+  runningRun,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -64,4 +67,43 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("shows no empty composer notice while a turn runs without reasoning", async () => {
+  const thread = threadWithHistory("no-reasoning", 1);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    showReasoning: true,
+    betterT3Device: {
+      ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+      flags: {
+        ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
+        "agent.reasoningWorkingOverlay": true,
+        "chat.workingStatusInHeader": true,
+      },
+    },
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("Answer 0 for no-reasoning.")).toBeVisible();
+
+  await act(() =>
+    emitThreadEvent(thread.id, {
+      type: "run.created",
+      payload: runningRun(thread.id, "no-reasoning-live", 2, "no-reasoning-live-user"),
+    }),
+  );
+
+  await vi.waitFor(() =>
+    expect(document.querySelector("[data-chat-header-working-status]")).not.toBeNull(),
+  );
+  expect(document.querySelector("[data-composer-banner-surface]")).toBeNull();
 });

@@ -1841,6 +1841,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
+    // thread/resume ignores mcp_servers on a loaded thread, so its tool list never refreshes.
+    listsMcpToolsOnce: true,
     getCapabilities: Effect.fn("CodexAdapterV2.getCapabilities")(function () {
       return Effect.succeed(CodexProviderCapabilitiesV2);
     }),

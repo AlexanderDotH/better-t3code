@@ -224,7 +224,6 @@ vi.mock("./ProjectIndexEntityBrowser", () => ({ ProjectIndexEntityBrowser: () =>
 vi.mock("./ProjectIndexSourceDialog", () => ({ ProjectIndexSourceDialog: () => null }));
 
 import { ProjectIndexingGlobalSettings } from "./ProjectIndexingGlobalSettings";
-import { Collapsible } from "../ui/collapsible";
 import { ProjectIndexingSettingsController } from "./ProjectIndexingSettingsController";
 
 const environmentId = EnvironmentId.make("environment");
@@ -418,14 +417,6 @@ function button(panel: ReactTestInstance, label: string) {
 function checkbox(panel: ReactTestInstance, label: string) {
   return panel.findAllByType("input").find((input) => input.props["aria-label"] === label)!;
 }
-function expandModels() {
-  return act(async () => {
-    await globalPanel()
-      .findAllByType(Collapsible)
-      .find((node) => node.props["data-better-t3-subgroup"] === "indexing-models")!
-      .props.onOpenChange(true);
-  });
-}
 function picker(panel: ReactTestInstance, label: string) {
   return panel.findAllByType("select").find((select) => select.props["aria-label"] === label)!;
 }
@@ -450,7 +441,6 @@ describe("global project indexing defaults", () => {
         currentTarget: { checked: true },
       });
     });
-    await expandModels();
     await act(async () => {
       await picker(globalPanel(), "Default AI review model").props.onChange({
         currentTarget: { value: "model-a" },
@@ -513,7 +503,6 @@ describe("global project indexing defaults", () => {
           />,
         );
       });
-      await expandModels();
       const decisions = globalPanel()
         .findAllByType("button")
         .filter((candidate) => candidate.children.includes("Decision model"));
@@ -528,7 +517,7 @@ describe("global project indexing defaults", () => {
     },
   );
 
-  it("shows the saved default-model failure in the closed header without starting indexing", async () => {
+  it("shows the saved default-model failure without starting indexing", async () => {
     fixture.settings = {
       ...fixture.settings!,
       projectIndexingDefaultModelSelection: model("retired-model"),
@@ -540,7 +529,6 @@ describe("global project indexing defaults", () => {
     await act(() => {
       renderer = create(<Harness />);
     });
-    expect(picker(globalPanel(), "Default AI review model")).toBeUndefined();
     expect(JSON.stringify(renderer!.toJSON())).toContain("retired-model");
     expect(JSON.stringify(renderer!.toJSON())).toContain("This model was removed");
     expect(fixture.api!.checkModel).toHaveBeenCalledExactlyOnceWith({
@@ -560,7 +548,6 @@ describe("global project indexing defaults", () => {
         />,
       );
     });
-    await expandModels();
     expect(picker(globalPanel(), "Default AI review model").props.disabled).toBe(true);
     expect(button(globalPanel(), "Decision model").props.disabled).toBe(true);
     await act(async () => {

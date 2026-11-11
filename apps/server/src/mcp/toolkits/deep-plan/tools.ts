@@ -102,6 +102,10 @@ export const DeepPlanValidationInput = Schema.Union([
 ]);
 export type DeepPlanValidationInput = typeof DeepPlanValidationInput.Type;
 
+// A provider that reads tools once at thread load needs these listed before a later turn binds a run.
+const listedForDeepPlan = () =>
+  hasThreadCapability("deep-plan")() || hasThreadCapability("deep-plan-tools")();
+
 const failure = Schema.Union([
   OrchestratorMcpFailure,
   DeepPlanToolScopeError,
@@ -135,7 +139,7 @@ const DeepPlanStateTool = Tool.make("deep_plan_state", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanSourcesTool = Tool.make("deep_plan_sources", {
   description:
@@ -148,7 +152,7 @@ const DeepPlanSourcesTool = Tool.make("deep_plan_sources", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 export const DeepPlanAnalyzeSourcesInput = Schema.Struct({
   ...RunAssertion,
@@ -189,7 +193,7 @@ const DeepPlanAnalyzeSourcesTool = Tool.make("deep_plan_analyze_sources", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanReadSourceTool = Tool.make("deep_plan_read_source", {
   description:
@@ -202,7 +206,7 @@ const DeepPlanReadSourceTool = Tool.make("deep_plan_read_source", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanSummarizeSourceTool = Tool.make("deep_plan_summarize_source", {
   description:
@@ -215,7 +219,7 @@ const DeepPlanSummarizeSourceTool = Tool.make("deep_plan_summarize_source", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanPublishTool = Tool.make("deep_plan_publish", {
   description:
@@ -228,7 +232,7 @@ const DeepPlanPublishTool = Tool.make("deep_plan_publish", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanStepUpdateTool = Tool.make("deep_plan_step_update", {
   description:
@@ -241,7 +245,7 @@ const DeepPlanStepUpdateTool = Tool.make("deep_plan_step_update", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanAdjustProcedureTool = Tool.make("deep_plan_adjust_procedure", {
   description:
@@ -254,7 +258,7 @@ const DeepPlanAdjustProcedureTool = Tool.make("deep_plan_adjust_procedure", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 const DeepPlanValidationTool = Tool.make("deep_plan_validation", {
   description:
@@ -267,7 +271,7 @@ const DeepPlanValidationTool = Tool.make("deep_plan_validation", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, hasThreadCapability("deep-plan"));
+  .annotate(McpSchema.EnabledWhen, listedForDeepPlan);
 
 export const DeepPlanToolkit = Toolkit.make(
   DeepPlanStateTool,

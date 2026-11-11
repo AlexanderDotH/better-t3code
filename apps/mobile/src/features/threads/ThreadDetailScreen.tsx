@@ -188,6 +188,9 @@ import {
   FloatingWorkingControl,
 } from "./floating-working-control";
 import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import { useSelectedThreadTokenUsage } from "../../state/use-thread-detail";
+import { ThreadTokenUsageSheet } from "./ThreadTokenUsageSheet";
+import { useWorkingStatusInHeader } from "./use-working-status-in-header";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -726,6 +729,9 @@ function ThreadDetailBody(
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  const tokenUsage = useSelectedThreadTokenUsage();
+  const workingStatusInHeader = useWorkingStatusInHeader();
+  const [tokenUsageOpen, setTokenUsageOpen] = useState(false);
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       translator,
@@ -800,8 +806,21 @@ function ThreadDetailBody(
     if (props.isCompacting && contentPresentationKind === "ready") {
       return { kind: "compacting" };
     }
-    if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
-      return { kind: "working", startedAt: props.activeWorkStartedAt };
+    if (
+      props.activeWorkStartedAt !== null &&
+      contentPresentationKind === "ready" &&
+      (!workingStatusInHeader || tokenUsage !== null)
+    ) {
+      return {
+        kind: "working",
+        startedAt: props.activeWorkStartedAt,
+        tokenUsage,
+        durationInHeader: workingStatusInHeader,
+        onOpenTokenUsage: () => {
+          Keyboard.dismiss();
+          setTokenUsageOpen(true);
+        },
+      };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
       return {
@@ -1531,6 +1550,12 @@ function ThreadDetailBody(
                 className="w-full"
               >
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                  {tokenUsageOpen && tokenUsage !== null ? (
+                    <ThreadTokenUsageSheet
+                      usage={tokenUsage}
+                      onClose={() => setTokenUsageOpen(false)}
+                    />
+                  ) : null}
                   <FloatingWorkingControl
                     colorScheme={isDarkMode ? "dark" : "light"}
                     status={floatingStatus}

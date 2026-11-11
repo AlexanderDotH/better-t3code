@@ -15,8 +15,7 @@ import {
   buildBetterT3ControlStates,
   buildReasoningDisplaySettingsPatch,
 } from "./BetterT3SettingsPanel.logic";
-import { SettingsSearchTargetProvider, SettingsSearchTarget } from "./settingsLayout";
-import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
+import { SettingsSearchTargetProvider } from "./settingsLayout";
 vi.mock("../../hooks/useSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   usePrimarySettingsAvailable: () => true,
@@ -64,9 +63,9 @@ it("keeps all reasoning choices directly visible and updates their existing sett
     });
   }
 });
-it("keeps the Project Index decision selector in its collapsed model group exactly once", async () => {
+it("keeps the Project Index decision selector in its model group exactly once", async () => {
   await using fixture = await setupFixture();
-  const { render, features, translate, click } = fixture;
+  const { render, features, translate } = fixture;
   await render(
     <BetterT3SettingsContent
       features={features}
@@ -80,20 +79,15 @@ it("keeps the Project Index decision selector in its collapsed model group exact
   );
   expect(fixture.host.textContent).toContain("Project Index settings");
   expect(
-    fixture.host.querySelector('[data-better-t3-feature="knowledge.projectIndexingDecisionModel"]'),
-  ).toBeNull();
-  await click(fixture.host.querySelector('[data-better-t3-subgroup="indexing-models"] button'));
-  expect(
     fixture.host.querySelectorAll(
       '[data-better-t3-feature="knowledge.projectIndexingDecisionModel"]',
     ),
   ).toHaveLength(1);
   expect(fixture.host.textContent).toContain("Decision model");
 });
-it("keeps every row available and preserves drafts through category navigation and collapsing", async () => {
+it("shows every feature row without any folded group", async () => {
   await using fixture = await setupFixture();
-  const { render, features, translate, DraftControl, click } = fixture;
-  const onSwitchChange = vi.fn();
+  const { render, features, translate } = fixture;
   await render(
     <BetterT3SettingsContent
       features={features}
@@ -103,58 +97,22 @@ it("keeps every row available and preserves drafts through category navigation a
       usagePacingControl={<span>Usage pacing</span>}
       chatWidthSettings={<span>Adjust chat width</span>}
       visualSettings={<span>Glass opacity</span>}
-      featureChoices={{
-        "agent.fetchModel": <DraftControl />,
-      }}
-      onSwitchChange={onSwitchChange}
+      onSwitchChange={vi.fn()}
     />,
   );
-  for (const trigger of Array.from(
-    fixture.host.querySelectorAll<HTMLElement>('[data-slot="collapsible-trigger"]'),
-  ))
-    await click(trigger);
-  const actualIds = Array.from(
-    fixture.host.querySelectorAll<HTMLElement>("[data-better-t3-feature]"),
-  )
-    .map((row) => row.dataset.betterT3Feature)
-    .sort();
-  expect(actualIds).toEqual(
+  expect(fixture.host.querySelector('[data-slot="collapsible-trigger"]')).toBeNull();
+  expect(
+    Array.from(fixture.host.querySelectorAll<HTMLElement>("[data-better-t3-feature]"))
+      .map((row) => row.dataset.betterT3Feature)
+      .sort(),
+  ).toEqual(
     features
       .map(({ descriptor }) => descriptor.id)
       .filter((id) => id !== "agent.reasoningWorkingOverlay" && id !== "agent.reasoningInMessage")
       .sort(),
   );
-  const draft = fixture.host.querySelector<HTMLInputElement>('[aria-label="Draft setting"]')!;
-  await act(() => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-      draft,
-      "Unsaved draft",
-    );
-    draft.dispatchEvent(
-      new Event("input", {
-        bubbles: true,
-      }),
-    );
-  });
-  for (const link of Array.from(fixture.host.querySelectorAll<HTMLAnchorElement>("nav a"))) {
-    await click(link);
-    expect(document.activeElement?.id).toBe(link.hash.slice(1));
-    expect(
-      fixture.host.querySelector<HTMLInputElement>('[aria-label="Draft setting"]')!.value,
-    ).toBe("Unsaved draft");
-  }
-  const fetchTrigger = fixture.host.querySelector<HTMLElement>(
-    '[data-better-t3-subgroup="fetch"] [data-slot="collapsible-trigger"]',
-  )!;
-  await click(fetchTrigger);
-  expect(draft.closest("[inert]")).not.toBeNull();
-  await click(fetchTrigger);
-  expect(draft.closest("[inert]")).toBeNull();
-  expect(fixture.host.querySelector('[aria-label="Draft setting"]')).toBe(draft);
-  expect(draft.value).toBe("Unsaved draft");
-  expect(onSwitchChange).not.toHaveBeenCalled();
 });
-it("opens a lazy model group before focusing its search destination", async () => {
+it("focuses a model row from its search destination", async () => {
   await using fixture = await setupFixture();
   const { render, features, translate } = fixture;
   const handled = vi.fn();
@@ -176,97 +134,23 @@ it("opens a lazy model group before focusing its search destination", async () =
   expect(document.activeElement).toBe(target);
   expect(handled).toHaveBeenCalledOnce();
 });
-it("finds character streaming motion in inline search and focuses it on repeated selections", async () => {
-  await using fixture = await setupFixture();
-  const { render, features, click, scrollIntoView } = fixture;
-  const motionTargetId = "chat.characterStreamingMotion";
-  const motionLabel = "Character streaming motion";
-  const englishTranslate = createInterfaceTranslator({
-    language: "en",
-    locale: "en-US",
-  }).message;
-  await render(
-    <SettingsSearchTargetProvider targetId={null}>
-      <BetterT3SettingsContent
-        features={features}
-        translate={englishTranslate}
-        controls={{}}
-        onSwitchChange={vi.fn()}
-      />
-    </SettingsSearchTargetProvider>,
-  );
-  const target = document.getElementById(motionTargetId)!;
-  expect(target).not.toBeNull();
-  const input = fixture.host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
-  for (let selection = 0; selection < 2; selection++) {
-    await act(() => {
-      input.focus();
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        input,
-        motionLabel,
-      );
-      input.dispatchEvent(
-        new Event("input", {
-          bubbles: true,
-        }),
-      );
-    });
-    const result = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
-      option.textContent?.includes(motionLabel),
-    );
-    await click(result ?? null);
-    expect(scrollIntoView.mock.contexts.at(-1)).toBe(target);
-    expect(document.activeElement).toBe(target);
-    expect(input.value).toBe("");
-    expect(target.closest('[hidden], [inert], [aria-hidden="true"]')).toBeNull();
-  }
-});
-it("indexes moved language and decision controls before their specialized groups ever open", async () => {
+it("shows one category as a page and leaves the others out", async () => {
   await using fixture = await setupFixture();
   const { render, features, translate } = fixture;
-  const movedIds = ["voice.outputLanguage", "knowledge.projectIndexingDecisionModel"] as const;
   await render(
-    <SettingsSearchTargetProvider targetId={null}>
-      <BetterT3SettingsContent
-        features={features.filter((feature) => movedIds.some((id) => id === feature.descriptor.id))}
-        consumedFeatureIds={movedIds}
-        controls={{}}
-        translate={translate}
-        onSwitchChange={vi.fn()}
-        voiceSettings={
-          <BetterT3SettingsSubgroup groupId="voice-translation">
-            <SettingsSearchTarget id="voice.outputLanguage">Language control</SettingsSearchTarget>
-          </BetterT3SettingsSubgroup>
-        }
-        projectIndexingSettings={
-          <BetterT3SettingsSubgroup groupId="indexing-models">
-            <SettingsSearchTarget id="knowledge.projectIndexingDecisionModel">
-              Decision control
-            </SettingsSearchTarget>
-          </BetterT3SettingsSubgroup>
-        }
-      />
-    </SettingsSearchTargetProvider>,
+    <BetterT3SettingsContent
+      activeCategory="agents"
+      features={features}
+      controls={{}}
+      translate={translate}
+      onSwitchChange={vi.fn()}
+    />,
   );
-  const input = fixture.host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
-  for (const id of movedIds) {
-    expect(document.getElementById(id)).toBeNull();
-    const label = translate(`betterT3.${id}.label`);
-    await act(() => {
-      input.focus();
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, label);
-      input.dispatchEvent(
-        new Event("input", {
-          bubbles: true,
-        }),
-      );
-    });
-    expect(
-      Array.from(document.querySelectorAll('[role="option"]')).some((option) =>
-        option.textContent?.includes(label),
-      ),
-    ).toBe(true);
-  }
+  expect(
+    Array.from(fixture.host.querySelectorAll("[data-better-t3-group]")).map(
+      (group) => (group as HTMLElement).dataset.betterT3Group,
+    ),
+  ).toEqual(["agents"]);
 });
 it("shows only available device categories when there is no environment", async () => {
   await using fixture = await setupFixture();
@@ -282,10 +166,10 @@ it("shows only available device categories when there is no environment", async 
       composerSettings={<span>Context meter</span>}
     />,
   );
-  expect(
-    Array.from(fixture.host.querySelectorAll("nav a")).map((link) => link.textContent),
-  ).toEqual(["Allgemein", "Chat", "Eingabe"]);
-  expect(fixture.host.querySelectorAll('[data-slot="settings-section-body"]')).toHaveLength(3);
+  expect(Array.from(fixture.host.querySelectorAll("h2")).map((title) => title.textContent)).toEqual(
+    ["Allgemein", "Chat", "Eingabe"],
+  );
+  expect(fixture.host.querySelectorAll("[data-better-t3-subgroup]")).toHaveLength(3);
 });
 async function setupFixture() {
   const fixtureResources = new AsyncDisposableStack();

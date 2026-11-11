@@ -108,52 +108,38 @@ describe("sanitizeMobilePreferences", () => {
     );
   });
 
-  it("keeps only known expandable Better T3 groups from device preferences", () => {
-    expect(sanitizeMobilePreferences({})).not.toHaveProperty("betterT3ExpandedSettingsGroups");
+  it("keeps only project keys in the open settled groups", () => {
+    expect(sanitizeMobilePreferences({})).not.toHaveProperty("openSettledProjectGroups");
     expect(
-      sanitizeMobilePreferences({ betterT3ExpandedSettingsGroups: "fetch" } as never),
-    ).not.toHaveProperty("betterT3ExpandedSettingsGroups");
+      sanitizeMobilePreferences({ openSettledProjectGroups: "alpha" } as never),
+    ).not.toHaveProperty("openSettledProjectGroups");
     expect(
-      sanitizeMobilePreferences({
-        betterT3ExpandedSettingsGroups: [
-          "fetch",
-          "parallel-plan",
-          "fetch",
-          "unknown",
-          "language",
-          null,
-        ],
-      } as never).betterT3ExpandedSettingsGroups,
-    ).toEqual(["fetch", "parallel-plan"]);
+      sanitizeMobilePreferences({ openSettledProjectGroups: ["alpha", null, "beta"] } as never)
+        .openSettledProjectGroups,
+    ).toEqual(["alpha", "beta"]);
   });
 
-  it.effect(
-    "retains independent expanded groups across device reloads and unrelated patches",
-    () => {
-      const dependencies = makeMemoryPreferenceDependencies();
-      return Effect.gen(function* () {
-        const firstLaunch = yield* make();
-        yield* firstLaunch.savePatch({
-          betterT3ExpandedSettingsGroups: ["fetch", "context-compaction"],
-        });
-        yield* firstLaunch.savePatch({ baseFontSize: 19 });
+  it.effect("retains open settled groups across device reloads and unrelated patches", () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    return Effect.gen(function* () {
+      const firstLaunch = yield* make();
+      yield* firstLaunch.savePatch({
+        openSettledProjectGroups: ["alpha", "beta"],
+      });
+      yield* firstLaunch.savePatch({ baseFontSize: 19 });
 
-        const secondLaunch = yield* make();
-        expect((yield* secondLaunch.load).betterT3ExpandedSettingsGroups).toEqual([
-          "fetch",
-          "context-compaction",
-        ]);
-        yield* secondLaunch.savePatch({ betterT3ExpandedSettingsGroups: [] });
+      const secondLaunch = yield* make();
+      expect((yield* secondLaunch.load).openSettledProjectGroups).toEqual(["alpha", "beta"]);
+      yield* secondLaunch.savePatch({ openSettledProjectGroups: [] });
 
-        const thirdLaunch = yield* make();
-        expect((yield* thirdLaunch.load).betterT3ExpandedSettingsGroups).toEqual([]);
-        expect((yield* thirdLaunch.load).baseFontSize).toBe(19);
-      }).pipe(
-        Effect.provideService(MobileDatabase, dependencies.database),
-        Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
-      );
-    },
-  );
+      const thirdLaunch = yield* make();
+      expect((yield* thirdLaunch.load).openSettledProjectGroups).toEqual([]);
+      expect((yield* thirdLaunch.load).baseFontSize).toBe(19);
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  });
 
   it.effect(
     "keeps response details opt-in and retains the choice after unrelated edits and reload",

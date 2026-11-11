@@ -1,14 +1,23 @@
-import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
+import type { MessageId } from "@t3tools/contracts";
+import type { ResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { formatResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { useId } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { useNowSecond } from "../../hooks/useNowSecond";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-export function ResponseMetricsDetails(props: { snapshot: ResponseMetricsSnapshot | null }) {
+export function ResponseMetricsDetails(props: {
+  snapshot: ResponseMetrics | null;
+  message?: { readonly id: MessageId; readonly text: string };
+}) {
   const id = useId();
   const translator = useInterfaceTranslator();
-  const metrics = formatResponseMetrics(props.snapshot, translator);
+  const nowMs = useNowSecond(props.snapshot?.liveStartedAt !== undefined);
+  const metrics = formatResponseMetrics(props.snapshot, translator, {
+    nowMs,
+    ...(props.message === undefined ? {} : { message: props.message }),
+  });
   if (metrics === null) return null;
 
   return (

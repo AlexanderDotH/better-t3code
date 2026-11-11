@@ -9,7 +9,7 @@ import {
   resolvePlanImplementationReviewPresentation,
 } from "../../planImplementationActions";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
+import { memo, type CSSProperties, type MouseEventHandler, type PointerEventHandler } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -51,6 +51,7 @@ interface ComposerPrimaryActionsProps {
   showPlanImplementationActions?: boolean;
   planImplementationSuggestion?: PlanImplementationSuggestion | null;
   planParallelismReviewStatus?: PlanParallelismReviewStatus;
+  planTone?: "plan" | "deep-plan";
   onImplementPlan?: (strategy: PlanImplementationStrategy) => void;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -98,6 +99,12 @@ const formatPendingPrimaryActionLabel = (input: {
 const messageActionPillClassName =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-message-action font-medium text-base text-message-action-foreground shadow-xs shadow-message-action/24 outline-none hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
 
+const DEEP_PLAN_ACTION_TONE = {
+  "--message-action": "var(--deep-plan)",
+  "--message-action-foreground": "var(--deep-plan-foreground)",
+  "--message-action-hover": "color-mix(in srgb, var(--deep-plan) 90%, var(--background))",
+} as CSSProperties;
+
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
@@ -117,6 +124,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   showPlanImplementationActions = false,
   planImplementationSuggestion = null,
   planParallelismReviewStatus = "idle",
+  planTone = "plan",
   onImplementPlan,
   promptHasText,
   isSendBusy,
@@ -268,7 +276,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     }
 
     return (
-      <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
+      <div
+        data-chat-composer-implement-actions="true"
+        data-plan-tone={planTone}
+        className="flex items-center justify-end"
+        style={planTone === "deep-plan" ? DEEP_PLAN_ACTION_TONE : undefined}
+      >
         <Tooltip>
           <TooltipTrigger
             render={

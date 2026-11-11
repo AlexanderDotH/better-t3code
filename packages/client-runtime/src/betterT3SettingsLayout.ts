@@ -7,21 +7,18 @@ const subgroupDefinitions = [
     categoryId: "general",
     featureIds: [],
     targetIds: ["interface-language", "better-t3-interface", "better-t3-interface-language"],
-    collapsible: false,
   },
   {
     id: "warnings",
     categoryId: "general",
     featureIds: ["integration.suppressErrorsAndWarnings"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "glass",
     categoryId: "appearance",
     featureIds: [],
     targetIds: ["setting-glass-opacity", "macos-window-transparency"],
-    collapsible: false,
   },
   {
     id: "chat-display",
@@ -31,16 +28,15 @@ const subgroupDefinitions = [
       "chat.presentation",
       "chat.presentationMotion",
       "chat.characterStreamingMotion",
+      "chat.workingStatusInHeader",
     ],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "messages",
     categoryId: "chat",
     featureIds: ["chat.messageEditing", "chat.messageReplies"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "reasoning",
@@ -51,35 +47,30 @@ const subgroupDefinitions = [
       "agent.reasoningInMessage",
     ],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "response-metrics",
     categoryId: "chat",
     featureIds: [],
     targetIds: ["response-metrics"],
-    collapsible: false,
   },
   {
     id: "chat-width",
     categoryId: "chat",
     featureIds: [],
     targetIds: ["setting-chat-content-width"],
-    collapsible: false,
   },
   {
     id: "composer-input",
     categoryId: "composer",
     featureIds: ["agent.promptImprovement", "agent.expandedComposerControls"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "context-display",
     categoryId: "composer",
     featureIds: ["chat.contextWindowSelector"],
     targetIds: ["legacy-context-window-indicator"],
-    collapsible: false,
   },
   {
     id: "composer-cards",
@@ -91,91 +82,78 @@ const subgroupDefinitions = [
       "chat.classicBubbleOnly",
     ],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "sidebar-layout",
     categoryId: "sidebar",
     featureIds: ["chat.classicSidebar", "chat.sidebarPosition"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "sidebar-previews",
     categoryId: "sidebar",
     featureIds: ["chat.previewCount", "chat.shiftClickShowLess", "chat.draftIndicators"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "sidebar-sorting",
     categoryId: "sidebar",
     featureIds: ["chat.sorting"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "sidebar-cleanup",
     categoryId: "sidebar",
     featureIds: ["chat.settling"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "usage-display",
     categoryId: "usage",
     featureIds: [],
     targetIds: ["usage-pacing"],
-    collapsible: false,
   },
   {
     id: "daily-budget",
     categoryId: "usage",
     featureIds: [],
     targetIds: ["usage-hard-budget"],
-    collapsible: false,
   },
   {
     id: "workday",
     categoryId: "usage",
     featureIds: [],
     targetIds: ["usage-workday"],
-    collapsible: false,
   },
   {
     id: "fetch",
     categoryId: "agents",
     featureIds: ["agent.fetch", "agent.fetchModel"],
     targetIds: [],
-    collapsible: true,
   },
   {
     id: "parallel-plan",
     categoryId: "agents",
     featureIds: ["agent.parallelPlanImplementation", "agent.parallelPlanReviewer"],
     targetIds: [],
-    collapsible: true,
   },
   {
     id: "context-compaction",
     categoryId: "agents",
     featureIds: ["agent.contextCompaction", "agent.contextCompactionModel"],
     targetIds: [],
-    collapsible: true,
   },
   {
     id: "auto-reasoning",
     categoryId: "agents",
     featureIds: ["agent.autoReasoningModel"],
     targetIds: [],
-    collapsible: true,
   },
   {
     id: "agent-workflow",
     categoryId: "agents",
     featureIds: ["agent.planMode", "agent.deepThinking", "agent.cavemanMode"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "agent-collaboration",
@@ -186,77 +164,66 @@ const subgroupDefinitions = [
       "agent.projectCoordination",
     ],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "git",
     categoryId: "workspace",
     featureIds: ["workspace.gitWorkbench"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "checkpoints",
     categoryId: "workspace",
     featureIds: ["workspace.checkpoints"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "chat-transfer",
     categoryId: "workspace",
     featureIds: ["workspace.chatPortability"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "voice-access",
     categoryId: "voice",
     featureIds: ["voice.assemblyAi", "voice.credentials"],
     targetIds: ["voice-input"],
-    collapsible: false,
   },
   {
     id: "voice-translation",
     categoryId: "voice",
     featureIds: ["voice.outputLanguage"],
     targetIds: ["voice-translation-model"],
-    collapsible: true,
   },
   {
     id: "voice-recording",
     categoryId: "voice",
     featureIds: [],
     targetIds: ["voice-recording-options"],
-    collapsible: false,
   },
   {
     id: "voice-cleanup",
     categoryId: "voice",
     featureIds: [],
     targetIds: ["voice-cleanup-model", "voice-cleanup-mode", "voice-cleanup-instructions"],
-    collapsible: true,
   },
   {
     id: "voice-project-context",
     categoryId: "voice",
     featureIds: [],
     targetIds: ["project-speech-context"],
-    collapsible: false,
   },
   {
     id: "voice-transcript-transfer",
     categoryId: "voice",
     featureIds: ["voice.transcriptPortability"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "knowledge-graph",
     categoryId: "knowledge",
     featureIds: ["knowledge.graph"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "project-indexing",
@@ -267,28 +234,24 @@ const subgroupDefinitions = [
       "knowledge.projectIndexingReview",
     ],
     targetIds: ["better-t3-project-indexing"],
-    collapsible: false,
   },
   {
     id: "indexing-models",
     categoryId: "knowledge",
     featureIds: ["knowledge.projectIndexingDefaultModel", "knowledge.projectIndexingDecisionModel"],
     targetIds: ["knowledge.projectIndexingReviewDefaults"],
-    collapsible: true,
   },
   {
     id: "resources",
     categoryId: "system",
     featureIds: ["resource.adaptiveAdmission", "resource.processSuspension"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "diagnostics",
     categoryId: "system",
     featureIds: ["resource.diagnostics"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "connection",
@@ -299,28 +262,24 @@ const subgroupDefinitions = [
       "integration.compatibility",
     ],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "mcp-skills",
     categoryId: "integrations",
     featureIds: ["integration.mcp", "integration.skills"],
     targetIds: [],
-    collapsible: false,
   },
   {
     id: "privacy",
     categoryId: "integrations",
     featureIds: ["integration.analyticsRemoval"],
     targetIds: [],
-    collapsible: false,
   },
 ] as const satisfies ReadonlyArray<{
   readonly id: string;
   readonly categoryId: string;
   readonly featureIds: ReadonlyArray<BetterT3FeatureId>;
   readonly targetIds: ReadonlyArray<string>;
-  readonly collapsible: boolean;
 }>;
 
 export type BetterT3SettingsSubgroupId = (typeof subgroupDefinitions)[number]["id"];
@@ -332,7 +291,6 @@ export interface BetterT3SettingsSubgroup {
   readonly titleMessageId: InterfaceMessageKey;
   readonly featureIds: ReadonlyArray<BetterT3FeatureId>;
   readonly targetIds: ReadonlyArray<string>;
-  readonly collapsible: boolean;
   readonly order: number;
 }
 
@@ -364,14 +322,19 @@ export function getBetterT3SettingsSubgroupForTarget(
   return BETTER_T3_SETTINGS_SUBGROUPS.find((group) => group.targetIds.includes(targetId));
 }
 
-export function sanitizeBetterT3ExpandedSettingsGroups(
-  value: unknown,
-): BetterT3SettingsSubgroupId[] {
-  if (!Array.isArray(value)) return [];
-  const expanded = new Set<BetterT3SettingsSubgroupId>();
-  for (const candidate of value) {
-    const group = BETTER_T3_SETTINGS_SUBGROUPS.find((entry) => entry.id === candidate);
-    if (group?.collapsible) expanded.add(group.id);
+export const BETTER_T3_SETTINGS_CATEGORY_IDS: ReadonlyArray<BetterT3SettingsCategoryId> = [
+  ...new Set(BETTER_T3_SETTINGS_SUBGROUPS.map((group) => group.categoryId)),
+];
+
+const CATEGORY_TARGET_PREFIX = "better-t3-group-";
+
+/** The category holding a deep-link target, so a link can open that category's page. */
+export function resolveBetterT3SettingsCategoryForTarget(
+  targetId: string,
+): BetterT3SettingsCategoryId | null {
+  if (targetId.startsWith(CATEGORY_TARGET_PREFIX)) {
+    const categoryId = targetId.slice(CATEGORY_TARGET_PREFIX.length);
+    return BETTER_T3_SETTINGS_CATEGORY_IDS.find((id) => id === categoryId) ?? null;
   }
-  return [...expanded];
+  return getBetterT3SettingsSubgroupForTarget(targetId)?.categoryId ?? null;
 }

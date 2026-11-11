@@ -32,10 +32,6 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import {
-  sanitizeBetterT3ExpandedSettingsGroups,
-  type BetterT3SettingsSubgroupId,
-} from "@t3tools/client-runtime/better-t3-settings-layout";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
@@ -135,7 +131,6 @@ export interface Preferences {
   readonly usagePacingWorkdayHours?: 8 | 24;
   /** Device-local Better T3 registry values, including clean/existing migration provenance. */
   readonly betterT3Device?: BetterT3SettingsV1Type;
-  readonly betterT3ExpandedSettingsGroups?: ReadonlyArray<BetterT3SettingsSubgroupId>;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
@@ -160,6 +155,9 @@ export interface Preferences {
   readonly crashReportsEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  /** Project groups showing their settled chats in a grouped thread list. */
+  readonly openSettledProjectGroups?: readonly string[];
+  readonly boringThreadListEnabled?: boolean;
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly olderProjectsExpanded?: boolean;
   readonly deepPlanChecklistExpandedByThread?: Readonly<Record<string, boolean>>;
@@ -257,7 +255,6 @@ export function sanitizeMobilePreferences(
     usagePacingEnabled?: boolean;
     usagePacingWorkdayHours?: 8 | 24;
     betterT3Device?: BetterT3SettingsV1Type;
-    betterT3ExpandedSettingsGroups?: ReadonlyArray<BetterT3SettingsSubgroupId>;
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     pullRequestHideTestFiles?: boolean;
@@ -281,6 +278,8 @@ export function sanitizeMobilePreferences(
     crashReportsEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    openSettledProjectGroups?: readonly string[];
+    boringThreadListEnabled?: boolean;
     olderProjectsExpanded?: boolean;
     deepPlanChecklistExpandedByThread?: Readonly<Record<string, boolean>>;
     projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
@@ -335,12 +334,6 @@ export function sanitizeMobilePreferences(
   }
   if (parsed.usagePacingWorkdayHours === 8 || parsed.usagePacingWorkdayHours === 24) {
     preferences.usagePacingWorkdayHours = parsed.usagePacingWorkdayHours;
-  }
-
-  if (Array.isArray(parsed.betterT3ExpandedSettingsGroups)) {
-    preferences.betterT3ExpandedSettingsGroups = sanitizeBetterT3ExpandedSettingsGroups(
-      parsed.betterT3ExpandedSettingsGroups,
-    );
   }
 
   const betterT3Device = decodeBetterT3SettingsV1(parsed.betterT3Device);
@@ -444,6 +437,14 @@ export function sanitizeMobilePreferences(
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
       (key): key is string => typeof key === "string",
     );
+  }
+  if (Array.isArray(parsed.openSettledProjectGroups)) {
+    preferences.openSettledProjectGroups = parsed.openSettledProjectGroups.filter(
+      (key): key is string => typeof key === "string",
+    );
+  }
+  if (typeof parsed.boringThreadListEnabled === "boolean") {
+    preferences.boringThreadListEnabled = parsed.boringThreadListEnabled;
   }
   if (typeof parsed.olderProjectsExpanded === "boolean") {
     preferences.olderProjectsExpanded = parsed.olderProjectsExpanded;

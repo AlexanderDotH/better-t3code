@@ -1,4 +1,6 @@
-import { useMemo } from "react";
+import { minuteTick } from "@t3tools/client-runtime/clock";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { useMemo, useSyncExternalStore } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
@@ -9,8 +11,27 @@ import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavi
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
+const subscribeNever = () => () => undefined;
+
+/** Ticks by the minute: each change rewrites the native header, so seconds stay in the chat. */
+function useWorkingHeaderSubtitle(startedAt: string | null): string | null {
+  const translator = useMobileInterfaceTranslator();
+  const minute = useSyncExternalStore(
+    startedAt === null ? subscribeNever : minuteTick.subscribe,
+    minuteTick.getSnapshot,
+    minuteTick.getSnapshot,
+  );
+  if (startedAt === null) return null;
+  const elapsedMinutes = Math.floor((Date.parse(minute) - Date.parse(startedAt)) / 60_000);
+  return Number.isFinite(elapsedMinutes) && elapsedMinutes >= 1
+    ? `${translator.message("chat.timeline.workingFor")} ${formatDuration(elapsedMinutes * 60_000)}`
+    : translator.message("chat.timeline.working");
+}
+
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+    /** When set, the subtitle shows the running turn instead of the project. */
+    readonly workingStartedAt?: string | null;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -26,6 +47,7 @@ export function ThreadHeader(
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const workingSubtitle = useWorkingHeaderSubtitle(props.workingStartedAt ?? null);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -95,7 +117,7 @@ export function ThreadHeader(
     <>
       <AppBar
         title={props.title}
-        subtitle={props.subtitle}
+        subtitle={workingSubtitle ?? props.subtitle}
         sidebar={native.sidebar}
         options={native.options}
         optionsVersion={native.optionsVersion}

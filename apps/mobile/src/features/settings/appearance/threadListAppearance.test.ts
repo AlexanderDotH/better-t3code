@@ -11,6 +11,7 @@ describe("mobile thread list appearance", () => {
     expect(THREAD_LIST_LAYOUT_OPTIONS.map(({ layout, label }) => ({ layout, label }))).toEqual([
       { layout: "current", label: "Current" },
       { layout: "classic", label: "Classic" },
+      { layout: "boring", label: "Boring" },
     ]);
   });
 
@@ -21,7 +22,18 @@ describe("mobile thread list appearance", () => {
 
   it("maps both layouts onto the existing device-local legacy preference", () => {
     expect(resolveMobileThreadListLayout(true)).toBe("classic");
-    expect(mobileThreadListLayoutPatch("current")).toEqual({ legacyThreadListEnabled: false });
-    expect(mobileThreadListLayoutPatch("classic")).toEqual({ legacyThreadListEnabled: true });
+    expect(resolveMobileThreadListLayout(false, true)).toBe("boring");
+    expect(mobileThreadListLayoutPatch("current")).toEqual({
+      legacyThreadListEnabled: false,
+      boringThreadListEnabled: false,
+    });
+    expect(mobileThreadListLayoutPatch("classic")).toEqual({
+      legacyThreadListEnabled: true,
+      boringThreadListEnabled: false,
+    });
+    expect(mobileThreadListLayoutPatch("boring")).toEqual({
+      legacyThreadListEnabled: false,
+      boringThreadListEnabled: true,
+    });
   });
 });

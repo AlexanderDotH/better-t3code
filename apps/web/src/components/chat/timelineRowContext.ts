@@ -56,7 +56,7 @@ export interface TimelineRowSharedState {
       }
     | undefined;
   responseMetrics?:
-    | ReadonlyMap<RunId, import("@t3tools/contracts").ResponseMetricsSnapshot>
+    | ReadonlyMap<RunId, import("@t3tools/client-runtime/response-metrics").ResponseMetrics>
     | null
     | undefined;
   chatVisualMode?: import("@t3tools/contracts").ChatVisualMode;

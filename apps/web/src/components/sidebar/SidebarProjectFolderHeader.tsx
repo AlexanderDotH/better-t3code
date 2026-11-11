@@ -1,16 +1,21 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
+import { ChevronDownIcon, CircleCheckIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+const FOLDER_DISCLOSURE_CLASS_NAME =
+  "flex h-8 w-full cursor-pointer items-center rounded-(--control-radius) ps-9 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
@@ -149,7 +154,7 @@ export const SidebarProjectFolderDisclosure = memo(function SidebarProjectFolder
         data-sidebar-row={`${folderRowId}:disclosure`}
         data-sidebar-parent={folderRowId}
         onClick={() => props.onShowAllChange(group, showMore)}
-        className="flex h-8 w-full cursor-pointer items-center rounded-(--control-radius) ps-9 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={FOLDER_DISCLOSURE_CLASS_NAME}
       >
         {showMore
           ? translator.message("sidebar.classic.showMoreCount", { count: hiddenCount })
@@ -158,3 +163,81 @@ export const SidebarProjectFolderDisclosure = memo(function SidebarProjectFolder
     </li>
   );
 });
+
+export const SidebarProjectFolderSettledToggle = memo(
+  function SidebarProjectFolderSettledToggle(props: {
+    group: SidebarProjectSnapshot;
+    open: boolean;
+    onToggle: (group: SidebarProjectSnapshot) => void;
+  }) {
+    const { group } = props;
+    const translator = useInterfaceTranslator();
+    const folderRowId = sidebarFolderRowId(group.projectKey);
+    return (
+      <li className="list-none">
+        <button
+          type="button"
+          role="treeitem"
+          tabIndex={-1}
+          aria-expanded={props.open}
+          data-sidebar-row={`${folderRowId}:settled`}
+          data-sidebar-parent={folderRowId}
+          onClick={() => props.onToggle(group)}
+          className={`${FOLDER_DISCLOSURE_CLASS_NAME} gap-2`}
+        >
+          <CircleCheckIcon aria-hidden className="size-3 shrink-0" />
+          {translator.message(
+            props.open ? "sidebar.classic.hideSettled" : "sidebar.classic.showSettled",
+          )}
+        </button>
+      </li>
+    );
+  },
+);
+
+/** Reads older settled pages for one open folder and offers the rest of its settled threads. */
+export function SidebarProjectFolderOlderSettled(props: {
+  group: SidebarProjectSnapshot;
+  scopes: ReadonlyArray<OlderSettledScope>;
+  threads: ReadonlyArray<EnvironmentThreadShell>;
+  visibleCount: number;
+  hiddenCount: number;
+  pageSize: number;
+  onShowMore: (group: SidebarProjectSnapshot) => void;
+}) {
+  const { group, hiddenCount } = props;
+  const translator = useInterfaceTranslator();
+  const shelf = useOlderSettledShelf({
+    scopes: props.scopes,
+    expanded: true,
+    visibleCount: props.visibleCount,
+  });
+  useOlderSettledShelfGrowth(shelf, props.threads);
+  if (hiddenCount === 0) return null;
+  const folderRowId = sidebarFolderRowId(group.projectKey);
+  return (
+    <li className="list-none">
+      <button
+        type="button"
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={`${folderRowId}:settled-more`}
+        data-sidebar-parent={folderRowId}
+        disabled={shelf.loading}
+        onClick={() => {
+          shelf.retry();
+          props.onShowMore(group);
+        }}
+        className={FOLDER_DISCLOSURE_CLASS_NAME}
+      >
+        {shelf.loading
+          ? translator.message("common.loading")
+          : shelf.failed
+            ? translator.message("sidebar.section.settledLoadFailed")
+            : translator.message("sidebar.classic.showMoreCount", {
+                count: Math.min(hiddenCount, props.pageSize),
+              })}
+      </button>
+    </li>
+  );
+}

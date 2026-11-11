@@ -42,6 +42,8 @@ function Shell({
         "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-2xl before:bg-(--chat-composer-glass-surface)/(--glass-opacity) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-glass-surface)",
         "has-data-[composer-banner-surface=attached]:before:hidden",
+        // Scrolled history would otherwise read through a row this short.
+        "has-data-[chat-composer-resting=true]:[--glass-opacity:var(--glass-opacity-resting)]",
         // With a context row below, the card paints its own glass (see Host) so the row stays bare.
         "data-context-row:before:hidden",
         classic && "before:rounded-3xl",

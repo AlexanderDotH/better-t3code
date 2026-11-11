@@ -1,202 +1,136 @@
-import { ArrowDownToLineIcon, ArrowUpFromLineIcon } from "lucide-react";
+import {
+  describeThreadTokenUsage,
+  formatTokenTotal,
+  type ThreadTokenUsage,
+  type TokenUsageSection,
+  type TokenUsageSegment,
+} from "@t3tools/client-runtime/thread-token-usage";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { formatContextWindowTokens } from "../../lib/contextWindow";
-import type { ThreadTokenUsage, TokenUsageBreakdown } from "../../lib/threadTokenUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-type TokenDirection = "input" | "output";
+const SEGMENT_TONES = ["bg-foreground/75", "bg-foreground/35", "bg-foreground/15"] as const;
 
-function TokenUsageIndicator(props: {
-  readonly segments: readonly { readonly value: number; readonly className: string }[];
-  readonly outline?: boolean;
-}) {
-  const total = props.segments.reduce((sum, segment) => sum + segment.value, 0);
-  const segments = [];
-  let offset = 0;
-  for (const segment of props.segments) {
-    const percentage = total > 0 ? (segment.value / total) * 100 : 0;
-    segments.push({ ...segment, percentage, start: offset });
-    offset += percentage;
-  }
-  if (props.outline) {
-    return (
-      <svg
-        aria-hidden
-        className="pointer-events-none absolute inset-0 size-full overflow-visible"
-        fill="none"
-        strokeWidth={1.25}
-      >
-        <rect
-          x="1"
-          y="1"
-          width="calc(100% - 2px)"
-          height="calc(100% - 2px)"
-          rx="5"
-          className="stroke-muted-foreground/20"
-        />
-        <g opacity={0.65}>
-          {segments
-            .filter((segment) => segment.percentage > 0)
-            .map((segment, index) => (
-              <rect
-                key={segment.className}
-                x="1"
-                y="1"
-                width="calc(100% - 2px)"
-                height="calc(100% - 2px)"
-                rx="5"
-                pathLength={100}
-                stroke="currentColor"
-                strokeDasharray={index === 0 ? undefined : `${segment.percentage} 100`}
-                strokeDashoffset={-segment.start}
-                className={segment.className}
-              />
-            ))}
-        </g>
-      </svg>
-    );
-  }
+function TokenSplit(props: { readonly segments: ReadonlyArray<TokenUsageSegment> }) {
+  const { number } = useInterfaceTranslator();
+  const segments = props.segments.map((segment, index) => ({
+    ...segment,
+    tone: SEGMENT_TONES[index] ?? SEGMENT_TONES[2],
+  }));
   return (
-    <div aria-hidden className="flex h-1.5 overflow-hidden rounded-full bg-muted-foreground/10">
-      {segments.map((segment) => (
-        <div
-          key={segment.className}
-          className={segment.className}
-          style={{ width: `${segment.percentage}%` }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function TokenUsageSource(props: {
-  readonly label: string;
-  readonly usage: TokenUsageBreakdown;
-  readonly direction: TokenDirection;
-  readonly total: number;
-  readonly className: string;
-  readonly showBar: boolean;
-}) {
-  const { message, number } = useInterfaceTranslator();
-  const value = props.direction === "input" ? props.usage.inputTokens : props.usage.outputTokens;
-  const reportedSubset =
-    props.direction === "input" ? props.usage.cachedInputTokens : props.usage.reasoningOutputTokens;
-  const subset = reportedSubset === null ? null : Math.min(value ?? 0, reportedSubset);
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-2">
-        <span className={`size-1.5 shrink-0 rounded-full ${props.className}`} aria-hidden />
-        <span className="flex-1 font-medium">{props.label}</span>
-        <span className="font-mono tabular-nums">{value === null ? "–" : number(value)}</span>
-        <span className="w-9 text-right text-3xs text-muted-foreground tabular-nums">
-          {value !== null && props.total > 0
-            ? number(value / props.total, { style: "percent", maximumFractionDigits: 0 })
-            : "–"}
-        </span>
-      </div>
-      {props.showBar ? (
-        <TokenUsageIndicator
-          segments={[
-            { value: Math.max(0, (value ?? 0) - (subset ?? 0)), className: props.className },
-            { value: subset ?? 0, className: `${props.className} opacity-35` },
-          ]}
-        />
-      ) : null}
-      <div className="flex justify-between gap-3 text-3xs leading-4 text-muted-foreground">
-        <span>
-          {message(props.direction === "input" ? "chat.tokens.uncached" : "chat.tokens.response")}{" "}
-          <span className="font-mono tabular-nums">
-            {value === null || subset === null ? "–" : number(value - subset)}
-          </span>
-        </span>
-        <span>
-          {message(props.direction === "input" ? "chat.tokens.cached" : "chat.tokens.reasoning")}{" "}
-          <span className="font-mono tabular-nums">{subset === null ? "–" : number(subset)}</span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
-export function ComposerTokenUsageMetrics({ usage }: { readonly usage: ThreadTokenUsage }) {
-  const { message, number } = useInterfaceTranslator();
-  const hasSubagents = usage.agentCount > 0;
-  return (["input", "output"] as const).map((direction) => {
-    const isInput = direction === "input";
-    const label = message(isInput ? "chat.timeline.inputTokens" : "chat.timeline.outputTokens");
-    const value = isInput ? usage.inputTokens : usage.outputTokens;
-    const partial = isInput ? usage.inputIsPartial : usage.outputIsPartial;
-    const Icon = isInput ? ArrowDownToLineIcon : ArrowUpFromLineIcon;
-    const sources = [
-      {
-        label: message("chat.tokens.mainAgent"),
-        usage: usage.mainAgent,
-        className: "bg-primary text-primary",
-      },
-      {
-        label: message("chat.tokens.subagents", { count: usage.agentCount }),
-        usage: usage.subagents,
-        className: "bg-sky-500 text-sky-500 dark:bg-sky-300/80 dark:text-sky-300/80",
-      },
-    ].slice(0, hasSubagents ? 2 : 1);
-    return (
-      <Tooltip key={direction}>
-        <TooltipTrigger
-          delay={0}
-          render={<span tabIndex={0} />}
-          aria-label={`${label}: ${number(value)}${partial ? "+" : ""}`}
-          className="relative inline-flex cursor-help items-center gap-1 rounded-md bg-background/35 px-2 py-1 text-3xs leading-4 text-muted-foreground tabular-nums transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-          data-composer-token-direction={direction}
-        >
-          {hasSubagents ? (
-            <TokenUsageIndicator
-              outline
-              segments={sources.map((source) => ({
-                value: (isInput ? source.usage.inputTokens : source.usage.outputTokens) ?? 0,
-                className: source.className,
-              }))}
+    <div className="space-y-1.5" data-token-split>
+      <div aria-hidden className="flex h-1.5 gap-px overflow-hidden rounded-full">
+        {segments
+          .filter((segment) => segment.value > 0)
+          .map((segment) => (
+            <div
+              key={segment.label}
+              className={`min-w-0.5 ${segment.tone}`}
+              style={{ flexGrow: segment.value, flexBasis: 0 }}
             />
-          ) : null}
-          <Icon aria-hidden className="size-3" strokeWidth={1.75} />
-          <span className="font-mono font-medium text-foreground/75">
-            {formatContextWindowTokens(value)}
-            {partial && value > 0 ? "+" : ""}
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup
-          side="top"
-          align="end"
-          sideOffset={8}
-          className="w-72 max-w-[calc(100vw-2rem)]"
-        >
-          <div className="space-y-3 p-1.5 text-left">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="font-medium">
-                  {message("chat.tokens.title", { direction: label })}
-                </div>
-                <div className="mt-0.5 text-3xs text-muted-foreground">
-                  {message("chat.tokens.scope")}
-                </div>
-              </div>
-              <span className="font-mono text-base font-semibold tabular-nums">
-                {number(value)}
-                {partial && value > 0 ? "+" : ""}
-              </span>
-            </div>
-            {sources.map((source) => (
-              <TokenUsageSource
-                key={source.label}
-                {...source}
-                direction={direction}
-                total={value}
-                showBar={hasSubagents}
-              />
-            ))}
+          ))}
+      </div>
+      <dl className="space-y-0.5 text-muted-foreground">
+        {segments.map((segment) => (
+          <div key={segment.label} className="flex items-baseline gap-1.5">
+            <span
+              aria-hidden
+              className={`size-1.5 shrink-0 self-center rounded-xs ${segment.tone}`}
+            />
+            <dt className="min-w-0 flex-1 truncate">{segment.label}</dt>
+            <dd className="tabular-nums">{number(segment.value)}</dd>
+            <span className="w-9 text-right text-3xs tabular-nums">{segment.share}</span>
           </div>
-        </TooltipPopup>
-      </Tooltip>
-    );
-  });
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function TokenSectionDetails({ section }: { readonly section: TokenUsageSection }) {
+  const { number } = useInterfaceTranslator();
+  return (
+    <section className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-4">
+        <h4 className="font-medium">{section.title}</h4>
+        <span className="text-sm font-semibold tabular-nums">
+          {number(section.total)}
+          {section.partial ? "+" : ""}
+        </span>
+      </div>
+      {section.splits.map((segments) => (
+        <TokenSplit key={segments[0]?.label} segments={segments} />
+      ))}
+    </section>
+  );
+}
+
+function TokenTotal(props: {
+  readonly value: number;
+  readonly partial: boolean;
+  readonly label: string;
+}) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="font-medium text-foreground/80">
+        {formatTokenTotal(props.value, props.partial)}
+      </span>
+      <span>{props.label}</span>
+    </span>
+  );
+}
+
+export function ComposerTokenUsageMetrics({
+  usage,
+  tooltipSide = "top",
+}: {
+  readonly usage: ThreadTokenUsage;
+  readonly tooltipSide?: "top" | "bottom";
+}) {
+  const translator = useInterfaceTranslator();
+  const { message, number } = translator;
+  const inputLabel = message("chat.timeline.inputTokens");
+  const outputLabel = message("chat.timeline.outputTokens");
+  const inputPartial = usage.inputIsPartial && usage.inputTokens > 0 ? "+" : "";
+  const outputPartial = usage.outputIsPartial && usage.outputTokens > 0 ? "+" : "";
+  const { sections, notes } = describeThreadTokenUsage(usage, translator);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        delay={0}
+        render={<span tabIndex={0} />}
+        aria-label={`${inputLabel}: ${number(usage.inputTokens)}${inputPartial}, ${outputLabel}: ${number(usage.outputTokens)}${outputPartial}`}
+        className="inline-flex cursor-help items-baseline gap-1.5 rounded-sm text-xs leading-4 whitespace-nowrap text-muted-foreground tabular-nums focus-visible:outline-2 focus-visible:outline-ring"
+        data-composer-token-totals
+      >
+        <TokenTotal
+          value={usage.inputTokens}
+          partial={usage.inputIsPartial}
+          label={message("chat.tokens.inShort")}
+        />
+        <span aria-hidden className="text-muted-foreground/40">
+          ·
+        </span>
+        <TokenTotal
+          value={usage.outputTokens}
+          partial={usage.outputIsPartial}
+          label={message("chat.tokens.outShort")}
+        />
+      </TooltipTrigger>
+      <TooltipPopup side={tooltipSide} sideOffset={8} className="w-72 max-w-[calc(100vw-2rem)]">
+        <div className="space-y-3.5 p-1.5 text-left">
+          {sections.map((section) => (
+            <TokenSectionDetails key={section.id} section={section} />
+          ))}
+          {notes.length > 0 ? (
+            <div className="space-y-0.5 border-t border-border/50 pt-2 text-3xs text-muted-foreground">
+              {notes.map((note) => (
+                <p key={note}>{note}</p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </TooltipPopup>
+    </Tooltip>
+  );
 }

@@ -7,6 +7,8 @@ import {
 } from "../contextCompaction/contextCompactionPolicy.ts";
 import * as Semaphore from "effect/Semaphore";
 import { startDeepPlanRun, updateDeepPlanRun } from "../deepPlanning/deepPlanDecision.ts";
+import { isDeepPlanContinuationPending } from "../deepPlanning/DeepPlanContinuation.ts";
+import { deepPlanMarkdown } from "../deepPlanning/deepPlanMarkdown.ts";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -37,7 +39,10 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
-  type NodeId,
+  type DeepPlanRun,
+  type DeepPlanRunId,
+  NodeId,
+  PlanId,
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
@@ -303,6 +308,16 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
 }
 
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
+
+function isDeepPlanContinuation(command: OrchestrationV2ServerCommand): boolean {
+  return (
+    command.type === "message.dispatch" &&
+    command.createdBy === "agent" &&
+    command.deepPlanRunId !== undefined &&
+    command.deepPlanContinuation === true &&
+    command.idleGuard !== undefined
+  );
+}
 
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
 function runtimePolicyCeilingCause(error: unknown) {
@@ -2919,6 +2934,141 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
   });
+
+  const deepPlanProposalId = (runId: DeepPlanRunId, version: number) =>
+    `deep-plan:${runId}:${version}`;
+
+  // Each version keeps its own record, so an older one stays readable but is never actionable.
+  const recordDeepPlanProposal = Effect.fn("orchestrationV2.dispatch.deepPlanProposal")(
+    function* (input: {
+      readonly command: OrchestrationV2ServerCommand;
+      readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      readonly threadId: ThreadId;
+      readonly previous: DeepPlanRun | null | undefined;
+      readonly run: DeepPlanRun;
+      readonly now: DateTime.Utc;
+    }) {
+      const { command, events, threadId, previous, run, now } = input;
+      if (run.plan === null) return;
+      const emitEvent = emit(events, command);
+      const version = run.plan.version;
+      const id = deepPlanProposalId(run.id, version);
+      const planId = PlanId.make(id);
+      if (run.approval !== null && previous?.approval == null) {
+        const approved = yield* projectionStore
+          .getPlan(threadId, planId)
+          .pipe(mapDispatchError(command));
+        if (approved === undefined) return;
+        yield* emitEvent({
+          type: "plan.updated",
+          threadId,
+          ...(approved.runId === null ? {} : { runId: approved.runId }),
+          nodeId: approved.nodeId,
+          occurredAt: now,
+          payload: { ...approved, status: "completed" },
+        });
+        return;
+      }
+      if (previous?.plan?.version === version) return;
+
+      const replaced =
+        version > 1
+          ? yield* projectionStore
+              .getPlan(threadId, PlanId.make(deepPlanProposalId(run.id, version - 1)))
+              .pipe(mapDispatchError(command))
+          : undefined;
+      if (replaced?.status === "active")
+        yield* emitEvent({
+          type: "plan.updated",
+          threadId,
+          ...(replaced.runId === null ? {} : { runId: replaced.runId }),
+          nodeId: replaced.nodeId,
+          occurredAt: now,
+          payload: { ...replaced, status: "superseded" },
+        });
+
+      const projection = yield* getProjectionWithPendingEvents(threadId, events);
+      const target =
+        projection.runs.find((candidate) => candidate.status === "running") ??
+        projection.runs
+          .filter((candidate) => candidate.status !== "queued")
+          .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      const nodeId = NodeId.make(id);
+      const runId = target?.id ?? null;
+      const providerThreadId = target?.providerThreadId ?? null;
+      const providerTurnId =
+        projection.providerTurns.find((turn) => turn.runAttemptId === target?.activeAttemptId)
+          ?.id ?? null;
+      const markdown = deepPlanMarkdown(run.plan);
+      const deepPlan = { runId: run.id, planVersion: version };
+      const scope = {
+        threadId,
+        ...(runId === null ? {} : { runId }),
+        nodeId,
+        occurredAt: now,
+      };
+      yield* emitEvent({
+        type: "node.updated",
+        ...scope,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId,
+          parentNodeId: target?.rootNodeId ?? null,
+          rootNodeId: target?.rootNodeId ?? nodeId,
+          kind: "plan",
+          status: "completed",
+          countsForRun: false,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      yield* emitEvent({
+        type: "plan.updated",
+        ...scope,
+        payload: {
+          id: planId,
+          threadId,
+          runId,
+          nodeId,
+          kind: "proposed_plan",
+          status: "active",
+          markdown,
+          deepPlan,
+        },
+      });
+      yield* emitEvent({
+        type: "turn-item.updated",
+        ...scope,
+        payload: {
+          id: TurnItemId.make(id),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal(projection),
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "proposed_plan",
+          deepPlan,
+          planId,
+          markdown,
+          streaming: false,
+        },
+      });
+    },
+  );
 
   const dispatchThreadVisit = Effect.fn("orchestrationV2.dispatch.threadVisit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.visit" }>,
@@ -5538,6 +5688,71 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* assertReplySourceAvailable(projection.thread, findThread).pipe(
         mapDispatchError(command),
       );
+    if (isDeepPlanContinuation(command)) {
+      const owned = projection.thread.deepPlan;
+      const run =
+        owned?.threadId === command.threadId && owned.id === command.deepPlanRunId
+          ? owned
+          : (yield* projectionStore
+              .getShellSnapshot({ projectId: projection.thread.projectId })
+              .pipe(mapDispatchError(command))).threads.find(
+              (thread) =>
+                thread.deepPlan?.threadId === thread.id &&
+                thread.deepPlan.id === command.deepPlanRunId,
+            )?.deepPlan;
+      if (
+        run == null ||
+        (run.approval?.implementationThreadId ?? run.threadId) !== command.threadId ||
+        !isDeepPlanContinuationPending(run)
+      )
+        return;
+    }
+    if (
+      command.idleGuard !== undefined &&
+      (projection.runs.some(
+        (run) => isActiveRun(run) || run.status === "queued" || run.status === "preparing",
+      ) ||
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        (command.idleGuard.latestUserMessageId !== undefined &&
+          projection.messages.findLast((message) => message.role === "user")?.id !==
+            (command.idleGuard.latestUserMessageId ?? undefined)) ||
+        (command.idleGuard.latestRunId !== undefined &&
+          ranAfterIdleGuard(projection.runs, command.idleGuard.latestRunId)))
+    ) {
+      if (isDeepPlanContinuation(command)) return;
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The thread is no longer idle at the requested run.",
+      });
+    }
+    const runtimeMode = command.runtimeMode ?? projection.thread.runtimeMode;
+    const interactionMode = command.interactionMode ?? projection.thread.interactionMode;
+    const runtimeChanged = runtimeMode !== projection.thread.runtimeMode;
+    const interactionChanged = interactionMode !== projection.thread.interactionMode;
+    if (runtimeChanged || interactionChanged) {
+      const now = yield* DateTime.now;
+      const thread = { ...projection.thread, runtimeMode, interactionMode, updatedAt: now };
+      yield* refuseAboveDispatchModeLimit(command, command.threadId, thread);
+      const emitEvent = emit(events, command);
+      if (runtimeChanged)
+        yield* emitEvent({
+          type: "thread.runtime-mode-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+      if (interactionChanged)
+        yield* emitEvent({
+          type: "thread.interaction-mode-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+      projection = { ...projection, thread };
+    }
     const contextCheckpoint = projection.thread.contextCompaction?.checkpoint;
     const compactionSettings =
       contextCheckpoint === undefined
@@ -5594,23 +5809,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = { ...projection, thread: nextThread };
     }
-    if (
-      command.idleGuard !== undefined &&
-      (projection.runs.some(
-        (run) => isActiveRun(run) || run.status === "queued" || run.status === "preparing",
-      ) ||
-        projection.runtimeRequests.some((request) => request.status === "pending") ||
-        (command.idleGuard.latestUserMessageId !== undefined &&
-          projection.messages.findLast((message) => message.role === "user")?.id !==
-            (command.idleGuard.latestUserMessageId ?? undefined)) ||
-        (command.idleGuard.latestRunId !== undefined &&
-          ranAfterIdleGuard(projection.runs, command.idleGuard.latestRunId)))
-    )
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "The thread is no longer idle at the requested run.",
-      });
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -6018,7 +6216,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Proposed plan ${command.sourcePlanRef?.planId} belongs to a different project.`,
       });
     }
-    if (!retrying && sourcePlan !== null && sourcePlan.status !== "active") {
+    const sourceApproval = sourcePlanProjection?.thread.deepPlan?.approval;
+    // Approving a Deep Plan completes its plan before the implementation turn cites it.
+    const approvedDeepPlanSource =
+      sourcePlan?.deepPlan !== undefined &&
+      sourcePlanProjection?.thread.deepPlan?.id === sourcePlan.deepPlan.runId &&
+      sourceApproval?.planVersion === sourcePlan.deepPlan.planVersion &&
+      sourceApproval?.implementationThreadId === command.threadId;
+    if (
+      !retrying &&
+      sourcePlan !== null &&
+      sourcePlan.status !== "active" &&
+      !approvedDeepPlanSource
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -13867,6 +14077,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: { ...thread, deepPlan: run, updatedAt: now },
         });
+        yield* recordDeepPlanProposal({
+          command,
+          events,
+          threadId: thread.id,
+          previous: thread.deepPlan,
+          run,
+          now,
+        });
         break;
       }
       case "thread.create":
@@ -14134,7 +14352,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
         cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
-        yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+        if ((yield* Ref.get(events)).length > 0)
+          yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
         break;
       }
       case "notification.delivery.accept":
@@ -14443,6 +14662,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          isDeepPlanContinuation(command) ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),

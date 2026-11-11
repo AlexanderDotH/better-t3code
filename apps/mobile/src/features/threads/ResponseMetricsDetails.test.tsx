@@ -11,6 +11,7 @@ vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>
     createInterfaceTranslator({ language: "en", locale: "en-US" }),
 }));
+vi.mock("./use-visible-second-clock", () => ({ useVisibleSecondClock: () => 3000 }));
 
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
 

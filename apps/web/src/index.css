@@ -131,6 +131,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --z-sheet: 46;
   --glass-blur: 12px;
   --glass-opacity: 80%;
+  --glass-opacity-resting: max(90%, var(--glass-opacity));
   --glass-saturation: 1.14;
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
@@ -420,49 +421,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     background: var(--background) !important;
-  }
-}
-
-.better-t3-settings-navigation {
-  --settings-navigation-surface: color-mix(in srgb, var(--card) 94%, var(--foreground));
-  background: color-mix(
-    in srgb,
-    var(--settings-navigation-surface) var(--glass-opacity),
-    transparent
-  );
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
-  box-shadow:
-    0 8px 24px color-mix(in srgb, var(--color-black) 12%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent);
-}
-
-.better-t3-settings-group {
-  position: relative;
-  isolation: isolate;
-}
-
-.better-t3-settings-group[data-focus-active="false"] [data-settings-focus-item] {
-  opacity: var(--settings-focus-opacity, 0.4);
-}
-
-.better-t3-settings-group[data-focus-active="true"] [data-slot="settings-section-body"] {
-  border-color: color-mix(in srgb, var(--foreground) 12%, transparent);
-  background-color: color-mix(in srgb, var(--card) 76%, transparent);
-  box-shadow:
-    0 12px 32px -16px color-mix(in srgb, var(--color-black) 28%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent);
-}
-
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
-  .better-t3-settings-navigation {
-    background: var(--settings-navigation-surface);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  .better-t3-settings-group[data-focus-active="false"] [data-settings-focus-item] {
-    opacity: 1;
   }
 }
 

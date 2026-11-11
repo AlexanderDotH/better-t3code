@@ -50,6 +50,18 @@ const maxPrice = (settings: OpenRouterSettings): OpenRouterProviderPreferences["
   return Object.keys(value).length === 0 ? undefined : value;
 };
 
+/** The user's settings that can leave a model with no endpoint OpenRouter may use. */
+export const openRouterRoutingRestrictions = (
+  settings: OpenRouterSettings,
+): ReadonlyArray<string> => [
+  ...(settings.requireZdr ? ["zero data retention"] : []),
+  ...(settings.dataCollection === "deny" ? ["no data collection"] : []),
+  ...(settings.routingMode === "provider-order" && settings.allowFallbacks === "disabled"
+    ? ["provider order without fallbacks"]
+    : []),
+  ...(maxPrice(settings) === undefined ? [] : ["price limits"]),
+];
+
 export const buildOpenRouterRequestPolicy = (
   settings: OpenRouterSettings,
 ): OpenRouterRequestPolicy => {

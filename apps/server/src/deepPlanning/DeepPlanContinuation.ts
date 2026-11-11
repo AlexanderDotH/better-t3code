@@ -7,17 +7,20 @@ import {
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
 
-export function canContinueDeepPlan(
-  run: DeepPlanRun,
-  interactionMode: ProviderInteractionMode,
-): boolean {
-  if (interactionMode === "chat") return false;
-  if (run.approval === null && interactionMode !== "plan") return false;
+export function isDeepPlanContinuationPending(run: DeepPlanRun): boolean {
   return (
     run.phase === "planning" ||
     run.phase === "implementing" ||
     (run.phase === "validating" && run.finalValidation.status === "inProgress")
   );
+}
+
+export function canContinueDeepPlan(
+  run: DeepPlanRun,
+  interactionMode: ProviderInteractionMode,
+): boolean {
+  const requiredMode = run.approval === null ? "plan" : "default";
+  return interactionMode === requiredMode && isDeepPlanContinuationPending(run);
 }
 
 export function deepPlanContinuationCommand(input: {
@@ -54,6 +57,7 @@ export function deepPlanContinuationCommand(input: {
     createdBy: "agent",
     creationSource: "server",
     deepPlanRunId: run.id,
+    deepPlanContinuation: true,
     idleGuard: { latestRunId: target.latestRunId },
     modelSelection: {
       instanceId: selection.instanceId,

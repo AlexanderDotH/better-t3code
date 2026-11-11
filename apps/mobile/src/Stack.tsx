@@ -7,7 +7,10 @@ import {
 import { SettingsAgentEnvironmentsRouteScreen } from "./features/settings/SettingsAgentEnvironmentsRouteScreen";
 import { SettingsProjectsRouteScreen } from "./features/settings/SettingsProjectsRouteScreen";
 import { SettingsProjectIndexingRouteScreen } from "./features/settings/SettingsProjectIndexingRouteScreen";
-import { SettingsBetterT3RouteScreen } from "./features/settings/SettingsBetterT3RouteScreen";
+import {
+  SettingsBetterT3CategoryRouteScreen,
+  SettingsBetterT3RouteScreen,
+} from "./features/settings/SettingsBetterT3RouteScreen";
 import { SettingsBetterT3ResourceDiagnosticsRouteScreen } from "./features/settings/SettingsBetterT3ResourceDiagnosticsRouteScreen";
 import { SettingsBetterT3TranscriptPortabilityRouteScreen } from "./features/settings/SettingsBetterT3TranscriptPortabilityRouteScreen";
 import { KnowledgeGraphRouteScreen } from "./features/knowledge-graph/KnowledgeGraphRouteScreen";
@@ -399,6 +402,10 @@ const SETTINGS_SCREENS = {
   SettingsBetterT3: createNativeStackScreen({
     screen: SettingsBetterT3RouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Better T3" },
+  }),
+  SettingsBetterT3Category: createNativeStackScreen({
+    screen: SettingsBetterT3CategoryRouteScreen,
+    options: SETTINGS_PAGE_OPTIONS,
   }),
   SettingsBetterT3ResourceDiagnostics: createNativeStackScreen({
     screen: SettingsBetterT3ResourceDiagnosticsRouteScreen,

@@ -5,9 +5,17 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
+import {
+  buildGroupedThreadListItems,
+  buildHomeProjectScopes,
+  findHomeProjectScope,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
-import { buildThreadListV2Items } from "../threads/threadListV2";
+import {
+  buildThreadListV2Items,
+  type ThreadListV2Item,
+  type ThreadListV2ListItem,
+} from "../threads/threadListV2";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -221,5 +229,128 @@ describe("home project scopes", () => {
     expect(findHomeProjectScope(scopes, "environment-local:project-target")).toBe(targetScope);
     expect(findHomeProjectScope(scopes, "environment-local:missing")).toBeNull();
     expect(findHomeProjectScope(scopes, null)).toBeNull();
+  });
+});
+
+describe("grouped thread list", () => {
+  const environmentId = EnvironmentId.make("local");
+  const projects = ["alpha", "beta"].map((id) =>
+    makeProject({ environmentId, id: ProjectId.make(id), title: id }),
+  );
+  const scopes = buildHomeProjectScopes({
+    projects,
+    environmentId,
+    projectGroupingMode: "separate",
+  });
+  const row = (
+    id: string,
+    projectId: string,
+    item: Partial<Pick<ThreadListV2Item, "variant" | "snoozed" | "pinned">> = {},
+  ): ThreadListV2ListItem => ({
+    type: "v2-thread",
+    key: id,
+    item: {
+      thread: makeThread({
+        environmentId,
+        id: ThreadId.make(id),
+        projectId: ProjectId.make(projectId),
+        title: id,
+      }),
+      variant: "card",
+      snoozed: false,
+      pinned: false,
+      wokeAt: null,
+      isLast: false,
+      ...item,
+    },
+    snoozeWakeLabelText: undefined,
+    timeLabel: "",
+    snoozePresetMinute: undefined,
+    showTrailingDivider: false,
+    hasQueuedMessages: false,
+    canMoveUp: false,
+    canMoveDown: false,
+  });
+  const settled = (id: string, projectId: string) => row(id, projectId, { variant: "slim" });
+  const build = (
+    rows: ReadonlyArray<ThreadListV2ListItem>,
+    overrides: Partial<Parameters<typeof buildGroupedThreadListItems>[0]> = {},
+  ) =>
+    buildGroupedThreadListItems({
+      rows,
+      scopes,
+      boring: false,
+      searching: false,
+      previewCount: 10,
+      projectSortField: "updatedAt",
+      threadSortField: "updatedAt",
+      collapsedGroups: undefined,
+      openSettledGroups: undefined,
+      expandedGroups: new Set(),
+      selectedThreadKey: null,
+      ...overrides,
+    });
+  const alphaKey = scopes.find((scope) => scope.title === "alpha")!.key;
+  const betaKey = scopes.find((scope) => scope.title === "beta")!.key;
+
+  it("folds settled chats behind a toggle per project and opens only that project", () => {
+    const rows = [row("a1", "alpha"), settled("a2", "alpha"), settled("b1", "beta")];
+    const closed = build(rows).items.map((item) => item.key);
+    expect(closed).not.toContain("a2");
+    expect(closed).not.toContain("b1");
+    expect(closed).toContain(`v2-project-settled:${alphaKey}`);
+
+    const opened = build(rows, { openSettledGroups: [alphaKey] }).items.map((item) => item.key);
+    expect(opened).toContain("a2");
+    expect(opened).not.toContain("b1");
+  });
+
+  it("gives a project with only settled chats a header on its toggle", () => {
+    const { groups } = build([settled("b1", "beta")]);
+    expect(groups.get(`v2-project-settled:${betaKey}`)).toMatchObject({
+      first: true,
+      title: "beta",
+    });
+  });
+
+  it("keeps the open chat visible while its settled group is closed", () => {
+    const keys = build([settled("a2", "alpha")], {
+      selectedThreadKey: `${environmentId}:a2`,
+    }).items.map((item) => item.key);
+    expect(keys).toContain("a2");
+  });
+
+  it("lists settled matches inline while searching", () => {
+    const keys = build([settled("a2", "alpha")], { searching: true }).items.map((item) => item.key);
+    expect(keys).toEqual(["a2"]);
+  });
+
+  it("starts each project with its own favorites and keeps snoozed chats below in Boring", () => {
+    const rows = [
+      row("snoozed", "alpha", { variant: "slim", snoozed: true }),
+      row("active", "alpha"),
+      row("favorite", "alpha", { pinned: true }),
+      row("other-favorite", "beta", { pinned: true }),
+    ];
+    expect(build(rows, { boring: true }).items.map((item) => item.key)).toEqual([
+      "favorite",
+      "active",
+      "other-favorite",
+      "snoozed",
+    ]);
+    expect(build(rows, { boring: true }).groups.get("favorite")).toMatchObject({ first: true });
+    expect(build(rows).items.map((item) => item.key)).toContain("favorite");
+    expect(build(rows).groups.has("favorite")).toBe(true);
+  });
+
+  it("never folds a favorite behind the project's preview limit in Boring", () => {
+    const rows = [
+      row("one", "alpha", { pinned: true }),
+      row("two", "alpha", { pinned: true }),
+      row("rest", "alpha"),
+    ];
+    const { items, groups } = build(rows, { boring: true, previewCount: 1 });
+    expect(items.map((item) => item.key)).toEqual(["one", "two"]);
+    expect(groups.get("two")).toMatchObject({ last: true, hiddenCount: 1 });
   });
 });

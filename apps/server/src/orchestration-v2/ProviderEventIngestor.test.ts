@@ -4,10 +4,12 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  DeepPlanRunId,
   MessageId,
   GitCommandError,
   type ModelSelection,
   NodeId,
+  PlanId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
@@ -562,6 +564,111 @@ layer("ProviderEventIngestorV2", (it) => {
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "waiting");
     }),
+  );
+
+  it.effect.each([
+    { scenario: "ordinary", deepPlan: false, projected: 1 },
+    { scenario: "Deep Plan", deepPlan: true, projected: 0 },
+  ])(
+    "projects a native proposed plan only outside a Deep Plan run ($scenario)",
+    ({ scenario, deepPlan, projected }) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const threadId = threadEvent.threadId;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const runId = RunId.make(`run:native-plan:${scenario}`);
+        const nodeId = NodeId.make(`node:native-plan:${scenario}`);
+        const planId = PlanId.make(`plan:native-plan:${scenario}`);
+        yield* eventSink.write({
+          events: [
+            threadEvent,
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "run.created",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: runId,
+                threadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: MessageId.make(`message:native-plan:${scenario}`),
+                rootNodeId: nodeId,
+                activeAttemptId: null,
+                status: "running",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                checkpointId: null,
+                contextHandoffId: null,
+                ...(deepPlan ? { deepPlanRunId: DeepPlanRunId.make("native-plan-run") } : {}),
+              },
+            },
+          ],
+        });
+        const ingest = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+            runId,
+            event,
+          });
+        yield* ingest({
+          type: "plan.updated",
+          driver: CODEX_DRIVER,
+          plan: {
+            id: planId,
+            threadId,
+            runId,
+            nodeId,
+            kind: "proposed_plan",
+            status: "active",
+            markdown: "# Native plan",
+          },
+        });
+        yield* ingest({
+          type: "turn_item.updated",
+          driver: CODEX_DRIVER,
+          turnItem: {
+            id: TurnItemId.make(`item:native-plan:${scenario}`),
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 101,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "proposed_plan",
+            planId,
+            markdown: "# Native plan",
+            streaming: false,
+          },
+        });
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.lengthOf(projection.plans, projected);
+        assert.lengthOf(
+          projection.turnItems.filter((item) => item.type === "proposed_plan"),
+          projected,
+        );
+      }),
   );
 
   it.effect("rolls back runs a provider rewound off its active branch", () =>

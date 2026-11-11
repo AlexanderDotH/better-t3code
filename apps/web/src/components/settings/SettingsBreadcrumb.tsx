@@ -1,3 +1,7 @@
+import { BETTER_T3_SETTINGS_CATEGORY_IDS } from "@t3tools/client-runtime/better-t3-settings-layout";
+import { useLocation } from "@tanstack/react-router";
+
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -17,7 +21,16 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
 }
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const translate = useInterfaceTranslator().message;
   const sectionLabel = settingsBreadcrumbLabel(pathname);
+  const search: { readonly category?: unknown } = useLocation({
+    select: (location) => location.search,
+  });
+  const requestedCategory = search.category;
+  const category =
+    pathname === "/settings/better-t3"
+      ? BETTER_T3_SETTINGS_CATEGORY_IDS.find((id) => id === requestedCategory)
+      : undefined;
 
   return (
     <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
@@ -27,9 +40,19 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
-      <WorkspaceBreadcrumbItem current className="truncate">
-        {sectionLabel ?? "Settings"}
-      </WorkspaceBreadcrumbItem>
+      {category ? (
+        <>
+          <WorkspaceBreadcrumbItem>{sectionLabel}</WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbSeparator />
+          <WorkspaceBreadcrumbItem current className="truncate">
+            {translate(`settings.betterT3.tab.${category}`)}
+          </WorkspaceBreadcrumbItem>
+        </>
+      ) : (
+        <WorkspaceBreadcrumbItem current className="truncate">
+          {sectionLabel ?? "Settings"}
+        </WorkspaceBreadcrumbItem>
+      )}
     </WorkspaceBreadcrumb>
   );
 }

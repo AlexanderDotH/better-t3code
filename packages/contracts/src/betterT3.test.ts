@@ -402,6 +402,7 @@ describe("BetterT3SettingsV1", () => {
       "chat.messageReplies",
       "chat.characterStreamingMotion",
       "chat.presentationMotion",
+      "chat.workingStatusInHeader",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",
       "workspace.gitWorkbench",

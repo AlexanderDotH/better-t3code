@@ -391,7 +391,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
 
   const listModels = (method: string) =>
     options.transport
-      .listModels(settings.customModels)
+      .listModels(settings.customModels, { requireZdr: settings.requireZdr })
       .pipe(
         Effect.mapError((cause) =>
           providerRequestError(

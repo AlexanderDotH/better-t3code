@@ -128,6 +128,29 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipPopup>
         </Tooltip>
       ) : null}
+      {showRightPanelControl ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={rightPanelOpen}
+              onPressedChange={onToggleRightPanel}
+              aria-label="Toggle right panel"
+              data-right-panel-toggle
+              variant="ghost"
+              size="sm"
+              disabled={!rightPanelAvailable}
+            >
+              <PanelRightIcon className="size-4" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {rightPanelAvailable
+              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
+              : rightPanelUnavailableLabel}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {windowExpansionAvailable ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -150,29 +173,6 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {windowExpansionPreparing ? "Resizing window…" : windowExpansionLabel}
-          </TooltipPopup>
-        </Tooltip>
-      ) : null}
-      {showRightPanelControl ? (
-        <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
-              aria-label="Toggle right panel"
-              data-right-panel-toggle
-              variant="ghost"
-              size="sm"
-              disabled={!rightPanelAvailable}
-            >
-              <PanelRightIcon className="size-4" />
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {rightPanelAvailable
-              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-              : rightPanelUnavailableLabel}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -216,7 +216,12 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
       className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
+      <PanelLayoutControls
+        {...props}
+        showTerminalControl={false}
+        showRightPanelControl={false}
+        windowExpansionAvailable={false}
+      />
     </div>
   );
 }

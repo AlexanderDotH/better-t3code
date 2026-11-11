@@ -62,6 +62,7 @@ interface RightPanelActionsInput {
   readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
   readonly onDiffPanelOpen: (() => void) | undefined;
   readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
+  readonly onRightPanelToggledClosed: () => void;
 }
 
 /**
@@ -71,6 +72,7 @@ interface RightPanelActionsInput {
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
     closeRightPanelSurface,
+    onRightPanelToggledClosed,
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
@@ -222,6 +224,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
       closePreviewPanel();
+      onRightPanelToggledClosed();
       return;
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);

@@ -1022,6 +1022,35 @@ export function previewSidebarFolderThreads<T>(
   };
 }
 
+/**
+ * A boring-sidebar folder's settled threads behind its own toggle. `visibleCount` is null while
+ * the toggle is closed, where only the open thread stays listed.
+ */
+export function resolveSidebarFolderSettled<T>(input: {
+  readonly threads: readonly T[];
+  readonly unloadedCount: number;
+  readonly visibleCount: number | null;
+  readonly isRouteThread: (thread: T) => boolean;
+}): {
+  readonly threads: readonly T[];
+  readonly hiddenCount: number;
+  readonly canToggle: boolean;
+  readonly open: boolean;
+} {
+  const { threads, unloadedCount, visibleCount } = input;
+  const listed = visibleCount === null ? [] : threads.slice(0, visibleCount);
+  const routeThread = threads.find(input.isRouteThread);
+  const rendered =
+    routeThread === undefined || listed.includes(routeThread) ? listed : [...listed, routeThread];
+  const total = threads.length + unloadedCount;
+  return {
+    threads: rendered,
+    hiddenCount: visibleCount === null ? 0 : Math.max(0, total - rendered.length),
+    canToggle: total > 0,
+    open: visibleCount !== null,
+  };
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"

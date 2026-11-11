@@ -1,5 +1,6 @@
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { ThreadTokenUsage } from "@t3tools/client-runtime/thread-token-usage";
 
 export interface FloatingStatusAction {
   readonly label: string;
@@ -9,7 +10,14 @@ export interface FloatingStatusAction {
 }
 
 export type FloatingWorkingStatus =
-  | { readonly kind: "working"; readonly startedAt: string }
+  | {
+      readonly kind: "working";
+      readonly startedAt: string;
+      readonly tokenUsage: ThreadTokenUsage | null;
+      /** The header carries the elapsed time, so only the totals stay here. */
+      readonly durationInHeader: boolean;
+      readonly onOpenTokenUsage: () => void;
+    }
   | { readonly kind: "syncing"; readonly label: string }
   | { readonly kind: "compacting" }
   | {

@@ -2,6 +2,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
+
 const persisted = vi.hoisted(() => ({ title: "" }));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -21,6 +23,7 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 }));
 
 import { render } from "../../../test/render";
+import { summarizeThreadTokenUsage } from "@t3tools/client-runtime/thread-token-usage";
 import { ChatHeader } from "./ChatHeader";
 
 function header(title: string) {
@@ -41,6 +44,38 @@ function header(title: string) {
     </>
   );
 }
+
+it("centers the working status between the title and the header controls", async () => {
+  await using screen = await render(
+    <div style={{ display: "flex", width: 900 }}>
+      <ChatHeader
+        activeThreadEnvironmentId={EnvironmentId.make("environment")}
+        activeThreadId={ThreadId.make("thread")}
+        activeThreadTitle={"A very long thread title ".repeat(12)}
+        isServerThread
+        activeProject={null}
+        parentThreadLink={null}
+        onOpenThread={() => {}}
+        rightPanelOpen={false}
+        onNewThreadInProject={() => {}}
+        showWorkingStatus
+        workingStartedAt="2026-01-01T00:00:00.000Z"
+        workingTokenUsage={summarizeThreadTokenUsage(null, [])}
+      />
+    </div>,
+  );
+  const status = screen.container.querySelector<HTMLElement>("[data-chat-header-working-status]")!;
+  const title = screen.container.querySelector<HTMLElement>("h2")!;
+  const statusBox = status.getBoundingClientRect();
+  const header = status.parentElement!;
+  const headerBox = header.getBoundingClientRect();
+  // The right padding reserves room for the floating titlebar controls.
+  const contentRight = headerBox.right - Number.parseFloat(getComputedStyle(header).paddingRight);
+  expect(
+    Math.abs((statusBox.left + statusBox.right) / 2 - (headerBox.left + contentRight) / 2),
+  ).toBeLessThanOrEqual(1);
+  expect(title.getBoundingClientRect().right).toBeLessThanOrEqual(statusBox.left);
+});
 
 it.each(["blur", "Enter"] as const)(
   "preserves a concurrent title update when an untouched rename ends with %s",

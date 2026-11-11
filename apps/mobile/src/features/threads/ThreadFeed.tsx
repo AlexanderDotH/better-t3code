@@ -16,13 +16,15 @@ import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-
 import { MessageImageCard } from "./MessageImageCard";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
-import { selectV2ResponseMetrics } from "@t3tools/client-runtime/response-metrics";
+import {
+  selectV2ResponseMetrics,
+  type ResponseMetrics,
+} from "@t3tools/client-runtime/response-metrics";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useMobileGitWorkbenchAvailability } from "../../state/use-git-workbench-availability";
 import { mobileGitWorkbenchCanActivate } from "../../state/git-workbench-availability";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
-import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { VisualizationMarkdownText } from "../visualizations/VisualizationMarkdownText";
 import { ThreadMessageReplyAction, ThreadMessageReplyGesture } from "./MessageReplyAction";
 import { MessageReplyPreview } from "./MessageReplyPreview";
@@ -1843,7 +1845,7 @@ function renderFeedEntry(
     readonly renderReasoning: (text: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly replyActionSize: { readonly button: number; readonly icon: number };
-    readonly responseMetrics: ReadonlyMap<RunId, ResponseMetricsSnapshot>;
+    readonly responseMetrics: ReadonlyMap<RunId, ResponseMetrics>;
     readonly betterChat: boolean;
     readonly assistantBubbleColor: string;
     readonly screenColor: string;
@@ -2067,6 +2069,11 @@ function renderFeedEntry(
       props.terminalAssistantMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
+    const showResponseMetrics =
+      !isUser &&
+      (props.terminalAssistantMessageIds.has(message.id) || message.streaming) &&
+      message.runId !== null &&
+      props.responseMetrics.has(message.runId);
 
     if (isUser && props.workflowOpening?.messageId === message.id) {
       return (
@@ -2532,46 +2539,53 @@ function renderFeedEntry(
               onOpenTurnDiff={props.onOpenTurnDiff}
             />
           ) : null}
-          {showAssistantMeta ? (
+          {showAssistantMeta || showResponseMetrics ? (
             <View className="mt-1 flex-row flex-wrap items-center gap-1">
-              <ThreadMessageReplyAction
-                environmentId={props.environmentId}
-                threadId={props.threadId}
-                message={message}
-                tintColor={iconSubtleColor}
-              />
-              <CopyTextButton
-                accessibilityLabel={currentInterfaceTranslator().message(
-                  "mobile.thread.copyMessage",
-                )}
-                text={renderedText}
-                tintColor={iconSubtleColor}
-                buttonSize={props.replyActionSize.button}
-                iconSize={props.replyActionSize.icon}
-              />
-              {props.forkAction ? (
-                <ThreadForkButton
-                  boundary={{ kind: "message", messageId: message.id }}
-                  action={props.forkAction}
-                  buttonSize={props.replyActionSize.button}
-                  iconSize={props.replyActionSize.icon}
-                />
-              ) : message.projectedItem ? (
-                <AssistantForkButton
-                  environmentId={props.environmentId}
-                  iconColor={iconSubtleColor}
-                  buttonSize={props.replyActionSize.button}
-                  iconSize={props.replyActionSize.icon}
-                  projectedItem={message.projectedItem}
-                  sourceTitle={props.threadTitle}
-                />
+              {showAssistantMeta ? (
+                <>
+                  <ThreadMessageReplyAction
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    message={message}
+                    tintColor={iconSubtleColor}
+                  />
+                  <CopyTextButton
+                    accessibilityLabel={currentInterfaceTranslator().message(
+                      "mobile.thread.copyMessage",
+                    )}
+                    text={renderedText}
+                    tintColor={iconSubtleColor}
+                    buttonSize={props.replyActionSize.button}
+                    iconSize={props.replyActionSize.icon}
+                  />
+                  {props.forkAction ? (
+                    <ThreadForkButton
+                      boundary={{ kind: "message", messageId: message.id }}
+                      action={props.forkAction}
+                      buttonSize={props.replyActionSize.button}
+                      iconSize={props.replyActionSize.icon}
+                    />
+                  ) : message.projectedItem ? (
+                    <AssistantForkButton
+                      environmentId={props.environmentId}
+                      iconColor={iconSubtleColor}
+                      buttonSize={props.replyActionSize.button}
+                      iconSize={props.replyActionSize.icon}
+                      projectedItem={message.projectedItem}
+                      sourceTitle={props.threadTitle}
+                    />
+                  ) : null}
+                </>
               ) : null}
               <ResponseMetricsDetails
                 snapshot={message.runId ? (props.responseMetrics.get(message.runId) ?? null) : null}
+                message={message}
               />
-              <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-                {timestampLabel}
-              </Text>
+              {showAssistantMeta ? (
+                <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+                  {timestampLabel}
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </Animated.View>
@@ -2915,6 +2929,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const preferences = useAtomValue(mobilePreferencesAtom);
   const projectedRuns = selectedProjection?.projection.runs;
   const projectedProviderTurns = selectedProjection?.projection.providerTurns;
+  const projectedTurnItems = selectedProjection?.projection.turnItems;
   const projectedThreadId = selectedProjection?.projection.thread.id;
   const responseMetrics = useMemo(
     () =>
@@ -2923,9 +2938,17 @@ export const ThreadFeed = memo(function ThreadFeed({
         ? selectV2ResponseMetrics({
             runs: projectedRuns ?? [],
             providerTurns: projectedProviderTurns ?? [],
+            turnItems: projectedTurnItems ?? [],
           })
-        : new Map<RunId, ResponseMetricsSnapshot>(),
-    [projectedRuns, projectedProviderTurns, projectedThreadId, props.threadId, preferences],
+        : new Map<RunId, ResponseMetrics>(),
+    [
+      projectedRuns,
+      projectedProviderTurns,
+      projectedTurnItems,
+      projectedThreadId,
+      props.threadId,
+      preferences,
+    ],
   );
   const betterChat = chatPresentation.variant === "better-t3";
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

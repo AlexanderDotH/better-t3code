@@ -263,7 +263,7 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
       {
         isModelAvailable: (model) =>
           transport
-            .listModels(effectiveConfig.customModels)
+            .listModels(effectiveConfig.customModels, { requireZdr: effectiveConfig.requireZdr })
             .pipe(
               Effect.map((catalog) =>
                 catalog.some(

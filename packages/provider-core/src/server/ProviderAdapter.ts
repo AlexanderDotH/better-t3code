@@ -670,6 +670,8 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
+    /** The provider reads a thread's MCP tools once, when the thread loads. */
+    readonly listsMcpToolsOnce?: boolean;
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error

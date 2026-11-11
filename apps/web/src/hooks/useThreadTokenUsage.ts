@@ -5,7 +5,7 @@ import {
   deriveLatestContextWindowSnapshot,
   latestProviderTurnTokenUsage,
 } from "../lib/contextWindow";
-import { summarizeThreadTokenUsage } from "../lib/threadTokenUsage";
+import { summarizeThreadTokenUsage } from "@t3tools/client-runtime/thread-token-usage";
 
 export function useThreadTokenUsage(threadKey: string, projection: ThreadStructure | null) {
   const input = { threadKey, projection };

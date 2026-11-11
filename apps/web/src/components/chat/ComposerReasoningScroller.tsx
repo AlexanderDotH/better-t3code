@@ -67,6 +67,13 @@ function reasoningTracesForTurn(
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+export function hasComposerReasoning(
+  entries: readonly WorkLogEntry[],
+  runId: RunId | null,
+): boolean {
+  return reasoningTracesForTurn(entries, [], runId).length > 0;
+}
+
 export const ComposerReasoningScroller = memo(function ComposerReasoningScroller(props: {
   readonly entries: readonly WorkLogEntry[];
   readonly messages?: readonly ChatMessage[];

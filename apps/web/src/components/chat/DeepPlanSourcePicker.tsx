@@ -29,7 +29,6 @@ export function DeepPlanSourcePicker({
   loading,
   error,
   disabled = false,
-  frozen = false,
   onOpen,
   onChange,
 }: {
@@ -41,7 +40,6 @@ export function DeepPlanSourcePicker({
   loading: boolean;
   error: string | null;
   disabled?: boolean;
-  frozen?: boolean;
   onOpen: () => void;
   onChange: (sources: readonly DeepPlanSourceRef[], includeProjectChats: boolean) => void;
 }) {
@@ -160,16 +158,11 @@ export function DeepPlanSourcePicker({
             })}
           </ComposerBanner.Body>
         ) : null}
-        {error || frozen ? (
-          <ComposerBanner.Body className="space-y-1 py-1">
-            {error ? (
-              <p role="status" className="break-words text-warning-foreground">
-                {error}
-              </p>
-            ) : null}
-            {frozen ? (
-              <p className="text-muted-foreground">{translate("chat.deepPlan.frozenSources")}</p>
-            ) : null}
+        {error ? (
+          <ComposerBanner.Body className="py-1">
+            <p role="status" className="break-words text-warning-foreground">
+              {error}
+            </p>
           </ComposerBanner.Body>
         ) : null}
       </ComposerBanner.Root>

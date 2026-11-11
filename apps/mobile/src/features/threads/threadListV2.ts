@@ -397,7 +397,17 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+/** Grouped lists only: shows or hides one project's settled rows. */
+export interface ThreadListV2ProjectSettledListItem {
+  readonly type: "v2-project-settled";
+  readonly key: string;
+  readonly scopeKey: string;
+  readonly count: number;
+  readonly open: boolean;
+}
+
 export type ThreadListV2ListItem =
+  | ThreadListV2ProjectSettledListItem
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2OlderProjectsShelfListItem
@@ -414,7 +424,8 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-older-projects-shelf" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
-    value.type === "v2-settled-shelf"
+    value.type === "v2-settled-shelf" ||
+    value.type === "v2-project-settled"
   );
 }
 
@@ -469,6 +480,13 @@ export function threadListV2ListItemsAreEqual(
         previous.count === item.count &&
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
+      );
+    case "v2-project-settled":
+      return (
+        previous.type === "v2-project-settled" &&
+        previous.key === item.key &&
+        previous.count === item.count &&
+        previous.open === item.open
       );
     case "v2-settled-shelf":
       return (

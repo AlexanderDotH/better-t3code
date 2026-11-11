@@ -1,7 +1,16 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
+import {
+  getLocalStorageItem,
+  setLocalStorageItem,
+  subscribeLocalStorageKey,
+} from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
 import { useStableCallback } from "./useStableCallback";
 
@@ -59,6 +68,15 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   const restoreWidth = useStableCallback((host: HTMLElement | null) => {
     host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${clampedWidth}px`);
   });
+
+  const readStoredWidth = useStableCallback(() => {
+    setWidthState({ storageKey, width: readWidth() });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows widths saved outside this hook, such as window expansion
+  useEffect(
+    () => subscribeLocalStorageKey(storageKey, readStoredWidth),
+    [storageKey, readStoredWidth],
+  );
 
   const commitWidth = (nextStorageKey: string, nextWidth: number) => {
     // Resizing remains usable for this session when browser storage is unavailable.

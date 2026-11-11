@@ -70,7 +70,7 @@ it("explains each metric on keyboard focus and closes with Escape", async () => 
     "including tool waits",
     "provider turn start",
     "including reasoning",
-    "Final context tokens",
+    "Latest context tokens",
   ];
 
   for (const [index, label] of triggers().entries()) {

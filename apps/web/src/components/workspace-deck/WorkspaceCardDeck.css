@@ -114,6 +114,7 @@
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   pointer-events: auto;
+  transition: transform 200ms ease-out;
 }
 
 .workspace-card-deck__peek--previous {
@@ -159,6 +160,36 @@
   height: 100%;
   min-width: 0;
   pointer-events: none;
+  transition:
+    opacity 150ms ease-out,
+    visibility 150ms;
+}
+
+/* Full peeks would outweigh a one-row composer, so they tuck behind it as card edges. Sliding
+   them leaves the deck's layout, and with it the timeline's inset, untouched. */
+.workspace-card-deck:has([data-chat-composer-resting="true"]) .workspace-card-deck__peek {
+  pointer-events: none;
+}
+
+.workspace-card-deck:has([data-chat-composer-resting="true"]) .workspace-card-deck__peek--previous {
+  transform: translate3d(0, 1.5rem, 0);
+}
+
+.workspace-card-deck:has([data-chat-composer-resting="true"]) .workspace-card-deck__peek--next {
+  transform: translate3d(0, -1.5rem, 0);
+}
+
+.workspace-card-deck:has([data-chat-composer-resting="true"]) .workspace-card-deck__peek-content,
+.workspace-card-deck:has([data-chat-composer-resting="true"]) .workspace-card-deck__peek-trigger {
+  visibility: hidden;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-card-deck__peek,
+  .workspace-card-deck__peek-content {
+    transition: none;
+  }
 }
 
 .workspace-card-deck__peek-content > [data-workspace-card-peek-id] {

@@ -1,5 +1,5 @@
 import { CheckIcon, CircleDotIcon, CircleIcon, ListTodoIcon } from "lucide-react";
-import { memo, type ComponentProps } from "react";
+import { memo, type ComponentProps, type ReactNode } from "react";
 
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
@@ -69,12 +69,14 @@ function TaskSummary({
   progress,
   steps,
   activityStatus,
+  reasoning,
   onToggle,
 }: {
   readonly expanded: boolean;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
   readonly activityStatus: ComposerActivityStatus | undefined;
+  readonly reasoning: ReactNode;
   readonly onToggle: () => void;
 }) {
   const translate = useInterfaceTranslator().message;
@@ -102,7 +104,7 @@ function TaskSummary({
         >
           {progress.step}
         </span>
-        {activityStatus?.kind === "working" ? activityStatus.reasoning : null}
+        {activityStatus?.kind === "working" ? activityStatus.reasoning : reasoning}
       </ComposerBanner.Content>
       <ComposerBanner.Actions>
         <ComposerActivityTokenMetrics status={activityStatus} />
@@ -140,6 +142,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   progress,
   steps,
   activityStatus,
+  reasoning,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -147,6 +150,8 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
   readonly activityStatus?: ComposerActivityStatus | undefined;
+  /** Live reasoning to show when the working status itself lives in the chat header. */
+  readonly reasoning?: ReactNode;
 }) {
   if (progress.totalSteps <= 0) return null;
 
@@ -157,6 +162,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
         progress={progress}
         steps={steps}
         activityStatus={activityStatus}
+        reasoning={reasoning}
         onToggle={onToggle}
       />
     </ComposerBanner.Row>
@@ -179,12 +185,14 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
   progress,
   steps,
   activityStatus,
+  reasoning,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
   readonly activityStatus?: ComposerActivityStatus | undefined;
+  readonly reasoning?: ReactNode;
 }) {
   const translate = useInterfaceTranslator().message;
   return (
@@ -199,6 +207,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         progress={progress}
         steps={steps}
         activityStatus={activityStatus}
+        reasoning={reasoning}
       />
       {expanded ? (
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">

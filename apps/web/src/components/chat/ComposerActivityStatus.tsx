@@ -3,7 +3,7 @@ import { LoaderCircleIcon } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { type ThreadSyncPhase } from "../../threadSync";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import type { ThreadTokenUsage } from "../../lib/threadTokenUsage";
+import type { ThreadTokenUsage } from "@t3tools/client-runtime/thread-token-usage";
 import { ComposerTokenUsageMetrics } from "./ComposerTokenUsageMetrics";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
@@ -73,6 +73,28 @@ export function ComposerActivityTokenMetrics(props: {
   return props.status?.kind === "working" && props.status.tokenUsage ? (
     <ComposerTokenUsageMetrics usage={props.status.tokenUsage} />
   ) : null;
+}
+
+/** The working row's compact form for the chat header, without the composer banner's chrome. */
+export function HeaderWorkingStatus(props: {
+  readonly startedAt: string | null;
+  readonly tokenUsage: ThreadTokenUsage | undefined;
+}) {
+  return (
+    <div
+      className="flex shrink-0 items-center gap-2.5 text-xs [-webkit-app-region:no-drag]"
+      data-chat-header-working-status
+    >
+      <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/50" />
+      <ComposerActivityLabel status={{ kind: "working", startedAt: props.startedAt }} />
+      {props.tokenUsage ? (
+        <span className="flex items-center gap-2.5 @max-[38rem]/chat-column:hidden">
+          <span aria-hidden className="h-3 w-px bg-border" />
+          <ComposerTokenUsageMetrics usage={props.tokenUsage} tooltipSide="bottom" />
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export function ComposerActivityLabel({ status }: { readonly status: ComposerActivityStatus }) {

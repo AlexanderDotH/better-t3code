@@ -14,10 +14,20 @@ import {
   SubagentId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
-import { GeneralSubagentCoordinator } from "../../../subagents/GeneralSubagentCoordinator.ts";
+import { McpSchema } from "effect/ai";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  GeneralSubagentCoordinator,
+  GeneralSubagentCoordinatorLive,
+} from "../../../subagents/GeneralSubagentCoordinator.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 
 import {
   DeepPlanSources,
@@ -36,6 +46,7 @@ import {
   invokeDeepPlanSummarizeSource,
   invokeDeepPlanValidation,
 } from "./handlers.ts";
+import { DeepPlanToolkit } from "./tools.ts";
 
 const threadId = ThreadId.make("plan-owner");
 const runId = DeepPlanRunId.make("run-current");
@@ -166,7 +177,7 @@ function harness(
         workspaceContextThreadId: invocation.threadId,
       }),
     );
-  return { getRun, updateRun, provide };
+  return { getRun, updateRun, provide, workflow };
 }
 
 function implementing(implementationThreadId = threadId) {
@@ -200,15 +211,38 @@ function implementing(implementationThreadId = threadId) {
   return { run: approved, scope: invocation };
 }
 
-it.effect("rejects credentials without a run grant before reading any run", () =>
+it.effect.each([[], ["deep-plan-tools"]] as const)(
+  "rejects credentials without a run grant before reading any run (%j)",
+  (capabilities) =>
+    Effect.gen(function* () {
+      const test = harness({ scope: { ...scope, capabilities: new Set(capabilities) } });
+      const error = yield* test.provide(invokeDeepPlanState()).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeepPlanToolScopeError",
+        reason: "credential-not-authorized",
+      });
+      expect(test.getRun).not.toHaveBeenCalled();
+    }),
+);
+
+it.effect.each([
+  { capabilities: ["deep-plan-tools"], listed: true },
+  { capabilities: ["deep-plan"], listed: true },
+  { capabilities: [], listed: false },
+] as const)("lists the toolkit before a run is bound ($capabilities)", ({ capabilities, listed }) =>
   Effect.gen(function* () {
-    const test = harness({ scope: { ...scope, capabilities: new Set() } });
-    const error = yield* test.provide(invokeDeepPlanState()).pipe(Effect.flip);
-    expect(error).toMatchObject({
-      _tag: "DeepPlanToolScopeError",
-      reason: "credential-not-authorized",
-    });
-    expect(test.getRun).not.toHaveBeenCalled();
+    const test = harness({ scope: { ...scope, capabilities: new Set(capabilities) } });
+    const visibility = yield* test.provide(
+      Effect.sync(() =>
+        Object.values(DeepPlanToolkit.tools).map((tool) =>
+          Context.getOrUndefined(
+            tool.annotations,
+            McpSchema.EnabledWhen,
+          )?.({ protocolVersion: "2025-06-18", capabilities: {} }),
+        ),
+      ),
+    );
+    expect(visibility).toEqual(Object.values(DeepPlanToolkit.tools).map(() => listed));
   }),
 );
 
@@ -649,6 +683,120 @@ it.effect(
       ).toMatchObject({ reason: "owner-mismatch" });
       expect(summarizeSource).toHaveBeenCalledOnce();
     }),
+);
+
+function reentryFailingRunLock(): DeepPlanWorkflow["Service"]["withRunLock"] {
+  const held = new Set<string>();
+  return (lockedRunId, effect) =>
+    Effect.suspend(() => {
+      if (held.has(lockedRunId))
+        return Effect.die(new Error("The run lock was acquired again by its holder."));
+      held.add(lockedRunId);
+      return effect.pipe(Effect.ensuring(Effect.sync(() => held.delete(lockedRunId))));
+    });
+}
+
+function liveCoordinator(
+  workflow: DeepPlanWorkflow["Service"],
+  getThreadRecords: (threadId: ThreadId) => unknown,
+  settings = ServerSettings.layerTest(),
+) {
+  return GeneralSubagentCoordinatorLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(DeepPlanWorkflow, workflow),
+        Layer.mock(OrchestratorV2)({
+          getThreadRecords: (recordsThreadId) =>
+            Effect.succeed(getThreadRecords(recordsThreadId) as never),
+        }),
+        Layer.mock(ThreadManagementService)({}),
+        Layer.mock(ProviderRegistry)({}),
+        settings,
+        NodeServices.layer,
+      ),
+    ),
+  );
+}
+
+it.effect("analyzes a run without sources at once, without spawning workers", () =>
+  Effect.gen(function* () {
+    const test = harness({ withRunLock: reentryFailingRunLock() });
+    const result = yield* test
+      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 1 }))
+      .pipe(Effect.provide(liveCoordinator(test.workflow, () => ({ runs: [], subagents: [] }))));
+    expect(result).toMatchObject({ agents: [], remainingSourceCount: 0, complete: true });
+  }),
+);
+
+it.effect("reports active source workers under the analysis call's single run lock", () =>
+  Effect.gen(function* () {
+    const source = frozenSource("source-in-progress");
+    const workerThreadId = ThreadId.make("source-worker-thread");
+    const test = harness({
+      run: { ...run, sources: [source] },
+      withRunLock: reentryFailingRunLock(),
+      sources: {
+        listSources: () =>
+          Effect.succeed({
+            runId,
+            sources: [source],
+            coverage: [
+              {
+                sourceId: source.sourceId,
+                status: "ready",
+                importedRecordCount: 1,
+                readRecordCount: 1,
+                summary: null,
+                error: null,
+                updatedAt: timestamp,
+              },
+            ],
+          }),
+      },
+    });
+    const coordinator = liveCoordinator(
+      test.workflow,
+      (recordsThreadId) =>
+        recordsThreadId === workerThreadId
+          ? {
+              thread: {
+                modelSelection,
+                deepPlanExecution: {
+                  runId,
+                  sourceAnalysis: { workerThreadId: threadId, sourceIds: [source.sourceId] },
+                },
+              },
+            }
+          : {
+              runs: [],
+              subagents: [
+                {
+                  id: "source-worker",
+                  childThreadId: workerThreadId,
+                  status: "running",
+                  providerInstanceId: modelSelection.instanceId,
+                  driver: ProviderDriverKind.make("codex"),
+                  model: modelSelection.model,
+                },
+              ],
+            },
+      ServerSettings.layerTest({
+        betterT3Environment: {
+          version: 1,
+          initialization: "clean-install",
+          flags: { "agent.generalSubagents": true },
+        },
+      }),
+    );
+    const result = yield* test
+      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 0 }))
+      .pipe(Effect.provide(coordinator));
+    expect(result).toMatchObject({
+      agents: [{ agentId: "source-worker", status: "running", sourceIds: [source.sourceId] }],
+      remainingSourceCount: 1,
+      complete: false,
+    });
+  }),
 );
 
 it.effect(

@@ -449,24 +449,23 @@ describe("Deep Plan continuation", () => {
       target.getRun.mockResolvedValue(current);
       await continueRun(target, current, { automatic });
       const commands = target.dispatchCommand.mock.calls.map(([command]) => command);
-      expect(commands.map((command) => command.type)).toEqual(
-        automatic
-          ? ["thread.runtime-mode.set", "message.dispatch"]
-          : ["thread.interaction-mode.set", "thread.runtime-mode.set", "message.dispatch"],
-      );
+      expect(commands.map((command) => command.type)).toEqual(["message.dispatch"]);
       if (!automatic) expect(commands[0]).toMatchObject({ interactionMode: "plan", threadId });
       expect(commands.at(-1)).toMatchObject({ deepPlanRunId: current.id });
     },
   );
 
-  it("does not start a planning turn when its requested mode change fails", async () => {
+  it("does not retry a continuation when its atomic mode and message command fails", async () => {
     const current = run();
     const target = api();
     target.getRun.mockResolvedValue(current);
     target.dispatchCommand.mockRejectedValueOnce(new Error("Disconnected"));
     await expect(continueRun(target, current)).rejects.toThrow("Disconnected");
     expect(target.dispatchCommand).toHaveBeenCalledOnce();
-    expect(target.dispatchCommand.mock.calls[0]?.[0].type).toBe("thread.interaction-mode.set");
+    expect(target.dispatchCommand.mock.calls[0]?.[0]).toMatchObject({
+      type: "message.dispatch",
+      interactionMode: "plan",
+    });
   });
 
   it("shares simultaneous continuations instead of starting duplicate turns", async () => {
@@ -479,9 +478,8 @@ describe("Deep Plan continuation", () => {
       continueRun(target, current),
     ]);
     expect(results).toEqual([current, current, current]);
+    expect(target.dispatchCommand.mock.calls[0]?.[0]).toMatchObject({ deepPlanContinuation: true });
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
-      "thread.interaction-mode.set",
-      "thread.runtime-mode.set",
       "message.dispatch",
     ]);
   });
@@ -519,12 +517,10 @@ describe("Deep Plan continuation", () => {
     await continueRun(target, paused, { idleGuard });
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
       "thread.deep-plan.update",
-      "thread.interaction-mode.set",
-      "thread.runtime-mode.set",
       "message.dispatch",
     ]);
     expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
-      type: "thread.interaction-mode.set",
+      type: "message.dispatch",
       threadId: paused.approval!.implementationThreadId,
       interactionMode: "default",
     });
@@ -617,8 +613,6 @@ describe("Deep Plan continuation", () => {
     await continueRun(target, planning);
     expect(transferDeepPlanSources).not.toHaveBeenCalled();
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
-      "thread.interaction-mode.set",
-      "thread.runtime-mode.set",
       "message.dispatch",
     ]);
     expect(target.dispatchCommand.mock.calls.at(-1)?.[0]).toMatchObject({

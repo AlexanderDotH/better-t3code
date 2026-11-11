@@ -28,10 +28,15 @@ export const composerInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Ausgabetoken für den gesamten Turn, inklusive Denken.",
     "Jetons de sortie pour tout le tour, raisonnement compris.",
   ],
+  "chat.responseMetrics.estimatedTooltip": [
+    "Estimated from the received text. Provider token counts replace the estimate when available.",
+    "Aus dem empfangenen Text geschätzt. Sobald Tokenzahlen vom Provider vorliegen, ersetzen sie die Schätzung.",
+    "Estimation à partir du texte reçu. Les comptes du fournisseur la remplacent dès qu’ils sont disponibles.",
+  ],
   "chat.responseMetrics.contextTooltip": [
-    "Final context tokens used and the model’s context limit.",
+    "Latest context tokens used and the model’s context limit.",
     "Zuletzt genutzte Kontexttoken und das Kontextlimit des Modells.",
-    "Jetons de contexte utilisés à la fin et limite de contexte du modèle.",
+    "Dernier nombre de jetons de contexte utilisés et limite de contexte du modèle.",
   ],
   "chat.responseMetrics.seconds": ["{{seconds}} s", "{{seconds}} s", "{{seconds}} s"],
   "chat.responseMetrics.contextValue": [

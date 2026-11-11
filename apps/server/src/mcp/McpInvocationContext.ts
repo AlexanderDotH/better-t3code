@@ -29,6 +29,7 @@ const ALL_MCP_CAPABILITIES = [
   "workspace-write",
   "coordination",
   "deep-plan",
+  "deep-plan-tools",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 

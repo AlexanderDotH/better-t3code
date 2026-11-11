@@ -354,24 +354,6 @@ it("selects and removes extra archived chats without changing automatically incl
   await act(() => button(container, "Remove Remote design").click());
   expect(container.textContent).not.toContain("Remote design");
   expect(container.textContent).toContain("2 project chats");
-  await act(() =>
-    screen.rerender(
-      <DeepPlanSourcePicker
-        currentProject={{ environmentId, projectId }}
-        projectSourceCount={2}
-        options={options}
-        selected={[remoteRef]}
-        loading={false}
-        error={null}
-        disabled
-        frozen
-        onOpen={() => {}}
-        onChange={() => {}}
-      />,
-    ),
-  );
-  expect(container.textContent).toContain("Sources are fixed for this Deep Plan.");
-  expect(button(container, "Remove Remote design").disabled).toBe(true);
 });
 
 it("plans from chosen project chats, or none, after project chats are excluded", async () => {
@@ -437,6 +419,67 @@ it("plans from chosen project chats, or none, after project chats are excluded",
   expect(onChange).toHaveBeenLastCalledWith([], true);
   await expect.element(page.getByRole("checkbox", { name: "Current work" })).toBeChecked();
   await expect.element(screen.getByText("2 project chats")).toBeInTheDocument();
+});
+
+function ComposerDeepPlanContent({
+  run,
+  working = false,
+}: {
+  run: DeepPlanRun | null;
+  working?: boolean;
+}) {
+  const chat = useDeepPlanChat({
+    environmentId,
+    threadRef: { environmentId, threadId },
+    projectId,
+    workspaceRoot: undefined,
+    branch: null,
+    worktreePath: null,
+    draftTarget: { environmentId, threadId },
+    mode: "deep-plan",
+    run,
+    supported: true,
+    parallelEnabled: false,
+    connected: true,
+    canOperate: true,
+    working,
+    latestRunId: null,
+    latestUserMessageId: null,
+    runtimeMode: "full-access",
+    providers: [],
+    reviewerSelection,
+    modelSelection: null,
+    getModelSelection: () => undefined,
+  });
+  return <>{chat.content}</>;
+}
+
+it("offers source selection only until the Deep Plan is on its way", async () => {
+  setup();
+  await using screen = await render(<ComposerDeepPlanContent run={null} />);
+  const sources = screen.getByRole("button", { name: "Add chats" });
+  await expect.element(sources).toBeVisible();
+
+  await screen.rerender(<ComposerDeepPlanContent run={null} working />);
+  await expect.element(sources).not.toBeInTheDocument();
+
+  const running = makeRun({ phase: "planning", plan: null, sources: [], sourceCoverage: [] });
+  await screen.rerender(<ComposerDeepPlanContent run={running} />);
+  await expect.element(sources).not.toBeInTheDocument();
+  expect(screen.container.textContent).not.toContain("Sources");
+
+  await screen.rerender(<ComposerDeepPlanContent run={makeRun({ phase: "completed" })} />);
+  await expect.element(sources).toBeVisible();
+});
+
+it("skips the preparation card when a plan has nothing slow to prepare", async () => {
+  setup();
+  const collecting = makeRun({ phase: "collecting", plan: null, sources: [], sourceCoverage: [] });
+  await using screen = await render(<DeepPlanAnalysisProgress run={collecting} />);
+  expect(screen.container.textContent).not.toContain("Preparing chat histories…");
+
+  await screen.rerender(<DeepPlanAnalysisProgress run={{ ...collecting, phase: "planning" }} />);
+  expect(screen.container.textContent).toBe("");
 });
 
 it("keeps the unfinished source visible as reading advances to a saved summary", async () => {
@@ -592,7 +635,7 @@ it("automatically finishes preparation before starting analysis without a Resume
     );
   }
   await act(renderRun);
-  expect(container.textContent).toContain("Preparing chat histories…");
+  await expect.element(screen.getByText("Preparing chat histories…")).toBeVisible();
   expect(container.textContent).not.toContain("0 of 0");
   expect(container.querySelector("progress")).toBeNull();
   await exportStarted;
@@ -1029,6 +1072,32 @@ it("reviews the durable DeepPlan approval path before dispatching its recommende
         </output>
         {plan.content}
         {plan.review}
+        {plan.implementation ? (
+          <ComposerPrimaryActions
+            compact={false}
+            canOperateThread
+            canInterrupt={false}
+            pendingAction={null}
+            isRunning={false}
+            showPlanFollowUpPrompt={false}
+            showPlanImplementationActions
+            planTone="deep-plan"
+            promptHasText={false}
+            isSendBusy={plan.implementation.pending}
+            sendDisabledReason={null}
+            isEnvironmentUnavailable={false}
+            isPreparingWorktree={false}
+            hasSendableContent={false}
+            onPreviousPendingQuestion={() => {}}
+            onInterrupt={() => {}}
+            planImplementationSuggestion={plan.implementation.suggestion}
+            planParallelismReviewStatus={plan.implementation.reviewStatus}
+            onImplementPlan={(strategy) => plan.implementation?.implement(strategy, false)}
+            onImplementPlanInNewThread={(strategy) =>
+              plan.implementation?.implement(strategy, true)
+            }
+          />
+        ) : null}
       </>
     );
   }
@@ -1059,15 +1128,20 @@ it("reviews the durable DeepPlan approval path before dispatching its recommende
     }),
   );
   expect(container.textContent).toContain("Deep Plan ready");
+  expect(
+    container
+      .querySelector("[data-chat-composer-implement-actions]")
+      ?.getAttribute("data-plan-tone"),
+  ).toBe("deep-plan");
   currentSelection = {
     instanceId: ProviderInstanceId.make("missing-provider"),
     model: "unavailable",
   };
-  await act(() => button(container, "Implement plan").click());
+  await act(() => button(container, "Implement with 4 subagents").click());
   expect(planReview.approve).not.toHaveBeenCalled();
   expect(container.textContent).toContain("Parallel plan implementation is no longer available");
   currentSelection = modelSelection;
-  await act(() => button(container, "Implement plan").click());
+  await act(() => button(container, "Implement with 4 subagents").click());
   expect(planReview.approve).toHaveBeenCalledWith(
     expect.objectContaining({ requestedParallelism: 4, implementation: modelSelection }),
   );

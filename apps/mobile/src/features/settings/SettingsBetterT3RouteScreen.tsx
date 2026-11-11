@@ -25,13 +25,11 @@ import {
 import { stripAutoReasoning } from "@t3tools/shared/model";
 import { prepareBetterT3StatusModel } from "@t3tools/client-runtime/better-t3-status";
 import {
-  getBetterT3SettingsSubgroupForTarget,
-  getBetterT3SettingsSubgroupForFeature,
-  sanitizeBetterT3ExpandedSettingsGroups,
-  type BetterT3SettingsSubgroupId,
+  BETTER_T3_SETTINGS_CATEGORY_IDS,
+  type BetterT3SettingsCategoryId,
 } from "@t3tools/client-runtime/better-t3-settings-layout";
 import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/project-indexing";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo, useState } from "react";
@@ -57,13 +55,13 @@ import { environmentSession } from "../../state/session";
 import { mobileProjectIndexPermissions } from "../project-indexing/mobile-project-indexing";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
-import { BetterT3SettingsSubgroup } from "./components/BetterT3SettingsSubgroup";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnvironmentsRouteScreen";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AutoSettleSettingsRows } from "./AutoSettleSettingsRows";
 import { ContextWindowMeterSettingsPreview } from "./ContextWindowMeterSettingsPreview";
+import { resolveMobileThreadListLayout } from "./appearance/threadListAppearance";
 import {
   buildMobileGitWorkbenchThreadOptions,
   mobileGitWorkbenchCanActivate,
@@ -71,13 +69,12 @@ import {
   resolveMobileGitWorkbenchAvailability,
 } from "../threads/git/mobile-git-workbench";
 import {
-  buildMobileBetterT3Sections,
+  buildMobileBetterT3Categories,
   createMobileBetterT3DeviceControlPatch,
   createMobileBetterT3DevicePreferencePatch,
   createMobileBetterT3EnvironmentControlPatch,
   createMobileBetterT3EnvironmentPatch,
   mobileBetterT3PreparedStatusDetail,
-  mobileBetterT3SubgroupSummary,
   mobileBetterT3PreparedStatusInput,
   mobileBetterT3PreparedStatusMessageKey,
   mobileLifecycleReceiptFromWelcome,
@@ -106,12 +103,31 @@ const SECTION_ICONS: Readonly<Record<BetterT3FeatureSection, AppSymbolName>> = {
   "integration-status": "checkmark.circle",
 };
 
+const CATEGORY_ICONS: Readonly<Record<BetterT3SettingsCategoryId, AppSymbolName>> = {
+  general: "gearshape",
+  appearance: "paintbrush",
+  chat: "bubble.left.and.bubble.right",
+  composer: "square.and.pencil",
+  sidebar: "sidebar.left",
+  usage: "chart.bar.xaxis",
+  agents: "person.2",
+  workspace: "arrow.triangle.branch",
+  voice: "waveform",
+  knowledge: "point.3.connected.trianglepath.dotted",
+  system: "memorychip",
+  integrations: "checkmark.circle",
+};
+
 const FALLBACK_CAPABILITIES: ExecutionEnvironmentCapabilities = {
   repositoryIdentity: false,
   midChatProviderSwitching: false,
 };
 
 type BetterT3SettingsNavigation = NativeStackNavigationProp<{
+  SettingsBetterT3Category: {
+    readonly category: BetterT3SettingsCategoryId;
+    readonly environmentId?: EnvironmentId;
+  };
   GitOverview: { readonly environmentId: string; readonly threadId: string };
   SettingsAgents: undefined;
   SettingsAppearance: undefined;
@@ -280,6 +296,27 @@ function preparedStatusText(
 }
 
 export function SettingsBetterT3RouteScreen() {
+  return <BetterT3SettingsPage category={null} initialEnvironmentId={null} />;
+}
+
+export function SettingsBetterT3CategoryRouteScreen({
+  route,
+}: StaticScreenProps<{
+  readonly category: BetterT3SettingsCategoryId;
+  readonly environmentId?: EnvironmentId;
+}>) {
+  return (
+    <BetterT3SettingsPage
+      category={route.params.category}
+      initialEnvironmentId={route.params.environmentId ?? null}
+    />
+  );
+}
+
+function BetterT3SettingsPage(props: {
+  readonly category: BetterT3SettingsCategoryId | null;
+  readonly initialEnvironmentId: EnvironmentId | null;
+}) {
   const navigation = useNavigation<BetterT3SettingsNavigation>();
   const { width } = useWindowDimensions();
   const translator = useMobileInterfaceTranslator();
@@ -291,11 +328,11 @@ export function SettingsBetterT3RouteScreen() {
   const { environments } = useEnvironments();
   const projects = useProjects();
   const threads = useThreadShells();
-  const [requestedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const [requestedEnvironmentId, setSelectedEnvironmentId] = useState(props.initialEnvironmentId);
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
   const [selectedGitThreadId, setSelectedGitThreadId] = useState<ThreadId | null>(null);
   const [activeChoice, setActiveChoice] = useState<
-    "caveman" | "context-compaction" | "project-sort" | "thread-sort" | null
+    "caveman" | "context-compaction" | "project-sort" | "sidebar-style" | "thread-sort" | null
   >(null);
   const [autoReasoningModelPickerOpen, setAutoReasoningModelPickerOpen] = useState(false);
   const [contextCompactionModelPickerOpen, setContextCompactionModelPickerOpen] = useState(false);
@@ -336,32 +373,15 @@ export function SettingsBetterT3RouteScreen() {
   const devicePreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : undefined;
-  const expandedSettingsGroups = useMemo(
-    () => sanitizeBetterT3ExpandedSettingsGroups(devicePreferences?.betterT3ExpandedSettingsGroups),
-    [devicePreferences?.betterT3ExpandedSettingsGroups],
-  );
-  const setGroupExpanded = (id: BetterT3SettingsSubgroupId, expanded: boolean) =>
-    savePreferences({
-      transform: (current) => {
-        const groups = sanitizeBetterT3ExpandedSettingsGroups(
-          current.betterT3ExpandedSettingsGroups,
-        );
-        return {
-          betterT3ExpandedSettingsGroups: expanded
-            ? sanitizeBetterT3ExpandedSettingsGroups([...groups, id])
-            : groups.filter((candidate) => candidate !== id),
-        };
-      },
-    });
   const deviceSettings = devicePreferences?.betterT3Device
     ? devicePreferences.betterT3Device
     : DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
   const environmentSettings =
     serverConfig?.settings.betterT3Environment ?? DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
   const mobileSurface = mobileBetterT3SurfaceForWidth(width);
-  const sections = useMemo(
+  const categories = useMemo(
     () =>
-      buildMobileBetterT3Sections({
+      buildMobileBetterT3Categories({
         registry: BETTER_T3_FEATURE_REGISTRY,
         surface: mobileSurface,
         deviceAvailable,
@@ -380,6 +400,11 @@ export function SettingsBetterT3RouteScreen() {
     ],
   );
 
+  const threadListLayout = resolveMobileThreadListLayout(
+    devicePreferences?.legacyThreadListEnabled,
+    devicePreferences?.boringThreadListEnabled,
+  );
+  const sidebarStyle = threadListLayout === "current" ? "standard" : threadListLayout;
   const projectSortOrder =
     devicePreferences?.sidebarProjectSortOrder ??
     (DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
@@ -458,7 +483,7 @@ export function SettingsBetterT3RouteScreen() {
   );
 
   const updateEnvironmentSettings = useCallback(
-    async (patch: ServerSettingsPatch, featureId?: BetterT3FeatureId): Promise<boolean> => {
+    async (patch: ServerSettingsPatch): Promise<boolean> => {
       if (environmentTargetId === null) return false;
       const result = await updateServerSettings({
         environmentId: environmentTargetId,
@@ -466,8 +491,6 @@ export function SettingsBetterT3RouteScreen() {
       });
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return true;
       const error = squashAtomCommandFailure(result);
-      const group = getBetterT3SettingsSubgroupForFeature(featureId ?? "");
-      if (group?.collapsible) setGroupExpanded(group.id, true);
       Alert.alert(
         translator.message("mobile.settings.betterT3.updateFailedTitle"),
         translator.message("mobile.settings.betterT3.updateFailedDescription", {
@@ -479,7 +502,7 @@ export function SettingsBetterT3RouteScreen() {
       );
       return false;
     },
-    [environmentTargetId, setGroupExpanded, translator, updateServerSettings],
+    [environmentTargetId, translator, updateServerSettings],
   );
 
   const setSwitch = useCallback(
@@ -501,7 +524,6 @@ export function SettingsBetterT3RouteScreen() {
           featureId,
           enabled,
         }),
-        featureId,
       );
     },
     [deviceSettings, environmentSettings, savePreferences, updateEnvironmentSettings],
@@ -554,7 +576,7 @@ export function SettingsBetterT3RouteScreen() {
     }
   };
 
-  const renderControl = (control: MobileBetterT3Control, sectionId: BetterT3FeatureSection) => {
+  const renderControl = (control: MobileBetterT3Control) => {
     const label = translator.message(
       messageKey(control.descriptor.labelMessageId, "settings.betterT3.title"),
     );
@@ -577,7 +599,7 @@ export function SettingsBetterT3RouteScreen() {
         <SettingsSwitchRow
           key={control.id}
           disabled={!available || !indexingCanOperate}
-          icon={SECTION_ICONS[sectionId]}
+          icon={SECTION_ICONS[control.descriptor.section]}
           label={label}
           subtitle={available ? description : `${description} · ${status}`}
           value={serverConfig?.settings.projectIndexingEnabled ?? false}
@@ -628,7 +650,7 @@ export function SettingsBetterT3RouteScreen() {
           <View key={control.id}>
             <SettingsSwitchRow
               disabled={!available}
-              icon={SECTION_ICONS[sectionId]}
+              icon={SECTION_ICONS[control.descriptor.section]}
               label={label}
               onValueChange={(enabled) => void setSwitch(control, enabled)}
               subtitle={available ? description : `${description} · ${status}`}
@@ -650,7 +672,7 @@ export function SettingsBetterT3RouteScreen() {
         <SettingsSwitchRow
           key={control.id}
           disabled={control.availability.state !== "available"}
-          icon={SECTION_ICONS[sectionId]}
+          icon={SECTION_ICONS[control.descriptor.section]}
           label={label}
           onValueChange={(enabled) => void setSwitch(control, enabled)}
           subtitle={
@@ -738,6 +760,18 @@ export function SettingsBetterT3RouteScreen() {
     if (control.id === "chat.settling") {
       return <AutoSettleSettingsRows key={control.id} />;
     }
+    if (control.id === "chat.classicSidebar") {
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={translator.message("settings.betterT3.sidebarStyle.description")}
+          label={translator.message("settings.betterT3.sidebarStyle.title")}
+          onPress={() => setActiveChoice("sidebar-style")}
+          status={translator.message(`settings.betterT3.sidebarStyle.${sidebarStyle}`)}
+        />
+      );
+    }
     return (
       <BetterT3ActionRow
         key={control.id}
@@ -750,24 +784,114 @@ export function SettingsBetterT3RouteScreen() {
     );
   };
 
+  const pageTitle =
+    props.category === null
+      ? translator.message("settings.betterT3.title")
+      : translator.message(`settings.betterT3.tab.${props.category}`);
+  const openCategories = BETTER_T3_SETTINGS_CATEGORY_IDS.filter(
+    (id) => id === "usage" || categories.some((category) => category.id === id),
+  );
+  const pageGroups = categories.find((category) => category.id === props.category)?.groups ?? [];
+
   return (
-    <AndroidScreenScaffold title={translator.message("settings.betterT3.title")}>
-      <NativeStackScreenOptions
-        options={{ title: translator.message("settings.betterT3.title") }}
-      />
+    <AndroidScreenScaffold title={pageTitle}>
+      <NativeStackScreenOptions options={{ title: pageTitle }} />
       <ScreenScaffoldScrollView>
         <Text className="px-2 text-sm leading-normal text-foreground-muted">
-          {translator.message("settings.betterT3.description")}
+          {props.category === null
+            ? translator.message("settings.betterT3.description")
+            : translator.message(`settings.betterT3.category.${props.category}.description`)}
         </Text>
 
-        <SettingsSection card title={translator.message("mobile.ui.usageLimitsAndPacing")}>
-          <BetterT3SettingsSubgroup
-            title={translator.message(
-              getBetterT3SettingsSubgroupForTarget("usage-pacing")?.titleMessageId ??
-                "settings.betterT3.title",
-            )}
-            showTitle={false}
-          >
+        {props.category === null ? (
+          <>
+            <SettingsSection card title={translator.message("settings.betterT3.environmentScope")}>
+              {environments.length === 0 ? (
+                <Text className="p-4 text-sm text-foreground-muted">
+                  {translator.message("settings.betterT3.noEnvironment")}
+                </Text>
+              ) : (
+                <ScrollView
+                  horizontal
+                  contentContainerClassName="gap-2 p-3"
+                  showsHorizontalScrollIndicator={false}
+                >
+                  {environments.map((environment) => {
+                    const selected = environment.environmentId === selectedEnvironmentId;
+                    return (
+                      <Pressable
+                        key={environment.environmentId}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: selected }}
+                        className={
+                          selected
+                            ? "rounded-full bg-primary px-4 py-2.5"
+                            : "rounded-full border border-border bg-subtle px-4 py-2.5"
+                        }
+                        onPress={() => {
+                          setSelectedGitThreadId(null);
+                          setSelectedProjectId(null);
+                          setSelectedEnvironmentId(environment.environmentId);
+                        }}
+                      >
+                        <Text
+                          className={
+                            selected
+                              ? "font-t3-semibold text-primary-foreground"
+                              : "font-t3-semibold text-foreground"
+                          }
+                        >
+                          {environment.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </SettingsSection>
+
+            <SettingsSection card>
+              {openCategories.map((id) => {
+                const label = translator.message(`settings.betterT3.tab.${id}`);
+                return (
+                  <Pressable
+                    key={id}
+                    accessibilityLabel={label}
+                    accessibilityRole="button"
+                    onPress={() =>
+                      navigation.navigate("SettingsBetterT3Category", {
+                        category: id,
+                        ...(selectedEnvironmentId === null
+                          ? {}
+                          : { environmentId: selectedEnvironmentId }),
+                      })
+                    }
+                  >
+                    <ListRowLayout
+                      icon={CATEGORY_ICONS[id]}
+                      label={label}
+                      description={translator.message(
+                        `settings.betterT3.category.${id}.description`,
+                      )}
+                      accessory={
+                        <SymbolView
+                          name="chevron.right"
+                          size={15}
+                          tintColorClassName="accent-icon"
+                          type="monochrome"
+                          weight="semibold"
+                        />
+                      }
+                    />
+                  </Pressable>
+                );
+              })}
+            </SettingsSection>
+          </>
+        ) : null}
+
+        {props.category === "usage" ? (
+          <SettingsSection card title={translator.message("mobile.ui.usageLimitsAndPacing")}>
             <SettingsSwitchRow
               icon="clock"
               label={translator.message("mobile.ui.showUsagePace")}
@@ -776,14 +900,6 @@ export function SettingsBetterT3RouteScreen() {
               value={devicePreferences?.usagePacingEnabled ?? true}
               onValueChange={(usagePacingEnabled) => savePreferences({ usagePacingEnabled })}
             />
-          </BetterT3SettingsSubgroup>
-          <BetterT3SettingsSubgroup
-            title={translator.message(
-              getBetterT3SettingsSubgroupForTarget("usage-hard-budget")?.titleMessageId ??
-                "settings.betterT3.title",
-            )}
-            showTitle={false}
-          >
             <SettingsSwitchRow
               icon="lock"
               label={translator.message("mobile.ui.hardDailyBudget")}
@@ -794,14 +910,6 @@ export function SettingsBetterT3RouteScreen() {
                 void updateEnvironmentSettings({ usageHardBudgetEnabled });
               }}
             />
-          </BetterT3SettingsSubgroup>
-          <BetterT3SettingsSubgroup
-            title={translator.message(
-              getBetterT3SettingsSubgroupForTarget("usage-workday")?.titleMessageId ??
-                "settings.betterT3.title",
-            )}
-            showTitle={false}
-          >
             <SettingsSwitchRow
               icon="clock"
               label="8-hour workday"
@@ -812,248 +920,203 @@ export function SettingsBetterT3RouteScreen() {
                 savePreferences({ usagePacingWorkdayHours: enabled ? 8 : 24 })
               }
             />
-          </BetterT3SettingsSubgroup>
-        </SettingsSection>
+          </SettingsSection>
+        ) : null}
 
-        <SettingsSection card title={translator.message("settings.betterT3.environmentScope")}>
-          {environments.length === 0 ? (
-            <Text className="p-4 text-sm text-foreground-muted">
-              {translator.message("settings.betterT3.noEnvironment")}
-            </Text>
-          ) : (
-            <ScrollView
-              horizontal
-              contentContainerClassName="gap-2 p-3"
-              showsHorizontalScrollIndicator={false}
-            >
-              {environments.map((environment) => {
-                const selected = environment.environmentId === selectedEnvironmentId;
-                return (
+        {props.category === "workspace" ? (
+          <>
+            {selectedEnvironmentId !== null && environmentProjects.length > 0 ? (
+              <SettingsSection
+                card
+                title={translator.message("settings.betterT3.status.projectRequired")}
+              >
+                <ScrollView
+                  horizontal
+                  contentContainerClassName="gap-2 p-3"
+                  showsHorizontalScrollIndicator={false}
+                >
                   <Pressable
-                    key={environment.environmentId}
                     accessibilityRole="radio"
-                    accessibilityState={{ checked: selected }}
+                    accessibilityState={{ checked: selectedProjectId === null }}
                     className={
-                      selected
+                      selectedProjectId === null
                         ? "rounded-full bg-primary px-4 py-2.5"
                         : "rounded-full border border-border bg-subtle px-4 py-2.5"
                     }
                     onPress={() => {
                       setSelectedGitThreadId(null);
                       setSelectedProjectId(null);
-                      setSelectedEnvironmentId(environment.environmentId);
                     }}
                   >
                     <Text
                       className={
-                        selected
+                        selectedProjectId === null
                           ? "font-t3-semibold text-primary-foreground"
                           : "font-t3-semibold text-foreground"
                       }
                     >
-                      {environment.label}
+                      {translator.message("settings.betterT3.status.projectRequired")}
                     </Text>
                   </Pressable>
-                );
-              })}
-            </ScrollView>
-          )}
-        </SettingsSection>
+                  {environmentProjects.map((project) => {
+                    const selected = project.id === selectedProjectId;
+                    return (
+                      <Pressable
+                        key={project.id}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: selected }}
+                        className={
+                          selected
+                            ? "rounded-full bg-primary px-4 py-2.5"
+                            : "rounded-full border border-border bg-subtle px-4 py-2.5"
+                        }
+                        onPress={() => {
+                          setSelectedGitThreadId(null);
+                          setSelectedProjectId(project.id);
+                        }}
+                      >
+                        <Text
+                          className={
+                            selected
+                              ? "font-t3-semibold text-primary-foreground"
+                              : "font-t3-semibold text-foreground"
+                          }
+                        >
+                          {project.title}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </SettingsSection>
+            ) : null}
 
-        {selectedEnvironmentId !== null && environmentProjects.length > 0 ? (
-          <SettingsSection
-            card
-            title={translator.message("settings.betterT3.status.projectRequired")}
-          >
-            <ScrollView
-              horizontal
-              contentContainerClassName="gap-2 p-3"
-              showsHorizontalScrollIndicator={false}
-            >
-              <Pressable
-                accessibilityRole="radio"
-                accessibilityState={{ checked: selectedProjectId === null }}
-                className={
-                  selectedProjectId === null
-                    ? "rounded-full bg-primary px-4 py-2.5"
-                    : "rounded-full border border-border bg-subtle px-4 py-2.5"
-                }
-                onPress={() => {
-                  setSelectedGitThreadId(null);
-                  setSelectedProjectId(null);
-                }}
-              >
-                <Text
-                  className={
-                    selectedProjectId === null
-                      ? "font-t3-semibold text-primary-foreground"
-                      : "font-t3-semibold text-foreground"
-                  }
-                >
-                  {translator.message("settings.betterT3.status.projectRequired")}
-                </Text>
-              </Pressable>
-              {environmentProjects.map((project) => {
-                const selected = project.id === selectedProjectId;
-                return (
-                  <Pressable
-                    key={project.id}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: selected }}
-                    className={
-                      selected
-                        ? "rounded-full bg-primary px-4 py-2.5"
-                        : "rounded-full border border-border bg-subtle px-4 py-2.5"
-                    }
-                    onPress={() => {
-                      setSelectedGitThreadId(null);
-                      setSelectedProjectId(project.id);
-                    }}
-                  >
-                    <Text
-                      className={
-                        selected
-                          ? "font-t3-semibold text-primary-foreground"
-                          : "font-t3-semibold text-foreground"
-                      }
-                    >
-                      {project.title}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </SettingsSection>
-        ) : null}
-
-        {gitWorkbenchFeatureEnabled &&
-        (serverConfig?.environment.capabilities.gitWorkbenchVersion ?? 0) >= 1 &&
-        selectedProject !== null ? (
-          <SettingsSection card title={translator.message("mobile.thread.openGit")}>
-            {gitWorkbenchThreadOptions.length === 0 ? (
-              <Text className="p-4 text-sm text-foreground-muted">
-                {translator.message("mobile.git.unavailable")}
-              </Text>
-            ) : (
-              <ScrollView
-                horizontal
-                contentContainerClassName="gap-2 p-3"
-                showsHorizontalScrollIndicator={false}
-              >
-                <Pressable
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: selectedGitThreadId === null }}
-                  className={
-                    selectedGitThreadId === null
-                      ? "rounded-full bg-primary px-4 py-2.5"
-                      : "rounded-full border border-border bg-subtle px-4 py-2.5"
-                  }
-                  onPress={() => setSelectedGitThreadId(null)}
-                >
-                  <Text
-                    className={
-                      selectedGitThreadId === null
-                        ? "font-t3-semibold text-primary-foreground"
-                        : "font-t3-semibold text-foreground"
-                    }
-                  >
-                    {translator.message("ui.thread.selectOrCreate")}
+            {gitWorkbenchFeatureEnabled &&
+            (serverConfig?.environment.capabilities.gitWorkbenchVersion ?? 0) >= 1 &&
+            selectedProject !== null ? (
+              <SettingsSection card title={translator.message("mobile.thread.openGit")}>
+                {gitWorkbenchThreadOptions.length === 0 ? (
+                  <Text className="p-4 text-sm text-foreground-muted">
+                    {translator.message("mobile.git.unavailable")}
                   </Text>
-                </Pressable>
-                {gitWorkbenchThreadOptions.map((option) => {
-                  const selected = option.threadId === selectedGitThreadId;
-                  return (
+                ) : (
+                  <ScrollView
+                    horizontal
+                    contentContainerClassName="gap-2 p-3"
+                    showsHorizontalScrollIndicator={false}
+                  >
                     <Pressable
-                      key={option.threadId}
                       accessibilityRole="radio"
-                      accessibilityState={{ checked: selected }}
+                      accessibilityState={{ checked: selectedGitThreadId === null }}
                       className={
-                        selected
+                        selectedGitThreadId === null
                           ? "rounded-full bg-primary px-4 py-2.5"
                           : "rounded-full border border-border bg-subtle px-4 py-2.5"
                       }
-                      onPress={() => setSelectedGitThreadId(option.threadId)}
+                      onPress={() => setSelectedGitThreadId(null)}
                     >
                       <Text
                         className={
-                          selected
+                          selectedGitThreadId === null
                             ? "font-t3-semibold text-primary-foreground"
                             : "font-t3-semibold text-foreground"
                         }
                       >
-                        {option.label}
+                        {translator.message("ui.thread.selectOrCreate")}
                       </Text>
                     </Pressable>
-                  );
-                })}
-              </ScrollView>
-            )}
-          </SettingsSection>
+                    {gitWorkbenchThreadOptions.map((option) => {
+                      const selected = option.threadId === selectedGitThreadId;
+                      return (
+                        <Pressable
+                          key={option.threadId}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
+                          className={
+                            selected
+                              ? "rounded-full bg-primary px-4 py-2.5"
+                              : "rounded-full border border-border bg-subtle px-4 py-2.5"
+                          }
+                          onPress={() => setSelectedGitThreadId(option.threadId)}
+                        >
+                          <Text
+                            className={
+                              selected
+                                ? "font-t3-semibold text-primary-foreground"
+                                : "font-t3-semibold text-foreground"
+                            }
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </SettingsSection>
+            ) : null}
+          </>
         ) : null}
 
-        {sections.map((section) => (
-          <SettingsSection
-            card
-            key={section.id}
-            title={translator.message(
-              messageKey(`settings.betterT3.section.${section.id}`, "settings.betterT3.title"),
-            )}
-          >
-            {section.groups.map((group) => (
-              <BetterT3SettingsSubgroup
-                key={group.definition.id}
-                title={translator.message(group.definition.titleMessageId)}
-                summary={
-                  group.definition.collapsible
-                    ? mobileBetterT3SubgroupSummary({
-                        group: group.definition,
-                        controls: group.controls,
-                        config: serverConfig,
-                        outputLanguage: devicePreferences?.voiceInputOutputLanguage,
-                        message: translator.message,
-                      })
-                    : undefined
-                }
-                collapsible={group.definition.collapsible}
-                expanded={expandedSettingsGroups.includes(group.definition.id)}
-                showTitle={
-                  group.controls.length > 1 ||
-                  group.controls.some((control) =>
-                    ["chat.sorting", "chat.settling", "workspace.gitWorkbench"].includes(
-                      control.id,
-                    ),
-                  ) ||
-                  (group.definition.id === "context-display" && group.controls.length > 0)
-                }
-                onExpandedChange={(expanded) => setGroupExpanded(group.definition.id, expanded)}
-              >
-                {group.definition.id === "response-metrics" ? (
-                  <SettingsSwitchRow
-                    icon="chart.bar.xaxis"
-                    label={translator.message("settings.responseMetrics.label")}
-                    subtitle={translator.message("settings.responseMetrics.description")}
-                    disabled={!deviceAvailable}
-                    value={devicePreferences?.responseMetricsEnabled ?? false}
-                    onValueChange={(responseMetricsEnabled) =>
-                      savePreferences({ responseMetricsEnabled })
-                    }
-                  />
-                ) : null}
-                {group.definition.id === "context-display" ? (
-                  <ContextWindowMeterSettingsPreview
-                    disabled={!deviceAvailable}
-                    enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
-                    onValueChange={(contextWindowMeterEnabled) =>
-                      savePreferences({ contextWindowMeterEnabled })
-                    }
-                  />
-                ) : null}
-                {group.controls.map((control) => renderControl(control, section.id))}
-              </BetterT3SettingsSubgroup>
-            ))}
-          </SettingsSection>
-        ))}
+        {pageGroups.map((group) => {
+          const showTitle =
+            group.controls.length > 1 ||
+            group.controls.some((control) =>
+              ["chat.sorting", "chat.settling", "workspace.gitWorkbench"].includes(control.id),
+            ) ||
+            group.definition.id === "context-display";
+          return (
+            <SettingsSection
+              card
+              key={group.definition.id}
+              {...(showTitle ? { title: translator.message(group.definition.titleMessageId) } : {})}
+            >
+              {group.definition.id === "response-metrics" ? (
+                <SettingsSwitchRow
+                  icon="chart.bar.xaxis"
+                  label={translator.message("settings.responseMetrics.label")}
+                  subtitle={translator.message("settings.responseMetrics.description")}
+                  disabled={!deviceAvailable}
+                  value={devicePreferences?.responseMetricsEnabled ?? false}
+                  onValueChange={(responseMetricsEnabled) =>
+                    savePreferences({ responseMetricsEnabled })
+                  }
+                />
+              ) : null}
+              {group.definition.id === "context-display" ? (
+                <ContextWindowMeterSettingsPreview
+                  disabled={!deviceAvailable}
+                  enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
+                  onValueChange={(contextWindowMeterEnabled) =>
+                    savePreferences({ contextWindowMeterEnabled })
+                  }
+                />
+              ) : null}
+              {group.controls.map((control) => renderControl(control))}
+            </SettingsSection>
+          );
+        })}
       </ScreenScaffoldScrollView>
+      <BetterT3ChoiceModal<typeof sidebarStyle>
+        choices={(["standard", "classic", "boring"] as const).map((value) => ({
+          value,
+          label: translator.message(`settings.betterT3.sidebarStyle.${value}`),
+        }))}
+        current={sidebarStyle}
+        onClose={() => setActiveChoice(null)}
+        onSelect={(value) =>
+          savePreferences({
+            ...createMobileBetterT3DevicePreferencePatch({
+              settings: deviceSettings,
+              featureId: "chat.classicSidebar",
+              enabled: value === "classic",
+            }),
+            boringThreadListEnabled: value === "boring",
+          })
+        }
+        title={translator.message("settings.betterT3.sidebarStyle.title")}
+        visible={activeChoice === "sidebar-style"}
+      />
       <BetterT3ChoiceModal<CavemanMode>
         choices={(["off", "lite", "full", "ultra"] as const).map((value) => ({
           value,
@@ -1067,7 +1130,6 @@ export function SettingsBetterT3RouteScreen() {
               id: "agent.cavemanMode",
               value,
             }),
-            "agent.cavemanMode",
           )
         }
         title={translator.message("betterT3.agent.cavemanMode.label")}
@@ -1096,7 +1158,6 @@ export function SettingsBetterT3RouteScreen() {
               featureId: "agent.contextCompaction",
               enabled,
             }),
-            "agent.contextCompaction",
           )
         }
         title={translator.message("betterT3.agent.contextCompaction.label")}
@@ -1161,7 +1222,6 @@ export function SettingsBetterT3RouteScreen() {
                   id: "agent.contextCompactionModel",
                   value: selection,
                 }),
-                "agent.contextCompactionModel",
               )
             }
           />
@@ -1181,7 +1241,6 @@ export function SettingsBetterT3RouteScreen() {
                   id: "agent.autoReasoningModel",
                   value: selection,
                 }),
-                "agent.autoReasoningModel",
               )
             }
             visible={autoReasoningModelPickerOpen}

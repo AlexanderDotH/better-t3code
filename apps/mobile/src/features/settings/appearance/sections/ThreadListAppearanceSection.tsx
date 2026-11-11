@@ -19,7 +19,10 @@ export function ThreadListAppearanceSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const selectedLayout = AsyncResult.isSuccess(preferencesResult)
-    ? resolveMobileThreadListLayout(preferencesResult.value.legacyThreadListEnabled)
+    ? resolveMobileThreadListLayout(
+        preferencesResult.value.legacyThreadListEnabled,
+        preferencesResult.value.boringThreadListEnabled,
+      )
     : null;
 
   return (
