@@ -498,6 +498,18 @@ export const layerWithOptions = (
           );
         },
       );
+      const listsDeepPlanToolsUpfront = Effect.fn(
+        "ProviderSessionManagerV2.listsDeepPlanToolsUpfront",
+      )(
+        function* (providerInstanceId: ProviderInstanceId) {
+          const adapter = yield* registry.get(providerInstanceId);
+          return (
+            adapter.listsMcpToolsOnce === true &&
+            (yield* adapter.getCapabilities()).deepPlan?.supported === true
+          );
+        },
+        Effect.orElseSucceed(() => false),
+      );
       const clearMcpProviderConfiguration = Effect.fn(
         "ProviderSessionManagerV2.clearMcpProviderConfiguration",
       )((threadId: ThreadId) =>
@@ -550,6 +562,13 @@ export const layerWithOptions = (
                         interactionMode: thread.interactionMode,
                       }).pipe(Effect.orDie);
                 if (deepPlan !== undefined) capabilities.add("deep-plan");
+                if (
+                  thread !== null &&
+                  !subagent &&
+                  thread.fetchWorker === undefined &&
+                  (yield* listsDeepPlanToolsUpfront(providerInstanceId))
+                )
+                  capabilities.add("deep-plan-tools");
                 capabilities.add("workspace");
                 // Children work under their root chat's claims; reply topics coordinate as their source.
                 const coordination =
@@ -578,6 +597,8 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     resolved.capabilities.has("coordination") === coordination &&
+                    resolved.capabilities.has("deep-plan-tools") ===
+                      capabilities.has("deep-plan-tools") &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent &&
                     Schema.toEquivalence(Schema.NullOr(DeepPlanExecutionContext))(

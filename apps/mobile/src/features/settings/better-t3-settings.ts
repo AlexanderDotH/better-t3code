@@ -2,14 +2,12 @@ import {
   resolveBetterT3FeatureFlag,
   type CavemanMode,
   type ModelSelection,
-  type ModelSelectionPurpose,
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
   type BetterT3FeatureAvailabilityState,
   type BetterT3FeatureControlKind,
   type BetterT3FeatureDescriptor,
   type BetterT3FeatureId,
-  type BetterT3FeatureSection,
   type BetterT3SettingsV1,
   type BetterT3Surface,
   type BetterT3SwitchFeatureId,
@@ -18,17 +16,18 @@ import {
   type ProjectId,
   type ServerLifecycleWelcomePayload,
   type ServerSettingsPatch,
-  type ServerConfig,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { BetterT3PreparedStatusModel } from "@t3tools/client-runtime/better-t3-status";
 import {
+  BETTER_T3_SETTINGS_CATEGORY_IDS,
   BETTER_T3_SETTINGS_SUBGROUPS,
+  type BetterT3SettingsCategoryId,
   type BetterT3SettingsSubgroup,
 } from "@t3tools/client-runtime/better-t3-settings-layout";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import type { InterfaceMessageKey, InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { stripAutoReasoning, supportsModelSelectionPurpose } from "@t3tools/shared/model";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+import { stripAutoReasoning } from "@t3tools/shared/model";
 
 type MobileVisiblePreparedStatusFeatureId = Exclude<
   keyof BetterT3PreparedStatusModel,
@@ -370,16 +369,8 @@ export function resolveMobileBetterT3ProjectSelection<
   );
 }
 
-const MOBILE_SECTION_ORDER: ReadonlyArray<BetterT3FeatureSection> = [
-  "agent-workflows",
-  "chat-layout",
-  "composer",
-  "workspace-source-control",
-  "voice-synchronization",
-  "knowledge-automation",
-  "resource-protection",
-  "integration-status",
-];
+/** Groups whose only row on mobile is a device preference the registry does not list. */
+const MOBILE_SUPPLEMENTAL_TARGETS = ["response-metrics", "legacy-context-window-indicator"];
 
 export interface MobileBetterT3Control {
   readonly id: BetterT3FeatureId;
@@ -389,98 +380,12 @@ export interface MobileBetterT3Control {
   readonly value: boolean | null;
 }
 
-export interface MobileBetterT3Section {
-  readonly id: BetterT3FeatureSection;
-  readonly controls: ReadonlyArray<MobileBetterT3Control>;
+export interface MobileBetterT3Category {
+  readonly id: BetterT3SettingsCategoryId;
   readonly groups: ReadonlyArray<{
     readonly definition: BetterT3SettingsSubgroup;
     readonly controls: ReadonlyArray<MobileBetterT3Control>;
   }>;
-}
-
-export function mobileBetterT3SubgroupSummary(input: {
-  readonly group: BetterT3SettingsSubgroup;
-  readonly controls: ReadonlyArray<MobileBetterT3Control>;
-  readonly config: Pick<ServerConfig, "settings" | "providers"> | null;
-  readonly outputLanguage?: "native" | "english";
-  readonly message: InterfaceTranslator["message"];
-}): string | undefined {
-  const first = input.controls[0];
-  if (first !== undefined && first.availability.state !== "available") {
-    return input.message(
-      (first.availability.reasonMessageId ??
-        `settings.betterT3.availability.${first.availability.state}`) as InterfaceMessageKey,
-    );
-  }
-  const modelSummary = (
-    selection: ModelSelection | null | undefined,
-    purpose: ModelSelectionPurpose = "text-generation",
-  ) => {
-    if (input.config === null) return input.message("settings.betterT3.noEnvironment");
-    if (selection === null || selection === undefined) {
-      return input.message("settings.betterT3.value.automatic");
-    }
-    const provider = input.config.providers.find(
-      (candidate) => candidate.instanceId === selection.instanceId,
-    );
-    const model = provider?.models.find((candidate) => candidate.slug === selection.model);
-    const label = model?.name ?? selection.model;
-    return provider?.enabled &&
-      provider.installed &&
-      provider.auth.status !== "unauthenticated" &&
-      provider.availability !== "unavailable" &&
-      model !== undefined &&
-      supportsModelSelectionPurpose(model, purpose)
-      ? label
-      : `${label} · ${input.message("settings.betterT3.availability.unavailable")}`;
-  };
-  const enabledLabel = input.message(
-    first?.value === true ? "settings.betterT3.summary.on" : "settings.betterT3.summary.off",
-  );
-  const settings = input.config?.settings;
-  switch (input.group.id) {
-    case "fetch":
-      return `${enabledLabel} · ${modelSummary(settings?.fetchModelSelection)}`;
-    case "parallel-plan":
-      return `${enabledLabel} · ${modelSummary(settings?.parallelPlanReviewModelSelection)}`;
-    case "context-compaction":
-      return [
-        input.message(
-          first?.value === true
-            ? "settings.betterT3.preview.examples.context.background"
-            : "settings.betterT3.preview.examples.context.native",
-        ),
-        ...(first?.value === true
-          ? [modelSummary(settings?.contextCompactionModelSelection, "context-compaction")]
-          : []),
-      ].join(" · ");
-    case "auto-reasoning":
-      return modelSummary(settings?.autoReasoningModelSelection, "decision");
-    case "voice-translation":
-      return settings === undefined
-        ? input.message("settings.betterT3.noEnvironment")
-        : [
-            input.message(
-              input.outputLanguage === "english"
-                ? "settings.betterT3.value.english"
-                : "settings.betterT3.value.nativeLanguage",
-            ),
-            modelSummary(settings.voiceTranslationModelSelection),
-          ].join(" · ");
-    case "indexing-models":
-      return settings === undefined
-        ? input.message("settings.betterT3.noEnvironment")
-        : [
-            settings.projectIndexingDefaultModelSelection === null
-              ? input.message("projectIndexing.noDefaultModel")
-              : modelSummary(settings.projectIndexingDefaultModelSelection),
-            settings.projectIndexingDecisionModelSelection === null
-              ? input.message("settings.betterT3.value.projectIndexDecisionOff")
-              : modelSummary(settings.projectIndexingDecisionModelSelection, "decision"),
-          ].join(" · ");
-    default:
-      return undefined;
-  }
 }
 
 export function mobileBetterT3SurfaceForWidth(
@@ -529,7 +434,7 @@ function dependencyAvailability(
   return null;
 }
 
-export function buildMobileBetterT3Sections(input: {
+export function buildMobileBetterT3Categories(input: {
   readonly registry: ReadonlyArray<BetterT3FeatureDescriptor>;
   readonly surface: Extract<BetterT3Surface, "phone" | "tablet">;
   readonly deviceAvailable: boolean;
@@ -537,7 +442,7 @@ export function buildMobileBetterT3Sections(input: {
   readonly deviceSettings: BetterT3SettingsV1;
   readonly environmentSettings: BetterT3SettingsV1;
   readonly capabilities: ExecutionEnvironmentCapabilities;
-}): ReadonlyArray<MobileBetterT3Section> {
+}): ReadonlyArray<MobileBetterT3Category> {
   const controlsById = new Map<BetterT3FeatureId, MobileBetterT3Control>();
 
   for (const descriptor of input.registry) {
@@ -575,27 +480,22 @@ export function buildMobileBetterT3Sections(input: {
     });
   }
 
-  return MOBILE_SECTION_ORDER.flatMap((sectionId): ReadonlyArray<MobileBetterT3Section> => {
-    const controls = [...controlsById.values()].filter(
-      (control) => control.descriptor.section === sectionId,
-    );
-    const supplementalTarget =
-      sectionId === "chat-layout"
-        ? "response-metrics"
-        : sectionId === "composer"
-          ? "legacy-context-window-indicator"
-          : null;
-    const groups = BETTER_T3_SETTINGS_SUBGROUPS.flatMap((definition) => {
+  const controls = [...controlsById.values()];
+  return BETTER_T3_SETTINGS_CATEGORY_IDS.flatMap((id): ReadonlyArray<MobileBetterT3Category> => {
+    const groups = BETTER_T3_SETTINGS_SUBGROUPS.filter(
+      (definition) => definition.categoryId === id,
+    ).flatMap((definition) => {
       const groupControls = controls.filter((control) =>
         definition.featureIds.includes(control.id),
       );
-      const hasSupplementalControl =
-        supplementalTarget !== null && definition.targetIds.includes(supplementalTarget);
+      const hasSupplementalControl = MOBILE_SUPPLEMENTAL_TARGETS.some((target) =>
+        definition.targetIds.includes(target),
+      );
       return groupControls.length === 0 && !hasSupplementalControl
         ? []
         : [{ definition, controls: groupControls }];
     });
-    return groups.length === 0 ? [] : [{ id: sectionId, controls, groups }];
+    return groups.length === 0 ? [] : [{ id, groups }];
   });
 }
 

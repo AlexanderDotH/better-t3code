@@ -1098,6 +1098,7 @@ export function PullRequestsPage() {
     if (rightPanelState.isOpen) {
       useRightPanelStore.getState().close(rightPanelRef);
       updateSearch(clearedSelection);
+      if (rightPanelWindowExpansion.expanded) void rightPanelWindowExpansion.toggle();
       return;
     }
     if (selectedPullRequestSurface === null) return;
@@ -1107,7 +1108,7 @@ export function PullRequestsPage() {
   const toggleWindowExpansion = () => {
     if (rightPanelWindowExpansion.expanded) {
       if (rightPanelState.isOpen) toggleRightPanel();
-      void rightPanelWindowExpansion.toggle();
+      else void rightPanelWindowExpansion.toggle();
       return;
     }
     if (rightPanelState.isOpen) {

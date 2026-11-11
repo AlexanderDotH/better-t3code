@@ -81,7 +81,7 @@ const perMillion = (value: string | undefined): number | undefined => {
   return Number.isFinite(number) && number >= 0 ? number * 1_000_000 : undefined;
 };
 
-const supportsTools = (raw: OpenRouterCatalogEntry): boolean =>
+const supportsTools = (raw: Pick<OpenRouterCatalogEntry, "supported_parameters">): boolean =>
   raw.supported_parameters.some((parameter) => parameter.trim().toLowerCase() === "tools");
 
 const normalizeModel = (raw: OpenRouterCatalogEntry): OpenRouterCatalogModel | undefined => {
@@ -172,6 +172,61 @@ export const decodeOpenRouterModelCatalog = Effect.fn("decodeOpenRouterModelCata
   }
   return Array.from(unique.values());
 });
+
+const OpenRouterZdrEndpoints = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      model_id: Schema.String,
+      supported_parameters: Schema.Array(Schema.String),
+    }),
+  ),
+});
+const decodeZdrEndpoints = Schema.decodeUnknownEffect(OpenRouterZdrEndpoints);
+
+/** Lowercased model ids with a zero data retention endpoint, and whether one supports tools. */
+export const decodeOpenRouterZdrModels = Effect.fn("decodeOpenRouterZdrModels")(function* (
+  input: unknown,
+) {
+  const { data } = yield* decodeZdrEndpoints(input, { onExcessProperty: "ignore" }).pipe(
+    Effect.mapError(
+      () =>
+        new OpenRouterModelCatalogError({
+          message: "OpenRouter zero data retention list schema is invalid",
+        }),
+    ),
+  );
+  const toolsByModel = new Map<string, boolean>();
+  for (const endpoint of data) {
+    const key = endpoint.model_id.toLowerCase();
+    toolsByModel.set(key, toolsByModel.get(key) === true || supportsTools(endpoint));
+  }
+  return toolsByModel;
+});
+
+export const restrictOpenRouterCatalogToZdr = (
+  catalog: ReadonlyArray<OpenRouterCatalogModel>,
+  zdrModels: ReadonlyMap<string, boolean>,
+): ReadonlyArray<OpenRouterCatalogModel> =>
+  catalog.map((model) => {
+    if (model.incompatibilityReason !== undefined) return model;
+    const hasToolEndpoint = zdrModels.get(model.id.toLowerCase());
+    if (hasToolEndpoint === undefined) {
+      return {
+        ...model,
+        selectionSupport: { agent: false, textGeneration: false, decision: "none" as const },
+        incompatibilityReason:
+          "OpenRouter has no zero data retention endpoint for this model, and this provider requires one.",
+      };
+    }
+    return hasToolEndpoint
+      ? model
+      : {
+          ...model,
+          selectionSupport: { ...model.selectionSupport, agent: false },
+          incompatibilityReason:
+            "This model's zero data retention endpoints do not support the tool calling required by T3 Code.",
+        };
+  });
 
 export const mergeOpenRouterCustomModels = (
   catalog: ReadonlyArray<OpenRouterCatalogModel>,

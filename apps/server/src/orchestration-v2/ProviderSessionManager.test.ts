@@ -335,6 +335,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   options: {
     readonly failEventStream?: boolean;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
+    readonly listsMcpToolsOnce?: boolean;
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
@@ -373,6 +374,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
+    ...(options.listsMcpToolsOnce === true ? { listsMcpToolsOnce: true } : {}),
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
@@ -481,6 +483,7 @@ function layerTest(input: {
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
+  readonly listsMcpToolsOnce?: boolean;
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
@@ -525,6 +528,9 @@ function layerTest(input: {
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+      ...(input.listsMcpToolsOnce === undefined
+        ? {}
+        : { listsMcpToolsOnce: input.listsMcpToolsOnce }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
       ...(input.hasPendingBackgroundWork === undefined
@@ -1815,6 +1821,10 @@ it.effect.each([
           "",
         );
         assert.isFalse((yield* registry.resolve(token))?.capabilities.has("deep-plan"));
+        assert.equal(
+          (yield* registry.resolve(token))?.capabilities.has("deep-plan-tools"),
+          scenario !== "unsupported",
+        );
         assert.isTrue((yield* registry.resolve(token))?.capabilities.has("workspace-write"));
 
         const planningRun = {
@@ -1895,6 +1905,7 @@ it.effect.each([
         );
         const finished = yield* registry.resolve(token);
         assert.isFalse(finished?.capabilities.has("deep-plan"));
+        assert.isTrue(finished?.capabilities.has("deep-plan-tools"));
         assert.isUndefined(finished?.deepPlan);
         assert.isTrue(finished?.capabilities.has("workspace-write"));
         assert.isFalse(finished?.projectMemoryEnabled);
@@ -1907,6 +1918,7 @@ it.effect.each([
             state,
             idleTimeoutMs: 60_000,
             mcpConfigs,
+            listsMcpToolsOnce: true,
             ...(scenario === "unsupported"
               ? {
                   capabilities: {
@@ -1922,13 +1934,25 @@ it.effect.each([
 );
 
 it.effect.each([
-  { relationshipToParent: null, subagent: false, coordination: true },
-  { relationshipToParent: "subagent", subagent: true, coordination: false },
-  { relationshipToParent: null, fetchWorker: true, subagent: false, coordination: false },
-  { relationshipToParent: "subagent", reply: true, subagent: true, coordination: true },
+  { relationshipToParent: null, subagent: false, coordination: true, deepPlanTools: true },
+  { relationshipToParent: "subagent", subagent: true, coordination: false, deepPlanTools: false },
+  {
+    relationshipToParent: null,
+    fetchWorker: true,
+    subagent: false,
+    coordination: false,
+    deepPlanTools: false,
+  },
+  {
+    relationshipToParent: "subagent",
+    reply: true,
+    subagent: true,
+    coordination: true,
+    deepPlanTools: false,
+  },
 ] as const)(
   "ProviderSessionManagerV2 marks MCP credentials of delegated children ($relationshipToParent)",
-  ({ relationshipToParent, subagent, coordination, ...kind }) =>
+  ({ relationshipToParent, subagent, coordination, deepPlanTools, ...kind }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const mcpConfigs = yield* Ref.make<
@@ -1983,10 +2007,15 @@ it.effect.each([
         const resolved = yield* registry.resolve(token!);
         assert.equal(resolved?.thread.subagent, subagent);
         assert.equal(resolved?.capabilities.has("coordination"), coordination);
+        assert.equal(resolved?.capabilities.has("deep-plan-tools"), deepPlanTools);
         yield* manager.close(providerSessionId);
       });
 
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs, listsMcpToolsOnce: true }),
+        ),
+      );
     }),
 );
 

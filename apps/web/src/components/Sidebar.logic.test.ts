@@ -36,6 +36,7 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   previewSidebarFolderThreads,
+  resolveSidebarFolderSettled,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -1684,6 +1685,52 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("resolveSidebarFolderSettled", () => {
+  const resolve = (input: {
+    readonly visibleCount: number | null;
+    readonly unloadedCount?: number;
+    readonly routeThread?: string;
+    readonly threads?: readonly string[];
+  }) =>
+    resolveSidebarFolderSettled({
+      threads: input.threads ?? ["a", "b", "c"],
+      unloadedCount: input.unloadedCount ?? 0,
+      visibleCount: input.visibleCount,
+      isRouteThread: (thread) => thread === input.routeThread,
+    });
+
+  it("keeps settled threads folded away until the project's toggle opens them", () => {
+    expect(resolve({ visibleCount: null })).toEqual({
+      threads: [],
+      hiddenCount: 0,
+      canToggle: true,
+      open: false,
+    });
+  });
+
+  it("still shows the open thread of a folded project", () => {
+    expect(resolve({ visibleCount: null, routeThread: "c" }).threads).toEqual(["c"]);
+  });
+
+  it("offers the toggle for a project whose settled threads are all unloaded", () => {
+    expect(resolve({ visibleCount: null, threads: [], unloadedCount: 4 }).canToggle).toBe(true);
+    expect(resolve({ visibleCount: null, threads: [] }).canToggle).toBe(false);
+  });
+
+  it("lists loaded threads up to the page and counts the rest, unloaded included", () => {
+    expect(resolve({ visibleCount: 2, unloadedCount: 5 })).toEqual({
+      threads: ["a", "b"],
+      hiddenCount: 6,
+      canToggle: true,
+      open: true,
+    });
+    expect(resolve({ visibleCount: 2, routeThread: "c" })).toMatchObject({
+      threads: ["a", "b", "c"],
+      hiddenCount: 0,
+    });
   });
 });
 

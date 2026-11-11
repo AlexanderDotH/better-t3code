@@ -31,13 +31,15 @@ import {
   type InterfaceTranslator,
 } from "@t3tools/shared/interfaceLanguage";
 import {
+  BETTER_T3_SETTINGS_CATEGORY_IDS,
   BETTER_T3_SETTINGS_SUBGROUPS,
   getBetterT3SettingsSubgroups,
+  type BetterT3SettingsCategoryId,
   type BetterT3SettingsSubgroupId,
 } from "@t3tools/client-runtime/better-t3-settings-layout";
 import { Link } from "@tanstack/react-router";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { ChatVisualModeSyncNotice } from "./ChatVisualModeSyncNotice";
 import { isElectron } from "../../env";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
@@ -63,7 +65,6 @@ import {
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
-  SettingsSection,
   SettingsSearchTarget,
 } from "./settingsLayout";
 import {
@@ -73,19 +74,8 @@ import {
   resolveBetterT3DescriptorMessageKeys,
   resolveSelectedBetterT3EnvironmentId,
 } from "./BetterT3SettingsPanel.logic";
-import {
-  buildBetterT3SubgroupSummaries,
-  useBetterT3PreparedControls,
-} from "./BetterT3SettingsPanel.controls";
-import {
-  BetterT3SettingsExpansionProvider,
-  BetterT3SettingsSubgroup,
-  useBetterT3SettingsExpansion,
-} from "./BetterT3SettingsSubgroup";
-import {
-  BetterT3SettingsSearchItemsProvider,
-  buildBetterT3FeatureSearchItems,
-} from "./BetterT3SettingsSearch";
+import { useBetterT3PreparedControls } from "./BetterT3SettingsPanel.controls";
+import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
 import {
   BETTER_T3_VISUAL_FEATURE_IDS,
   BetterT3FeatureChoice,
@@ -99,7 +89,6 @@ import { UsagePacingSettings } from "./UsagePacingSettings";
 import { VoiceInputSettings } from "./VoiceInputSettings";
 import { ProjectIndexingGlobalSettings } from "../project-indexing/ProjectIndexingGlobalSettings";
 import { searchableSetting } from "./settingsSearch";
-import { BetterT3SettingsNavigation } from "./BetterT3SettingsNavigation";
 import { ChatWidthPreview } from "./ChatWidthPreview";
 import { ContextWindowMeterChoice } from "./ContextWindowMeterPreview";
 type Translate = InterfaceTranslator["message"];
@@ -107,6 +96,10 @@ const BETTER_T3_SETTINGS_GROUPS = [
   ...new Set(BETTER_T3_SETTINGS_SUBGROUPS.map((group) => group.categoryId)),
 ].map((id) => ({ id, labelMessageId: `settings.betterT3.tab.${id}` as const }));
 export interface BetterT3SettingsPanelViewProps {
+  /** Shows one category as a page; every category renders when this is left out. */
+  readonly activeCategory?: BetterT3SettingsCategoryId;
+  /** Beside each category's title, for choosing the environment its settings apply to. */
+  readonly environmentControl?: ReactNode;
   readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
   readonly translate: Translate;
   readonly controls: Partial<Record<BetterT3FeatureId, ReactNode>>;
@@ -122,7 +115,6 @@ export interface BetterT3SettingsPanelViewProps {
   readonly visualSettings?: ReactNode;
   readonly featureVisuals?: Partial<Record<BetterT3FeatureId, ReactNode>>;
   readonly featureChoices?: Partial<Record<BetterT3FeatureId, ReactNode>>;
-  readonly subgroupSummaries?: Partial<Record<BetterT3SettingsSubgroupId, string>>;
   readonly consumedFeatureIds?: ReadonlyArray<BetterT3FeatureId>;
 }
 const availabilityStatus = (
@@ -407,18 +399,6 @@ function visibleBetterT3Features(props: BetterT3SettingsPanelViewProps) {
     );
   });
 }
-function searchableBetterT3Features(props: BetterT3SettingsPanelViewProps) {
-  return props.features.filter((feature) => {
-    const id = feature.descriptor.id;
-    if (id === "agent.reasoningWorkingOverlay" || id === "agent.reasoningInMessage") return false;
-    if (props.voiceSettings && id === "voice.credentials") return false;
-    return !(
-      props.projectIndexingSettings &&
-      id.startsWith("knowledge.projectIndexing") &&
-      id !== "knowledge.projectIndexingDecisionModel"
-    );
-  });
-}
 function renderBetterT3FeatureRow(
   feature: BetterT3FeatureControlStateV1,
   props: Pick<
@@ -428,13 +408,22 @@ function renderBetterT3FeatureRow(
 ) {
   const messageIds = resolveBetterT3DescriptorMessageKeys(feature.descriptor);
   const featureChoice = props.featureChoices?.[feature.descriptor.id];
+  // Web offers three sidebar styles under this feature; mobile keeps its classic list switch.
+  const isSidebarStyle =
+    featureChoice !== undefined && feature.descriptor.id === "chat.classicSidebar";
   return (
     <SettingsRow
       key={feature.descriptor.id}
       id={feature.descriptor.id}
       data-better-t3-feature={feature.descriptor.id}
-      title={props.translate(messageIds.labelMessageId)}
-      description={props.translate(messageIds.descriptionMessageId)}
+      title={props.translate(
+        isSidebarStyle ? "settings.betterT3.sidebarStyle.title" : messageIds.labelMessageId,
+      )}
+      description={props.translate(
+        isSidebarStyle
+          ? "settings.betterT3.sidebarStyle.description"
+          : messageIds.descriptionMessageId,
+      )}
       status={availabilityStatus(feature, props.translate)}
       control={
         featureChoice ? null : (
@@ -452,7 +441,6 @@ function renderBetterT3FeatureRow(
   );
 }
 function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
-  const contentRef = useRef<HTMLDivElement>(null);
   const visibleFeatures = visibleBetterT3Features(props);
   const additionalContent: Partial<Record<BetterT3SettingsSubgroupId, ReactNode>> = {
     language: props.languageControl ? (
@@ -474,49 +462,35 @@ function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
       (category.id === "voice" && props.voiceSettings) ||
       (category.id === "knowledge" && props.projectIndexingSettings),
   );
+  const shownGroups = props.activeCategory
+    ? groups.filter((group) => group.id === props.activeCategory)
+    : groups;
+  if (shownGroups.length === 0) {
+    return (
+      <p className="px-1 text-sm text-muted-foreground">
+        {props.translate("settings.betterT3.noEnvironment")}
+      </p>
+    );
+  }
   return (
-    <div
-      ref={contentRef}
-      className="min-w-0 space-y-8 [--better-t3-scroll-offset:calc(var(--better-t3-navigation-height,0px)+1rem)] [&_[data-settings-scroll-target]]:scroll-mt-(--better-t3-scroll-offset) [&_[tabindex='-1']]:scroll-mt-(--better-t3-scroll-offset)"
-    >
-      <BetterT3SettingsNavigation
-        contentRef={contentRef}
-        groups={groups}
-        translate={props.translate}
-      />
-      {groups.map((group) => {
+    <div className="min-w-0 space-y-10">
+      {shownGroups.map((group) => {
         const subgroups = getBetterT3SettingsSubgroups(group.id).flatMap((subgroup) => {
           const features = visibleFeatures.filter((feature) =>
             subgroup.featureIds.includes(feature.descriptor.id),
           );
           const additional = additionalContent[subgroup.id];
           if (features.length === 0 && !additional) return [];
-          const fallbackSummary = features
-            .map(
-              (feature) =>
-                availabilityStatus(feature, props.translate) ??
-                (typeof feature.value === "boolean"
-                  ? props.translate(
-                      feature.value
-                        ? "settings.betterT3.summary.on"
-                        : "settings.betterT3.summary.off",
-                    )
-                  : null),
-            )
-            .filter(Boolean)
-            .join(" · ");
           return [
             <BetterT3SettingsSubgroup
               key={subgroup.id}
               groupId={subgroup.id}
               title={props.translate(subgroup.titleMessageId)}
               hideTitle={
-                !subgroup.collapsible &&
-                ((features.length === 1 && !additional) ||
-                  subgroup.id === "language" ||
-                  subgroup.id === "response-metrics")
+                (features.length === 1 && !additional) ||
+                subgroup.id === "language" ||
+                subgroup.id === "response-metrics"
               }
-              summary={props.subgroupSummaries?.[subgroup.id] ?? fallbackSummary}
             >
               {features.map((feature) => renderBetterT3FeatureRow(feature, props))}
               {additional}
@@ -535,24 +509,31 @@ function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
         return (
           <SettingsSearchTarget
             aria-labelledby={`better-t3-group-title-${group.id}`}
-            className="better-t3-settings-group space-y-4 border-t border-border/70 pt-6 outline-none last:min-h-[calc(100dvh-var(--workspace-topbar-height)-4rem)]"
+            className="space-y-6 outline-none"
             data-better-t3-group={group.id}
             id={`better-t3-group-${group.id}`}
             key={group.id}
             role="region"
           >
-            <h2
-              className="px-3 text-lg font-semibold tracking-tight text-foreground sm:px-4"
+            <div
+              className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-1"
               data-settings-scroll-target="start"
-              id={`better-t3-group-title-${group.id}`}
             >
-              {props.translate(group.labelMessageId)}
-            </h2>
-            {subgroups.length > 0 ? (
-              <SettingsSection title={props.translate(group.labelMessageId)} hideTitle>
-                {subgroups}
-              </SettingsSection>
-            ) : null}
+              <div className="min-w-0 flex-1 basis-64">
+                <h2
+                  className="text-xl font-semibold tracking-tight text-foreground"
+                  id={`better-t3-group-title-${group.id}`}
+                >
+                  {props.translate(group.labelMessageId)}
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                  {props.translate(`settings.betterT3.category.${group.id}.description`)}
+                </p>
+              </div>
+              {props.environmentControl}
+            </div>
+            {group.id === BETTER_T3_SETTINGS_CATEGORY_IDS[0] ? props.introduction : null}
+            {subgroups}
             {specialized}
           </SettingsSearchTarget>
         );
@@ -561,32 +542,13 @@ function BetterT3SettingsContentBody(props: BetterT3SettingsPanelViewProps) {
   );
 }
 export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
-  const expansion = useBetterT3SettingsExpansion();
-  const content = (
-    <BetterT3SettingsSearchItemsProvider
-      items={buildBetterT3FeatureSearchItems(searchableBetterT3Features(props), props.translate)}
-    >
-      <BetterT3SettingsContentBody {...props} />
-    </BetterT3SettingsSearchItemsProvider>
-  );
-  return expansion ? (
-    content
-  ) : (
-    <BetterT3SettingsExpansionProvider>{content}</BetterT3SettingsExpansionProvider>
-  );
+  return <BetterT3SettingsContentBody {...props} />;
 }
 function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
   return (
-    <BetterT3SettingsExpansionProvider>
-      <BetterT3SettingsSearchItemsProvider
-        items={buildBetterT3FeatureSearchItems(searchableBetterT3Features(props), props.translate)}
-      >
-        <SettingsPageContainer>
-          {props.introduction}
-          <BetterT3SettingsContentBody {...props} />
-        </SettingsPageContainer>
-      </BetterT3SettingsSearchItemsProvider>
-    </BetterT3SettingsExpansionProvider>
+    <SettingsPageContainer>
+      <BetterT3SettingsContentBody {...props} />
+    </SettingsPageContainer>
   );
 }
 type BetterT3Destination =
@@ -791,84 +753,81 @@ function initializationMessageId(
     ? "settings.betterT3.initialization.clean"
     : "settings.betterT3.initialization.existing";
 }
-function BetterT3SettingsIntroduction(props: {
+function BetterT3EnvironmentControl(props: {
   readonly environmentOptions: ReadonlyArray<BetterT3EnvironmentOption>;
   readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly deviceInitialization: BetterT3SettingsInitialization;
-  readonly environmentInitialization: BetterT3SettingsInitialization | null;
   readonly translate: Translate;
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
 }) {
+  // With one environment there is nothing to choose.
+  if (props.environmentOptions.length < 2) return null;
   const selectedEnvironment = props.environmentOptions.find(
     (option) => option.environmentId === props.selectedEnvironmentId,
   );
+  if (!selectedEnvironment) return null;
+  return (
+    <Select
+      value={selectedEnvironment.environmentId}
+      onValueChange={(value) => {
+        const option = props.environmentOptions.find(
+          (candidate) => candidate.environmentId === value,
+        );
+        if (option) props.onEnvironmentChange(option.environmentId);
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        className="w-full max-w-60 sm:w-auto"
+        aria-label={props.translate("settings.betterT3.selectEnvironment")}
+      >
+        <SelectValue>{selectedEnvironment.label}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end">
+        {props.environmentOptions.map((option) => (
+          <SelectItem key={option.environmentId} value={option.environmentId}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+function BetterT3SettingsIntroduction(props: {
+  readonly deviceInitialization: BetterT3SettingsInitialization;
+  readonly environmentInitialization: BetterT3SettingsInitialization | null;
+  readonly translate: Translate;
+}) {
   return (
     <div
       data-better-t3-introduction
-      className="better-t3-settings-introduction overflow-hidden rounded-2xl border border-border/60 bg-card/45"
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border/60 bg-card/40 px-4 py-3"
     >
-      <div className="better-t3-settings-introduction-header space-y-1.5 p-4 sm:p-5">
-        <h1 className="text-xl font-semibold tracking-tight">
-          {props.translate("settings.betterT3.title")}
-        </h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          {props.translate("settings.betterT3.description")}
-        </p>
-      </div>
-      <div className="grid gap-3 border-t border-border/50 bg-muted/15 p-4 sm:grid-cols-[minmax(12rem,1fr)_auto] sm:items-center sm:px-5">
-        {selectedEnvironment ? (
-          <Select
-            value={selectedEnvironment.environmentId}
-            onValueChange={(value) => {
-              const option = props.environmentOptions.find(
-                (candidate) => candidate.environmentId === value,
-              );
-              if (option) props.onEnvironmentChange(option.environmentId);
-            }}
-          >
-            <SelectTrigger
-              size="sm"
-              className="w-full max-w-72"
-              aria-label={props.translate("settings.betterT3.selectEnvironment")}
-            >
-              <SelectValue>{selectedEnvironment.label}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="start">
-              {props.environmentOptions.map((option) => (
-                <SelectItem key={option.environmentId} value={option.environmentId}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {props.translate("settings.betterT3.noEnvironment")}
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2 text-2xs text-muted-foreground sm:justify-end">
+      <p className="min-w-0 flex-1 basis-64 text-sm leading-relaxed text-muted-foreground">
+        {props.translate("settings.betterT3.description")}
+      </p>
+      <div className="flex flex-wrap gap-2 text-2xs text-muted-foreground">
+        <span
+          data-better-t3-scope="device"
+          className="rounded-full border border-border/60 bg-background/65 px-2.5 py-1"
+        >
+          {props.translate("settings.betterT3.deviceScope")}:{" "}
+          {props.translate(initializationMessageId(props.deviceInitialization))}
+        </span>
+        {props.environmentInitialization ? (
           <span
-            data-better-t3-scope="device"
+            data-better-t3-scope="environment"
             className="rounded-full border border-border/60 bg-background/65 px-2.5 py-1"
           >
-            {props.translate("settings.betterT3.deviceScope")}:{" "}
-            {props.translate(initializationMessageId(props.deviceInitialization))}
+            {props.translate("settings.betterT3.environmentScope")}:{" "}
+            {props.translate(initializationMessageId(props.environmentInitialization))}
           </span>
-          {props.environmentInitialization ? (
-            <span
-              data-better-t3-scope="environment"
-              className="rounded-full border border-border/60 bg-background/65 px-2.5 py-1"
-            >
-              {props.translate("settings.betterT3.environmentScope")}:{" "}
-              {props.translate(initializationMessageId(props.environmentInitialization))}
-            </span>
-          ) : null}
-        </div>
+        ) : null}
       </div>
     </div>
   );
 }
 function SelectedEnvironmentBetterT3SettingsPanel(props: {
+  readonly category: BetterT3SettingsCategoryId;
   readonly environment: EnvironmentPresentation;
   readonly environmentOptions: ReadonlyArray<BetterT3EnvironmentOption>;
   readonly deviceInitialization: BetterT3SettingsInitialization;
@@ -922,6 +881,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     chatVisualMode,
     contextWindowSelector: settings.contextWindowSelector,
     sidebarPosition: settings.sidebarPosition,
+    boringSidebar: settings.boringSidebarEnabled,
     showReasoning: settings.showReasoning,
     reasoningWorkingOverlay: resolveBetterT3FeatureFlag(
       settings.betterT3Device,
@@ -952,6 +912,12 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     }
     if (featureId === "chat.sidebarPosition") {
       if (value === "left" || value === "right") updateSettings({ sidebarPosition: value });
+      return;
+    }
+    if (featureId === "chat.classicSidebar") {
+      onSwitchChange(featureId, value === true);
+      // The same setting as the Boring sidebar switch in Labs.
+      updateSettings({ boringSidebarEnabled: value === "boring" });
       return;
     }
     if (featureId === "chat.presentation") {
@@ -993,6 +959,13 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
           break;
         case "chat.sidebarPosition":
           value = previewModel.chat.sidebarPosition;
+          break;
+        case "chat.classicSidebar":
+          value = previewModel.chat.classicSidebar
+            ? true
+            : previewModel.chat.boringSidebar
+              ? "boring"
+              : false;
           break;
         case "chat.presentation":
           value = previewModel.chat.presentation;
@@ -1120,18 +1093,11 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       ? renderBetterT3FeatureRow(feature, { translate, controls, featureChoices, onSwitchChange })
       : null;
   };
-  const subgroupSummaries = buildBetterT3SubgroupSummaries({
-    settings,
-    providers: serverProviders,
-    features,
-    translate,
-  });
   return (
     <BetterT3SettingsPanelView
       features={features}
       translate={translate}
       controls={controls}
-      subgroupSummaries={subgroupSummaries}
       consumedFeatureIds={[
         "voice.assemblyAi",
         "voice.outputLanguage",
@@ -1208,20 +1174,30 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         />
       }
       onSwitchChange={onSwitchChange}
-      introduction={
-        <BetterT3SettingsIntroduction
+      activeCategory={props.category}
+      environmentControl={
+        <BetterT3EnvironmentControl
           environmentOptions={props.environmentOptions}
           selectedEnvironmentId={props.environment.environmentId}
+          translate={translate}
+          onEnvironmentChange={props.onEnvironmentChange}
+        />
+      }
+      introduction={
+        <BetterT3SettingsIntroduction
           deviceInitialization={props.deviceInitialization}
           environmentInitialization={settings.betterT3Environment.initialization}
           translate={translate}
-          onEnvironmentChange={props.onEnvironmentChange}
         />
       }
     />
   );
 }
-export function BetterT3SettingsPanel() {
+export function BetterT3SettingsPanel({
+  category,
+}: {
+  readonly category: BetterT3SettingsCategoryId;
+}) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const deviceInitialization = useClientSettings(
@@ -1245,6 +1221,7 @@ export function BetterT3SettingsPanel() {
   if (!selectedEnvironment) {
     return (
       <BetterT3SettingsPanelView
+        activeCategory={category}
         features={[]}
         controls={{}}
         onSwitchChange={() => undefined}
@@ -1258,12 +1235,9 @@ export function BetterT3SettingsPanel() {
         }
         introduction={
           <BetterT3SettingsIntroduction
-            environmentOptions={environmentOptions}
-            selectedEnvironmentId={null}
             deviceInitialization={deviceInitialization}
             environmentInitialization={null}
             translate={translator.message}
-            onEnvironmentChange={setRequestedEnvironmentId}
           />
         }
       />
@@ -1271,6 +1245,7 @@ export function BetterT3SettingsPanel() {
   }
   return (
     <SelectedEnvironmentBetterT3SettingsPanel
+      category={category}
       environment={selectedEnvironment}
       environmentOptions={environmentOptions}
       deviceInitialization={deviceInitialization}

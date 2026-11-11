@@ -244,6 +244,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   showPlanImplementationActions?: boolean;
   planImplementationSuggestion?: PlanImplementationSuggestion | null;
   planParallelismReviewStatus?: PlanParallelismReviewStatus;
+  planTone?: "plan" | "deep-plan";
   onImplementPlan?: (strategy: PlanImplementationStrategy) => void;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -276,6 +277,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       showPlanImplementationActions={props.showPlanImplementationActions ?? false}
       planImplementationSuggestion={props.planImplementationSuggestion ?? null}
       planParallelismReviewStatus={props.planParallelismReviewStatus ?? "idle"}
+      planTone={props.planTone ?? "plan"}
       {...(props.onImplementPlan ? { onImplementPlan: props.onImplementPlan } : {})}
       promptHasText={props.promptHasText}
       isSendBusy={props.isSendBusy}

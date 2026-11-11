@@ -327,6 +327,8 @@ describe("V2 environment commands", () => {
 
         expect(commands.at(-1)).toMatchObject({
           type: "message.dispatch",
+          runtimeMode: "full-access",
+          interactionMode: "default",
           deepPlanRunId: "deep-plan",
           idleGuard: { latestRunId: "previous", latestUserMessageId: null },
           replyTo: { messageId: "quoted", role: "assistant", text: "Reference" },

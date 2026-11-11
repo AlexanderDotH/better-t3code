@@ -60,6 +60,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
       composerPlanBubble: true,
       expandedComposerControls: true,
       classicSidebar: true,
+      boringSidebar: false,
       draftIndicators: true,
       presentation: "classic",
       contextWindowSelector: "native",

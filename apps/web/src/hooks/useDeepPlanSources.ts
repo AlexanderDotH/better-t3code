@@ -91,10 +91,12 @@ export function useDeepPlanSources(input: {
   useEffect(() => {
     if (!input.enabled || !currentEnvironmentId || !currentProjectId) return;
     const controller = new AbortController();
+    // `targets` is a new array every render; depending on it reloads the catalog forever.
+    const [, , requestTargets] = JSON.parse(requestKey) as [string, number, typeof targets];
     const requested =
       requestAll > 0
-        ? targets.filter((target) => target.connected && target.supported)
-        : targets.filter(
+        ? requestTargets.filter((target) => target.connected && target.supported)
+        : requestTargets.filter(
             (target) =>
               target.environmentId === currentEnvironmentId &&
               target.projectId === currentProjectId,
@@ -146,15 +148,7 @@ export function useDeepPlanSources(input: {
       });
     });
     return () => controller.abort();
-  }, [
-    input.enabled,
-    currentEnvironmentId,
-    currentProjectId,
-    requestAll,
-    targets,
-    scopeKey,
-    requestKey,
-  ]);
+  }, [input.enabled, currentEnvironmentId, currentProjectId, requestAll, scopeKey, requestKey]);
 
   const onOpen = useStableCallback(() => setRequestAll((value) => value + 1));
   const options = [

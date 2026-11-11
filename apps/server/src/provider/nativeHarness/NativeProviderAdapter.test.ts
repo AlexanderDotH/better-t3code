@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -217,7 +218,7 @@ it.layer(layer)("NativeProviderAdapterV2", (it) => {
       assert.equal(released, 1);
     }),
   );
-  it.effect("streams tools and persists the transcript for a resumed V2 session", () =>
+  it.effect("keeps thread identity across initialization, resume and native replacement", () =>
     Effect.gen(function* () {
       const observed: Array<ReadonlyArray<string>> = [];
       const adapter = yield* makeAdapter(
@@ -241,6 +242,7 @@ it.layer(layer)("NativeProviderAdapterV2", (it) => {
               toolCalls: [],
             },
           ],
+          [{ type: "completed", historyItems: ["fresh"], toolCalls: [] }],
         ],
         observed,
       );
@@ -250,11 +252,32 @@ it.layer(layer)("NativeProviderAdapterV2", (it) => {
         modelSelection,
         runtimePolicy,
       });
+      const now = yield* DateTime.now;
+      const preparedThread = {
+        id: ProviderThreadId.make("prepared-native-thread"),
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "not_loaded" as const,
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
         runtimePolicy,
+        existingProviderThread: preparedThread,
       });
+      assert.equal(providerThread.id, preparedThread.id);
+      assert.isNotNull(providerThread.nativeThreadRef);
       const firstEvents = yield* runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
@@ -292,6 +315,23 @@ it.layer(layer)("NativeProviderAdapterV2", (it) => {
         "answer",
         "question-2",
       ]);
+      const replacement = yield* resumed.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        existingProviderThread: restored,
+        forceNewNativeThread: true,
+      });
+      assert.equal(replacement.id, preparedThread.id);
+      assert.notEqual(replacement.nativeThreadRef?.nativeId, restored.nativeThreadRef?.nativeId);
+      const replacementEvents = yield* resumed.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* resumed.startTurn(yield* turnInput(replacement, 3));
+      yield* Fiber.join(replacementEvents);
+      assert.deepEqual(observed[3], ["question-3"]);
     }),
   );
   it.effect("reports a stream without a completion as a V2 failure", () =>
@@ -441,13 +481,15 @@ it.layer(layer)("NativeProviderAdapterV2", (it) => {
       });
       const terminal = yield* runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runDrain,
+        Stream.runLast,
         Effect.forkChild,
       );
       yield* runtime.startTurn(yield* turnInput(providerThread, 1));
-      yield* Fiber.join(terminal);
+      const last = yield* Fiber.join(terminal);
       assert.equal(acquired, 1);
       assert.equal(released, 1);
+      // The reason reaches the user instead of a generic wrapper around it.
+      assert.notInclude(JSON.stringify(last), "Provider turn failed");
     }),
   );
   it.effect("persists a rewind before a subsequent session resumes", () =>

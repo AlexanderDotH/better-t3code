@@ -21,7 +21,6 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow } from "./settingsLayout";
 import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
-import { BetterT3SettingsSearchItems } from "./BetterT3SettingsSearch";
 
 type ModelOption = { readonly id: string; readonly name: string };
 const isValidVoiceSettings = Schema.is(AssemblyAiVoiceSettings);
@@ -61,7 +60,6 @@ export function AssemblyAiVoiceSettingsForm({
   const modelOptions = models.some((model) => model.id === draft.cleanupModel)
     ? models
     : [{ id: draft.cleanupModel, name: draft.cleanupModel }, ...models];
-  const cleanupModeLabel = translate(`settings.voice.options.${draft.cleanupMode}`);
   const selectedCleanupModel = draft.cleanupModelSelection
     ? t3Models.optionsByInstance
         .get(draft.cleanupModelSelection.instanceId)
@@ -70,38 +68,16 @@ export function AssemblyAiVoiceSettingsForm({
   const selectedCleanupProvider = t3Models.instanceEntries.find(
     (entry) => entry.instanceId === draft.cleanupModelSelection?.instanceId,
   );
-  const cleanupModelLabel = draft.cleanupModelSelection
-    ? (selectedCleanupModel?.name ?? draft.cleanupModelSelection.model)
-    : (modelOptions.find((model) => model.id === draft.cleanupModel)?.name ?? draft.cleanupModel);
-  const cleanupModelStatus = draft.cleanupModelSelection
+  const cleanupModelUnavailable = draft.cleanupModelSelection
     ? !selectedCleanupModel ||
       selectedCleanupModel.isUnavailable ||
       !selectedCleanupProvider ||
       !isProviderInstancePickerReady(selectedCleanupProvider)
-      ? translate("settings.betterT3.value.unavailable")
-      : null
-    : modelsState === "loading"
-      ? translate("settings.voice.options.modelsLoading")
-      : !models.some((model) => model.id === draft.cleanupModel)
-        ? translate("settings.betterT3.value.unavailable")
-        : null;
-  const cleanupSummary = cleanupEnabled
-    ? [
-        cleanupModeLabel,
-        cleanupModelLabel,
-        ...(cleanupModelStatus ? [cleanupModelStatus] : []),
-      ].join(" · ")
-    : cleanupModeLabel;
+    : modelsState !== "loading" && !models.some((model) => model.id === draft.cleanupModel);
 
-  function group(groupId: BetterT3SettingsSubgroupId, children: ReactNode, summary?: string) {
+  function group(groupId: BetterT3SettingsSubgroupId, children: ReactNode) {
     return grouped ? (
-      <BetterT3SettingsSubgroup
-        groupId={groupId}
-        summary={summary}
-        revealOnError={groupId === "voice-cleanup" && message === "validation"}
-      >
-        {children}
-      </BetterT3SettingsSubgroup>
+      <BetterT3SettingsSubgroup groupId={groupId}>{children}</BetterT3SettingsSubgroup>
     ) : (
       children
     );
@@ -249,43 +225,12 @@ export function AssemblyAiVoiceSettingsForm({
 
   return (
     <form
+      className={grouped ? "space-y-6" : undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void save();
       }}
     >
-      {grouped ? (
-        <BetterT3SettingsSearchItems
-          items={[
-            {
-              id: "voice-cleanup-mode",
-              targetId: "voice-cleanup-mode",
-              to: "/settings/better-t3",
-              title: translate("settings.voice.options.cleanup"),
-              description: translate("settings.voice.options.cleanupHint"),
-              category: translate("settings.voice.title"),
-            },
-            {
-              id: "voice-cleanup-model",
-              targetId: "voice-cleanup-model",
-              to: "/settings/better-t3",
-              title: translate("settings.voice.options.cleanupModel"),
-              category: translate("settings.voice.title"),
-            },
-            ...(draft.cleanupMode === "custom"
-              ? [
-                  {
-                    id: "voice-cleanup-instructions",
-                    targetId: "voice-cleanup-instructions",
-                    to: "/settings/better-t3" as const,
-                    title: translate("settings.voice.options.instructions"),
-                    category: translate("settings.voice.title"),
-                  },
-                ]
-              : []),
-          ]}
-        />
-      ) : null}
       {group(
         "voice-recording",
         <>
@@ -419,6 +364,11 @@ export function AssemblyAiVoiceSettingsForm({
           <SettingsRow
             id={grouped ? "voice-cleanup-model" : undefined}
             title={translate("settings.voice.options.cleanupModel")}
+            status={
+              cleanupEnabled && cleanupModelUnavailable
+                ? translate("settings.betterT3.value.unavailable")
+                : undefined
+            }
             control={
               <ProviderModelPicker
                 environmentId={environmentId}
@@ -467,7 +417,6 @@ export function AssemblyAiVoiceSettingsForm({
             </SettingsRow>
           ) : null}
         </>,
-        cleanupSummary,
       )}
       <div className="space-y-3 px-3 py-4 sm:px-4">
         <p className="text-xs text-muted-foreground">

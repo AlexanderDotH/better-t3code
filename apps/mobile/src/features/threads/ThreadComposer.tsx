@@ -1190,7 +1190,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             onCancel={replies.cancelReply}
           />
         ) : null}
-        {composerMode === "deep-plan" && !draft.messageReply ? (
+        {composerMode === "deep-plan" &&
+        !draft.messageReply &&
+        (!deepPlan || deepPlan.phase === "completed") ? (
           <DeepPlanSources
             environmentId={props.environmentId}
             projectId={props.selectedThread.projectId}

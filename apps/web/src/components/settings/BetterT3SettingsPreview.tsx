@@ -247,6 +247,7 @@ function AgentReasoningPreview(props: {
 }
 
 function PreviewSidebar(props: {
+  readonly boring: boolean;
   readonly classic: boolean;
   readonly draftIndicators: boolean;
   readonly position: BetterT3ChatPreviewModel["sidebarPosition"];
@@ -259,18 +260,29 @@ function PreviewSidebar(props: {
       )}
     >
       <span className="mb-1.5 block h-1.5 w-2/3 rounded-full bg-foreground/15" />
-      <div className={cn("space-y-1", props.classic && "space-y-0.5")}>
+      <div className={cn("space-y-1", (props.classic || props.boring) && "space-y-0.5")}>
         {[0, 1, 2, 3].map((row) => (
           <span
             className={cn(
               "flex items-center gap-1 rounded px-1",
-              props.classic ? "h-3.5" : "h-4.5",
-              row === 0 ? "bg-primary/10" : "bg-transparent",
+              props.classic || props.boring ? "h-3.5" : "h-4.5",
+              // Folders: a project heading over its indented chats.
+              props.boring && row % 2 === 1 && "ms-2",
+              row === (props.boring ? 1 : 0) ? "bg-primary/10" : "bg-transparent",
             )}
             key={row}
           >
-            <span className="block size-1 rounded-full bg-foreground/15" />
-            <span className="block h-1 flex-1 rounded-full bg-foreground/10" />
+            {props.boring && row % 2 === 0 ? (
+              <span className="block size-1.5 rounded-xs bg-foreground/25" />
+            ) : (
+              <span className="block size-1 rounded-full bg-foreground/15" />
+            )}
+            <span
+              className={cn(
+                "block h-1 flex-1 rounded-full",
+                props.boring && row % 2 === 0 ? "bg-foreground/25" : "bg-foreground/10",
+              )}
+            />
             {props.draftIndicators && row === 1 ? (
               <span className="size-1 rounded-full bg-warning" />
             ) : null}
@@ -287,6 +299,7 @@ function SidebarLayoutPreview(props: {
 }) {
   const sidebar = (
     <PreviewSidebar
+      boring={props.model.boringSidebar}
       classic={props.model.classicSidebar}
       draftIndicators={props.model.draftIndicators}
       position={props.model.sidebarPosition}
@@ -522,6 +535,7 @@ export type BetterT3VisualChoiceValue =
   | SidebarPosition
   | ContextWindowSelector
   | ReasoningDisplayMode
+  | "boring"
   | "english";
 
 function visualChoiceValues(
@@ -530,6 +544,7 @@ function visualChoiceValues(
   if (featureId === "agent.reasoningVisibility") return ["none", "chat", "working", "message"];
   if (featureId === "voice.outputLanguage") return ["native", "english"];
   if (featureId === "chat.sidebarPosition") return ["left", "right"];
+  if (featureId === "chat.classicSidebar") return [false, true, "boring"];
   if (featureId === "chat.presentation") return CHAT_VISUAL_MODES;
   if (featureId === "chat.contextWindowSelector") return ["native", "better-t3"];
   return [false, true];
@@ -593,6 +608,15 @@ function visualChoiceLabel(
             : "settings.betterT3.reasoning.chat",
     );
   }
+  if (featureId === "chat.classicSidebar") {
+    return translate(
+      value === "boring"
+        ? "settings.betterT3.sidebarStyle.boring"
+        : value === true
+          ? "settings.betterT3.sidebarStyle.classic"
+          : "settings.betterT3.sidebarStyle.standard",
+    );
+  }
   if (featureId === "chat.sidebarPosition") {
     return translate(
       value === "right"
@@ -653,7 +677,10 @@ function visualChoiceModel(
         chat: { ...model.chat, sidebarPosition: value === "right" ? "right" : "left" },
       };
     case "chat.classicSidebar":
-      return { ...model, chat: { ...model.chat, classicSidebar: value === true } };
+      return {
+        ...model,
+        chat: { ...model.chat, classicSidebar: value === true, boringSidebar: value === "boring" },
+      };
     case "chat.cardMorphing":
       return {
         ...model,
@@ -700,7 +727,8 @@ export function BetterT3FeatureChoice(props: {
       aria-label={props.translate(`betterT3.${props.featureId}.label`)}
       className={cn(
         "grid grid-cols-1 gap-3 pb-2 pt-3 sm:grid-cols-2",
-        props.featureId === "chat.presentation" && "lg:grid-cols-3",
+        (props.featureId === "chat.presentation" || props.featureId === "chat.classicSidebar") &&
+          "lg:grid-cols-3",
         props.featureId === "agent.reasoningVisibility" && "xl:grid-cols-4",
       )}
       data-better-t3-feature-choice={props.featureId}
@@ -867,7 +895,7 @@ function BetterT3FeatureVisual(props: {
     case "chat.classicSidebar":
       return (
         <FeatureVisualFrame
-          animationKey={`classic-sidebar:${chat.classicSidebar}:${chat.sidebarPosition}`}
+          animationKey={`classic-sidebar:${chat.classicSidebar}:${chat.boringSidebar}:${chat.sidebarPosition}`}
           featureId={props.featureId}
         >
           <SidebarLayoutPreview model={chat} translate={props.translate} />

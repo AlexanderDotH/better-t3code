@@ -1,6 +1,8 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
+import { writeLocalStorageValue } from "./useLocalStorage";
 import { RESIZABLE_WIDTH_PROPERTY, useResizableWidth } from "./useResizableWidth";
 
 const STORAGE_KEY = "test:responsive-panel-width";
@@ -39,6 +41,9 @@ describe("useResizableWidth", () => {
       await screen.unmount();
       await using restored = await render(<Panel defaultWidth={200} />, { router: false });
       expect(restored.container.textContent).toBe("350");
+
+      await act(() => writeLocalStorageValue(STORAGE_KEY, 420, 420, Schema.Finite));
+      expect(restored.container.textContent).toBe("420");
     } finally {
       if (previous === null) localStorage.removeItem(STORAGE_KEY);
       else localStorage.setItem(STORAGE_KEY, previous);

@@ -62,6 +62,7 @@ Pin a thread from its menu to keep it above your active work.
 In the Classic Sidebar on web and desktop, use a thread's star to keep it at the top
 of its project, including when the project's list is shortened. Click the star again
 to unpin it. These favorites use the same saved pins as the standard sidebar.
+The boring sidebar has the same star on each thread. A starred thread moves to the top of its project's folder.
 When **Shift-click Show More/Less** is enabled, Shift-click an open project or folder
 name in the Classic Sidebar or the boring sidebar to switch between its preview and
 expanded thread list.
@@ -155,16 +156,23 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 ### Group threads by project (beta)
 
-Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
-threads in a folder for each project. Pinned projects come first. A project with no active
+Choose **Boring** under **Settings → Better T3 → Sidebar → Sidebar style**, or turn on
+**Settings → Labs → Boring sidebar (group by project)**, on web and desktop to put active threads
+in a folder for each project. Pinned projects come first. A project with no active or settled
 threads has no folder unless it is pinned or you pick it in the project filter. An archived
 project's folder comes last and shows only while it has active threads. Click a folder to open or
 close it. A closed folder shows how many threads it holds, and a dot when one of them
 needs you. An open folder lists as many threads as the Better T3 **Preview count**, plus any
 thread that is working, finished unread, or needs you; use **Show more** below it for the rest.
 Use the pen button on a folder, or right-click it, to start a thread in that project.
-Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-cannot drag threads, and the Working section is off. Each device keeps its own choice.
+Use **Show settled chats** at the end of an open folder to list that project's settled threads
+there, as in the Classic Sidebar. Pinned threads come first in their project's folder, and Snoozed
+stays below the folders. In this mode you cannot drag threads, and the Working section is off. Each device keeps its
+own choice.
+
+On mobile, choose **Classic** or **Boring** under **Settings → Better T3 → Sidebar → Sidebar style**.
+Both group chats by project and keep each project's settled chats behind **Show settled chats**.
+Boring also lists favorites first in their project and keeps snoozed chats below the groups.
 
 ## Settle finished work
 

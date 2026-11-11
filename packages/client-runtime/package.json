@@ -23,6 +23,10 @@
       "types": "./src/contextWindow.ts",
       "default": "./src/contextWindow.ts"
     },
+    "./thread-token-usage": {
+      "types": "./src/threadTokenUsage.ts",
+      "default": "./src/threadTokenUsage.ts"
+    },
     "./messageReplies": {
       "types": "./src/messageReplies.ts",
       "default": "./src/messageReplies.ts"

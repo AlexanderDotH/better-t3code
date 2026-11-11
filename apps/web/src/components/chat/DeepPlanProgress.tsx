@@ -42,15 +42,28 @@ function stepStatusMessage(status: DeepPlanStepStatus) {
   }
 }
 
+const COLLECTING_CARD_DELAY_MS = 600;
+
 export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
   const translator = useInterfaceTranslator();
   const translate = translator.message;
   const completed = selectDeepPlanProgress(run).summarizedSourceCount;
   const collecting = run.phase === "collecting";
+  const [collectingCardDue, setCollectingCardDue] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hold the preparation card back so a capture that finishes at once never flashes it.
+  useEffect(() => {
+    if (!collecting) return;
+    const timer = setTimeout(() => setCollectingCardDue(true), COLLECTING_CARD_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      setCollectingCardDue(false);
+    };
+  }, [collecting]);
   const missing = run.sourceCoverage.filter(
     (source) => source.status === "unavailable" || source.status === "failed",
   );
   const analysis = selectDeepPlanSourceAnalysis(run, translator);
+  if (collecting && !collectingCardDue) return null;
   if (
     run.phase !== "collecting" &&
     (run.sources.length === 0 ||

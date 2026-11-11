@@ -226,7 +226,12 @@ describe("routine command transport budget", () => {
       if ("projection" in receipt) {
         throw new Error("Expected a dispatch receipt");
       }
-      const { deliveryIntent: _deliveryIntent, ...formerCommand } = command;
+      const {
+        deliveryIntent: _deliveryIntent,
+        runtimeMode: _runtimeMode,
+        interactionMode: _interactionMode,
+        ...formerCommand
+      } = command;
 
       const historicalApplicationBytes =
         encodedBytes(projection) + encodedBytes(formerCommand) + encodedBytes(receipt);
@@ -267,6 +272,8 @@ describe("routine command transport budget", () => {
       expect(projectionResponseBytes.value).toBe(0);
       expect(command).toMatchObject({
         type: "message.dispatch",
+        runtimeMode: "full-access",
+        interactionMode: "default",
         deliveryIntent: "auto",
         dispatchMode: { type: "start_immediately" },
       });

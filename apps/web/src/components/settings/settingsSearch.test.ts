@@ -1,3 +1,4 @@
+import { resolveBetterT3SettingsCategoryForTarget } from "@t3tools/client-runtime/better-t3-settings-layout";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -147,6 +148,18 @@ describe("searchSettings", () => {
         scope: "environment-defaults",
       });
     }
+  });
+
+  it("sends every Better T3 result to the category page holding its setting", () => {
+    const unresolved = SETTINGS_SEARCH_ITEMS.filter(
+      (item) =>
+        item.to === "/settings/better-t3" &&
+        item.id !== "better-t3" &&
+        resolveBetterT3SettingsCategoryForTarget(
+          ("targetId" in item ? item.targetId : undefined) ?? item.id,
+        ) === null,
+    );
+    expect(unresolved.map((item) => item.id)).toEqual([]);
   });
 
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {

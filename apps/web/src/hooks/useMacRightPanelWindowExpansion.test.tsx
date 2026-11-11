@@ -16,6 +16,8 @@ let expansion: ReturnType<typeof useMacRightPanelWindowExpansion>;
 const setWindowExpansion = vi.fn(
   async ({ panelWidth }: { panelWidth: number | null }) => panelWidth !== null,
 );
+let storedItems: Map<string, string>;
+let zoomFactor: number;
 
 function Panel({ open }: { open: boolean }) {
   const result = useMacRightPanelWindowExpansion({
@@ -32,13 +34,17 @@ beforeEach(() => {
   mockSettings.sidebarPosition = "left";
   setWindowExpansion.mockReset();
   setWindowExpansion.mockImplementation(async ({ panelWidth }) => panelWidth !== null);
-  const items = new Map<string, string>();
+  storedItems = new Map<string, string>();
+  zoomFactor = 1;
   const browserWindow = Object.assign(new EventTarget(), {
-    desktopBridge: { setRightPanelWindowExpansion: setWindowExpansion },
+    desktopBridge: {
+      setRightPanelWindowExpansion: setWindowExpansion,
+      getWindowZoomFactor: () => zoomFactor,
+    },
     localStorage: {
-      getItem: (key: string) => items.get(key) ?? null,
-      setItem: (key: string, value: string) => items.set(key, value),
-      removeItem: (key: string) => items.delete(key),
+      getItem: (key: string) => storedItems.get(key) ?? null,
+      setItem: (key: string, value: string) => storedItems.set(key, value),
+      removeItem: (key: string) => storedItems.delete(key),
     },
   });
 
@@ -80,7 +86,7 @@ describe("macOS right-panel window expansion", () => {
     expect(setWindowExpansion).toHaveBeenLastCalledWith({ panelWidth: null, direction: "right" });
   });
 
-  it("does not change window size when the normal sidebar button opens or closes the panel", async () => {
+  it("does not change window size on its own when the panel opens or closes", async () => {
     await act(async () => {
       renderer = create(<Panel open={false} />);
     });
@@ -157,6 +163,56 @@ describe("macOS right-panel window expansion", () => {
       await expansion.toggle();
     });
     expect(expansion.expanded).toBe(true);
+  });
+
+  it("grows the window by the visible panel width and keeps the panel at that width", async () => {
+    storedItems.set("test-panel-width", "800");
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [
+        { getBoundingClientRect: () => ({ width: 0 }) },
+        { getBoundingClientRect: () => ({ width: 420 }) },
+      ],
+    });
+    await act(async () => {
+      renderer = create(<Panel open />);
+    });
+    await act(async () => {
+      await expansion.toggle();
+    });
+    expect(setWindowExpansion).toHaveBeenCalledExactlyOnceWith({
+      panelWidth: 420,
+      direction: "right",
+    });
+    expect(storedItems.get("test-panel-width")).toBe("420");
+  });
+
+  it("keeps the saved panel width when the window cannot expand", async () => {
+    storedItems.set("test-panel-width", "800");
+    setWindowExpansion.mockResolvedValue(false);
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [{ getBoundingClientRect: () => ({ width: 420 }) }],
+    });
+    await act(async () => {
+      renderer = create(<Panel open />);
+    });
+    await act(async () => {
+      await expansion.toggle();
+    });
+    expect(storedItems.get("test-panel-width")).toBe("800");
+  });
+
+  it("converts the panel width to window units at the app zoom", async () => {
+    zoomFactor = 1.25;
+    await act(async () => {
+      renderer = create(<Panel open={false} />);
+    });
+    await act(async () => {
+      await expansion.prepareOpen();
+    });
+    expect(setWindowExpansion).toHaveBeenCalledExactlyOnceWith({
+      panelWidth: 675,
+      direction: "right",
+    });
   });
 
   it("restores a prepared expansion when opening the panel is cancelled", async () => {

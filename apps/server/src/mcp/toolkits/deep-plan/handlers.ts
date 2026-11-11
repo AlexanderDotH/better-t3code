@@ -246,6 +246,7 @@ export const invokeDeepPlanAnalyzeSources = Effect.fn("DeepPlanToolkit.analyzeSo
           (coverage) => coverage.sourceId === source.sourceId && coverage.status === "ready",
         ),
       );
+      if (ready.length === 0) return [];
       return yield* coordinator.analyzeDeepPlanSources({ ...caller, binding, sources: ready });
     }),
   );

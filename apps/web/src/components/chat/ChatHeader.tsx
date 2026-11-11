@@ -45,6 +45,8 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { HeaderWorkingStatus } from "./ComposerActivityStatus";
+import type { ThreadTokenUsage } from "@t3tools/client-runtime/thread-token-usage";
 
 interface ChatHeaderProps {
   activeTurnInProgress?: boolean;
@@ -62,6 +64,9 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
+  showWorkingStatus?: boolean;
+  workingStartedAt?: string | null | undefined;
+  workingTokenUsage?: ThreadTokenUsage | undefined;
 }
 
 function resolveRenameCommit(input: {
@@ -92,6 +97,9 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
+  showWorkingStatus = false,
+  workingStartedAt = null,
+  workingTokenUsage,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -298,7 +306,7 @@ export const ChatHeader = memo(function ChatHeader({
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
         // The titlebar controls float over the header's right edge; their width varies by platform.
-        rightPanelOpen ? "pr-10" : "pr-(--workspace-titlebar-controls-width)",
+        rightPanelOpen ? "pr-12" : "pr-(--workspace-titlebar-controls-width)",
       )}
       onContextMenu={handleHeaderContextMenu}
     >
@@ -444,26 +452,38 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {isServerThread && projectIndexAvailable && activeProject ? (
-        <ProjectIndexActivitySummary
-          current={{
-            environmentId: activeThreadEnvironmentId,
-            projectId: activeProject.id,
-            threadId: activeThreadId,
-          }}
-          projectLabel={activeProject.title}
-        />
+      {showWorkingStatus ? (
+        <HeaderWorkingStatus startedAt={workingStartedAt} tokenUsage={workingTokenUsage} />
       ) : null}
-      {isServerThread && supportsTranscriptExport ? (
-        <ChatTranscriptCopyButton
-          key={`${activeThreadEnvironmentId}:${activeThreadId}`}
-          environmentId={activeThreadEnvironmentId}
-          threadId={activeThreadId}
-          activeTurnInProgress={activeTurnInProgress}
-          environmentUnavailable={environmentUnavailable}
-        />
-      ) : null}
-      {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      {/* Equal flex on both sides keeps the working status centered between title and controls. */}
+      <div
+        className={
+          showWorkingStatus
+            ? "flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3"
+            : "contents"
+        }
+      >
+        {isServerThread && projectIndexAvailable && activeProject ? (
+          <ProjectIndexActivitySummary
+            current={{
+              environmentId: activeThreadEnvironmentId,
+              projectId: activeProject.id,
+              threadId: activeThreadId,
+            }}
+            projectLabel={activeProject.title}
+          />
+        ) : null}
+        {isServerThread && supportsTranscriptExport ? (
+          <ChatTranscriptCopyButton
+            key={`${activeThreadEnvironmentId}:${activeThreadId}`}
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
+            activeTurnInProgress={activeTurnInProgress}
+            environmentUnavailable={environmentUnavailable}
+          />
+        ) : null}
+        {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      </div>
     </div>
   );
 });

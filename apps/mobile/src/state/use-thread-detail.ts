@@ -1,5 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
+import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
+import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  summarizeThreadTokenUsage,
+  type ThreadTokenUsage,
+} from "@t3tools/client-runtime/thread-token-usage";
 import type { EnvironmentThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import type {
@@ -9,6 +15,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { useMemo } from "react";
 
 import { environmentThreadDetails, useEnvironmentThread } from "./threads";
 import { useThreadSelection } from "./use-thread-selection";
@@ -54,6 +61,20 @@ export function useQuietThreadStructure(
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STRUCTURE_ATOM : environmentThreadDetails.quietThreadAtom(ref),
   );
+}
+
+/** Totals for the open thread; reads the quiet structure so streamed text does not re-render. */
+export function useSelectedThreadTokenUsage(): ThreadTokenUsage | null {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  const structure = useQuietThreadStructure(selectedThreadDetailRef);
+  return useMemo(() => {
+    if (structure === null) return null;
+    const usage = summarizeThreadTokenUsage(
+      deriveLatestContextWindowSnapshot(structure.projection),
+      projectedSubagentsToRuntime(structure.projection.subagents),
+    );
+    return usage.inputTokens + usage.outputTokens > 0 ? usage : null;
+  }, [structure]);
 }
 
 export function useSelectedThreadProjection(): EnvironmentThread | null {

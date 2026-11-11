@@ -30,6 +30,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingWorkingStatus } from "./floating-working-status";
+import { ThreadTokenTotals } from "./ThreadTokenUsageSheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
@@ -166,7 +167,8 @@ export function FloatingWorkingControl(props: {
   const statusInteractive =
     props.status?.kind === "connection" ||
     props.status?.kind === "child-input" ||
-    props.status?.kind === "background";
+    props.status?.kind === "background" ||
+    (props.status?.kind === "working" && props.status.tokenUsage !== null);
   const capsuleInteractive =
     statusInteractive || action !== null || hasQueue || hasAgents || hasPreview;
   const statusContent =
@@ -554,14 +556,14 @@ function FloatingStatusLabel(props: {
       </StatusLabelRow>
     );
   }
-  return (
-    <WorkingDuration key="working" startedAt={props.status.startedAt} onLayout={props.onLayout} />
-  );
+  return <WorkingDuration key="working" status={props.status} onLayout={props.onLayout} />;
 }
 
 function StatusLabelRow(props: {
   readonly accessibilityLabel?: string;
   readonly accessibilityRole?: "button";
+  /** A row holding its own button must not read as one element, or that button is unreachable. */
+  readonly containsControl?: boolean;
   readonly className?: string;
   readonly children: ReactNode;
   readonly onLayout: (event: LayoutChangeEvent) => void;
@@ -586,7 +588,11 @@ function StatusLabelRow(props: {
           {props.children}
         </Pressable>
       ) : (
-        <View accessible accessibilityLabel={props.accessibilityLabel} className={rowClassName}>
+        <View
+          accessible={!props.containsControl}
+          accessibilityLabel={props.accessibilityLabel}
+          className={rowClassName}
+        >
           {props.children}
         </View>
       )}
@@ -595,12 +601,19 @@ function StatusLabelRow(props: {
 }
 
 function WorkingDuration(props: {
-  readonly startedAt: string;
+  readonly status: Extract<FloatingWorkingStatus, { kind: "working" }>;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
+  const { status } = props;
   return (
-    <StatusLabelRow onLayout={props.onLayout}>
-      <WorkingTimer startedAt={props.startedAt} />
+    <StatusLabelRow className="gap-2" containsControl onLayout={props.onLayout}>
+      {status.durationInHeader ? null : <WorkingTimer startedAt={status.startedAt} />}
+      {status.tokenUsage !== null ? (
+        <>
+          {status.durationInHeader ? null : <View className="h-3 w-px bg-border" />}
+          <ThreadTokenTotals usage={status.tokenUsage} onPress={status.onOpenTokenUsage} />
+        </>
+      ) : null}
     </StatusLabelRow>
   );
 }

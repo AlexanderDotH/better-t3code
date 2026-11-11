@@ -383,6 +383,37 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
 });
 
+export const ThreadListV2ProjectSettledRow = memo(function ThreadListV2ProjectSettledRow(props: {
+  readonly count: number;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+}) {
+  const translator = useMobileInterfaceTranslator();
+  const label = translator.message(
+    props.open ? "sidebar.classic.hideSettled" : "sidebar.classic.showSettled",
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: props.open }}
+      accessibilityLabel={`${label}, ${props.count}`}
+      className="min-h-11 flex-row items-center gap-2 px-5"
+      onPress={props.onToggle}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <SymbolView
+        name="checkmark.circle"
+        size={13}
+        tintColorClassName="accent-foreground-muted"
+        type="monochrome"
+      />
+      <Text className="text-sm text-foreground-muted">
+        {label} ({props.count})
+      </Text>
+    </Pressable>
+  );
+});
+
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
   readonly hiddenCount: number;

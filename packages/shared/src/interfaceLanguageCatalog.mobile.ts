@@ -7739,6 +7739,11 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Connexion HTTP non chiffrée",
   ],
   "mobile.ui.useCredit": ["Use credit", "Guthaben verwenden", "Utiliser le crédit"],
+  "mobile.ui.boringThreadListDescription": [
+    "Group chats by project, with favorites first in each project and settled chats kept per project.",
+    "Gruppiert Chats nach Projekt, mit Favoriten oben im jeweiligen Projekt und abgeschlossenen Chats pro Projekt.",
+    "Regroupe les discussions par projet, avec les favoris en tête de chaque projet et les discussions classées par projet.",
+  ],
   "mobile.ui.useTheOriginalThreadListGroupedBy": [
     "Use the original thread list grouped by project.",
     "Nutze die ursprüngliche Chatliste, nach Projekt gruppiert.",

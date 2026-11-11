@@ -106,8 +106,6 @@ export function createMobilePreferencesState(
               const values = { ...optimistic.values } as Record<string, unknown>;
               const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
               for (const key of Object.keys(patch) as Array<keyof MobilePreferences.Preferences>) {
-                // Keep the current presentation choice when device storage is unavailable.
-                if (key === "betterT3ExpandedSettingsGroups") continue;
                 if (optimistic.versions[key] === version) {
                   delete values[key];
                   delete currentVersions[key];

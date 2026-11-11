@@ -338,6 +338,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("keeps following the live end when one update grows past a viewport", async () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse(CREATED_AT) + 2000);
     const props = baseProps();
     const runId = RunId.make("streaming-run");
     const entries = (reply: string) => [
@@ -352,6 +353,7 @@ describe("MessagesTimeline work rows", () => {
         isWorking
         latestRun={{ runId, status: "running", startedAt: CREATED_AT, completedAt: null }}
         activeTurnStartedAt={CREATED_AT}
+        responseMetrics={new Map([[runId, { liveStartedAt: Date.parse(CREATED_AT) }]])}
         timelineEntries={entries(reply)}
       />
     );
@@ -360,6 +362,7 @@ describe("MessagesTimeline work rows", () => {
     await using screen = await render(timeline("Starting"), { container });
     await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
     const viewport = props.listRef.current!.getScrollableNode()!;
+    await expect.element(screen.getByText("≈ 1 tok/s")).toBeVisible();
     const distanceFromEnd = () =>
       viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
     await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
@@ -535,6 +538,7 @@ describe("MessagesTimeline messages", () => {
       );
       await using screen = await renderElement(timeline(RunId.make("answer-run")));
       const fork = screen.getByRole("button", { name: "Fork chat from here", exact: true });
+      await screen.getByText("Keep only this answer", { exact: true }).hover();
       await fork.click();
       expect(onForkBoundary).toHaveBeenLastCalledWith({ kind: "message", messageId });
       expect(onForkFromRun).not.toHaveBeenCalled();
@@ -553,6 +557,55 @@ describe("MessagesTimeline messages", () => {
       await expect.element(fork).not.toHaveAttribute("aria-busy");
       await screen.rerender(timeline(null, null, false));
       await expect.element(fork).toBeDisabled();
+    },
+  );
+
+  it.each(["current", "classic", "better-t3"] as const)(
+    "pushes the following chat down to reveal message details only while hovering in %s",
+    async (mode) => {
+      setup();
+      // Long enough that the message actions do not cover the text's center.
+      const HOVERED_ANSWER_TEXT = "Hovered answer that is wide enough to sit clear of its actions";
+      presentationMode.mode = mode;
+      const answer = MessageId.make("hovered-answer");
+      await using screen = await renderTimeline([
+        {
+          ...message(HOVERED_ANSWER_TEXT, { role: "assistant" }, answer),
+          projectedItem: v2Item("assistant_message", {
+            id: "hovered-answer-item",
+            messageId: answer,
+            text: HOVERED_ANSWER_TEXT,
+          }),
+        },
+        message("Next question", { role: "user" }, MessageId.make("next-question")),
+      ]);
+      const next = screen.getByText("Next question", { exact: true });
+      await expect.element(next).toBeVisible();
+      const meta = () =>
+        screen.container
+          .querySelector<HTMLElement>("[data-message-hover-details]")!
+          .getBoundingClientRect();
+      const nextTop = () => next.element().getBoundingClientRect().top;
+      // Relative to the answer, since the list may scroll while the row resizes.
+      const nextOffset = () =>
+        nextTop() -
+        screen.getByText(HOVERED_ANSWER_TEXT, { exact: true }).element().getBoundingClientRect()
+          .bottom;
+      expect(meta().height).toBe(0);
+      const collapsedOffset = nextOffset();
+
+      await screen.getByText(HOVERED_ANSWER_TEXT, { exact: true }).hover();
+      await vi.waitFor(() => {
+        expect(meta().height).toBeGreaterThan(0);
+        expect(nextTop()).toBeGreaterThanOrEqual(meta().bottom);
+        expect(nextOffset()).toBeGreaterThan(collapsedOffset);
+      });
+
+      await next.hover({ position: { x: 1, y: 1 } });
+      await vi.waitFor(() => {
+        expect(meta().height).toBe(0);
+        expect(nextOffset()).toBe(collapsedOffset);
+      });
     },
   );
 

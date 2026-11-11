@@ -130,6 +130,7 @@ describe("deepPlanProviderContext", () => {
     expect(canContinueDeepPlan(planningRun, "default")).toBe(false);
     expect(canContinueDeepPlan(planningRun, "plan")).toBe(true);
     expect(canContinueDeepPlan(approvedRun, "default")).toBe(true);
+    expect(canContinueDeepPlan(approvedRun, "plan")).toBe(false);
   });
 
   it("preserves explicit Plan mode while keeping the approved implementing model", () => {

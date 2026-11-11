@@ -17,7 +17,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { isRuntimeReconcileCommandId } from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
-import { canContinueDeepPlan, deepPlanContinuationCommand } from "./DeepPlanContinuation.ts";
+import {
+  canContinueDeepPlan,
+  isDeepPlanContinuationPending,
+  deepPlanContinuationCommand,
+} from "./DeepPlanContinuation.ts";
 import { DeepPlanWorkflow } from "./DeepPlanWorkflow.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 
@@ -84,7 +88,11 @@ const make = Effect.gen(function* () {
   const process = Effect.fn("DeepPlanValidationReactor.process")(function* (threadId: ThreadId) {
     if (activation !== undefined) yield* activation;
     const run = yield* workflow.getRun({ threadId });
-    if (run == null || (!awaitsFinalValidation(run) && !canContinueDeepPlan(run, "plan"))) {
+    if (
+      run == null ||
+      run.threadId !== threadId ||
+      (!awaitsFinalValidation(run) && !isDeepPlanContinuationPending(run))
+    ) {
       pendingRuns.delete(threadId);
       return;
     }
@@ -159,7 +167,10 @@ const make = Effect.gen(function* () {
     const event = stored.event;
     if (event.type === "thread.deep-plan-updated") {
       const run = event.payload.deepPlan;
-      if (run && (awaitsFinalValidation(run) || canContinueDeepPlan(run, "plan")))
+      if (
+        run?.threadId === event.threadId &&
+        (awaitsFinalValidation(run) || isDeepPlanContinuationPending(run))
+      )
         pendingRuns.set(event.threadId, run);
       else pendingRuns.delete(event.threadId);
       yield* worker.enqueue(event.threadId);
@@ -176,7 +187,7 @@ const make = Effect.gen(function* () {
             run.id,
             Effect.gen(function* () {
               const current = yield* workflow.getRun({ threadId, runId: run.id });
-              if (!current || !canContinueDeepPlan(current, "plan")) return;
+              if (!current || !isDeepPlanContinuationPending(current)) return;
               yield* workflow.update({
                 threadId,
                 runId: current.id,
@@ -211,9 +222,11 @@ const make = Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(eventSink.stream({ afterSequence: snapshot.snapshotSequence }), consume),
       );
-      const runs = snapshot.threads.flatMap((thread) => (thread.deepPlan ? [thread.deepPlan] : []));
+      const runs = snapshot.threads.flatMap((thread) =>
+        thread.deepPlan?.threadId === thread.id ? [thread.deepPlan] : [],
+      );
       for (const run of runs) {
-        if (!awaitsFinalValidation(run) && !canContinueDeepPlan(run, "plan")) continue;
+        if (!awaitsFinalValidation(run) && !isDeepPlanContinuationPending(run)) continue;
         pendingRuns.set(run.threadId, run);
         yield* worker.enqueue(run.threadId);
       }

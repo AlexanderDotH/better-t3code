@@ -188,6 +188,9 @@ export interface FakeThread {
   readonly lastVisitedAt?: string | null;
   /** Makes this a side chat of that thread. */
   readonly sideChatOf?: ThreadId;
+  readonly settledOverride?: "settled";
+  /** Marks this fixture as a favorite. */
+  readonly pinned?: true;
   readonly id: ThreadId;
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -252,7 +255,8 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     createdAt: AT,
     updatedAt: AT,
     archivedAt: null,
-    settledOverride: null,
+    settledOverride: thread.settledOverride ?? null,
+    ...(thread.pinned ? { pinnedAt: AT, pinOrderKey: "a0" } : {}),
     settledAt: null,
     lastVisitedAt:
       thread.lastVisitedAt === undefined

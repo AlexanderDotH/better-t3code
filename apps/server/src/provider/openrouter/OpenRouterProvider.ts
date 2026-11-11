@@ -81,6 +81,7 @@ export interface OpenRouterProviderStatusDependencies {
   ) => Effect.Effect<OpenRouterKeyProfile, OpenRouterProviderDependencyError>;
   readonly listModels: (
     customModels: ReadonlyArray<string>,
+    options?: { readonly requireZdr?: boolean },
   ) => Effect.Effect<
     ReadonlyArray<OpenRouterSnapshotCatalogModel>,
     OpenRouterProviderDependencyError
@@ -251,7 +252,9 @@ export const checkOpenRouterProviderStatus = Effect.fn("checkOpenRouterProviderS
     });
   }
   const auth = openRouterAuthenticatedAuth(profileExit.value, { source: credential.source });
-  const catalogExit = yield* Effect.exit(dependencies.listModels(settings.customModels));
+  const catalogExit = yield* Effect.exit(
+    dependencies.listModels(settings.customModels, { requireZdr: settings.requireZdr }),
+  );
   if (Exit.isFailure(catalogExit)) {
     return build({
       status: "error",

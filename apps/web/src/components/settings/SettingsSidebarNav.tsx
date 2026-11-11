@@ -10,7 +10,12 @@ import {
 import {
   ArchiveIcon,
   BlocksIcon,
+  BrainIcon,
+  ChartColumnIcon,
+  ChevronRightIcon,
+  CpuIcon,
   FlaskConicalIcon,
+  FolderGit2Icon,
   BotIcon,
   createLucideIcon,
   CalendarClockIcon,
@@ -25,7 +30,11 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   KeyRoundIcon,
+  MicIcon,
   PaletteIcon,
+  PanelLeftIcon,
+  PencilLineIcon,
+  PlugIcon,
   RocketIcon,
   SearchIcon,
   ServerIcon,
@@ -36,7 +45,16 @@ import {
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  BETTER_T3_SETTINGS_CATEGORY_IDS,
+  type BetterT3SettingsCategoryId,
+} from "@t3tools/client-runtime/better-t3-settings-layout";
+import { BETTER_T3_FEATURE_REGISTRY } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
+import { isElectron } from "~/env";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -49,6 +67,7 @@ import {
   SidebarMenuItem,
   SidebarInput,
 } from "../ui/sidebar";
+import { buildBetterT3FeatureSearchItems } from "./BetterT3SettingsSearch";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -117,6 +136,33 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
+const BETTER_T3_CATEGORY_ICONS: Readonly<
+  Record<BetterT3SettingsCategoryId, ComponentType<{ className?: string }>>
+> = {
+  general: Settings2Icon,
+  appearance: PaletteIcon,
+  chat: MessageSquareTextIcon,
+  composer: PencilLineIcon,
+  sidebar: PanelLeftIcon,
+  usage: ChartColumnIcon,
+  agents: BotIcon,
+  workspace: FolderGit2Icon,
+  voice: MicIcon,
+  knowledge: BrainIcon,
+  system: CpuIcon,
+  integrations: PlugIcon,
+};
+
+const NAV_GROUP_CHOICES_KEY = "t3code:settings:nav-group-choices";
+const NO_NAV_GROUP_CHOICES: Readonly<Record<string, boolean>> = {};
+const NavGroupChoices = Schema.Record(Schema.String, Schema.Boolean);
+
+// Merged rows a reasoning selector already covers would only duplicate it in results.
+const UNLISTED_BETTER_T3_FEATURES: ReadonlySet<string> = new Set([
+  "agent.reasoningWorkingOverlay",
+  "agent.reasoningInMessage",
+]);
+
 // Detail pages without a nav entry highlight the page that links to them.
 const SETTINGS_DETAIL_PAGE_PARENTS: Readonly<Record<string, SettingsPath>> = {
   "/settings/diagnostics": "/settings/maintenance",
@@ -133,6 +179,14 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
+interface SettingsNavRow {
+  readonly key: string;
+  readonly label: string;
+  readonly Icon: ComponentType<{ className?: string }>;
+  readonly active: boolean;
+  readonly onSelect: () => void;
+}
+
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
   const navigate = useNavigate();
@@ -140,18 +194,73 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
+  const translate = useInterfaceTranslator().message;
+  const requestedCategory = (currentSearch as { readonly category?: unknown }).category;
+  const activeCategory =
+    activePath === "/settings/better-t3"
+      ? (BETTER_T3_SETTINGS_CATEGORY_IDS.find((id) => id === requestedCategory) ??
+        BETTER_T3_SETTINGS_CATEGORY_IDS[0])
+      : undefined;
+  const navGroups = SETTINGS_NAV_GROUPS.map((group, index) => ({
+    heading: group.heading,
+    primary: index === 0,
+    rows: group.paths.flatMap((to): ReadonlyArray<SettingsNavRow> => {
+      if (to !== "/settings/better-t3") {
+        return [
+          {
+            key: to,
+            label: SETTINGS_SECTION_LABELS[to],
+            Icon: SETTINGS_SECTION_ICONS[to],
+            active: activePath === to || activePath.startsWith(`${to}/`),
+            onSelect: () => handleSectionClick(to),
+          },
+        ];
+      }
+      return BETTER_T3_SETTINGS_CATEGORY_IDS.map((category) => ({
+        key: `${to}:${category}`,
+        label: translate(`settings.betterT3.tab.${category}`),
+        Icon: BETTER_T3_CATEGORY_ICONS[category],
+        active: category === activeCategory,
+        onSelect: () => {
+          void navigate({
+            to,
+            search: { category },
+            hash: "",
+            replace: true,
+            hashScrollIntoView: false,
+          });
+        },
+      }));
+    }),
+  }));
+  const [navGroupChoices, setNavGroupChoices] = useLocalStorage(
+    NAV_GROUP_CHOICES_KEY,
+    NO_NAV_GROUP_CHOICES,
+    NavGroupChoices,
+  );
+  const navRows = navGroups.flatMap((group) => group.rows);
   const sectionNavigation = useSettingsSectionNavigation(
-    navPaths.find((to) => activePath === to || activePath.startsWith(`${to}/`)) ??
-      navPaths[0] ??
-      "",
+    navRows.find((row) => row.active)?.key ?? navRows[0]?.key ?? "",
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const availableSearchItems = useAvailableSettingsSearchItems(scopeSearch);
+  const coveredTargets = new Set(availableSearchItems.map((item) => item.targetId ?? item.id));
+  const searchableItems = [
+    ...availableSearchItems,
+    // Every Better T3 feature is findable from here, not only the curated entries.
+    ...buildBetterT3FeatureSearchItems(
+      BETTER_T3_FEATURE_REGISTRY.filter(
+        (descriptor) =>
+          !UNLISTED_BETTER_T3_FEATURES.has(descriptor.id) &&
+          descriptor.availability.surfaces.includes(isElectron ? "desktop" : "web"),
+      ).map((descriptor) => ({ descriptor })),
+      translate,
+    ).filter((item) => !coveredTargets.has(item.targetId ?? item.id)),
+  ];
   const results = searchSettings(query, searchableItems);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
@@ -220,6 +329,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     setCompactSearchOpen(false);
     const targetId = item.targetId ?? item.id;
     revealSettingsSearchTarget(targetId);
+    // A result must land in a visible section, even one the user folded.
+    const resultGroup = SETTINGS_NAV_GROUPS.find((group) => group.paths.includes(item.to));
+    if (resultGroup && navGroupChoices[resultGroup.heading] === false) {
+      setNavGroupChoices((current) => ({ ...current, [resultGroup.heading]: true }));
+    }
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
       scrollToSettingsTarget(targetId);
       return;
@@ -389,53 +503,79 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   aria-label="Settings sections"
                   className="flex flex-col gap-4"
                 >
-                  {SETTINGS_NAV_GROUPS.map((group, index) => (
-                    <div
-                      key={group.heading ?? index}
-                      role="group"
-                      aria-label={group.heading ?? undefined}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
-                    >
-                      {group.heading ? (
-                        // The group carries this label; a heading is not a valid tree child.
-                        <h3
-                          aria-hidden="true"
+                  {navGroups.map((group) => {
+                    const holdsActivePage = group.rows.some((row) => row.active);
+                    // A section opens for its own page until the user folds or opens it by hand.
+                    const open =
+                      navGroupChoices[group.heading] ?? (group.primary || holdsActivePage);
+                    const groupKey = `group:${group.heading}`;
+                    return (
+                      <div
+                        key={group.heading}
+                        role="group"
+                        aria-label={group.heading}
+                        className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      >
+                        <button
+                          type="button"
+                          role="treeitem"
+                          tabIndex={sectionNavigation.tabIndexFor(groupKey)}
+                          data-settings-section={groupKey}
+                          aria-expanded={open}
+                          onClick={() =>
+                            setNavGroupChoices((current) => ({
+                              ...current,
+                              [group.heading]: !open,
+                            }))
+                          }
                           className={cn(
-                            "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                            "flex h-6 cursor-pointer items-center gap-1 rounded-md px-2 text-left text-xs outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                            group.primary
+                              ? "font-semibold text-sidebar-foreground"
+                              : "font-medium text-sidebar-muted-foreground/80",
+                            // A folded section still shows that the open page is inside it.
+                            holdsActivePage && !open && "text-sidebar-foreground",
                             !compactSearchOpen && "max-md:hidden",
                           )}
                         >
+                          {group.primary ? (
+                            <RocketIcon aria-hidden className="me-0.5 size-3 shrink-0" />
+                          ) : null}
                           {group.heading}
-                        </h3>
-                      ) : null}
-                      <SidebarMenu role="presentation">
-                        {group.paths.map((to) => {
-                          const Icon = SETTINGS_SECTION_ICONS[to];
-                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                          return (
-                            <SidebarMenuItem key={to} role="presentation">
+                          <ChevronRightIcon
+                            aria-hidden
+                            className={cn(
+                              "size-3 shrink-0 transition-transform",
+                              open && "rotate-90",
+                            )}
+                          />
+                        </button>
+                        {/* The icon rail has no headings to reopen a group from. */}
+                        <SidebarMenu role="presentation" className={cn(!open && "md:hidden")}>
+                          {group.rows.map((row) => (
+                            <SidebarMenuItem key={row.key} role="presentation">
                               <SidebarMenuButton
-                                data-settings-section={to}
+                                data-settings-section={row.key}
                                 role="treeitem"
-                                tabIndex={sectionNavigation.tabIndexFor(to)}
-                                aria-selected={isActive}
-                                aria-current={isActive ? "page" : undefined}
-                                isActive={isActive}
-                                onClick={() => handleSectionClick(to)}
+                                tabIndex={sectionNavigation.tabIndexFor(row.key)}
+                                aria-selected={row.active}
+                                aria-current={row.active ? "page" : undefined}
+                                isActive={row.active}
+                                onClick={row.onSelect}
                               >
-                                <Icon />
+                                <row.Icon />
                                 <span
                                   className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
                                 >
-                                  {SETTINGS_SECTION_LABELS[to]}
+                                  {row.label}
                                 </span>
                               </SidebarMenuButton>
                             </SidebarMenuItem>
-                          );
-                        })}
-                      </SidebarMenu>
-                    </div>
-                  ))}
+                          ))}
+                        </SidebarMenu>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

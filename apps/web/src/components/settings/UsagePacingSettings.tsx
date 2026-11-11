@@ -2,14 +2,13 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
-import { searchableSetting } from "./settingsSearch";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSearchTarget } from "./settingsLayout";
 
 export function UsagePacingSettings({ environmentId }: { environmentId: EnvironmentId }) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   return (
-    <SettingsSection {...searchableSetting("usage-pacing")}>
+    <SettingsSearchTarget id="usage-pacing" className="space-y-6">
       <BetterT3SettingsSubgroup groupId="usage-display" hideTitle>
         <SettingsRow
           title="Show usage pace"
@@ -56,6 +55,6 @@ export function UsagePacingSettings({ environmentId }: { environmentId: Environm
           }
         />
       </BetterT3SettingsSubgroup>
-    </SettingsSection>
+    </SettingsSearchTarget>
   );
 }

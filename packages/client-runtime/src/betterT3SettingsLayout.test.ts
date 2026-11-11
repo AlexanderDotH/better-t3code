@@ -7,10 +7,18 @@ import {
   getBetterT3SettingsSubgroupForFeature,
   getBetterT3SettingsSubgroupForTarget,
   getBetterT3SettingsSubgroups,
-  sanitizeBetterT3ExpandedSettingsGroups,
+  resolveBetterT3SettingsCategoryForTarget,
 } from "./betterT3SettingsLayout.ts";
 
 describe("Better T3 settings layout", () => {
+  it("resolves deep-link targets to the category page that shows them", () => {
+    expect(resolveBetterT3SettingsCategoryForTarget("chat.classicSidebar")).toBe("sidebar");
+    expect(resolveBetterT3SettingsCategoryForTarget("voice-cleanup-model")).toBe("voice");
+    expect(resolveBetterT3SettingsCategoryForTarget("better-t3-group-usage")).toBe("usage");
+    expect(resolveBetterT3SettingsCategoryForTarget("better-t3-group-missing")).toBeNull();
+    expect(resolveBetterT3SettingsCategoryForTarget("")).toBeNull();
+  });
+
   it("assigns every registry feature to exactly one subgroup", () => {
     const featureIds = BETTER_T3_SETTINGS_SUBGROUPS.flatMap((group) => group.featureIds);
     expect(featureIds.toSorted()).toEqual(
@@ -75,18 +83,7 @@ describe("Better T3 settings layout", () => {
     }
   });
 
-  it("starts only the seven agent and model groups collapsed", () => {
-    expect(
-      BETTER_T3_SETTINGS_SUBGROUPS.filter((group) => group.collapsible).map((group) => group.id),
-    ).toEqual([
-      "fetch",
-      "parallel-plan",
-      "context-compaction",
-      "auto-reasoning",
-      "voice-translation",
-      "voice-cleanup",
-      "indexing-models",
-    ]);
+  it("lists a category's groups in order", () => {
     expect(getBetterT3SettingsSubgroups("agents").map((group) => group.id)).toEqual([
       "fetch",
       "parallel-plan",
@@ -98,24 +95,6 @@ describe("Better T3 settings layout", () => {
     expect(getBetterT3SettingsSubgroups("unknown")).toEqual([]);
     expect(getBetterT3SettingsSubgroupForTarget("unknown")).toBeUndefined();
     expect(getBetterT3SettingsSubgroupForFeature("unknown")).toBeUndefined();
-  });
-
-  it("sanitizes local expansion preferences without changing the supplied value", () => {
-    const stored = Object.freeze([
-      "voice-cleanup",
-      "unknown",
-      "fetch",
-      "voice-cleanup",
-      null,
-      5,
-      { id: "parallel-plan" },
-      "language",
-    ]);
-    expect(sanitizeBetterT3ExpandedSettingsGroups(stored)).toEqual(["voice-cleanup", "fetch"]);
-    expect(stored).toHaveLength(8);
-    for (const invalid of [undefined, null, "", "fetch", 42, { fetch: true }]) {
-      expect(sanitizeBetterT3ExpandedSettingsGroups(invalid)).toEqual([]);
-    }
   });
 
   it("has translated group titles and compact summaries in every supported language", () => {

@@ -28,6 +28,7 @@ export interface BetterT3ChatPreviewModel {
   readonly composerPlanBubble: boolean;
   readonly expandedComposerControls: boolean;
   readonly classicSidebar: boolean;
+  readonly boringSidebar: boolean;
   readonly draftIndicators: boolean;
   readonly presentation: ChatVisualMode;
   readonly presentationMotion: boolean;
@@ -59,6 +60,7 @@ export function buildBetterT3SettingsPreviewModel(input: {
   readonly chatVisualMode: ChatVisualMode;
   readonly contextWindowSelector: ContextWindowSelector;
   readonly sidebarPosition: SidebarPosition;
+  readonly boringSidebar?: boolean;
   readonly showReasoning?: boolean;
   readonly reasoningWorkingOverlay?: boolean;
   readonly reasoningInMessage?: boolean;
@@ -106,6 +108,7 @@ export function buildBetterT3SettingsPreviewModel(input: {
     ),
     composerPlanBubble: effectiveFeatureEnabled(input.features, "chat.classicBubbleOnly"),
     classicSidebar: effectiveFeatureEnabled(input.features, "chat.classicSidebar"),
+    boringSidebar: input.boringSidebar ?? false,
     draftIndicators: effectiveFeatureEnabled(input.features, "chat.draftIndicators"),
     presentation: input.chatVisualMode,
     presentationMotion: effectiveFeatureEnabled(input.features, "chat.presentationMotion"),

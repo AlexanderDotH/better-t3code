@@ -67,6 +67,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2OlderProjectsShelfHeader,
+  ThreadListV2ProjectSettledRow,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -86,6 +87,7 @@ import {
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
+  buildGroupedThreadListItems,
   buildHomeProjectScopes,
   findHomeProjectScope,
   type HomeProjectSortOrder,
@@ -255,7 +257,8 @@ export function HomeScreen(props: HomeScreenProps) {
     ? preferencesResult.value
     : undefined;
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const classic = preferences?.legacyThreadListEnabled === true;
+  const boring = preferences?.boringThreadListEnabled === true;
+  const classic = preferences?.legacyThreadListEnabled === true || boring;
   const { appearance } = useAppearancePreferences();
   const [expandedClassicProjects, setExpandedClassicProjects] = useState<ReadonlySet<string>>(
     new Set(),
@@ -491,6 +494,7 @@ export function HomeScreen(props: HomeScreenProps) {
     activeReorderEnvironmentIds,
     queuedThreadKeys,
     settledLimit: settledVisibleCount,
+    listAllLoadedSettled: classic,
     now,
     pendingOrder,
     shelfPreferencesLoaded,
@@ -503,84 +507,27 @@ export function HomeScreen(props: HomeScreenProps) {
     olderProjectsExpanded,
     selectedThreadKey,
   });
-  const classicGroups = new Map<
-    string,
-    {
-      readonly title: string;
-      readonly scopeKey: string;
-      readonly first: boolean;
-      readonly last: boolean;
-      readonly collapsed: boolean;
-      readonly expanded: boolean;
-      readonly hiddenCount: number;
-      readonly project: EnvironmentProject;
-    }
-  >();
-  const threadListV2Items = (() => {
-    if (!classic) return flatThreadListItems;
-    const rows = flatThreadListItems.filter(
-      (item) => item.type === "v2-thread" || item.type === "v2-pending",
-    );
-    const result: ThreadListV2ListItem[] = [];
-    const included = new Set<string>();
-    const sortField =
-      (preferences?.sidebarProjectSortOrder ?? props.projectSortOrder) === "created_at"
-        ? "createdAt"
-        : "updatedAt";
-    const scopes = [...projectScopes].sort(
-      (first, second) =>
-        Number(second.pinned) - Number(first.pinned) ||
-        Date.parse(second.representative[sortField]) - Date.parse(first.representative[sortField]),
-    );
-    for (const scope of scopes) {
-      const keys = new Set(
-        scope.projectRefs.map((ref) => scopedProjectKey(ref.environmentId, ref.projectId)),
-      );
-      const projectRows = rows.filter((row) => {
-        const target =
-          row.type === "v2-thread"
-            ? { environmentId: row.item.thread.environmentId, projectId: row.item.thread.projectId }
-            : row.pendingTask;
-        return keys.has(scopedProjectKey(target.environmentId, target.projectId));
-      });
-      const threadSortField =
-        preferences?.sidebarThreadSortOrder === "created_at" ? "createdAt" : "updatedAt";
-      projectRows.sort((first, second) =>
-        first.type === "v2-thread" && second.type === "v2-thread"
-          ? Date.parse(second.item.thread[threadSortField]) -
-            Date.parse(first.item.thread[threadSortField])
-          : first.type === second.type
-            ? 0
-            : first.type === "v2-pending"
-              ? -1
-              : 1,
-      );
-      const collapsed = preferences?.collapsedProjectGroups?.includes(scope.key) === true;
-      const expanded =
-        expandedClassicProjects.has(scope.key) || props.searchQuery.trim().length > 0;
-      const shown = projectRows.slice(
-        0,
-        collapsed ? 1 : expanded ? projectRows.length : appearance.projectThreadPreviewCount,
-      );
-      for (const [index, row] of shown.entries()) {
-        included.add(row.key);
-        classicGroups.set(row.key, {
-          title: scope.title,
-          scopeKey: scope.key,
-          first: index === 0,
-          last: index === shown.length - 1,
-          collapsed,
-          expanded,
-          hiddenCount: Math.max(0, projectRows.length - appearance.projectThreadPreviewCount),
-          project: scope.representative,
-        });
-        result.push(row);
-      }
-      for (const row of projectRows) included.add(row.key);
-    }
-    result.push(...rows.filter((row) => !included.has(row.key)));
-    return result;
-  })();
+  const grouped = classic
+    ? buildGroupedThreadListItems({
+        rows: flatThreadListItems,
+        scopes: projectScopes,
+        boring,
+        searching: props.searchQuery.trim().length > 0,
+        previewCount: appearance.projectThreadPreviewCount,
+        projectSortField:
+          (preferences?.sidebarProjectSortOrder ?? props.projectSortOrder) === "created_at"
+            ? "createdAt"
+            : "updatedAt",
+        threadSortField:
+          preferences?.sidebarThreadSortOrder === "created_at" ? "createdAt" : "updatedAt",
+        collapsedGroups: preferences?.collapsedProjectGroups,
+        openSettledGroups: preferences?.openSettledProjectGroups,
+        expandedGroups: expandedClassicProjects,
+        selectedThreadKey,
+      })
+    : null;
+  const classicGroups = grouped?.groups;
+  const threadListV2Items = grouped?.items ?? flatThreadListItems;
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
   const { onSelectThread } = props;
@@ -603,6 +550,23 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
 
   const renderFlatV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
+    if (item.type === "v2-project-settled") {
+      return (
+        <ThreadListV2ProjectSettledRow
+          count={item.count}
+          open={item.open}
+          onToggle={() =>
+            savePreferences({
+              transform: (current) => ({
+                openSettledProjectGroups: current.openSettledProjectGroups?.includes(item.scopeKey)
+                  ? current.openSettledProjectGroups.filter((key) => key !== item.scopeKey)
+                  : [...(current.openSettledProjectGroups ?? []), item.scopeKey],
+              }),
+            })
+          }
+        />
+      );
+    }
     if (item.type === "v2-pending") {
       const pendingScopeKey = scopedProjectKey(
         item.pendingTask.environmentId,
@@ -751,7 +715,7 @@ export function HomeScreen(props: HomeScreenProps) {
     );
   };
   const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
-    const group = classicGroups.get(item.key);
+    const group = classicGroups?.get(item.key);
     if (!group) return renderFlatV2Item({ item });
     return (
       <View>
@@ -815,6 +779,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ExtraData = {
     classic,
     collapsedClassicProjects: preferences?.collapsedProjectGroups,
+    openSettledProjects: preferences?.openSettledProjectGroups,
     expandedClassicProjects,
     classicPreviewCount: appearance.projectThreadPreviewCount,
     activeNewTask,
@@ -985,7 +950,7 @@ export function HomeScreen(props: HomeScreenProps) {
               extraData={v2ExtraData}
               ListHeaderComponent={v2ListHeader}
               ListFooterComponent={
-                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                (classic || settledShelfExpanded) && threadListV2Layout.hiddenSettledCount > 0 ? (
                   <ThreadListV2ShowMoreRow
                     hiddenCount={threadListV2Layout.hiddenSettledCount}
                     {...(olderSettledShelf.loading

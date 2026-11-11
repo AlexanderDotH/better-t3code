@@ -95,6 +95,24 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
         .dispatch(rename)
         .pipe(Effect.provideService(DispatchModeLimit, supervised));
       assert.equal((yield* projections.getThreadShell(threadId))?.title, "After");
+      const turn = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("raise-with-turn"),
+          threadId,
+          messageId: MessageId.make("raise-with-turn-message"),
+          text: "Implement it",
+          attachments: [],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      assert.equal(turn._tag, "OrchestratorThreadAboveModeLimitError");
+      assert.equal((yield* projections.getThreadShell(threadId))?.runtimeMode, "approval-required");
+      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 0);
     }),
   );
 

@@ -324,14 +324,6 @@ async function continueDeepPlan(input: {
   )
     return run;
   if (run.phase === "awaitingApproval") return run;
-  if (!input.automatic) {
-    await api.dispatchCommand({
-      type: "thread.interaction-mode.set",
-      commandId: CommandId.make(input.createId()),
-      threadId: run.approval?.implementationThreadId ?? run.threadId,
-      interactionMode: run.approval ? "default" : "plan",
-    });
-  }
   const selection = run.approval?.implementation ?? input.fallbackModelSelection;
   const modelSelection: ModelSelection = {
     instanceId: selection.instanceId,
@@ -346,12 +338,6 @@ async function continueDeepPlan(input: {
         : `Resume Deep Plan run ${run.id} owned by thread ${run.threadId}. Read its durable state with deep_plan_state, continue reading and summarizing every frozen source, and publish the complete structured plan with deep_plan_publish. Do not omit unavailable sources or begin implementation before approval.`;
   const commandId = CommandId.make(input.createId());
   await api.dispatchCommand({
-    type: "thread.runtime-mode.set",
-    commandId: CommandId.make(input.createId()),
-    threadId: run.approval?.implementationThreadId ?? run.threadId,
-    runtimeMode: input.runtimeMode,
-  });
-  await api.dispatchCommand({
     type: "message.dispatch",
     createdBy: "agent",
     creationSource: "web",
@@ -361,7 +347,12 @@ async function continueDeepPlan(input: {
     text,
     attachments: [],
     deepPlanRunId: run.id,
+    deepPlanContinuation: true,
     modelSelection,
+    runtimeMode: input.runtimeMode,
+    ...(input.automatic
+      ? {}
+      : { interactionMode: run.approval ? ("default" as const) : ("plan" as const) }),
     idleGuard: input.automatic ? (input.idleGuard ?? {}) : {},
     dispatchMode: { type: "start_immediately" },
   });

@@ -27,12 +27,15 @@ const MCP_CATALOG_DEFAULT_RESULT_LIMIT = 10;
 const MCP_CATALOG_MAX_RESULT_LIMIT = 20;
 const MCP_CATALOG_SEARCH_TOOL = "mcp__t3_catalog__search";
 const MCP_CATALOG_CALL_TOOL = "mcp__t3_catalog__call";
+const NATIVE_HARNESS_BUILTIN_TOOLS = nativeHarnessToolDeclarations({
+  interactionMode: "default",
+  sandboxMode: "danger-full-access",
+});
+const NATIVE_HARNESS_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set(
+  NATIVE_HARNESS_BUILTIN_TOOLS.map((tool) => tool.name),
+);
 const NATIVE_MCP_TOOL_DEFINITION_BUDGET =
-  NATIVE_HARNESS_MAX_TOOL_DEFINITIONS -
-  nativeHarnessToolDeclarations({
-    interactionMode: "default",
-    sandboxMode: "danger-full-access",
-  }).length;
+  NATIVE_HARNESS_MAX_TOOL_DEFINITIONS - NATIVE_HARNESS_BUILTIN_TOOLS.length;
 
 const McpCatalogSearchArgs = Schema.Struct({
   query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
@@ -454,6 +457,9 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
           const { client, listed } = prepared;
           clients.push(client);
           for (const tool of listed.tools) {
+            // The harness runs its own tool of this name, and a catalog cannot list both.
+            if (connection.kind === "internal" && NATIVE_HARNESS_BUILTIN_TOOL_NAMES.has(tool.name))
+              continue;
             if (
               connection.kind === "internal" &&
               isDeepPlanToolName(tool.name) &&
@@ -464,9 +470,7 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
               connection.kind === "internal" && isBoundDeepPlanTool(threadId, tool.name);
             const deepPlan = deepPlanContextForThread(threadId);
             const inheritsComposerPermissions =
-              deepPlan !== undefined &&
-              deepPlan.sourceAnalysis === undefined &&
-              !(connection.kind === "internal" && tool.name === "workspace_edit");
+              deepPlan !== undefined && deepPlan.sourceAnalysis === undefined;
             const exposedName =
               connection.kind === "internal"
                 ? tool.name

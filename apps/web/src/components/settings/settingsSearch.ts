@@ -126,9 +126,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
 };
 
-/** Sidebar order. A group without a heading is set apart by space alone. */
+/** Sidebar order. Better T3 expands into its categories in the sidebar itself. */
 export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
-  readonly heading: string | null;
+  readonly heading: string;
   readonly paths: ReadonlyArray<SettingsPath>;
 }> = [
   {
@@ -136,7 +136,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: ["/settings/better-t3", "/settings/mcp", "/settings/skills", "/settings/import-chats"],
   },
   {
-    heading: null,
+    heading: "T3 Code",
     paths: [
       "/settings/general",
       "/settings/appearance",
@@ -169,7 +169,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: null,
+    heading: "System",
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
   },
 ];
@@ -356,6 +356,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Voice translation model",
     to: "/settings/better-t3",
     searchTerms: ["dictation translation English Sprache Übersetzung"],
+  },
+  {
+    id: "voice-cleanup-mode",
+    title: "Transcript cleanup",
+    to: "/settings/better-t3",
+    searchTerms: ["voice cleanup mode Nachbearbeitung Sprachausgabe nettoyage"],
+  },
+  {
+    id: "voice-cleanup-model",
+    title: "Transcript cleanup model",
+    to: "/settings/better-t3",
+    searchTerms: ["voice cleanup model Nachbearbeitungsmodell"],
+  },
+  {
+    id: "voice-cleanup-instructions",
+    title: "Transcript cleanup instructions",
+    to: "/settings/better-t3",
+    searchTerms: ["voice custom cleanup prompt Anweisungen"],
   },
   {
     id: "voice-recording-options",
@@ -981,7 +999,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Classic sidebar",
     to: "/settings/better-t3",
     targetId: "chat.classicSidebar",
-    searchTerms: ["legacy project thread tree old flat list Klassische Seitenleiste classique"],
+    searchTerms: [
+      "legacy project thread tree old flat list Klassische Seitenleiste classique sidebar style boring folders Stil",
+    ],
   },
   {
     id: "keybindings",

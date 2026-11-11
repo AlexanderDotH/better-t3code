@@ -582,6 +582,22 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
+  it("invalidates live-query reuse when the Deep Plan instructions change", () => {
+    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+        cwd: "/workspace",
+      }),
+    );
+    const key = (deepPlan?: { readonly phase: "planning" | "execution" }) =>
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, {}, deepPlan);
+
+    assert.notEqual(key({ phase: "planning" }), key());
+    assert.notEqual(key({ phase: "planning" }), key({ phase: "execution" }));
+    assert.equal(key({ phase: "planning" }), key({ phase: "planning" }));
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),

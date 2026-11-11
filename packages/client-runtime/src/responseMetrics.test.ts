@@ -5,6 +5,7 @@ import {
   ProviderTurnId,
   ProviderThreadId,
   NodeId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { v2Projection, v2Now } from "./state/orchestrationV2TestFixtures.ts";
@@ -80,7 +81,7 @@ describe("response metrics", () => {
     expect(metrics?.speed.tooltip).toContain("including tool waits");
     expect(metrics?.firstToken.tooltip).toContain("provider turn start");
     expect(metrics?.output.tooltip).toContain("whole turn, including reasoning");
-    expect(metrics?.context.tooltip).toContain("Final context tokens used");
+    expect(metrics?.context.tooltip).toContain("Latest context tokens used");
   });
 
   it("keeps genuine zero values", () => {
@@ -136,6 +137,27 @@ describe("response metrics", () => {
       "≥ 12 Tokens",
       "Context –",
     ]);
+  });
+
+  it("updates live text estimates and replaces them with provider totals", () => {
+    const live = {
+      liveStartedAt: 1000,
+      outputCharacters: 400,
+      outputCharactersByMessageId: new Map([[MessageId.make("reply"), 200]]),
+    };
+    const result = formatResponseMetrics(live, translator, {
+      nowMs: 3000,
+      message: { id: MessageId.make("reply"), text: "x".repeat(600) },
+    });
+    expect(result?.speed.text).toBe("≈ 100 tok/s");
+    expect(result?.output.text).toBe("≈ 200 Tokens");
+    expect(formatResponseMetrics(live, translator, { nowMs: 5000 })?.speed.text).toBe("≈ 25 tok/s");
+    const final = formatResponseMetrics(
+      { ...live, ...snapshot, liveStartedAt: undefined },
+      translator,
+    );
+    expect(final?.speed.text).toBe("150 tok/s");
+    expect(final?.output.text).toBe("300 Tokens");
   });
 
   it("omits absent snapshots and uses en dashes for missing measurements", () => {
@@ -232,4 +254,56 @@ it("uses the run's provider attempt and retains reported latency without borrowi
       },
     ],
   ]);
+
+  const contextUsage = { usedTokens: 100, outputTokens: 30, updatedAt: "2026-01-01T00:00:00Z" };
+  const output = {
+    id: TurnItemId.make("reply-item"),
+    type: "assistant_message" as const,
+    threadId: run.threadId,
+    runId: run.id,
+    nodeId: providerTurn.nodeId,
+    providerThreadId: providerTurn.providerThreadId,
+    providerTurnId: providerTurn.id,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "running" as const,
+    title: null,
+    startedAt: v2Now,
+    completedAt: null,
+    updatedAt: v2Now,
+    messageId: MessageId.make("reply"),
+    text: "x".repeat(200),
+    streaming: true,
+  };
+  const running = selectV2ResponseMetrics({
+    runs: [{ ...run, status: "running", completedAt: null }],
+    providerTurns: [
+      {
+        ...providerTurn,
+        ordinal: 2,
+        status: "running",
+        completedAt: null,
+        tokenUsage: contextUsage,
+        turnTokenUsage: undefined,
+      },
+      { ...providerTurn, id: ProviderTurnId.make("older"), ordinal: 1 },
+    ],
+    turnItems: [
+      output,
+      { ...output, id: TurnItemId.make("reasoning"), type: "reasoning", text: "x".repeat(400) },
+      { ...output, id: TurnItemId.make("child"), providerTurnId: ProviderTurnId.make("child") },
+      {
+        type: "assistant_message",
+        providerTurnId: providerTurn.id,
+        messageId: MessageId.make("quiet"),
+      },
+    ],
+  }).get(run.id);
+  expect(running?.liveStartedAt).toBe(DateTime.toEpochMillis(v2Now));
+  expect(running?.tokenUsage?.outputTokens).toBe(30);
+  expect(running?.tokenUsage?.usageStatus).toBe("partial");
+  expect(running?.contextUsedTokens).toBe(100);
+  expect(running?.outputCharacters).toBe(600);
+  expect(running?.outputCharactersByMessageId?.get(output.messageId)).toBe(200);
 });

@@ -3,6 +3,7 @@ import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
+import { useWorkingStatusInHeader } from "./use-working-status-in-header";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { AppBar } from "../../components/ui/AppBar";
@@ -576,6 +577,7 @@ function ThreadRouteContent(
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
+  const workingStatusInHeader = useWorkingStatusInHeader();
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
@@ -1037,6 +1039,11 @@ function ThreadRouteContent(
     return <OpeningThreadLoadingScreen />;
   }
 
+  const activeWorkStartedAt =
+    creationState?.kind === "preparing" || (worktreeSetup !== null && setupTurnStartedAt === null)
+      ? null
+      : composer.activeWorkStartedAt;
+
   if (!selectedThread) {
     return <OpeningThreadLoadingScreen />;
   }
@@ -1068,6 +1075,7 @@ function ThreadRouteContent(
               <ThreadHeader
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
+                workingStartedAt={workingStatusInHeader ? activeWorkStartedAt : null}
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
@@ -1094,12 +1102,7 @@ function ThreadRouteContent(
           selectedThreadFeed={composer.selectedThreadFeed}
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}
-          activeWorkStartedAt={
-            creationState?.kind === "preparing" ||
-            (worktreeSetup !== null && setupTurnStartedAt === null)
-              ? null
-              : composer.activeWorkStartedAt
-          }
+          activeWorkStartedAt={activeWorkStartedAt}
           isCompacting={composer.isCompacting}
           runlessWorkActive={composer.runlessWorkActive}
           providerSubagentStatus={composer.providerSubagentStatus}

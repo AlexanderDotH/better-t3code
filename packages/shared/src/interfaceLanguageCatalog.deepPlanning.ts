@@ -14,11 +14,6 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.deepPlan.affectedAreas": ["Affected areas", "Betroffene Bereiche", "Zones concernées"],
   "chat.deepPlan.dependencies": ["Depends on", "Abhängig von", "Dépend de"],
   "chat.deepPlan.checkMethod": ["Check", "Prüfung", "Vérification"],
-  "chat.deepPlan.frozenSources": [
-    "Sources are fixed for this Deep Plan.",
-    "Die Quellen für diesen Deep Plan stehen fest.",
-    "Les sources de ce Deep Plan sont figées.",
-  ],
   "chat.deepPlan.projectSources": [
     { one: "{{count}} project chat", other: "{{count}} project chats" },
     { one: "{{count}} Projektchat", other: "{{count}} Projektchats" },
@@ -137,12 +132,6 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
     },
   ],
   "chat.deepPlan.refine": ["Refine plan", "Plan überarbeiten", "Affiner le plan"],
-  "chat.deepPlan.implement": ["Implement plan", "Plan umsetzen", "Mettre en œuvre le plan"],
-  "chat.deepPlan.implementNewThread": [
-    "Implement in new thread",
-    "In neuem Chat umsetzen",
-    "Mettre en œuvre dans une nouvelle discussion",
-  ],
   "chat.deepPlan.parallelism": ["Parallelism", "Parallelität", "Parallélisme"],
   "chat.deepPlan.checklist": ["Deep checklist", "Deep-Checkliste", "Liste de suivi approfondie"],
   "chat.deepPlan.stepProgress": [

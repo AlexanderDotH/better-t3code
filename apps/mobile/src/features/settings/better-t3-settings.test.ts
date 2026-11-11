@@ -23,18 +23,15 @@ import {
 } from "@t3tools/client-runtime/better-t3-status";
 import { describe, expect, it } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { getBetterT3SettingsSubgroupForFeature } from "@t3tools/client-runtime/better-t3-settings-layout";
 
 import {
-  buildMobileBetterT3Sections,
+  buildMobileBetterT3Categories,
   createMobileBetterT3DeviceControlPatch,
   createMobileBetterT3DevicePreferencePatch,
   createMobileBetterT3EnvironmentControlPatch,
   createMobileBetterT3EnvironmentPatch,
   MOBILE_BETTER_T3_DIRECT_CONTROL_IDS,
   mobileBetterT3SurfaceForWidth,
-  mobileBetterT3SubgroupSummary,
   mobileBetterT3PreparedStatusMessageKey,
   mobileLifecycleReceiptFromWelcome,
   mobileBetterT3PreparedStatusDetail,
@@ -56,93 +53,21 @@ const capabilities = (
   ...overrides,
 });
 
-function feature(sections: ReturnType<typeof buildMobileBetterT3Sections>, id: BetterT3FeatureId) {
-  return sections.flatMap((section) => section.controls).find((control) => control.id === id);
+function feature(
+  sections: ReturnType<typeof buildMobileBetterT3Categories>,
+  id: BetterT3FeatureId,
+) {
+  return sections
+    .flatMap((section) => section.groups)
+    .flatMap((group) => group.controls)
+    .find((control) => control.id === id);
 }
 
 describe("mobile Better T3 settings", () => {
-  it("summarizes the current environment's model and keeps unavailable selections visible", () => {
-    const message = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
-    const group = getBetterT3SettingsSubgroupForFeature("agent.autoReasoningModel")!;
-    const input = { group, controls: [], message };
-    const config = { settings: DEFAULT_SERVER_SETTINGS, providers: [] };
-    expect(mobileBetterT3SubgroupSummary({ ...input, config: null })).toBe(
-      message("settings.betterT3.noEnvironment"),
-    );
-    expect(mobileBetterT3SubgroupSummary({ ...input, config })).toBe(
-      message("settings.betterT3.value.automatic"),
-    );
-    const selected = { instanceId: ProviderInstanceId.make("codex"), model: "luna" };
-    expect(
-      mobileBetterT3SubgroupSummary({
-        ...input,
-        config: {
-          ...config,
-          settings: { ...config.settings, autoReasoningModelSelection: selected },
-        },
-      }),
-    ).toBe(`luna · ${message("settings.betterT3.availability.unavailable")}`);
-    expect(
-      mobileBetterT3SubgroupSummary({
-        ...input,
-        config: {
-          ...config,
-          settings: {
-            ...config.settings,
-            autoReasoningModelSelection: { ...selected, model: "sol" },
-          },
-        },
-      }),
-    ).toBe(`sol · ${message("settings.betterT3.availability.unavailable")}`);
-  });
-
-  it("uses the device voice language and retains the optional indexing decision off state", () => {
-    const message = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
-    const voiceGroup = getBetterT3SettingsSubgroupForFeature("voice.outputLanguage")!;
-    const config = { settings: DEFAULT_SERVER_SETTINGS, providers: [] };
-    const native = mobileBetterT3SubgroupSummary({
-      group: voiceGroup,
-      controls: [],
-      message,
-      config,
-      outputLanguage: "native",
-    });
-    const english = mobileBetterT3SubgroupSummary({
-      group: voiceGroup,
-      controls: [],
-      message,
-      config,
-      outputLanguage: "english",
-    });
-    expect(native).toContain(message("settings.betterT3.value.nativeLanguage"));
-    expect(english).toContain(message("settings.betterT3.value.english"));
-    expect(native).not.toBe(english);
-    expect(
-      mobileBetterT3SubgroupSummary({
-        group: getBetterT3SettingsSubgroupForFeature("knowledge.projectIndexingDefaultModel")!,
-        controls: [],
-        message,
-        config: {
-          ...config,
-          settings: {
-            ...config.settings,
-            projectIndexingDefaultModelSelection: null,
-            projectIndexingDecisionModelSelection: null,
-          },
-        },
-      }),
-    ).toBe(
-      [
-        message("projectIndexing.noDefaultModel"),
-        message("settings.betterT3.value.projectIndexDecisionOff"),
-      ].join(" · "),
-    );
-  });
-
   it("places every visible native control in one shared thematic group", () => {
     for (const surface of ["phone", "tablet"] as const) {
       for (const environmentAvailable of [true, false]) {
-        const sections = buildMobileBetterT3Sections({
+        const sections = buildMobileBetterT3Categories({
           registry: BETTER_T3_FEATURE_REGISTRY,
           surface,
           deviceAvailable: true,
@@ -151,19 +76,20 @@ describe("mobile Better T3 settings", () => {
           environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
           capabilities: capabilities(),
         });
-        for (const section of sections) {
-          const grouped = section.groups.flatMap((group) => group.controls);
-          expect(grouped.map((control) => control.id).sort()).toEqual(
-            section.controls.map((control) => control.id).sort(),
-          );
-          expect(new Set(grouped.map((control) => control.id)).size).toBe(grouped.length);
-          for (const control of grouped) {
-            expect(section.controls).toContain(control);
-          }
-        }
+        const grouped = sections.flatMap((section) => section.groups.flatMap((g) => g.controls));
+        expect(new Set(grouped.map((control) => control.id)).size).toBe(grouped.length);
+        expect(grouped.map((control) => control.id).sort()).toEqual(
+          BETTER_T3_FEATURE_REGISTRY.filter(
+            (descriptor) =>
+              descriptor.availability.surfaces.includes(surface) &&
+              descriptor.id !== "knowledge.projectIndexingDefaultModel",
+          )
+            .map((descriptor) => descriptor.id)
+            .sort(),
+        );
         expect(
           sections
-            .find((section) => section.id === "chat-layout")
+            .find((section) => section.id === "chat")
             ?.groups.filter((group) => group.definition.id === "response-metrics"),
         ).toHaveLength(1);
         expect(
@@ -176,7 +102,7 @@ describe("mobile Better T3 settings", () => {
   });
 
   it("keeps the native compaction engine and model together without changing availability", () => {
-    const sections = buildMobileBetterT3Sections({
+    const sections = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -188,7 +114,6 @@ describe("mobile Better T3 settings", () => {
     const group = sections
       .flatMap((section) => section.groups)
       .find((entry) => entry.definition.id === "context-compaction");
-    expect(group?.definition.collapsible).toBe(true);
     expect(group?.controls.map((control) => control.id)).toEqual([
       "agent.contextCompaction",
       "agent.contextCompactionModel",
@@ -196,18 +121,13 @@ describe("mobile Better T3 settings", () => {
     expect(group?.controls.every((control) => control.availability.state === "unavailable")).toBe(
       true,
     );
-    expect(
-      sections
-        .flatMap((section) => section.groups)
-        .find((entry) => entry.definition.id === "agent-workflow")?.definition.collapsible,
-    ).toBe(false);
   });
 
   it("gates visualizations on the selected environment on phone and tablet", () => {
     for (const surface of ["phone", "tablet"] as const) {
       for (const supported of [true, false]) {
         for (const enabled of [true, false]) {
-          const sections = buildMobileBetterT3Sections({
+          const sections = buildMobileBetterT3Categories({
             registry: BETTER_T3_FEATURE_REGISTRY,
             surface,
             deviceAvailable: true,
@@ -293,7 +213,7 @@ describe("mobile Better T3 settings", () => {
     expect(mobileBetterT3SurfaceForWidth(767)).toBe("phone");
     expect(mobileBetterT3SurfaceForWidth(768)).toBe("tablet");
 
-    const sections = buildMobileBetterT3Sections({
+    const sections = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -308,7 +228,7 @@ describe("mobile Better T3 settings", () => {
   });
 
   it("honors clean versus migrated defaults and blocks dependent controls reversibly", () => {
-    const clean = buildMobileBetterT3Sections({
+    const clean = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -317,7 +237,7 @@ describe("mobile Better T3 settings", () => {
       environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       capabilities: capabilities({ knowledgeGraphVersion: 1 }),
     });
-    const migrated = buildMobileBetterT3Sections({
+    const migrated = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -332,7 +252,10 @@ describe("mobile Better T3 settings", () => {
     expect(feature(clean, "voice.assemblyAi")?.value).toBe(false);
     expect(feature(migrated, "voice.assemblyAi")?.value).toBe(true);
     expect(
-      clean.find((section) => section.id === "composer")?.controls.map((control) => control.id),
+      clean
+        .find((section) => section.id === "composer")
+        ?.groups.flatMap((group) => group.controls)
+        .map((control) => control.id),
     ).toContain("agent.promptImprovement");
     for (const id of [
       "knowledge.progress",
@@ -342,7 +265,7 @@ describe("mobile Better T3 settings", () => {
     ] as const)
       expect(feature(clean, id)).toBeUndefined();
 
-    const enabled = buildMobileBetterT3Sections({
+    const enabled = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -362,7 +285,7 @@ describe("mobile Better T3 settings", () => {
   });
 
   it("marks version-gated controls unsupported on mixed-version environments", () => {
-    const legacy = buildMobileBetterT3Sections({
+    const legacy = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "tablet",
       deviceAvailable: true,
@@ -371,7 +294,7 @@ describe("mobile Better T3 settings", () => {
       environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       capabilities: capabilities(),
     });
-    const current = buildMobileBetterT3Sections({
+    const current = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "tablet",
       deviceAvailable: true,
@@ -396,7 +319,7 @@ describe("mobile Better T3 settings", () => {
   });
 
   it("keeps device controls available while disabling environment controls without a target", () => {
-    const sections = buildMobileBetterT3Sections({
+    const sections = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -416,7 +339,7 @@ describe("mobile Better T3 settings", () => {
   });
 
   it("blocks device switches until persisted preferences finish loading", () => {
-    const sections = buildMobileBetterT3Sections({
+    const sections = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: false,
@@ -492,7 +415,7 @@ describe("mobile Better T3 settings", () => {
   });
 
   it("gives every visible non-switch control a real direct control, destination, or status path", () => {
-    const sections = buildMobileBetterT3Sections({
+    const sections = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -511,7 +434,9 @@ describe("mobile Better T3 settings", () => {
 
     expect(direct.has("agent.autoReasoningModel")).toBe(true);
 
-    for (const control of sections.flatMap((section) => section.controls)) {
+    for (const control of sections.flatMap((section) =>
+      section.groups.flatMap((group) => group.controls),
+    )) {
       if (control.controlKind === "switch") continue;
       if (control.controlKind === "status-only") {
         expect(resolveMobileBetterT3Destination(control.id)).toBeNull();
@@ -893,7 +818,7 @@ it("switches compaction engines through environment settings without losing the 
     ).toBe(enabled);
     expect(settings.contextCompactionModelSelection).toEqual(selection);
     expect(settings.betterT3Environment.flags["chat.visualizations"]).toBe(false);
-    const sections = buildMobileBetterT3Sections({
+    const sections = buildMobileBetterT3Categories({
       registry: BETTER_T3_FEATURE_REGISTRY,
       surface: "phone",
       deviceAvailable: true,
@@ -925,7 +850,7 @@ it("keeps the context model and its environment switch independently reversible"
   ).toEqual({ contextCompactionModelSelection: null });
   for (const supported of [true, false])
     for (const enabled of [true, false]) {
-      const sections = buildMobileBetterT3Sections({
+      const sections = buildMobileBetterT3Categories({
         registry: BETTER_T3_FEATURE_REGISTRY,
         surface: "phone",
         deviceAvailable: true,

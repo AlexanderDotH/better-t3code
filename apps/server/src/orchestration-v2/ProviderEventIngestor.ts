@@ -460,6 +460,17 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    // A Deep Plan run's plan is the version it publishes; a native plan would be a second, unapproved one.
+    const isInDeepPlanRun =
+      /* Proposed plans arrive as streaming updates; the enclosing operation owns the span. */
+      Effect.fnUntraced(function* (threadId: ThreadId, runId: RunId | null) {
+        if (runId === null) return false;
+        const { runs } = yield* projections.getThreadRecords(threadId, ["runs"], {
+          runIds: [runId],
+        });
+        return runs.find((run) => run.id === runId)?.deepPlanRunId !== undefined;
+      });
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -575,6 +586,11 @@ export const layer: Layer.Layer<
                 }),
               ];
             case "turn_item.updated":
+              if (
+                input.event.turnItem.type === "proposed_plan" &&
+                (yield* isInDeepPlanRun(input.event.turnItem.threadId, input.event.turnItem.runId))
+              )
+                return [];
               return [
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
@@ -598,6 +614,11 @@ export const layer: Layer.Layer<
             case "plan.updated": {
               const occurredAt = yield* DateTime.now;
               const plan = input.event.plan;
+              if (
+                plan.kind === "proposed_plan" &&
+                (yield* isInDeepPlanRun(plan.threadId, plan.runId))
+              )
+                return [];
               const previous =
                 plan.kind === "todo_list"
                   ? yield* projections.getPlan(plan.threadId, plan.id)

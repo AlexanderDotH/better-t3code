@@ -58,8 +58,8 @@ describe("ContextWindowMeter", () => {
     await act(() => {
       compact.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
+    await expect.element(trigger(screen)).toHaveFocus();
     expect(trigger(screen).getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(trigger(screen));
     await act(() => trigger(screen).blur());
     await focusMeter(screen);
     expect(trigger(screen).getAttribute("aria-expanded")).toBe("true");

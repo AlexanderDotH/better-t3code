@@ -68,6 +68,15 @@ Choose **No thinking traces**, **In chat** to read full traces including complet
 or **In Working dialog** to follow the latest live thoughts automatically.
 Both visible modes use your character streaming setting.
 
+## Working status in the top bar
+
+While an agent runs on web or desktop, its timer and total input and output tokens appear in the
+middle of the chat's top bar. Hover the token totals for the full breakdown. To keep the status
+above the composer, turn off **Settings → Better T3 → Chat → Working status in top bar**.
+
+On mobile, the same setting shows the elapsed time in the chat header. The token totals stay above
+the composer; tap them for the full breakdown.
+
 ## Edit chat messages
 
 In web and desktop chats, use **Edit message** beside a completed user or assistant message.

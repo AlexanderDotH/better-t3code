@@ -1903,7 +1903,7 @@ function getItemType(item: MessagesTimelineRow) {
 function betterT3RowSpacing(row: TimelineRow): string {
   if (row.kind === "message" && row.message.role === "user") return "pb-7 sm:pb-8";
   if (row.kind === "message" && row.message.role === "assistant") {
-    return row.showAssistantMeta ? "pb-7" : "pb-4";
+    return "pb-4";
   }
   if (row.kind === "assistant-meta" || row.kind === "proposed-plan") return "pb-6";
   return row.kind === "work" && row.isExpandedToolGroup ? "pb-1" : "pb-2.5";

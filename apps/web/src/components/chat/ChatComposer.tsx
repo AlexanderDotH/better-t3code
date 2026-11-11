@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   resolvePlanImplementationSuggestion,
   type PlanImplementationStrategy,
+  type PlanImplementationSuggestion,
   type PlanParallelismReviewStatus,
 } from "@t3tools/client-runtime/plan-implementation";
 import { usePlanParallelismReview } from "../../hooks/usePlanParallelismReview";
@@ -415,6 +416,12 @@ export interface ChatComposerProps {
   replyError?: string | null;
   showPlanAnalysis?: boolean;
   deepPlanningContent?: React.ReactNode;
+  deepPlanImplementation?: {
+    suggestion: PlanImplementationSuggestion | null;
+    reviewStatus: PlanParallelismReviewStatus;
+    pending: boolean;
+    implement: (strategy: PlanImplementationStrategy, inNewThread: boolean) => void;
+  } | null;
   deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
   deepPlanIncludeProjectChats?: boolean;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -1066,6 +1073,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       parallelPlanEnabled &&
       planModeUiEnabled &&
       phase !== "running");
+  const deepPlanImplementation = props.deepPlanImplementation ?? null;
+  const planActionsShown = deepPlanImplementation !== null || showPlanAnalysisPanel;
   const planParallelismReview = usePlanParallelismReview({
     enabled: parallelPlanEnabled && showPlanAnalysisPanel && environmentUnavailable === null,
     environmentId,
@@ -1085,6 +1094,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         reviewedSubagentCount: planParallelismReview.reviewedSubagentCount,
       })
     : null;
+  const shownPlanSuggestion = deepPlanImplementation
+    ? deepPlanImplementation.suggestion
+    : planImplementationSuggestion;
+  const shownPlanReviewStatus =
+    deepPlanImplementation?.reviewStatus ?? planParallelismReview.status;
   const explicitPlanStrategyRef = useRef<PlanImplementationStrategy | null>(null);
   const selectedModelSelection: ModelSelection = createModelSelection(
     selectedInstanceId,
@@ -1166,7 +1180,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerCollapsedMobile =
     isMobileViewport &&
     !forceExpandedOnMobile &&
-    !showPlanAnalysisPanel &&
+    !planActionsShown &&
     !isComposerFocused &&
     !hasMultilinePrompt &&
     pendingUserInputs.length === 0;
@@ -1328,7 +1342,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (!activePendingProgress ||
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
-  const composerFooterHasWideActions = showPlanAnalysisPanel || activePendingProgress !== null;
+  const composerFooterHasWideActions = planActionsShown || activePendingProgress !== null;
 
   const editPromptFromTraits = (edit: (prompt: string) => string) => {
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
@@ -2482,6 +2496,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerControlsCollapsed = isComposerResting || isComposerCollapsedMobile;
   const showInlineRestingControls = composerControlsCollapsed;
   const externalRestingControlsHost = classicComposer ? props.restingControlsHost : null;
+  // The current layout rests as one row; model and mode return with the full composer on focus.
+  const inlineRestingControlsShown =
+    showInlineRestingControls &&
+    !externalRestingControlsHost &&
+    (classicComposer || !isComposerResting);
   const onRestingChange = props.onRestingChange;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports composer geometry to the timeline's overflow measurement
   useLayoutEffect(() => {
@@ -3026,13 +3045,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const handleInterruptPrimaryActionStable = useStableCallback(handleInterruptPrimaryAction);
   const handleImplementPlanPrimaryAction = (strategy: PlanImplementationStrategy) => {
+    if (deepPlanImplementation) {
+      deepPlanImplementation.implement(strategy, false);
+      return;
+    }
     if (planParallelismReview.status === "reviewing") return;
     explicitPlanStrategyRef.current = strategy;
     submitComposer();
     explicitPlanStrategyRef.current = null;
   };
   const handleImplementPlanInNewThreadPrimaryAction = (strategy: PlanImplementationStrategy) => {
-    if (planParallelismReview.status !== "reviewing") void onImplementPlanInNewThread(strategy);
+    if (deepPlanImplementation) deepPlanImplementation.implement(strategy, true);
+    else if (planParallelismReview.status !== "reviewing")
+      void onImplementPlanInNewThread(strategy);
   };
   const handleImplementPlanInNewThreadPrimaryActionStable = useStableCallback(
     handleImplementPlanInNewThreadPrimaryAction,
@@ -3644,11 +3669,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
-            {!isComposerResting && !isComposerCollapsedMobile && contextWindowMeter ? (
-              <div data-chat-composer-context-usage className="absolute top-3 right-3 z-10">
-                {contextWindowMeter}
-              </div>
-            ) : null}
             {props.replyError ? (
               <p role="alert" className="px-3 pt-2 text-sm text-destructive">
                 {props.replyError}
@@ -3739,6 +3759,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 isComposerResting && "py-2 sm:py-2",
               )}
             >
+              {!isComposerResting && !isComposerCollapsedMobile && contextWindowMeter ? (
+                <div data-chat-composer-context-usage className="absolute top-3 right-3 z-10">
+                  {contextWindowMeter}
+                </div>
+              ) : null}
               {isStashMenuOpen && !composerMenuOpen && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerStashMenu
@@ -3910,9 +3935,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryActionStable}
                       onImplementPlan={handleImplementPlanPrimaryAction}
-                      showPlanImplementationActions={showPlanAnalysisPanel}
-                      planImplementationSuggestion={planImplementationSuggestion}
-                      planParallelismReviewStatus={planParallelismReview.status}
+                      showPlanImplementationActions={planActionsShown}
+                      planImplementationSuggestion={shownPlanSuggestion}
+                      planParallelismReviewStatus={shownPlanReviewStatus}
+                      planTone={deepPlanImplementation ? "deep-plan" : "plan"}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
                     />
                   </div>
@@ -3933,7 +3959,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   pendingUserInputs.length > 0 && "pt-2",
                   showMobilePendingAnswerActions && "hidden sm:flex",
                   isComposerResting && "absolute right-0 z-10 h-12 w-auto gap-0 py-0 sm:py-0",
-                  isComposerResting && (externalRestingControlsHost ? "bottom-px" : "bottom-10"),
+                  isComposerResting &&
+                    (inlineRestingControlsShown
+                      ? "bottom-10"
+                      : classicComposer
+                        ? "bottom-px"
+                        : "bottom-0"),
                 )}
               >
                 {!classicComposer && !isComposerResting && composerAttachButton ? (
@@ -4037,7 +4068,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
                     promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy || voiceInput.active}
+                    isSendBusy={
+                      isSendBusy || voiceInput.active || deepPlanImplementation?.pending === true
+                    }
                     sendDisabledReason={sendDisabledReason}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
@@ -4054,9 +4087,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryActionStable}
                     onImplementPlan={handleImplementPlanPrimaryAction}
-                    showPlanImplementationActions={showPlanAnalysisPanel}
-                    planImplementationSuggestion={planImplementationSuggestion}
-                    planParallelismReviewStatus={planParallelismReview.status}
+                    showPlanImplementationActions={planActionsShown}
+                    planImplementationSuggestion={shownPlanSuggestion}
+                    planParallelismReviewStatus={shownPlanReviewStatus}
+                    planTone={deepPlanImplementation ? "deep-plan" : "plan"}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
                     compactBeforeSendTokens={props.resumeCompactionTokens}
                     keepFullHistory={props.keepFullHistory}
@@ -4065,7 +4099,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </div>
               </div>
             )}
-            {showInlineRestingControls && !externalRestingControlsHost ? (
+            {inlineRestingControlsShown ? (
               <div className="h-8">
                 <div
                   ref={setInlineRestingControlsHost}

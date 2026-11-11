@@ -176,6 +176,11 @@ describe("ChatGptMcpToolBridge", () => {
                         inputSchema: { type: "object", additionalProperties: false },
                         annotations: { readOnlyHint: true },
                       },
+                      {
+                        name: "workspace_edit",
+                        description: "Edit workspace files.",
+                        inputSchema: { type: "object", additionalProperties: false },
+                      },
                     ]
                   : [
                       {
@@ -206,6 +211,12 @@ describe("ChatGptMcpToolBridge", () => {
           "list_agents",
           "mcp__docs__search",
         ]);
+        const catalog = yield* buildNativeHarnessToolCatalog({
+          interactionMode: "default",
+          sandboxMode: "danger-full-access",
+          extensions: [extension],
+        });
+        expect(catalog.filter(({ name }) => name === "workspace_edit")).toHaveLength(1);
         expect(extension.declarations[0]?.availability).toBe("read-only");
         expect(extension.declarations[0]?.requiresApproval).toBe(false);
         expect(extension.declarations[1]?.availability).toBe("default-only");

@@ -208,6 +208,66 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   "settings.betterT3.subgroup.privacy": ["Privacy", "Datenschutz", "Confidentialité"],
   "settings.betterT3.summary.on": ["On", "An", "Activé"],
   "settings.betterT3.summary.off": ["Off", "Aus", "Désactivé"],
+  "settings.betterT3.category.general.description": [
+    "Language and how Better T3 reports problems.",
+    "Sprache und wie Better T3 Probleme meldet.",
+    "Langue et signalement des problèmes.",
+  ],
+  "settings.betterT3.category.appearance.description": [
+    "Glass, transparency and the look of the window.",
+    "Glas, Transparenz und das Aussehen des Fensters.",
+    "Verre, transparence et apparence de la fenêtre.",
+  ],
+  "settings.betterT3.category.chat.description": [
+    "How conversations, messages and thinking appear.",
+    "Wie Unterhaltungen, Nachrichten und Denkprozesse erscheinen.",
+    "Apparence des conversations, des messages et de la réflexion.",
+  ],
+  "settings.betterT3.category.composer.description": [
+    "The input box, its controls and context cards.",
+    "Das Eingabefeld, seine Bedienelemente und Kontextkarten.",
+    "La zone de saisie, ses commandes et ses cartes de contexte.",
+  ],
+  "settings.betterT3.category.sidebar.description": [
+    "Sidebar style, previews, sorting and cleanup.",
+    "Stil der Seitenleiste, Vorschauen, Sortierung und Aufräumen.",
+    "Style de la barre latérale, aperçus, tri et nettoyage.",
+  ],
+  "settings.betterT3.category.usage.description": [
+    "Token pacing, daily budget and your workday.",
+    "Token-Tempo, Tagesbudget und dein Arbeitstag.",
+    "Rythme des tokens, budget quotidien et journée de travail.",
+  ],
+  "settings.betterT3.category.agents.description": [
+    "Fetch, planning, compaction and how agents work together.",
+    "Fetch, Planung, Kompaktierung und die Zusammenarbeit der Agenten.",
+    "Fetch, planification, compaction et collaboration des agents.",
+  ],
+  "settings.betterT3.category.workspace.description": [
+    "Git workbench, checkpoints and moving chats.",
+    "Git-Werkbank, Checkpoints und Chat-Übertragung.",
+    "Atelier Git, points de contrôle et transfert de discussions.",
+  ],
+  "settings.betterT3.category.voice.description": [
+    "Dictation, translation and transcript cleanup.",
+    "Diktat, Übersetzung und Nachbearbeitung von Transkripten.",
+    "Dictée, traduction et nettoyage des transcriptions.",
+  ],
+  "settings.betterT3.category.knowledge.description": [
+    "Knowledge graph and project indexing.",
+    "Wissensgraph und Projektindexierung.",
+    "Graphe de connaissances et indexation des projets.",
+  ],
+  "settings.betterT3.category.system.description": [
+    "Resource limits, diagnostics and connection health.",
+    "Ressourcenlimits, Diagnose und Verbindungszustand.",
+    "Limites de ressources, diagnostic et état de la connexion.",
+  ],
+  "settings.betterT3.category.integrations.description": [
+    "MCP, skills and compatibility with other tools.",
+    "MCP, Skills und Kompatibilität mit anderen Tools.",
+    "MCP, skills et compatibilité avec d’autres outils.",
+  ],
   "settings.betterT3.tab.general": ["General", "Allgemein", "Général"],
   "settings.betterT3.tab.appearance": ["Appearance", "Darstellung", "Apparence"],
   "settings.betterT3.chatWidth.label": [
@@ -752,6 +812,19 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Position der Seitenleiste",
     "Position de la barre latérale",
   ],
+  "settings.betterT3.sidebarStyle.title": [
+    "Sidebar style",
+    "Seitenleisten-Stil",
+    "Style de la barre latérale",
+  ],
+  "settings.betterT3.sidebarStyle.description": [
+    "Choose how chats are arranged in the sidebar. Boring groups them into project folders and uses the same setting as Labs.",
+    "Wähle, wie Chats in der Seitenleiste angeordnet sind. Boring gruppiert sie in Projektordnern und nutzt dieselbe Einstellung wie Labs.",
+    "Choisissez la disposition des discussions dans la barre latérale. Boring les regroupe par dossiers de projet et utilise le même réglage que Labs.",
+  ],
+  "settings.betterT3.sidebarStyle.standard": ["Standard", "Standard", "Standard"],
+  "settings.betterT3.sidebarStyle.classic": ["Classic", "Klassisch", "Classique"],
+  "settings.betterT3.sidebarStyle.boring": ["Boring", "Boring", "Boring"],
   "settings.betterT3.sidebarPosition.left": ["Left", "Links", "À gauche"],
   "settings.betterT3.sidebarPosition.right": ["Right", "Rechts", "À droite"],
   "settings.betterT3.mobile.transcript.title": [
@@ -1008,6 +1081,11 @@ const featureLabels = {
   ],
   "chat.classicBubbleOnly": ["Plan presentation", "Plan-Darstellung", "Présentation du plan"],
   "chat.classicSidebar": ["Classic sidebar", "Klassische Seitenleiste", "Barre latérale classique"],
+  "chat.workingStatusInHeader": [
+    "Working status in top bar",
+    "Arbeitsstatus in der oberen Leiste",
+    "État d’activité dans la barre supérieure",
+  ],
   "chat.previewCount": ["Preview count", "Vorschauanzahl", "Nombre d’aperçus"],
   "chat.sorting": ["Chat sorting", "Chat-Sortierung", "Tri des discussions"],
   "chat.settling": ["Chat settling", "Chat-Ablage", "Classement des discussions"],
@@ -1226,6 +1304,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Use the native T3 Code menu or the Better T3 slider for Codex. Only one is shown; your selected context size is preserved.",
     "Nutzt das native T3-Code-Menü oder den Better-T3-Regler für Codex. Nur eine Auswahl wird angezeigt; die gewählte Kontextgröße bleibt erhalten.",
     "Utilise le menu natif de T3 Code ou le curseur Better T3 pour Codex. Un seul est affiché ; la taille de contexte choisie est conservée.",
+  ],
+  "chat.workingStatusInHeader": [
+    "Show a running agent's timer and token totals compactly in the middle of the chat's top bar instead of above the composer.",
+    "Zeigt Laufzeit und Token-Summen eines laufenden Agenten kompakt mittig in der oberen Chat-Leiste statt über dem Eingabefeld.",
+    "Affiche la durée et le total des tokens d’un agent en cours de façon compacte au centre de la barre supérieure, au lieu d’au-dessus de la zone de saisie.",
   ],
   "chat.classicBubbleOnly": [
     "Use the native T3 Code plan, or move active plan progress into a blue bubble above the Card Deck composer. The bubble requires Card Deck.",

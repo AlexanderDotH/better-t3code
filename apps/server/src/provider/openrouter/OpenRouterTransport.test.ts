@@ -18,6 +18,8 @@ import {
   makeOpenRouterTransport,
 } from "./OpenRouterTransport.ts";
 
+import type { OpenRouterCatalogModel } from "./OpenRouterModelCatalog.ts";
+
 const SETTINGS = {
   enabled: true,
   protocol: "chat-completions",
@@ -396,6 +398,73 @@ describe("OpenRouter transport", () => {
       const serializedError = JSON.stringify(error);
       expect(serializedError).not.toContain("secret route");
       expect(serializedError).not.toContain("secret-key");
+
+      const restricted = yield* Effect.flip(
+        transport
+          .streamRound({
+            model: "moonshotai/kimi-k3",
+            instructions: "Answer.",
+            history: [{ type: "user", content: "Hello" }],
+            tools: [],
+            settings: { ...SETTINGS, requireZdr: true },
+          })
+          .pipe(Stream.runCollect),
+      );
+      expect(restricted.message).toContain("zero data retention");
+      expect(JSON.stringify(restricted)).not.toContain("secret route");
+    }),
+  );
+
+  it.effect("offers only models a required zero data retention endpoint can serve", () =>
+    Effect.gen(function* () {
+      const requests: Array<string> = [];
+      let zdrAvailable = true;
+      const entry = (id: string) => ({
+        ...modelCatalogResponse.data[0],
+        id,
+        canonical_slug: id,
+        name: id,
+      });
+      const client = HttpClient.make((request) => {
+        requests.push(request.url);
+        if (request.url.endsWith("/endpoints/zdr")) {
+          return response(
+            request,
+            zdrAvailable
+              ? Response.json({
+                  data: [
+                    { model_id: "with/zdr", supported_parameters: ["tools"] },
+                    { model_id: "zdr/no-tools", supported_parameters: ["max_tokens"] },
+                  ],
+                })
+              : new Response("unavailable", { status: 503 }),
+          );
+        }
+        return response(
+          request,
+          Response.json({
+            data: [entry("with/zdr"), entry("without/zdr"), entry("zdr/no-tools")],
+          }),
+        );
+      });
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const selectable = (models: ReadonlyArray<OpenRouterCatalogModel>) =>
+        models.filter((model) => model.selectionSupport.agent).map((model) => model.id);
+
+      expect(selectable(yield* transport.listModels(["my/custom"], { requireZdr: true }))).toEqual([
+        "with/zdr",
+        "my/custom",
+      ]);
+
+      requests.length = 0;
+      expect(selectable(yield* transport.listModels([]))).toHaveLength(3);
+      expect(requests).toEqual([`${OPENROUTER_API_ORIGIN}/models?output_modalities=all`]);
+
+      // A failed list must not block turns; the routing error still explains a miss.
+      zdrAvailable = false;
+      expect(selectable(yield* transport.listModels([], { requireZdr: true }))).toHaveLength(3);
     }),
   );
 

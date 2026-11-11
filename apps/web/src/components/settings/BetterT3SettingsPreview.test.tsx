@@ -148,33 +148,34 @@ describe("plan bubble visual choice", () => {
   });
 });
 
-describe.each(["agent.expandedComposerControls", "chat.classicSidebar"] as const)(
-  "%s visual choice",
-  (featureId) => {
-    it("shows both layouts and updates the selected card", async () => {
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(() => {
-          renderer = create(<ComposerOrSidebarChoiceHarness featureId={featureId} />);
-        });
-        const radios = renderer!.root.findAllByProps({ role: "radio" });
-        expect(radios).toHaveLength(2);
-        expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([true, false]);
-        const previews = renderer!.root.findAllByProps({
-          "data-better-t3-feature-visual": featureId,
-        });
-        expect(previews).toHaveLength(2);
+describe.each([
+  ["agent.expandedComposerControls", ["Deaktiviert", "Aktiviert"]],
+  ["chat.classicSidebar", ["Standard", "Klassisch", "Boring"]],
+] as const)("%s visual choice", (featureId, labels) => {
+  it("shows each layout and updates the selected card", async () => {
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<ComposerOrSidebarChoiceHarness featureId={featureId} />);
+      });
+      const radios = renderer!.root.findAllByProps({ role: "radio" });
+      expect(radios.map((radio) => radio.props["aria-label"])).toEqual(labels);
+      const selection = () => radios.map((radio) => radio.props["aria-checked"]).slice(0, 2);
+      expect(selection()).toEqual([true, false]);
+      const previews = renderer!.root.findAllByProps({
+        "data-better-t3-feature-visual": featureId,
+      });
+      expect(previews).toHaveLength(labels.length);
 
-        await act(async () => {
-          await radios[1]!.props.onClick();
-        });
-        expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, true]);
-      } finally {
-        await act(async () => {
-          await renderer?.unmount();
-        });
-        vi.unstubAllGlobals();
-      }
-    });
-  },
-);
+      await act(async () => {
+        await radios[1]!.props.onClick();
+      });
+      expect(selection()).toEqual([false, true]);
+    } finally {
+      await act(async () => {
+        await renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});

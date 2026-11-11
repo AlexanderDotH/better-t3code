@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
@@ -10,6 +11,50 @@ vi.mock("./useAvailableSettingsSearchItems", () => ({
     { id: "theme", title: "Theme", to: "/settings/appearance" },
   ],
 }));
+
+it("lists each Better T3 category as a page and keeps other sections folded until opened", async () => {
+  // Below md the sidebar is an icon rail, which never folds its sections.
+  await page.viewport(1200, 800);
+  await using screen = await render(
+    <SidebarProvider defaultOpen>
+      <SettingsSidebarNav pathname="/settings/general" />
+    </SidebarProvider>,
+    { router: "/settings/general" },
+  );
+  await screen.getByRole("treeitem", { name: "Sidebar" }).click();
+  await vi.waitFor(() => {
+    expect(screen.router?.state.location.pathname).toBe("/settings/better-t3");
+    expect(screen.router?.state.location.search).toMatchObject({ category: "sidebar" });
+  });
+
+  // The open page's own section stays open; another section starts folded.
+  const section = (key: string) =>
+    page.elementLocator(document.querySelector(`[data-settings-section="${key}"]`)!);
+  await expect.element(section("/settings/general")).toBeVisible();
+  await expect.element(section("/settings/providers")).not.toBeVisible();
+  await section("group:Agents").click();
+  await expect.element(section("/settings/providers")).toBeVisible();
+
+  // Better T3 folds like the rest, and comes back the same way.
+  await expect.element(section("/settings/better-t3:sidebar")).toBeVisible();
+  await section("group:Better T3").click();
+  await expect.element(section("/settings/better-t3:sidebar")).not.toBeVisible();
+  await section("group:Better T3").click();
+  await expect.element(section("/settings/better-t3:sidebar")).toBeVisible();
+});
+
+it("finds Better T3 features that have no curated search entry", async () => {
+  await using _screen = await render(
+    <SidebarProvider defaultOpen>
+      <SettingsSidebarNav pathname="/settings/general" />
+    </SidebarProvider>,
+    { router: "/settings/general" },
+  );
+  await page.getByRole("combobox", { name: "Search settings" }).fill("Working status in top bar");
+  await expect
+    .element(page.getByRole("option", { name: /Working status in top bar/ }))
+    .toBeVisible();
+});
 
 it("ignores composing keys in the search", async () => {
   await using screen = await render(

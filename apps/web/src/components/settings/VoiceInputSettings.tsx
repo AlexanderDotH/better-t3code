@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
-import { ChevronDownIcon, MicIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -26,9 +26,9 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import {
+  isProviderInstancePickerReady,
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
-  isProviderInstancePickerReady,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
@@ -39,14 +39,8 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Spinner } from "../ui/spinner";
-import {
-  SettingResetButton,
-  SettingsRow,
-  SettingsSearchTarget,
-  SettingsSection,
-} from "./settingsLayout";
+import { SettingResetButton, SettingsRow, SettingsSearchTarget } from "./settingsLayout";
 import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
-import { BetterT3SettingsSearchItems } from "./BetterT3SettingsSearch";
 import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
 
 const EMPTY_SECRET_VALUE = { value: "", valueRedacted: false };
@@ -417,25 +411,14 @@ export function VoiceInputSettings({
   const savedTranslationProvider = modelInstanceEntries.find(
     (entry) => entry.instanceId === savedTranslationSelection?.instanceId,
   );
-  const translationSummary = [
-    translate(
-      settings.voiceInputOutputLanguage === "english"
-        ? "settings.betterT3.value.english"
-        : "settings.betterT3.value.nativeLanguage",
-    ),
-    savedTranslationSelection === null
-      ? translate("settings.betterT3.value.automatic")
-      : (savedTranslationModel?.name ?? savedTranslationSelection.model),
-    ...(disabled
-      ? [translate("settings.betterT3.noEnvironment")]
-      : savedTranslationSelection &&
-          (!savedTranslationModel ||
-            savedTranslationModel.isUnavailable ||
-            !savedTranslationProvider ||
-            !isProviderInstancePickerReady(savedTranslationProvider))
-        ? [translate("settings.betterT3.value.unavailable")]
-        : []),
-  ].join(" · ");
+  const savedTranslationIssue =
+    savedTranslationSelection &&
+    (!savedTranslationModel ||
+      savedTranslationModel.isUnavailable ||
+      !savedTranslationProvider ||
+      !isProviderInstancePickerReady(savedTranslationProvider))
+      ? `${savedTranslationModel?.name ?? savedTranslationSelection.model} · ${translate("settings.betterT3.value.unavailable")}`
+      : null;
   const cleanupModelPicker = {
     fallbackSelection: defaultModelSelection,
     instanceEntries: modelInstanceEntries,
@@ -563,23 +546,7 @@ export function VoiceInputSettings({
 
   return (
     <>
-      <SettingsSection
-        id="voice-input"
-        title={translate("settings.voice.title")}
-        icon={<MicIcon className="size-3.5" />}
-      >
-        <BetterT3SettingsSearchItems
-          items={[
-            {
-              id: "voice-translation-model",
-              targetId: "voice-translation-model",
-              to: "/settings/better-t3",
-              title: translate("settings.voice.model.title"),
-              description: translate("settings.voice.model.description"),
-              category: translate("settings.voice.title"),
-            },
-          ]}
-        />
+      <SettingsSearchTarget id="voice-input" className="space-y-6">
         <BetterT3SettingsSubgroup groupId="voice-access" hideTitle={!accessSettings}>
           {accessSettings}
           <SettingsRow
@@ -621,12 +588,13 @@ export function VoiceInputSettings({
             }
           />
         </BetterT3SettingsSubgroup>
-        <BetterT3SettingsSubgroup groupId="voice-translation" summary={translationSummary}>
+        <BetterT3SettingsSubgroup groupId="voice-translation">
           {translationSettings}
           <SettingsRow
             id="voice-translation-model"
             title={translate("settings.voice.model.title")}
             description={translate("settings.voice.model.description")}
+            status={savedTranslationIssue}
             resetAction={
               settings.voiceTranslationModelSelection !== null ? (
                 <SettingResetButton
@@ -658,7 +626,7 @@ export function VoiceInputSettings({
             }
           />
         </BetterT3SettingsSubgroup>
-        <SettingsSearchTarget id="voice-recording-options">
+        <SettingsSearchTarget id="voice-recording-options" className="space-y-6">
           {supportsOptions ? (
             <>
               <AssemblyAiVoiceSettingsForm
@@ -672,7 +640,7 @@ export function VoiceInputSettings({
                 onSave={(voice) => persistVoiceOptions(voice)}
               />
               {modelsState !== "ready" ? (
-                <div className="space-y-2 px-4 pb-4 text-xs text-muted-foreground" role="status">
+                <div className="space-y-2 px-1 text-xs text-muted-foreground" role="status">
                   <p>
                     {translate(
                       modelsState === "loading"
@@ -694,7 +662,7 @@ export function VoiceInputSettings({
               ) : null}
             </>
           ) : (
-            <p className="px-4 py-4 text-xs text-muted-foreground">
+            <p className="px-1 text-xs text-muted-foreground">
               {translate("settings.voice.options.unsupported")}
             </p>
           )}
@@ -831,7 +799,7 @@ export function VoiceInputSettings({
             {transcriptTransferSettings}
           </BetterT3SettingsSubgroup>
         ) : null}
-      </SettingsSection>
+      </SettingsSearchTarget>
     </>
   );
 }
