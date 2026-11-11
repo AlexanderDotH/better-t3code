@@ -46,12 +46,13 @@ export function makeResponseMetricsTracker() {
       },
     };
     turns.set(turn.id, updated);
+    const { tokenUsage: _tokenUsage, ...metricsUpdate } = updated;
     return [
       {
         type: "provider_turn.updated",
         driver: event.driver,
         threadId: item.threadId,
-        providerTurn: updated,
+        providerTurn: metricsUpdate,
       },
       event,
     ];

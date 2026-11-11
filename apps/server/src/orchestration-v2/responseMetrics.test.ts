@@ -30,6 +30,10 @@ it.each(["assistant_message", "reasoning"] as const)(
       status: "running" as const,
       startedAt,
       completedAt: null,
+      tokenUsage: {
+        usedTokens: 1814,
+        updatedAt: DateTime.formatIso(startedAt),
+      },
     };
     track({ type: "provider_turn.updated", driver, providerTurn });
     const item: Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> = {
@@ -64,6 +68,7 @@ it.each(["assistant_message", "reasoning"] as const)(
       type: "provider_turn.updated",
       providerTurn: { responseMetrics: { timeToFirstTokenMs: 250 } },
     });
+    expect(first[0]).not.toHaveProperty("providerTurn.tokenUsage");
     expect(
       track({
         ...text,
@@ -76,7 +81,10 @@ it.each(["assistant_message", "reasoning"] as const)(
       },
     ]);
     expect(track({ type: "provider_turn.updated", driver, providerTurn })[0]).toMatchObject({
-      providerTurn: { responseMetrics: { timeToFirstTokenMs: 250 } },
+      providerTurn: {
+        tokenUsage: providerTurn.tokenUsage,
+        responseMetrics: { timeToFirstTokenMs: 250 },
+      },
     });
     expect(
       track({
