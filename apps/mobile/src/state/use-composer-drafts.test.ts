@@ -177,6 +177,13 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
+import {
+  composerPromptHistory,
+  deleteComposerStash,
+  listComposerStashes,
+  restoreComposerStashState,
+  stashComposerDraftState,
+} from "./composer-library";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 import { threadOutboxManager } from "./thread-outbox";
 import {
@@ -279,6 +286,107 @@ function contextDraft(start: number, count: number): ComposerDraft {
     attachments: [],
   };
 }
+
+describe("composer stash and prompt history", () => {
+  it("persists a complete draft and swaps the current draft on restore", () => {
+    const key = "env:thread";
+    const draft = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        [key]: {
+          ...contextDraft(0, 1),
+          attachments: [
+            {
+              type: "file",
+              id: "file",
+              name: "notes.md",
+              mimeType: "text/markdown",
+              sizeBytes: 10,
+              fileUri: "file:///notes.md",
+            },
+          ],
+          additionalModelSelections: [
+            { instanceId: ProviderInstanceId.make("codex"), model: "second-model" },
+          ],
+        },
+      },
+    }).drafts[key]!;
+    const stashed = stashComposerDraftState({ [key]: draft }, key, "stash", 100)!;
+    const saved = listComposerStashes(stashed, key)[0]!;
+    expect(stashed[key]?.text ?? "").toBe("");
+    expect(saved.draft).toEqual(draft);
+    const reloaded = decodePersistedComposerState({ schemaVersion: 1, drafts: stashed }).drafts;
+    expect(reloaded[saved.key]).toEqual(draft);
+    const replacement = { text: "new draft", attachments: [] };
+    const restored = restoreComposerStashState(
+      { ...reloaded, [key]: replacement },
+      key,
+      saved.key,
+    )!;
+    expect(restored[key]).toEqual(draft);
+    expect(restored[saved.key]).toEqual(replacement);
+    expect(restoreComposerStashState(restored, "other:thread", saved.key)).toBeNull();
+    expect(stashComposerDraftState({}, key, "empty", 200)).toBeNull();
+  });
+
+  it("keeps new-task stashes scoped to their environment and deletes only the selected stash", () => {
+    const key = "new-task:draft";
+    const project = {
+      environmentId: EnvironmentId.make("env"),
+      projectId: ProjectId.make("project"),
+      createdAt: "2026-11-11T00:00:00.000Z",
+    };
+    const stashed = stashComposerDraftState(
+      { [key]: { text: "unsent", attachments: [], project } },
+      key,
+      "stash",
+      100,
+    )!;
+    const saved = listComposerStashes(stashed, key)[0]!;
+    expect(saved.key.startsWith("env:")).toBe(true);
+    expect(findNewTaskDraftKeys(stashed, project)).not.toContain(saved.key);
+    expect(stashed[key]?.project).toEqual(project);
+    expect(listComposerStashes(stashed, "env:another-thread")[0]?.key).toBe(saved.key);
+    const otherProject = { ...project, projectId: ProjectId.make("other-project") };
+    const restored = restoreComposerStashState(
+      { ...stashed, "new-task:other": { text: "", attachments: [], project: otherProject } },
+      "new-task:other",
+      saved.key,
+      project.environmentId,
+    );
+    expect(restored?.["new-task:other"]).toMatchObject({ text: "unsent", project: otherProject });
+    const primary = { instanceId: ProviderInstanceId.make("codex"), model: "primary" };
+    const emptyDraft = {
+      text: "",
+      attachments: [],
+      project,
+      modelSelection: primary,
+      additionalModelSelections: [{ ...primary, model: "other" }],
+    };
+    expect(
+      decodePersistedComposerState({ schemaVersion: 1, drafts: { [key]: emptyDraft } }).drafts[key]
+        ?.modelSelection,
+    ).toEqual(primary);
+    appAtomRegistry.set(composerDraftsAtom, stashed);
+    deleteComposerStash("other:thread", saved.key);
+    expect(appAtomRegistry.get(composerDraftsAtom)[saved.key]).toBeDefined();
+    deleteComposerStash(key, saved.key);
+    expect(appAtomRegistry.get(composerDraftsAtom)[saved.key]).toBeUndefined();
+  });
+
+  it("recalls durable user prompts newest first without duplicate prompts or operational commands", () => {
+    expect(
+      composerPromptHistory([
+        { role: "user", text: " first " },
+        { role: "assistant", text: "answer" },
+        { role: "user", text: "/compact" },
+        { role: "user", text: "second" },
+        { role: "user", text: "first" },
+        { role: "user", text: " " },
+      ]),
+    ).toEqual(["first", "second"]);
+  });
+});
 
 function modelReconciliationHarness(
   environmentId: EnvironmentId,

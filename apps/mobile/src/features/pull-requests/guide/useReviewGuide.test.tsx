@@ -54,6 +54,10 @@ vi.mock("../../../state/query", () => ({
 }));
 vi.mock("../../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.generate }));
 vi.mock("../usePullRequestConnected", () => ({ usePullRequestConnected: () => true }));
+vi.mock("./reviewGuideRuns", () => ({
+  showReviewGuide: () => () => {},
+  watchReviewGuideRun: () => {},
+}));
 vi.mock("../usePullRequestDiff", () => ({
   pullRequestTarget: (params: unknown) => params,
 }));

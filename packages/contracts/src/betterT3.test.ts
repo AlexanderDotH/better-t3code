@@ -33,6 +33,15 @@ describe("Better T3 feature registry", () => {
         "agent.reasoningInMessage",
       ),
     ).toBe(false);
+    for (const id of [
+      "agent.reasoningVisibility",
+      "agent.reasoningWorkingOverlay",
+      "agent.reasoningInMessage",
+    ] as const) {
+      expect(
+        BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === id)?.availability.surfaces,
+      ).toEqual(["web", "desktop", "phone", "tablet"]);
+    }
   });
 
   it("gives every feature one localized descriptor and valid dependencies", () => {
@@ -144,19 +153,13 @@ describe("Better T3 feature registry", () => {
   it("does not advertise web-only controls on mobile while keeping real server mirrors", () => {
     for (const featureId of [
       "agent.expandedComposerControls",
-      "agent.reasoningVisibility",
-      "agent.reasoningWorkingOverlay",
-      "agent.reasoningInMessage",
       "agent.nativeSubagentDisplay",
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
       "chat.hideComposerDivider",
       "chat.characterStreamingMotion",
-      "chat.contextWindowSelector",
       "chat.classicBubbleOnly",
       "chat.shiftClickShowLess",
-      "chat.draftIndicators",
-      "integration.suppressErrorsAndWarnings",
     ] as const) {
       expect(
         BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === featureId)?.availability.surfaces,
@@ -166,6 +169,16 @@ describe("Better T3 feature registry", () => {
       BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "agent.deepThinking")?.availability
         .surfaces,
     ).toEqual(["web", "desktop", "phone", "tablet"]);
+    for (const id of [
+      "chat.messageEditing",
+      "chat.draftIndicators",
+      "integration.suppressErrorsAndWarnings",
+      "chat.contextWindowSelector",
+    ] as const) {
+      expect(
+        BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === id)?.availability.surfaces,
+      ).toEqual(["web", "desktop", "phone", "tablet"]);
+    }
   });
 
   it("advertises the real Git workbench on every client surface", () => {

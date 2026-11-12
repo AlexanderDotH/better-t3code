@@ -12,8 +12,10 @@ function checkedMenuState(checked: boolean) {
 
 export function HomeHeader(props: HomeHeaderProps) {
   const translator = useMobileInterfaceTranslator();
+  const selectedProjectKeys =
+    props.selectedProjectKeys ?? (props.selectedProjectKey ? [props.selectedProjectKey] : []);
   const hasCustomListOptions =
-    props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
+    props.selectedEnvironmentId !== null || selectedProjectKeys.length > 0;
   const menuActions: MenuAction[] = [
     {
       id: "environment",
@@ -41,12 +43,12 @@ export function HomeHeader(props: HomeHeaderProps) {
               {
                 id: "project:all",
                 title: translator.message("mobile.navigation.allProjects"),
-                state: checkedMenuState(props.selectedProjectKey === null),
+                state: checkedMenuState(selectedProjectKeys.length === 0),
               },
               ...props.projects.map((project) => ({
                 id: `project:${project.key}`,
                 title: project.label,
-                state: checkedMenuState(props.selectedProjectKey === project.key),
+                state: checkedMenuState(selectedProjectKeys.includes(project.key)),
               })),
             ],
           },

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestReviewThread } from "@t3tools/contracts";
 import type { NativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
-import { annotatePullRequestDiff, reviewPositionLabel } from "./pullRequestDiffComments";
+import {
+  annotatePullRequestDiff,
+  buildReviewCommentRange,
+  reviewPositionLabel,
+} from "./pullRequestDiffComments";
 const data: NativeReviewDiffData = {
   rows: [
     { kind: "file", id: "header", fileId: "f", filePath: "a.ts" },
@@ -24,6 +28,73 @@ const thread: PullRequestReviewThread = {
   comments: [],
 };
 describe("PR comments in continuous native diffs", () => {
+  it("builds ordered range positions on either diff side and falls back for single-line hosts", () => {
+    const rows = [
+      {
+        kind: "line" as const,
+        id: "a",
+        fileId: "f",
+        oldLineNumber: 4,
+        newLineNumber: 6,
+        content: "context",
+      },
+      {
+        kind: "line" as const,
+        id: "b",
+        fileId: "f",
+        change: "delete" as const,
+        oldLineNumber: 5,
+        content: "removed",
+      },
+      {
+        kind: "line" as const,
+        id: "c",
+        fileId: "f",
+        change: "add" as const,
+        newLineNumber: 7,
+        content: "added",
+      },
+    ];
+    expect(buildReviewCommentRange(rows, "c", "a")).toMatchObject({
+      startPosition: { kind: "context", oldLine: 4, newLine: 6, side: "right" },
+      position: { kind: "added", newLine: 7 },
+      code: "context\nadded",
+      rowIds: ["a", "c"],
+    });
+    expect(buildReviewCommentRange(rows, "b", "a")).toMatchObject({
+      startPosition: { kind: "context", oldLine: 4, newLine: 6, side: "left" },
+      position: { kind: "deleted", oldLine: 5 },
+      code: "context\nremoved",
+    });
+    expect(buildReviewCommentRange(rows, "a", "c", false)).toEqual({
+      position: { kind: "added", newLine: 7 },
+      code: "added",
+      rowIds: ["a", "c"],
+    });
+    expect(buildReviewCommentRange(rows, "a", "a")?.startPosition).toBeUndefined();
+    const shiftedContext = [
+      rows[0]!,
+      {
+        kind: "line" as const,
+        id: "ctx",
+        fileId: "f",
+        oldLineNumber: 5,
+        newLineNumber: 9,
+        content: "context after removal",
+      },
+    ];
+    expect(buildReviewCommentRange(shiftedContext, "a", "ctx", true, "left")).toMatchObject({
+      startPosition: { kind: "context", oldLine: 4, newLine: 6, side: "left" },
+      position: { kind: "context", oldLine: 5, newLine: 9, side: "left" },
+    });
+    expect(buildReviewCommentRange(rows, "b", "c")).toBeNull();
+    expect(
+      buildReviewCommentRange([...rows, { ...rows[2]!, id: "other", fileId: "g" }], "a", "other"),
+    ).toBeNull();
+    expect(
+      buildReviewCommentRange([...rows, { ...rows[2]!, id: "gap", newLineNumber: 10 }], "a", "gap"),
+    ).toBeNull();
+  });
   it("returns unannotated data unchanged without reading or indexing rows", () => {
     const unannotated = {
       ...data,

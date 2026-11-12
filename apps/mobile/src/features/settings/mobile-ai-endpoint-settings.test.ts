@@ -69,7 +69,7 @@ describe("mobile AI endpoint setup", () => {
           enabled: false,
           displayName: "Work",
           accentColor: "#123456",
-          config: { baseUrl: LM_STUDIO_BASE_URL, defaultModel: "previous" },
+          config: { baseUrl: LM_STUDIO_BASE_URL, defaultModel: "previous", futureOption: true },
         },
         [otherInstanceId]: { driver: ProviderDriverKind.make("lmstudio"), enabled: true },
       },
@@ -91,6 +91,7 @@ describe("mobile AI endpoint setup", () => {
       displayName: "Office",
       accentColor: "#123456",
       config: {
+        futureOption: true,
         baseUrl: "https://models.example/proxy/api",
         defaultModel: "manual/coder",
         customModels: ["manual/vision", "manual/coder"],

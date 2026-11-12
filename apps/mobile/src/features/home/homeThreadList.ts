@@ -1,4 +1,7 @@
-import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  buildProjectGroups,
+  getProjectOrderKey,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -18,9 +21,13 @@ import * as Order from "effect/Order";
 
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import type { ThreadListV2ListItem } from "../threads/threadListV2";
+import {
+  resolveThreadListV2Status,
+  threadHasUnseenCompletion,
+  type ThreadListV2ListItem,
+} from "../threads/threadListV2";
 
-export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
+export type HomeProjectSortOrder = SidebarProjectSortOrder;
 
 export interface HomeProjectScope {
   readonly key: string;
@@ -47,6 +54,7 @@ export function buildHomeProjectScopes(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
 }): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
@@ -56,7 +64,7 @@ export function buildHomeProjectScopes(input: {
     groupScratchProjects: true,
     settings: {
       sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: {},
+      sidebarProjectGroupingOverrides: input.projectGroupingOverrides ?? {},
     },
   }).map((group) => {
     return {
@@ -89,12 +97,84 @@ export function findHomeProjectScope(
   );
 }
 
+export function resolveHomeProjectFilter(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  keys: ReadonlyArray<string>,
+) {
+  const selectedScopes = [
+    ...new Map(
+      keys.flatMap((key) => {
+        const scope = findHomeProjectScope(scopes, key);
+        return scope ? [[scope.key, scope] as const] : [];
+      }),
+    ).values(),
+  ];
+  return {
+    scopes: selectedScopes,
+    keys: selectedScopes.map((scope) => scope.key),
+    projectRefs:
+      selectedScopes.length > 0 ? selectedScopes.flatMap((scope) => scope.projectRefs) : null,
+  };
+}
+
+export function reorderHomeProjectKeys(
+  keys: ReadonlyArray<string>,
+  key: string,
+  direction: "up" | "down",
+) {
+  const ordered = [...new Set(keys)];
+  const index = ordered.indexOf(key);
+  const destination = index + (direction === "up" ? -1 : 1);
+  if (index < 0 || destination < 0 || destination >= ordered.length) return ordered;
+  const neighbor = ordered[destination]!;
+  ordered[destination] = key;
+  ordered[index] = neighbor;
+  return ordered;
+}
+
+export function resolveProjectFolderAttention(threads: ReadonlyArray<EnvironmentThreadShell>) {
+  const statuses = new Set(threads.map(resolveThreadListV2Status));
+  if (
+    statuses.has("approval") ||
+    statuses.has("input") ||
+    statuses.has("request") ||
+    statuses.has("limited")
+  )
+    return "attention" as const;
+  if (statuses.has("failed")) return "failed" as const;
+  if (
+    threads.some(
+      (thread) =>
+        resolveThreadListV2Status(thread) === "ready" && threadHasUnseenCompletion(thread),
+    )
+  )
+    return "unread" as const;
+  return statuses.has("working") ? ("working" as const) : null;
+}
+
 export function sortHomeProjectScopes(input: {
   readonly scopes: ReadonlyArray<HomeProjectScope>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly projectSortOrder: HomeProjectSortOrder;
+  readonly projectOrder?: ReadonlyArray<string>;
 }): ReadonlyArray<HomeProjectScope> {
+  if (input.projectSortOrder === "manual") {
+    const order = new Map(input.projectOrder?.map((key, index) => [key, index]));
+    return [...input.scopes].sort((first, second) => {
+      const rank = (scope: HomeProjectScope) =>
+        Math.min(
+          order.get(scope.key) ?? Infinity,
+          ...scope.projects.map((project) => order.get(getProjectOrderKey(project)) ?? Infinity),
+          ...scope.projectRefs.map(
+            (ref) => order.get(scopedProjectKey(ref.environmentId, ref.projectId)) ?? Infinity,
+          ),
+        );
+      const firstRank = rank(first);
+      const secondRank = rank(second);
+      return firstRank === secondRank ? 0 : firstRank < secondRank ? -1 : 1;
+    });
+  }
   const scopeKeyByProjectRef = new Map(
     input.scopes.flatMap((scope) =>
       scope.projectRefs.map(
@@ -116,7 +196,10 @@ export function sortHomeProjectScopes(input: {
     if (thread.archivedAt !== null) continue;
     recordActivity(
       scopeKeyByProjectRef.get(scopedProjectKey(thread.environmentId, thread.projectId)),
-      getThreadSortTimestamp(thread, input.projectSortOrder),
+      getThreadSortTimestamp(
+        thread,
+        input.projectSortOrder === "created_at" ? "created_at" : "updated_at",
+      ),
     );
   }
   for (const pendingTask of input.pendingTasks) {
@@ -157,6 +240,9 @@ export interface GroupedThreadListGroup {
   readonly collapsed: boolean;
   readonly expanded: boolean;
   readonly hiddenCount: number;
+  readonly hiddenThreadCount: number;
+  readonly attention: ReturnType<typeof resolveProjectFolderAttention>;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly project: EnvironmentProject;
 }
 
@@ -179,6 +265,9 @@ export function buildGroupedThreadListItems(input: {
   readonly openSettledGroups: ReadonlyArray<string> | undefined;
   readonly expandedGroups: ReadonlySet<string>;
   readonly selectedThreadKey: string | null;
+  readonly selectedProjectKeys?: ReadonlyArray<string>;
+  readonly projectSortOrder?: HomeProjectSortOrder;
+  readonly projectOrder?: ReadonlyArray<string>;
 }) {
   const rows = input.rows.filter((row) => row.type === "v2-thread" || row.type === "v2-pending");
   const isPinned = (row: ThreadListV2ListItem) => row.type === "v2-thread" && row.item.pinned;
@@ -193,11 +282,17 @@ export function buildGroupedThreadListItems(input: {
   const groups = new Map<string, GroupedThreadListGroup>();
   const items: ThreadListV2ListItem[] = [];
   const included = new Set(below.map((row) => row.key));
-  const scopes = [...input.scopes].sort(
-    (first, second) =>
-      Number(second.pinned) - Number(first.pinned) ||
-      Date.parse(second.representative[input.projectSortField]) -
-        Date.parse(first.representative[input.projectSortField]),
+  const orderedScopes = sortHomeProjectScopes({
+    scopes: input.scopes,
+    threads: [],
+    pendingTasks: [],
+    projectSortOrder:
+      input.projectSortOrder ??
+      (input.projectSortField === "createdAt" ? "created_at" : "updated_at"),
+    projectOrder: input.projectOrder,
+  });
+  const scopes = [...orderedScopes].sort(
+    (first, second) => Number(second.pinned) - Number(first.pinned),
   );
   for (const scope of scopes) {
     const keys = new Set(
@@ -212,6 +307,7 @@ export function buildGroupedThreadListItems(input: {
             : null;
       return target !== null && keys.has(scopedProjectKey(target.environmentId, target.projectId));
     });
+    if (scope.archived && scopeRows.length === 0) continue;
     // A search lists every match, so nothing it found may hide behind a toggle.
     const settledRows = input.searching ? [] : scopeRows.filter(isSettled);
     const unsettledRows = input.searching ? scopeRows : scopeRows.filter((r) => !isSettled(r));
@@ -241,6 +337,11 @@ export function buildGroupedThreadListItems(input: {
       collapsed,
       expanded,
       hiddenCount: Math.max(0, projectRows.length - previewCount),
+      hiddenThreadCount: scopeRows.length,
+      attention: resolveProjectFolderAttention(
+        scopeRows.flatMap((row) => (row.type === "v2-thread" ? [row.item.thread] : [])),
+      ),
+      projects: scope.projects,
       project: scope.representative,
     };
     for (const [index, row] of shown.entries()) {
@@ -248,7 +349,22 @@ export function buildGroupedThreadListItems(input: {
       items.push(row);
     }
     for (const row of scopeRows) included.add(row.key);
-    if (settledRows.length === 0) continue;
+    if (settledRows.length === 0) {
+      if (
+        shown.length === 0 &&
+        !input.searching &&
+        (scope.pinned || input.selectedProjectKeys?.includes(scope.key))
+      ) {
+        const header: ThreadListV2ListItem = {
+          type: "v2-project-header",
+          key: `v2-project-header:${scope.key}`,
+          scopeKey: scope.key,
+        };
+        groups.set(header.key, { ...group, first: true, last: true });
+        items.push(header);
+      }
+      continue;
+    }
     const open = input.openSettledGroups?.includes(scope.key) === true;
     const toggle: ThreadListV2ListItem = {
       type: "v2-project-settled",

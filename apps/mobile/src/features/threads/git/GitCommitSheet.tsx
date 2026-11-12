@@ -81,11 +81,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   );
 
   return (
-    // Material sheet drags follow the first nested-scrolling native view, and the inline
-    // header's Compose button is one, so Android renders content first and reverses the column.
     <View
       collapsable={false}
-      className="bg-sheet ios:flex-1 android:flex-col-reverse"
+      className="bg-sheet ios:flex-1"
       style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
       {android ? (
@@ -93,8 +91,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           options={{ sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" }}
         />
       ) : null}
-      {android ? null : header}
-      <ScreenContent fitToContents>
+      <ScreenContent fitToContents header={header}>
         <ScrollView
           nestedScrollEnabled
           contentInsetAdjustmentBehavior="automatic"
@@ -245,7 +242,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </View>
         </ScrollView>
       </ScreenContent>
-      {android ? header : null}
     </View>
   );
 }

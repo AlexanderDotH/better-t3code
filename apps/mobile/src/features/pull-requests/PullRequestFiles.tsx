@@ -441,14 +441,6 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
     });
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader
-        presentation={Platform.OS === "android" ? "inline" : "native"}
-        title={translator.message("mobile.review.changedFiles")}
-        subtitle={`#${params.number} · ${params.commit?.slice(0, 7) ?? params.repository}`}
-        onClose={() => navigation.goBack()}
-        // iOS gets the native menu below; SheetHeader would render this as a custom bar item.
-        trailing={Platform.OS === "android" ? <FileFilterMenu filter={filter} /> : undefined}
-      />
       <Toolbar placement="right">
         <Toolbar.Menu
           title={translator.message("mobile.ui.reviewFiles")}
@@ -464,8 +456,20 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
-      <ScreenContent>
+      <ScreenContent
+        header={
+          <SheetHeader
+            presentation={Platform.OS === "android" ? "inline" : "native"}
+            title={translator.message("mobile.review.changedFiles")}
+            subtitle={`#${params.number} · ${params.commit?.slice(0, 7) ?? params.repository}`}
+            onClose={() => navigation.goBack()}
+            // iOS gets the native menu below; SheetHeader would render this as a custom bar item.
+            trailing={Platform.OS === "android" ? <FileFilterMenu filter={filter} /> : undefined}
+          />
+        }
+      >
         <AnimatedLegendList
+          nestedScrollEnabled
           renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
           className="flex-1"
           data={parsed.kind === "files" ? groupByDirectory(parsed.files, collapsed) : []}

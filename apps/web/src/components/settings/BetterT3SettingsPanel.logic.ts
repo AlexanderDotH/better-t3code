@@ -12,6 +12,12 @@ import {
   resolveBetterT3FeatureFlag,
 } from "@t3tools/contracts";
 import { isInterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+import {
+  reasoningDisplayModeFlags,
+  type ReasoningDisplayMode,
+} from "@t3tools/client-runtime/chat-presentation";
+
+export type { ReasoningDisplayMode };
 
 type BetterT3FeatureLabelMessageKey = `betterT3.${BetterT3FeatureId}.label`;
 type BetterT3FeatureDescriptionMessageKey = `betterT3.${BetterT3FeatureId}.description`;
@@ -281,8 +287,6 @@ export function buildBetterT3SwitchSettingsPatch(
   };
 }
 
-export type ReasoningDisplayMode = "none" | "chat" | "working" | "message";
-
 export function buildReasoningDisplaySettingsPatch(
   mode: ReasoningDisplayMode,
 ): ClientSettingsPatch {
@@ -290,11 +294,7 @@ export function buildReasoningDisplaySettingsPatch(
     showReasoning: mode !== "none",
     betterT3Device: {
       version: 1,
-      flags: {
-        "agent.reasoningVisibility": mode !== "none",
-        "agent.reasoningWorkingOverlay": mode === "working",
-        "agent.reasoningInMessage": mode === "message",
-      },
+      flags: reasoningDisplayModeFlags(mode),
     },
   };
 }

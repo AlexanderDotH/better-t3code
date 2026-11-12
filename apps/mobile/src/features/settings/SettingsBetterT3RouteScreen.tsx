@@ -15,7 +15,7 @@ import {
   type ProjectId,
   type ServerSettingsPatch,
   type SidebarThreadSortOrder,
-  type ThreadId,
+  type SidebarProjectSortOrder,
 } from "@t3tools/contracts";
 import {
   INTERFACE_MESSAGE_KEYS,
@@ -24,6 +24,15 @@ import {
 } from "@t3tools/shared/interfaceLanguage";
 import { stripAutoReasoning } from "@t3tools/shared/model";
 import { prepareBetterT3StatusModel } from "@t3tools/client-runtime/better-t3-status";
+import { buildBetterT3SettingsPreviewModel } from "@t3tools/client-runtime/better-t3-settings-preview";
+import { BetterT3FeaturePreview } from "./BetterT3FeaturePreview";
+import { useAppearancePreferences } from "./appearance/AppearancePreferencesProvider";
+import {
+  REASONING_DISPLAY_MODES,
+  reasoningDisplayModeFlags,
+  type ReasoningDisplayMode,
+} from "@t3tools/client-runtime/chat-presentation";
+import { resolveMobileReasoningDisplayMode } from "../../lib/threadReasoning";
 import {
   BETTER_T3_SETTINGS_CATEGORY_IDS,
   type BetterT3SettingsCategoryId,
@@ -32,8 +41,17 @@ import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/projec
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { useMemo, useState } from "react";
+import {
+  Alert,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -47,23 +65,24 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { useEnvironments } from "../../state/environments";
-import { useProjects, useThreadShells } from "../../state/entities";
+import { useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { environmentSession } from "../../state/session";
 import { mobileProjectIndexPermissions } from "../project-indexing/mobile-project-indexing";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnvironmentsRouteScreen";
+import { MobileProjectIndexDefaultModelSetting } from "./MobileProjectIndexDefaultModelSetting";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AutoSettleSettingsRows } from "./AutoSettleSettingsRows";
 import { ContextWindowMeterSettingsPreview } from "./ContextWindowMeterSettingsPreview";
 import { resolveMobileThreadListLayout } from "./appearance/threadListAppearance";
 import {
-  buildMobileGitWorkbenchThreadOptions,
   mobileGitWorkbenchCanActivate,
   mobileGitWorkbenchStatusMessageKey,
   resolveMobileGitWorkbenchAvailability,
@@ -129,6 +148,11 @@ type BetterT3SettingsNavigation = NativeStackNavigationProp<{
     readonly environmentId?: EnvironmentId;
   };
   GitOverview: { readonly environmentId: string; readonly threadId: string };
+  ProjectGitWorkbench: {
+    readonly environmentId: string;
+    readonly cwd: string;
+    readonly projectName?: string;
+  };
   SettingsAgents: undefined;
   SettingsAppearance: undefined;
   SettingsBetterT3ResourceDiagnostics: { readonly environmentId: EnvironmentId };
@@ -157,9 +181,14 @@ function BetterT3ChoiceModal<T extends BetterT3ChoiceValue>(props: {
   readonly onSelect: (value: T) => void;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const insets = useSafeAreaInsets();
   return (
     <Modal animationType="slide" presentationStyle="pageSheet" visible={props.visible}>
-      <View className="flex-1 bg-sheet">
+      <View
+        className="flex-1 bg-sheet"
+        // Android ignores pageSheet and draws the modal edge to edge under the status bar.
+        style={{ paddingTop: Platform.OS === "android" ? insets.top : 0 }}
+      >
         <View className="flex-row items-center border-b border-border px-5 py-4">
           <Text className="flex-1 text-xl font-t3-semibold text-foreground">{props.title}</Text>
           <Pressable accessibilityRole="button" className="px-2 py-1" onPress={props.onClose}>
@@ -320,6 +349,7 @@ function BetterT3SettingsPage(props: {
   const navigation = useNavigation<BetterT3SettingsNavigation>();
   const { width } = useWindowDimensions();
   const translator = useMobileInterfaceTranslator();
+  const { chatVisualMode } = useAppearancePreferences();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const updateServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -327,12 +357,16 @@ function BetterT3SettingsPage(props: {
   });
   const { environments } = useEnvironments();
   const projects = useProjects();
-  const threads = useThreadShells();
   const [requestedEnvironmentId, setSelectedEnvironmentId] = useState(props.initialEnvironmentId);
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
-  const [selectedGitThreadId, setSelectedGitThreadId] = useState<ThreadId | null>(null);
   const [activeChoice, setActiveChoice] = useState<
-    "caveman" | "context-compaction" | "project-sort" | "sidebar-style" | "thread-sort" | null
+    | "caveman"
+    | "context-compaction"
+    | "project-sort"
+    | "sidebar-style"
+    | "thread-sort"
+    | "reasoning"
+    | null
   >(null);
   const [autoReasoningModelPickerOpen, setAutoReasoningModelPickerOpen] = useState(false);
   const [contextCompactionModelPickerOpen, setContextCompactionModelPickerOpen] = useState(false);
@@ -369,6 +403,15 @@ function BetterT3SettingsPage(props: {
       ? serverEnvironment.welcome({ environmentId: environmentTargetId, input: {} })
       : null,
   );
+  const loadedSkills = useEnvironmentQuery(
+    environmentTargetId !== null &&
+      (serverConfig?.environment.capabilities.environmentSettingsVersion ?? 0) >= 1
+      ? agentSettingsEnvironment.skills.listQuery({
+          environmentId: environmentTargetId,
+          input: { includeBody: false, forceReload: false },
+        })
+      : null,
+  );
   const deviceAvailable = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const devicePreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -379,32 +422,42 @@ function BetterT3SettingsPage(props: {
   const environmentSettings =
     serverConfig?.settings.betterT3Environment ?? DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
   const mobileSurface = mobileBetterT3SurfaceForWidth(width);
-  const categories = useMemo(
-    () =>
-      buildMobileBetterT3Categories({
-        registry: BETTER_T3_FEATURE_REGISTRY,
-        surface: mobileSurface,
-        deviceAvailable,
-        environmentAvailable,
-        deviceSettings,
-        environmentSettings,
-        capabilities: serverConfig?.environment.capabilities ?? FALLBACK_CAPABILITIES,
-      }),
-    [
-      deviceAvailable,
-      deviceSettings,
-      environmentAvailable,
-      environmentSettings,
-      serverConfig?.environment.capabilities,
-      mobileSurface,
-    ],
-  );
+  const categories = buildMobileBetterT3Categories({
+    registry: BETTER_T3_FEATURE_REGISTRY,
+    surface: mobileSurface,
+    deviceAvailable,
+    environmentAvailable,
+    deviceSettings,
+    environmentSettings,
+    capabilities: serverConfig?.environment.capabilities ?? FALLBACK_CAPABILITIES,
+  });
 
   const threadListLayout = resolveMobileThreadListLayout(
     devicePreferences?.legacyThreadListEnabled,
     devicePreferences?.boringThreadListEnabled,
   );
   const sidebarStyle = threadListLayout === "current" ? "standard" : threadListLayout;
+  const reasoningMode = resolveMobileReasoningDisplayMode(devicePreferences?.betterT3Device);
+  const previewModel = buildBetterT3SettingsPreviewModel({
+    features: categories.flatMap((category) =>
+      category.groups.flatMap((group) =>
+        group.controls.map((control) => ({
+          descriptor: control.descriptor,
+          availability: control.availability,
+          value: control.value,
+          source: "better-t3" as const,
+        })),
+      ),
+    ),
+    chatVisualMode,
+    contextWindowSelector:
+      devicePreferences?.contextWindowMeterEnabled === false ? "native" : "better-t3",
+    sidebarPosition: "left",
+    boringSidebar: threadListLayout === "boring",
+    showReasoning: reasoningMode !== "none",
+    reasoningWorkingOverlay: reasoningMode === "working",
+    reasoningInMessage: reasoningMode === "message",
+  });
   const projectSortOrder =
     devicePreferences?.sidebarProjectSortOrder ??
     (DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
@@ -427,107 +480,83 @@ function BetterT3SettingsPage(props: {
     deviceSettings,
     "workspace.gitWorkbench",
   );
-  const gitWorkbenchThreadOptions = useMemo(
-    () =>
-      environmentTargetId !== null && selectedProject !== null
-        ? buildMobileGitWorkbenchThreadOptions(threads, environmentTargetId, selectedProject.id)
-        : [],
-    [environmentTargetId, selectedProject, threads],
-  );
-  const selectedGitThread =
-    gitWorkbenchThreadOptions.find((option) => option.threadId === selectedGitThreadId) ?? null;
   const gitWorkbenchOwnerAvailability = resolveMobileGitWorkbenchAvailability({
     featureEnabled: deviceAvailable ? gitWorkbenchFeatureEnabled : null,
     gitWorkbenchVersion: serverConfig?.environment.capabilities.gitWorkbenchVersion,
     environmentId: environmentTargetId,
-    threadId: selectedGitThread?.threadId ?? null,
+    threadId: null,
+    cwd: selectedProject?.workspaceRoot ?? null,
   });
-  const preparedStatusModel = useMemo(
-    () =>
-      prepareBetterT3StatusModel({
-        surface: mobileSurface,
-        connectionPhase: selectedEnvironment?.connection.phase ?? "connecting",
-        capabilities: serverConfig?.environment.capabilities ?? null,
-        lifecycleReceipt: mobileLifecycleReceiptFromWelcome(welcome.data),
-        registry: BETTER_T3_FEATURE_REGISTRY,
-        mcp:
-          serverConfig === null
-            ? null
-            : {
-                configuredCount: serverConfig.settings.mcp.servers.length,
-                runtimeServers: null,
-              },
-        skills:
-          serverConfig === null
-            ? null
-            : {
-                advertisedSkills: serverConfig.providers.flatMap((provider) => provider.skills),
-                loadedSkills: null,
-              },
-        project:
-          selectedProject === null
-            ? null
-            : {
-                projectId: selectedProject.id,
-                checkpointsEnabled: selectedProject.checkpointsEnabled !== false,
-              },
-        knowledgeGraphStatus: null,
+  const preparedStatusModel = prepareBetterT3StatusModel({
+    surface: mobileSurface,
+    connectionPhase: selectedEnvironment?.connection.phase ?? "connecting",
+    capabilities: serverConfig?.environment.capabilities ?? null,
+    lifecycleReceipt: mobileLifecycleReceiptFromWelcome(welcome.data),
+    registry: BETTER_T3_FEATURE_REGISTRY,
+    mcp:
+      serverConfig === null
+        ? null
+        : {
+            configuredCount: serverConfig.settings.mcp.servers.length,
+            runtimeServers: null,
+          },
+    skills:
+      serverConfig === null
+        ? null
+        : {
+            advertisedSkills: serverConfig.providers.flatMap((provider) => provider.skills),
+            loadedSkills: loadedSkills.data?.skills ?? null,
+          },
+    project:
+      selectedProject === null
+        ? null
+        : {
+            projectId: selectedProject.id,
+            checkpointsEnabled: selectedProject.checkpointsEnabled !== false,
+          },
+    knowledgeGraphStatus: null,
+  });
+
+  const updateEnvironmentSettings = async (patch: ServerSettingsPatch): Promise<boolean> => {
+    if (environmentTargetId === null) return false;
+    const result = await updateServerSettings({
+      environmentId: environmentTargetId,
+      input: { patch },
+    });
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return true;
+    const error = squashAtomCommandFailure(result);
+    Alert.alert(
+      translator.message("mobile.settings.betterT3.updateFailedTitle"),
+      translator.message("mobile.settings.betterT3.updateFailedDescription", {
+        message:
+          error instanceof Error
+            ? error.message
+            : translator.message("settings.betterT3.availability.unavailable"),
       }),
-    [
-      mobileSurface,
-      selectedEnvironment?.connection.phase,
-      selectedProject,
-      serverConfig,
-      welcome.data,
-    ],
-  );
+    );
+    return false;
+  };
 
-  const updateEnvironmentSettings = useCallback(
-    async (patch: ServerSettingsPatch): Promise<boolean> => {
-      if (environmentTargetId === null) return false;
-      const result = await updateServerSettings({
-        environmentId: environmentTargetId,
-        input: { patch },
-      });
-      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return true;
-      const error = squashAtomCommandFailure(result);
-      Alert.alert(
-        translator.message("mobile.settings.betterT3.updateFailedTitle"),
-        translator.message("mobile.settings.betterT3.updateFailedDescription", {
-          message:
-            error instanceof Error
-              ? error.message
-              : translator.message("settings.betterT3.availability.unavailable"),
-        }),
-      );
-      return false;
-    },
-    [environmentTargetId, translator, updateServerSettings],
-  );
-
-  const setSwitch = useCallback(
-    async (control: MobileBetterT3Control, enabled: boolean) => {
-      const featureId = control.id as BetterT3SwitchFeatureId;
-      if (control.descriptor.scope === "device") {
-        savePreferences(
-          createMobileBetterT3DevicePreferencePatch({
-            settings: deviceSettings,
-            featureId,
-            enabled,
-          }),
-        );
-        return;
-      }
-      await updateEnvironmentSettings(
-        createMobileBetterT3EnvironmentPatch({
-          settings: environmentSettings,
+  const setSwitch = async (control: MobileBetterT3Control, enabled: boolean) => {
+    const featureId = control.id as BetterT3SwitchFeatureId;
+    if (control.descriptor.scope === "device") {
+      savePreferences(
+        createMobileBetterT3DevicePreferencePatch({
+          settings: deviceSettings,
           featureId,
           enabled,
         }),
       );
-    },
-    [deviceSettings, environmentSettings, savePreferences, updateEnvironmentSettings],
-  );
+      return;
+    }
+    await updateEnvironmentSettings(
+      createMobileBetterT3EnvironmentPatch({
+        settings: environmentSettings,
+        featureId,
+        enabled,
+      }),
+    );
+  };
 
   const navigateToControl = (featureId: BetterT3FeatureId) => {
     const destination = resolveMobileBetterT3Destination(featureId);
@@ -535,10 +564,11 @@ function BetterT3SettingsPage(props: {
       case null:
         return;
       case "GitOverview":
-        if (environmentTargetId !== null && selectedGitThread !== null) {
-          navigation.navigate("GitOverview", {
+        if (environmentTargetId !== null && selectedProject !== null) {
+          navigation.navigate("ProjectGitWorkbench", {
             environmentId: String(environmentTargetId),
-            threadId: String(selectedGitThread.threadId),
+            cwd: selectedProject.workspaceRoot,
+            projectName: selectedProject.title,
           });
         }
         return;
@@ -594,6 +624,40 @@ function BetterT3SettingsPage(props: {
     const preparedStatusLabel =
       preparedStatus === null ? null : preparedStatusText(preparedStatus, translator.message);
     const available = control.availability.state === "available";
+    if (control.id === "chat.contextWindowSelector") {
+      return (
+        <ContextWindowMeterSettingsPreview
+          key={control.id}
+          disabled={!available}
+          enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
+          onValueChange={(enabled) =>
+            savePreferences(
+              createMobileBetterT3DeviceControlPatch({
+                id: "chat.contextWindowSelector",
+                value: enabled ? "better-t3" : "native",
+              }),
+            )
+          }
+        />
+      );
+    }
+    if (
+      control.id === "knowledge.projectIndexingDefaultModel" &&
+      serverConfig &&
+      environmentTargetId
+    ) {
+      return (
+        <MobileProjectIndexDefaultModelSetting
+          key={control.id}
+          environmentId={environmentTargetId}
+          config={serverConfig}
+          disabled={!available || !indexingCanOperate}
+          updateSettings={(patch) => {
+            void updateEnvironmentSettings(patch);
+          }}
+        />
+      );
+    }
     if (control.id === "knowledge.projectIndexingMaster") {
       return (
         <SettingsSwitchRow
@@ -623,6 +687,24 @@ function BetterT3SettingsPage(props: {
                   control.value === true
                     ? "settings.betterT3.preview.examples.context.background"
                     : "settings.betterT3.preview.examples.context.native",
+                )
+              : status
+          }
+        />
+      );
+    }
+    if (control.id === "agent.reasoningVisibility") {
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={description}
+          label={label}
+          onPress={() => setActiveChoice("reasoning")}
+          status={
+            available
+              ? translator.message(
+                  `settings.betterT3.reasoning.${resolveMobileReasoningDisplayMode(devicePreferences?.betterT3Device)}`,
                 )
               : status
           }
@@ -741,7 +823,9 @@ function BetterT3SettingsPage(props: {
             status={translator.message(
               projectSortOrder === "updated_at"
                 ? "settings.betterT3.value.updated"
-                : "settings.betterT3.value.created",
+                : projectSortOrder === "manual"
+                  ? "settings.betterT3.value.manual"
+                  : "settings.betterT3.value.created",
             )}
           />
           <BetterT3ActionRow
@@ -829,7 +913,6 @@ function BetterT3SettingsPage(props: {
                             : "rounded-full border border-border bg-subtle px-4 py-2.5"
                         }
                         onPress={() => {
-                          setSelectedGitThreadId(null);
                           setSelectedProjectId(null);
                           setSelectedEnvironmentId(environment.environmentId);
                         }}
@@ -944,7 +1027,6 @@ function BetterT3SettingsPage(props: {
                         : "rounded-full border border-border bg-subtle px-4 py-2.5"
                     }
                     onPress={() => {
-                      setSelectedGitThreadId(null);
                       setSelectedProjectId(null);
                     }}
                   >
@@ -971,7 +1053,6 @@ function BetterT3SettingsPage(props: {
                             : "rounded-full border border-border bg-subtle px-4 py-2.5"
                         }
                         onPress={() => {
-                          setSelectedGitThreadId(null);
                           setSelectedProjectId(project.id);
                         }}
                       >
@@ -988,71 +1069,6 @@ function BetterT3SettingsPage(props: {
                     );
                   })}
                 </ScrollView>
-              </SettingsSection>
-            ) : null}
-
-            {gitWorkbenchFeatureEnabled &&
-            (serverConfig?.environment.capabilities.gitWorkbenchVersion ?? 0) >= 1 &&
-            selectedProject !== null ? (
-              <SettingsSection card title={translator.message("mobile.thread.openGit")}>
-                {gitWorkbenchThreadOptions.length === 0 ? (
-                  <Text className="p-4 text-sm text-foreground-muted">
-                    {translator.message("mobile.git.unavailable")}
-                  </Text>
-                ) : (
-                  <ScrollView
-                    horizontal
-                    contentContainerClassName="gap-2 p-3"
-                    showsHorizontalScrollIndicator={false}
-                  >
-                    <Pressable
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: selectedGitThreadId === null }}
-                      className={
-                        selectedGitThreadId === null
-                          ? "rounded-full bg-primary px-4 py-2.5"
-                          : "rounded-full border border-border bg-subtle px-4 py-2.5"
-                      }
-                      onPress={() => setSelectedGitThreadId(null)}
-                    >
-                      <Text
-                        className={
-                          selectedGitThreadId === null
-                            ? "font-t3-semibold text-primary-foreground"
-                            : "font-t3-semibold text-foreground"
-                        }
-                      >
-                        {translator.message("ui.thread.selectOrCreate")}
-                      </Text>
-                    </Pressable>
-                    {gitWorkbenchThreadOptions.map((option) => {
-                      const selected = option.threadId === selectedGitThreadId;
-                      return (
-                        <Pressable
-                          key={option.threadId}
-                          accessibilityRole="radio"
-                          accessibilityState={{ checked: selected }}
-                          className={
-                            selected
-                              ? "rounded-full bg-primary px-4 py-2.5"
-                              : "rounded-full border border-border bg-subtle px-4 py-2.5"
-                          }
-                          onPress={() => setSelectedGitThreadId(option.threadId)}
-                        >
-                          <Text
-                            className={
-                              selected
-                                ? "font-t3-semibold text-primary-foreground"
-                                : "font-t3-semibold text-foreground"
-                            }
-                          >
-                            {option.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
-                )}
               </SettingsSection>
             ) : null}
           </>
@@ -1083,16 +1099,19 @@ function BetterT3SettingsPage(props: {
                   }
                 />
               ) : null}
-              {group.definition.id === "context-display" ? (
-                <ContextWindowMeterSettingsPreview
-                  disabled={!deviceAvailable}
-                  enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
-                  onValueChange={(contextWindowMeterEnabled) =>
-                    savePreferences({ contextWindowMeterEnabled })
-                  }
-                />
-              ) : null}
               {group.controls.map((control) => renderControl(control))}
+              <BetterT3FeaturePreview
+                group={group.definition.id}
+                model={previewModel}
+                enabled={(id) =>
+                  group.controls.some(
+                    (control) =>
+                      control.id === id &&
+                      control.value === true &&
+                      control.availability.state === "available",
+                  )
+                }
+              />
             </SettingsSection>
           );
         })}
@@ -1116,6 +1135,29 @@ function BetterT3SettingsPage(props: {
         }
         title={translator.message("settings.betterT3.sidebarStyle.title")}
         visible={activeChoice === "sidebar-style"}
+      />
+      <BetterT3ChoiceModal<ReasoningDisplayMode>
+        choices={REASONING_DISPLAY_MODES.map((value) => ({
+          value,
+          label: translator.message(`settings.betterT3.reasoning.${value}`),
+        }))}
+        current={resolveMobileReasoningDisplayMode(devicePreferences?.betterT3Device)}
+        onClose={() => setActiveChoice(null)}
+        onSelect={(mode) =>
+          savePreferences({
+            transform: (current) => {
+              const settings = current.betterT3Device ?? DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
+              return {
+                betterT3Device: {
+                  ...settings,
+                  flags: { ...settings.flags, ...reasoningDisplayModeFlags(mode) },
+                },
+              };
+            },
+          })
+        }
+        title={translator.message("betterT3.agent.reasoningVisibility.label")}
+        visible={activeChoice === "reasoning"}
       />
       <BetterT3ChoiceModal<CavemanMode>
         choices={(["off", "lite", "full", "ultra"] as const).map((value) => ({
@@ -1163,13 +1205,15 @@ function BetterT3SettingsPage(props: {
         title={translator.message("betterT3.agent.contextCompaction.label")}
         visible={activeChoice === "context-compaction"}
       />
-      <BetterT3ChoiceModal<"updated_at" | "created_at">
-        choices={(["updated_at", "created_at"] as const).map((value) => ({
+      <BetterT3ChoiceModal<SidebarProjectSortOrder>
+        choices={(["updated_at", "created_at", "manual"] as const).map((value) => ({
           value,
           label: translator.message(
             value === "updated_at"
               ? "settings.betterT3.value.updated"
-              : "settings.betterT3.value.created",
+              : value === "manual"
+                ? "settings.betterT3.value.manual"
+                : "settings.betterT3.value.created",
           ),
         }))}
         current={projectSortOrder}

@@ -3,6 +3,7 @@ import {
   buildPlanParallelismReviewCacheKey,
   cachedPlanParallelismReview,
   requestPlanParallelismReview,
+  type PlanParallelismReviewState,
 } from "@t3tools/client-runtime/plan-implementation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -27,7 +28,7 @@ export function useMobilePlanParallelismReview(input: {
   readonly implementationProvider: ServerProvider | null;
   readonly reviewerSelection: ModelSelection | null;
   readonly providers: ReadonlyArray<ServerProvider>;
-}): number | null {
+}): PlanParallelismReviewState {
   const reviewPlanParallelism = useAtomCommand(serverEnvironment.reviewPlanParallelism, {
     reportFailure: false,
   });
@@ -35,7 +36,7 @@ export function useMobilePlanParallelismReview(input: {
   const key = descriptor ? buildPlanParallelismReviewCacheKey(descriptor) : null;
   const [review, setReview] = useState<{
     readonly key: string;
-    readonly count: number | null;
+    readonly state: PlanParallelismReviewState;
   } | null>(null);
 
   const requestReview = useEffectEvent((requestKey: string, isCancelled: () => boolean) => {
@@ -45,7 +46,7 @@ export function useMobilePlanParallelismReview(input: {
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       return result.value;
     }).then((state) => {
-      if (!isCancelled()) setReview({ key: requestKey, count: state.reviewedSubagentCount });
+      if (!isCancelled()) setReview({ key: requestKey, state });
     });
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the remote reviewer request until this plan revision is replaced or unmounted.
@@ -58,6 +59,17 @@ export function useMobilePlanParallelismReview(input: {
     };
   }, [key]);
 
-  if (!key) return null;
-  return cachedPlanParallelismReview(key) ?? (review?.key === key ? review.count : null);
+  if (!key)
+    return {
+      status:
+        input.enabled &&
+        input.plan?.implementedAt === null &&
+        (input.implementationProvider?.nativeSubagents?.maxRecommendedSubagents ?? 0) >= 2
+          ? "fallback"
+          : "idle",
+      reviewedSubagentCount: null,
+    };
+  const cached = cachedPlanParallelismReview(key);
+  if (cached !== null) return { status: "ready", reviewedSubagentCount: cached };
+  return review?.key === key ? review.state : { status: "reviewing", reviewedSubagentCount: null };
 }

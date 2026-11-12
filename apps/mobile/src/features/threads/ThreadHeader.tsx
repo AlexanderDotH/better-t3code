@@ -4,13 +4,17 @@ import { useMemo, useSyncExternalStore } from "react";
 import { minuteTickToEpochMs } from "../../lib/clock";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
-import type { AppBarAction } from "../../components/ui/AppBar.types";
+import type { AppBarAction, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { requestTimelineControl } from "./timeline-controls";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useThreadHeaderPanels } from "./useThreadHeaderPanels";
 
 const subscribeNever = () => () => undefined;
 
@@ -33,6 +37,7 @@ export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
     /** When set, the subtitle shows the running turn instead of the project. */
     readonly workingStartedAt?: string | null;
+    readonly workingTokenLabel?: string | null;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -47,8 +52,42 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
-  const native = useThreadHeaderOptions(props);
   const workingSubtitle = useWorkingHeaderSubtitle(props.workingStartedAt ?? null);
+  const subtitle =
+    workingSubtitle === null
+      ? props.subtitle
+      : [workingSubtitle, props.workingTokenLabel].filter(Boolean).join(" · ");
+  const native = useThreadHeaderOptions({ ...props, subtitle });
+  const panels = useThreadHeaderPanels(
+    props.gitControls.threadId && !props.draft
+      ? {
+          environmentId: EnvironmentId.make(String(props.gitControls.environmentId)),
+          threadId: ThreadId.make(String(props.gitControls.threadId)),
+        }
+      : null,
+    props.title,
+  );
+  const timelineItems = props.gitControls.threadId
+    ? (["find", "jump-list"] as const).map((action) => ({
+        id: `timeline-${action}`,
+        title: translator.message(
+          action === "find" ? "mobile.timeline.find" : "mobile.timeline.jumpList",
+        ),
+        icon: action === "find" ? "magnifyingglass" : "list.bullet",
+        onPress: () =>
+          requestTimelineControl(
+            scopedThreadKey(
+              EnvironmentId.make(String(props.gitControls.environmentId)),
+              ThreadId.make(String(props.gitControls.threadId)),
+            ),
+            action,
+          ),
+      }))
+    : [];
+  const actionItems: ReadonlyArray<Extract<AppBarMenuItem, { readonly onPress: () => void }>> = [
+    ...panels.items,
+    ...timelineItems,
+  ];
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -118,10 +157,42 @@ export function ThreadHeader(
     <>
       <AppBar
         title={props.title}
-        subtitle={workingSubtitle ?? props.subtitle}
+        subtitle={subtitle}
         sidebar={native.sidebar}
-        options={native.options}
-        optionsVersion={native.optionsVersion}
+        options={{
+          ...native.options,
+          unstable_headerRightItems: () => [
+            ...((
+              native.options.unstable_headerRightItems as (() => ReadonlyArray<unknown>) | undefined
+            )?.() ?? []),
+            ...(actionItems.length
+              ? [
+                  {
+                    type: "menu",
+                    identifier: "thread-title-menu",
+                    accessibilityLabel: props.title,
+                    icon: { type: "sfSymbol", name: "ellipsis.circle" },
+                    menu: {
+                      title: props.title,
+                      items: actionItems.map((item) => ({
+                        type: "action",
+                        label: item.title,
+                        disabled: item.disabled,
+                        icon: { type: "sfSymbol", name: item.icon },
+                        onPress: item.onPress,
+                      })),
+                    },
+                  },
+                ]
+              : []),
+          ],
+        }}
+        optionsVersion={[native.optionsVersion, actionItems]}
+        menus={
+          actionItems.length
+            ? [{ title: props.title, icon: "ellipsis.circle", items: actionItems }]
+            : undefined
+        }
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (
             <ScreenHeaderButton
@@ -142,6 +213,8 @@ export function ThreadHeader(
         compact={composerKeyboardActive}
       />
       {native.fallback}
+      {panels.editor}
+      {panels.panel}
     </>
   );
 }

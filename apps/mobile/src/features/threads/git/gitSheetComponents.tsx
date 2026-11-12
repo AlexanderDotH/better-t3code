@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
@@ -36,33 +37,36 @@ export function statusSummary(
     readonly pr?: { readonly state?: string; readonly number?: number } | null;
     readonly sourceControlProvider?: { readonly kind: string } | null;
   } | null,
+  translator: InterfaceTranslator,
 ): string {
   if (!gitStatus) {
-    return "Loading branch status\u2026";
+    return translator.message("mobile.git.checkingStatus");
   }
 
   if (!gitStatus.isRepo) {
-    return "Not a git repository";
+    return translator.message("mobile.git.notRepository");
   }
 
   const parts: string[] = [];
   if (gitStatus.hasWorkingTreeChanges) {
     const fileCount = gitStatus.workingTree?.files.length ?? 0;
-    parts.push(`${fileCount} file${fileCount === 1 ? "" : "s"} changed`);
+    parts.push(translator.message("git.overview.filesChanged", { count: fileCount }));
   } else {
-    parts.push("Clean");
+    parts.push(translator.message("mobile.git.cleanShort"));
   }
   if ((gitStatus.aheadCount ?? 0) > 0) {
-    parts.push(`${gitStatus.aheadCount} ahead`);
+    parts.push(translator.message("mobile.git.aheadCount", { count: gitStatus.aheadCount ?? 0 }));
   }
   if ((gitStatus.behindCount ?? 0) > 0) {
-    parts.push(`${gitStatus.behindCount} behind`);
+    parts.push(translator.message("mobile.git.behindCount", { count: gitStatus.behindCount ?? 0 }));
   }
   if (gitStatus.pr?.state === "open") {
     const { shortLabel } = sourceControlClients.get(
       gitStatus.sourceControlProvider?.kind,
     ).changeRequest;
-    parts.push(`${shortLabel} #${gitStatus.pr.number} open`);
+    parts.push(
+      `${shortLabel} #${gitStatus.pr.number} ${translator.message("pullRequest.state.open")}`,
+    );
   }
 
   return parts.join(" \u00b7 ");

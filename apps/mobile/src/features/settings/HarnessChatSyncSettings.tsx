@@ -22,6 +22,7 @@ import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ProjectSettingsSelect } from "./ProjectSettingsFields";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
@@ -272,6 +273,13 @@ function SupportedHarnessChatSource(props: {
   const refreshStatus = useAtomCommand(agentSettingsEnvironment.harnessChatSync.status, {
     reportFailure: false,
   });
+  const [selectedInstanceId, setPreferredInstanceId] = useState(
+    props.source.preferredInstanceId ?? props.source.instanceIds[0] ?? null,
+  );
+  const preferredInstanceId =
+    selectedInstanceId !== null && props.source.instanceIds.includes(selectedInstanceId)
+      ? selectedInstanceId
+      : (props.source.preferredInstanceId ?? props.source.instanceIds[0] ?? null);
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -423,7 +431,7 @@ function SupportedHarnessChatSource(props: {
       environmentId: props.environmentId,
       input: buildHarnessChatSyncRunInput({
         sourceId: props.source.id,
-        preferredInstanceId: props.source.preferredInstanceId,
+        preferredInstanceId,
         selection,
         query,
         includeArchived,
@@ -504,6 +512,19 @@ function SupportedHarnessChatSource(props: {
   return (
     <View className="gap-2">
       <SettingsSection card title={`${props.source.label} · ${props.source.driver}`}>
+        {props.source.instanceIds.length > 1 ? (
+          <ProjectSettingsSelect
+            label={translator.message("settings.harness.providerAccount", {
+              provider: props.source.label,
+            })}
+            value={preferredInstanceId}
+            options={props.source.instanceIds.map((value) => ({ value, label: value }))}
+            disabled={syncing}
+            onChange={(value) =>
+              setPreferredInstanceId(props.source.instanceIds.find((id) => id === value) ?? null)
+            }
+          />
+        ) : null}
         <View className="gap-1 p-4">
           <Text className="text-sm text-foreground-muted">
             {loading

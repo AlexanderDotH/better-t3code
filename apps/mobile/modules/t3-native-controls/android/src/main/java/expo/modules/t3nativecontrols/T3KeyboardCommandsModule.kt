@@ -40,11 +40,35 @@ class T3KeyboardCommandsView(
 
   private fun commandFor(event: KeyEvent): String? = when {
     event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0 -> null
+    !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN -> "paletteNext"
+    !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_DPAD_UP -> "palettePrevious"
+    !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_ESCAPE -> "paletteDismiss"
     event.keyCode == KeyEvent.KEYCODE_TAB && hasComposerModeModifiers(event) -> "cycleComposerMode"
-    !event.isCtrlPressed || !event.isShiftPressed || event.isAltPressed -> null
+    !(event.isCtrlPressed || event.isMetaPressed) || event.isAltPressed -> null
+    !event.isShiftPressed -> when (event.keyCode) {
+      KeyEvent.KEYCODE_K -> "commandPalette"
+      KeyEvent.KEYCODE_F -> "focusSearch"
+      KeyEvent.KEYCODE_N -> "newTask"
+      KeyEvent.KEYCODE_LEFT_BRACKET -> "back"
+      KeyEvent.KEYCODE_RIGHT_BRACKET -> "forward"
+      KeyEvent.KEYCODE_BACKSLASH -> "toggleSidebar"
+      KeyEvent.KEYCODE_1 -> "thread.jump.1"
+      KeyEvent.KEYCODE_2 -> "thread.jump.2"
+      KeyEvent.KEYCODE_3 -> "thread.jump.3"
+      KeyEvent.KEYCODE_4 -> "thread.jump.4"
+      KeyEvent.KEYCODE_5 -> "thread.jump.5"
+      KeyEvent.KEYCODE_6 -> "thread.jump.6"
+      KeyEvent.KEYCODE_7 -> "thread.jump.7"
+      KeyEvent.KEYCODE_8 -> "thread.jump.8"
+      KeyEvent.KEYCODE_9 -> "thread.jump.9"
+      else -> null
+    }
     else -> when (event.keyCode) {
       KeyEvent.KEYCODE_C -> "copyThreadReference"
       KeyEvent.KEYCODE_H -> "cycleHost"
+      KeyEvent.KEYCODE_F -> "files"
+      KeyEvent.KEYCODE_T -> "terminal"
+      KeyEvent.KEYCODE_R -> "review"
       else -> null
     }
   }

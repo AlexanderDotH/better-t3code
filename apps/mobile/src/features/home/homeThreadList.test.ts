@@ -2,13 +2,17 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildGroupedThreadListItems,
   buildHomeProjectScopes,
   findHomeProjectScope,
+  resolveHomeProjectFilter,
+  sortHomeProjectScopes,
+  reorderHomeProjectKeys,
+  resolveProjectFolderAttention,
 } from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import {
@@ -230,6 +234,88 @@ describe("home project scopes", () => {
     expect(findHomeProjectScope(scopes, "environment-local:missing")).toBeNull();
     expect(findHomeProjectScope(scopes, null)).toBeNull();
   });
+  it("filters the union of selected logical projects without leaking same IDs from other hosts", () => {
+    const first = EnvironmentId.make("first");
+    const second = EnvironmentId.make("second");
+    const projects = [
+      makeProject({ environmentId: first, id: ProjectId.make("same"), title: "A" }),
+      makeProject({ environmentId: second, id: ProjectId.make("same"), title: "B" }),
+      makeProject({ environmentId: first, id: ProjectId.make("third"), title: "C" }),
+    ];
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    expect(resolveHomeProjectFilter(scopes, [scopes[0]!.key, scopes[2]!.key]).projectRefs).toEqual([
+      { environmentId: first, projectId: projects[0]!.id },
+      { environmentId: first, projectId: projects[2]!.id },
+    ]);
+    expect(resolveHomeProjectFilter(scopes, []).projectRefs).toBeNull();
+  });
+
+  it("keeps a manual order stable across new scopes and moves only the requested project", () => {
+    const environmentId = EnvironmentId.make("local");
+    const projects = ["a", "b", "c"].map((id) =>
+      makeProject({ environmentId, id: ProjectId.make(id), title: id }),
+    );
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    const ordered = sortHomeProjectScopes({
+      scopes,
+      threads: [],
+      pendingTasks: [],
+      projectSortOrder: "manual",
+      projectOrder: [scopes[1]!.key, scopes[0]!.key],
+    });
+    expect(ordered.map((scope) => scope.title)).toEqual(["b", "a", "c"]);
+    expect(
+      sortHomeProjectScopes({
+        scopes,
+        threads: [],
+        pendingTasks: [],
+        projectSortOrder: "manual",
+        projectOrder: ["local:/workspaces/c", "local:/workspaces/a"],
+      }).map((scope) => scope.title),
+    ).toEqual(["c", "a", "b"]);
+    expect(
+      reorderHomeProjectKeys(
+        ordered.map((scope) => scope.key),
+        scopes[0]!.key,
+        "up",
+      ),
+    ).toEqual([scopes[0]!.key, scopes[1]!.key, scopes[2]!.key]);
+  });
+
+  it("applies physical-project grouping overrides before building logical scopes", () => {
+    const environmentId = EnvironmentId.make("local");
+    const projects = ["a", "b"].map((id) =>
+      makeProject({
+        environmentId,
+        id: ProjectId.make(id),
+        title: id,
+        repositoryIdentity: {
+          canonicalKey: "github.com/org/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://github.com/org/repo",
+          },
+        },
+      }),
+    );
+    expect(
+      buildHomeProjectScopes({
+        projects,
+        environmentId: null,
+        projectGroupingMode: "repository",
+        projectGroupingOverrides: { "local:/workspaces/b": "separate" },
+      }),
+    ).toHaveLength(2);
+  });
 });
 
 describe("grouped thread list", () => {
@@ -343,6 +429,13 @@ describe("grouped thread list", () => {
     expect(build(rows).groups.has("favorite")).toBe(true);
   });
 
+  it("retains empty pinned and explicitly selected folders", () => {
+    const pinnedScopes = scopes.map((scope) => ({ ...scope, pinned: scope.key === alphaKey }));
+    const result = build([], { scopes: pinnedScopes, selectedProjectKeys: [betaKey] });
+    expect([...result.groups.values()].map((group) => group.title)).toEqual(["alpha", "beta"]);
+    expect(result.items.every((item) => item.type === "v2-project-header")).toBe(true);
+  });
+
   it("never folds a favorite behind the project's preview limit in Boring", () => {
     const rows = [
       row("one", "alpha", { pinned: true }),
@@ -352,5 +445,41 @@ describe("grouped thread list", () => {
     const { items, groups } = build(rows, { boring: true, previewCount: 1 });
     expect(items.map((item) => item.key)).toEqual(["one", "two"]);
     expect(groups.get("two")).toMatchObject({ last: true, hiddenCount: 1 });
+  });
+});
+
+describe("folder attention", () => {
+  it("prioritizes requests, failures, unread completion, then work, leaving waiting quiet", () => {
+    const ready = makeThreadShellFixture({
+      latestRun: {
+        runId: RunId.make("run"),
+        status: "completed",
+        requestedAt: "2026-11-11T10:00:00.000Z",
+        assistantMessageId: null,
+        startedAt: "2026-11-11T10:00:00.000Z",
+        completedAt: "2026-11-11T11:00:00.000Z",
+      },
+      lastVisitedAt: "2026-11-11T09:00:00.000Z",
+    });
+    const working = {
+      ...ready,
+      runtime: {
+        status: "running" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: ready.updatedAt,
+      },
+    };
+    const failed = { ...working, runtime: { ...working.runtime, status: "failed" as const } };
+    const waiting = { ...working, runtime: { ...working.runtime, status: "idle" as const } };
+    expect(resolveProjectFolderAttention([working, ready])).toBe("unread");
+    expect(resolveProjectFolderAttention([ready, failed])).toBe("failed");
+    expect(resolveProjectFolderAttention([failed, { ...ready, hasPendingUserInput: true }])).toBe(
+      "attention",
+    );
+    expect(resolveProjectFolderAttention([working])).toBe("working");
+    expect(resolveProjectFolderAttention([waiting])).toBeNull();
   });
 });

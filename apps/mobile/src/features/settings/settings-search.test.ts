@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { filterSettingsSections } from "./settings-search";
 
 const SECTIONS = [
-  { rows: [{ id: "usage", label: "Usage" }] },
+  { rows: [{ id: "SettingsUsage", label: "Usage" }] },
   {
     title: "Connections",
     rows: [
@@ -48,6 +48,7 @@ describe("filterSettingsSections", () => {
     { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
+    { query: "review guides", expected: [["Server settings", ["Source control"]]] },
     {
       query: "server settings",
       expected: [["Server settings", ["Provider accounts", "Source control"]]],
@@ -56,7 +57,13 @@ describe("filterSettingsSections", () => {
       query: "accounts",
       expected: [["Server settings", ["Provider accounts"]]],
     },
-    { query: "usage", expected: [[null, ["Usage"]]] },
+    {
+      query: "usage",
+      expected: [
+        [null, ["Usage"]],
+        ["Connections", ["Environments"]],
+      ],
+    },
     { query: "zzzz", expected: [] },
   ])("$query", ({ query, expected }) => {
     expect(visible(query)).toEqual(expected);
@@ -65,4 +72,21 @@ describe("filterSettingsSections", () => {
   it("drops sections that start empty", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
   });
+});
+
+it.each([
+  ["snooze presets", "SettingsThreads"],
+  ["settled worktrees", "SettingsWorktrees"],
+  ["host power monitor", "SettingsEnvironmentMaintenance"],
+  ["signature header", "SettingsScheduledTasks"],
+  ["destination thread", "SettingsScheduledTasks"],
+  ["webhook deliveries", "SettingsScheduledTasks"],
+  ["identity file", "SettingsDevices"],
+  ["lease minutes", "SettingsDevices"],
+  ["monogram", "SettingsProjectOverview"],
+  ["run on settle", "SettingsProjectScripts"],
+  ["merge method", "SettingsEnvironmentSourceControl"],
+  ["guest sharing", "SettingsLabs"],
+])("finds %s on its settings page", (query, id) => {
+  expect(filterSettingsSections([{ rows: [{ id, label: id }] }], query)).toHaveLength(1);
 });

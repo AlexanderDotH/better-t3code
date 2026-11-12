@@ -8,7 +8,7 @@ import {
   PREVIEW_ZOOM_LEVELS,
   type PreviewAdjustInput,
   type PreviewSessionSnapshot,
-  type PreviewViewportSetting,
+  PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 
@@ -18,6 +18,12 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { useState } from "react";
+import { Schema } from "effect";
+import { View } from "react-native";
+import { AppTextInput } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
+import { ThreadPanelSheet } from "../threads/ThreadPanelSheet";
 
 const APPEARANCES = [
   {
@@ -48,35 +54,67 @@ const VIEWPORTS = [
     },
     setting: FILL_PREVIEW_VIEWPORT,
   },
-  ...(["Phone", "Tablet", "Desktop"] as const).flatMap((category) => {
-    const preset = PREVIEW_VIEWPORT_PRESETS.find((candidate) => candidate.category === category);
-    if (!preset) return [];
+  ...PREVIEW_VIEWPORT_PRESETS.map((preset) => {
     const setting: PreviewViewportSetting = {
       _tag: "preset",
       presetId: preset.id,
       width: preset.width,
       height: preset.height,
     };
-    return [{ id: `preset:${preset.id}`, title: `${category} (${preset.label})`, setting }];
+    return { id: `preset:${preset.id}`, title: `${preset.label} (${preset.detail})`, setting };
   }),
+  ...(
+    [
+      ["1920 × 1080", 1920, 1080],
+      ["1440 × 900", 1440, 900],
+      ["1280 × 800", 1280, 800],
+    ] as const
+  ).map(([title, width, height]) => ({
+    id: `desktop:${width}`,
+    title,
+    setting: { _tag: "freeform", width, height } as const,
+  })),
 ];
+
+const isViewportSetting = Schema.is(PreviewViewportSetting);
 
 export function BrowserTabMenu({
   environmentId,
   tab,
   streaming,
   onPaste,
+  recording = false,
+  onCapture,
+  onAnnotate,
+  onPickElement,
+  onRecording,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly streaming: boolean;
   readonly onPaste?: () => void;
+  readonly recording?: boolean;
+  readonly onCapture?: () => void;
+  readonly onAnnotate?: () => void;
+  readonly onPickElement?: (() => void) | undefined;
+  readonly onRecording?: () => void;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const [customOpen, setCustomOpen] = useState(false);
+  const [width, setWidth] = useState("1280");
+  const [height, setHeight] = useState("800");
+  const customViewport = {
+    _tag: "freeform",
+    width: Number(width),
+    height: Number(height),
+  } as const;
+  const customValid = isViewportSetting(customViewport);
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
   const close = useAtomCommand(previewEnvironment.close, "browser tab close");
   const canClose = useAtomValue(previewEnvironment.close.permissionAtom(environmentId));
+  const canResize = useAtomValue(previewEnvironment.resize.permissionAtom(environmentId));
+  const canAdjust = useAtomValue(previewEnvironment.adjust.permissionAtom(environmentId));
   const target = { threadId: tab.threadId as PreviewAdjustInput["threadId"], tabId: tab.tabId };
   const colorScheme = tab.colorScheme ?? "system";
   const zoomFactor = tab.zoomFactor ?? DEFAULT_PREVIEW_ZOOM_FACTOR;
@@ -96,9 +134,35 @@ export function BrowserTabMenu({
     id: "close",
     title: translator.message("mobile.ui.closeTab"),
     image: "xmark",
-    attributes: { destructive: true, disabled: !canClose },
+    attributes: { destructive: true, disabled: !canClose || recording },
   };
   const actions: MenuAction[] = [
+    ...(onPickElement
+      ? [
+          {
+            id: "pick-element",
+            title: translator.message("mobile.panels.pickElement"),
+            image: "cursorarrow.rays",
+          },
+        ]
+      : []),
+    ...(onCapture
+      ? [{ id: "capture", title: translator.message("mobile.panels.capture"), image: "camera" }]
+      : []),
+    ...(onAnnotate
+      ? [{ id: "annotate", title: translator.message("mobile.panels.annotate"), image: "pencil" }]
+      : []),
+    ...(onRecording
+      ? [
+          {
+            id: "record",
+            title: translator.message(
+              recording ? "mobile.panels.stopRecording" : "mobile.panels.record",
+            ),
+            image: recording ? "stop.circle" : "record.circle",
+          },
+        ]
+      : []),
     ...(onPaste
       ? [
           {
@@ -112,11 +176,13 @@ export function BrowserTabMenu({
       id: "hard-reload",
       title: translator.message("browser.menu.hardReload"),
       image: "arrow.clockwise.circle",
+      attributes: { disabled: !canAdjust },
     },
     {
       id: "appearance",
       title: translator.message("mobile.settings.section.appearance"),
       image: "circle.lefthalf.filled",
+      attributes: { disabled: !canAdjust },
       subactions: APPEARANCES.map((option) => ({
         id: `appearance:${option.id}`,
         title: option.title,
@@ -127,6 +193,7 @@ export function BrowserTabMenu({
       id: "zoom",
       title: `Zoom (${Math.round(zoomFactor * 100)}%)`,
       image: "plus.magnifyingglass",
+      attributes: { disabled: !canAdjust },
       subactions: [
         {
           id: "zoom:in",
@@ -149,16 +216,25 @@ export function BrowserTabMenu({
       id: "viewport",
       title: translator.message("mobile.ui.viewport"),
       image: "rectangle.and.arrow.up.right.and.arrow.down.left",
-      subactions: VIEWPORTS.map((option) => ({
-        id: `viewport:${option.id}`,
-        title: option.title,
-        state: option.id === viewportId ? "on" : "off",
-      })),
+      attributes: { disabled: !canResize },
+      subactions: [
+        ...VIEWPORTS.map<MenuAction>((option) => ({
+          id: `viewport:${option.id}`,
+          title: option.title,
+          state: option.id === viewportId ? "on" : "off",
+        })),
+        {
+          id: "viewport:custom",
+          title: translator.message("mobile.panels.customSize"),
+          state: viewportId === "custom" ? "on" : "off",
+        },
+      ],
     },
     {
       id: "site-data",
       title: translator.message("mobile.ui.siteData"),
       image: "trash",
+      attributes: { disabled: !canAdjust },
       subactions: [
         {
           id: "clear:cookies",
@@ -176,12 +252,18 @@ export function BrowserTabMenu({
   ];
 
   const run = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
+    if (!canAdjust) return;
     const result = await adjust({ environmentId, input: { ...target, ...change } });
     if (result._tag === "Failure")
       Dialog.alert(translator.message("mobile.ui.couldNotChangeThisBrowserTab"));
   };
 
   const onAction = (id: string) => {
+    if (id === "pick-element") return onPickElement?.();
+    if (id === "capture") return onCapture?.();
+    if (id === "annotate") return onAnnotate?.();
+    if (id === "record") return onRecording?.();
+    if (id === "viewport:custom" && canResize) return setCustomOpen(true);
     if (id === "close") {
       void close({ environmentId, input: target }).then((result) => {
         if (result._tag === "Failure")
@@ -202,6 +284,7 @@ export function BrowserTabMenu({
       return;
     }
     if (id.startsWith("viewport:")) {
+      if (!canResize) return;
       const option = VIEWPORTS.find((candidate) => `viewport:${candidate.id}` === id);
       if (!option) return;
       void resize({ environmentId, input: { ...target, viewport: option.setting } }).then(
@@ -214,20 +297,57 @@ export function BrowserTabMenu({
   };
 
   return (
-    <Menu
-      // Remount when streaming changes, so an open menu never keeps offering
-      // the other state's actions.
-      key={streaming ? "streaming" : "idle"}
-      accessible
-      accessibilityLabel={translator.message("mobile.ui.browserTabOptions")}
-      accessibilityRole="button"
-      actions={streaming ? actions : [closeAction]}
-      onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
-    >
-      <ControlPill
-        icon="ellipsis"
+    <>
+      <Menu
+        // Remount when streaming changes, so an open menu never keeps offering
+        // the other state's actions.
+        key={streaming ? "streaming" : "idle"}
+        accessible
         accessibilityLabel={translator.message("mobile.ui.browserTabOptions")}
-      />
-    </Menu>
+        accessibilityRole="button"
+        actions={streaming ? actions : [closeAction]}
+        onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+      >
+        <ControlPill
+          icon="ellipsis"
+          accessibilityLabel={translator.message("mobile.ui.browserTabOptions")}
+        />
+      </Menu>
+      {customOpen ? (
+        <ThreadPanelSheet
+          title={translator.message("mobile.panels.customSize")}
+          onClose={() => setCustomOpen(false)}
+        >
+          <View className="flex-row gap-2">
+            <AppTextInput
+              accessibilityLabel={translator.message("mobile.panels.width")}
+              value={width}
+              onChangeText={setWidth}
+              keyboardType="number-pad"
+              className="flex-1 rounded-xl bg-input px-3 py-3 text-foreground"
+            />
+            <AppTextInput
+              accessibilityLabel={translator.message("mobile.panels.height")}
+              value={height}
+              onChangeText={setHeight}
+              keyboardType="number-pad"
+              className="flex-1 rounded-xl bg-input px-3 py-3 text-foreground"
+            />
+          </View>
+          <Button
+            label={translator.message("mobile.panels.apply")}
+            disabled={!customValid || !canResize}
+            onPress={() => {
+              void resize({ environmentId, input: { ...target, viewport: customViewport } }).then(
+                (result) => {
+                  if (result._tag === "Success") setCustomOpen(false);
+                  else Dialog.alert(translator.message("mobile.ui.couldNotChangeTheViewport"));
+                },
+              );
+            }}
+          />
+        </ThreadPanelSheet>
+      ) : null}
+    </>
   );
 }

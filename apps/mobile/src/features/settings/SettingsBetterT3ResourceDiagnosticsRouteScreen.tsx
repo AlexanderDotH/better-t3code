@@ -1,4 +1,4 @@
-import { useRoute, type RouteProp } from "@react-navigation/native";
+import { type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { ActivityIndicator, View } from "react-native";
 
@@ -12,12 +12,9 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { ResourceMonitor } from "../diagnostics/ResourceMonitor";
 import { SettingsSection } from "./components/SettingsSection";
 import { formatMobileResourceBytes, supportsMobileResourceDiagnostics } from "./better-t3-settings";
-
-type ResourceDiagnosticsParams = {
-  SettingsBetterT3ResourceDiagnostics: { readonly environmentId: EnvironmentId };
-};
 
 function DiagnosticValue(props: { readonly label: string; readonly value: string }) {
   return (
@@ -28,11 +25,11 @@ function DiagnosticValue(props: { readonly label: string; readonly value: string
   );
 }
 
-export function SettingsBetterT3ResourceDiagnosticsRouteScreen() {
-  const route =
-    useRoute<RouteProp<ResourceDiagnosticsParams, "SettingsBetterT3ResourceDiagnostics">>();
+export function SettingsBetterT3ResourceDiagnosticsRouteScreen(
+  props: StaticScreenProps<{ readonly environmentId: EnvironmentId }>,
+) {
   const translator = useMobileInterfaceTranslator();
-  const environmentId = EnvironmentId.make(route.params.environmentId);
+  const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const config = useEnvironmentServerConfig(environmentId);
   const supported = supportsMobileResourceDiagnostics(
     config?.environment.capabilities.resourceDiagnosticsVersion,
@@ -94,6 +91,7 @@ export function SettingsBetterT3ResourceDiagnosticsRouteScreen() {
             />
           </SettingsSection>
         )}
+        {supported ? <ResourceMonitor environmentId={environmentId} /> : null}
       </ScreenScaffoldScrollView>
     </AndroidScreenScaffold>
   );

@@ -12,6 +12,7 @@ import {
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { FontFamilyChoiceRow } from "../components/FontFamilyChoiceRow";
 
 export function TextAppearanceSection() {
   const translator = useMobileInterfaceTranslator();
@@ -22,6 +23,8 @@ export function TextAppearanceSection() {
     <SettingsSection title={translator.message("mobile.appearance.text")}>
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
+      <FontFamilyChoiceRow preferenceKey="fontFamilySans" />
+      <FontFamilyChoiceRow preferenceKey="fontFamilyComposer" />
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"

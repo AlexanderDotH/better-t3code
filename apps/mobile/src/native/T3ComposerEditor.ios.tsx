@@ -180,38 +180,48 @@ export function ComposerEditor({
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
-        const record =
-          token.type === "context"
-            ? props.context?.records.find((record) => record.contextId === token.contextId)
-            : undefined;
-        const presentation = contextChipPresentation(
-          token.type === "context" ? token.kind : token.type,
-          record,
-        );
-        const icon = contextChipIcon(
-          presentation,
-          token.type === "mention" ? token.value : contextRecordFileName(record),
-        );
-        return {
-          type: token.type,
-          source: token.source,
-          start: token.start,
-          end: token.end,
-          accent: contextChipAccent(presentation.accent, theme, chipTextColor),
-          label:
-            token.type === "skill"
-              ? (skillLabels.get(token.value) ?? token.value)
-              : token.type === "context"
-                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                : basename(token.value),
-          detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
-          iconUri: contextChipIconUri(icon),
-          tintsIcon: icon.kind === "chip",
-        };
-      }),
+      composerContextEditorTokens(props.value, tokens, skillLabels, props.richTextEnabled).map(
+        (token) => {
+          const record =
+            token.type === "context"
+              ? props.context?.records.find((record) => record.contextId === token.contextId)
+              : undefined;
+          const presentation = contextChipPresentation(
+            token.type === "context" ? token.kind : token.type,
+            record,
+          );
+          const icon = contextChipIcon(
+            presentation,
+            token.type === "mention" ? token.value : contextRecordFileName(record),
+          );
+          return {
+            type: token.type,
+            source: token.source,
+            start: token.start,
+            end: token.end,
+            accent: contextChipAccent(presentation.accent, theme, chipTextColor),
+            label:
+              token.type === "skill"
+                ? (skillLabels.get(token.value) ?? token.value)
+                : token.type === "context"
+                  ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                  : basename(token.value),
+            detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
+            iconUri: contextChipIconUri(icon),
+            tintsIcon: icon.kind === "chip",
+          };
+        },
+      ),
     );
-  }, [props.value, tokens, props.context, skillLabels, theme, chipTextColor]);
+  }, [
+    props.value,
+    tokens,
+    props.context,
+    props.richTextEnabled,
+    skillLabels,
+    theme,
+    chipTextColor,
+  ]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a

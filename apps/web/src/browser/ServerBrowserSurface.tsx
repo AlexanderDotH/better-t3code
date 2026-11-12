@@ -1,7 +1,7 @@
 import {
   createPreviewFramePainter,
   createPreviewStreamClient,
-  previewStreamControlLabel,
+  previewStreamControlLabelKey,
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
@@ -41,6 +41,7 @@ import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
@@ -169,6 +170,7 @@ export function ServerBrowserSurface(props: {
     pdfUrl = null,
     ref,
   } = props;
+  const translate = useInterfaceTranslator().message;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
@@ -753,7 +755,7 @@ export function ServerBrowserSurface(props: {
         )}
       >
         <span role="status" className="text-xs text-muted-foreground">
-          {previewStreamControlLabel(control)}
+          {translate(previewStreamControlLabelKey(control))}
         </span>
         {control?.canOperate ? (
           <Button
@@ -764,7 +766,11 @@ export function ServerBrowserSurface(props: {
               send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
             }
           >
-            {control.controller === "you" ? "Release control" : "Take control"}
+            {translate(
+              control.controller === "you"
+                ? "browser.stream.releaseControl"
+                : "browser.stream.takeControl",
+            )}
           </Button>
         ) : null}
       </div>

@@ -17,6 +17,7 @@ import { WS_METHODS } from "./rpc.ts";
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+  [WS_METHODS.previewPickElementAt]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
@@ -60,6 +61,20 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
+  [WS_METHODS.skillsCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.skillsUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.skillsRename]: AuthOrchestrationOperateScope,
+  [WS_METHODS.skillsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.skillsSetEnabled]: AuthOrchestrationOperateScope,
+  [WS_METHODS.skillsImportSources]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpSetEnabled]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpSetProviderEnabled]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpImportCursorJson]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpImportSources]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpRuntimeAction]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,

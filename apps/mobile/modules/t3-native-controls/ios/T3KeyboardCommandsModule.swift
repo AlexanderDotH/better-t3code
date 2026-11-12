@@ -42,13 +42,12 @@ public final class T3KeyboardCommandsView: ExpoView {
     var commands = [
       enabledCommand("newTask", input: "n", modifiers: .command, action: #selector(newTask), title: "New Task"),
       enabledCommand("focusSearch", input: "f", modifiers: .command, action: #selector(focusSearch), title: "Find"),
-      isPad
-        ? enabledCommand("commandPalette", input: "k", modifiers: .command, action: #selector(openCommandPalette), title: "Command Palette")
-        : enabledCommand("focusSearch", input: "k", modifiers: .command, action: #selector(focusSearch), title: "Focus Search"),
+      enabledCommand("commandPalette", input: "k", modifiers: .command, action: #selector(openCommandPalette), title: "Command Palette"),
       enabledCommand("paletteNext", input: UIKeyCommand.inputDownArrow, modifiers: [], action: #selector(paletteNext), title: "Next Result"),
       enabledCommand("palettePrevious", input: UIKeyCommand.inputUpArrow, modifiers: [], action: #selector(palettePrevious), title: "Previous Result"),
       enabledCommand("paletteDismiss", input: UIKeyCommand.inputEscape, modifiers: [], action: #selector(paletteDismiss), title: "Close Command Palette"),
       enabledCommand("back", input: "[", modifiers: .command, action: #selector(goBack), title: "Back"),
+      enabledCommand("forward", input: "]", modifiers: .command, action: #selector(goForward), title: "Forward"),
       enabledCommand("files", input: "f", modifiers: [.command, .shift], action: #selector(openFiles), title: "Open Files"),
       enabledCommand("terminal", input: "t", modifiers: [.command, .shift], action: #selector(openTerminal), title: "Open Terminal"),
       enabledCommand("review", input: "r", modifiers: [.command, .shift], action: #selector(openReview), title: "Open Review"),
@@ -157,6 +156,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   }
   @objc private func focusSearch() { emit("focusSearch") }
   @objc private func goBack() { emit("back") }
+  @objc private func goForward() { emit("forward") }
   @objc private func openFiles() { emit("files") }
   @objc private func openTerminal() { emit("terminal") }
   @objc private func openReview() { emit("review") }

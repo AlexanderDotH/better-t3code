@@ -16,6 +16,7 @@ const REASONING_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
   ...REASONING_EFFORT_OPTION_IDS,
   "thinking",
 ]);
+const MAX_EFFORT_BARS = 7;
 
 /** The model's reasoning control: a known effort id, or a select its agent marked as reasoning. */
 export function isReasoningControl(descriptor: ProviderOptionDescriptor): boolean {
@@ -29,6 +30,35 @@ export function isReasoningSelect(
   descriptor: ProviderOptionDescriptor,
 ): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> {
   return descriptor.type === "select" && isReasoningControl(descriptor);
+}
+
+export function resolveEffortGlyph(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+  current: string | null,
+) {
+  const special = new Set([...(descriptor.promptInjectedValues ?? []), "ultracode", "max"]);
+  const levels = descriptor.options.filter((option) => !special.has(option.id));
+  if (levels.length < 2 || levels.length > MAX_EFFORT_BARS || current === null) return null;
+  const startsAtOff = ["off", "none"].includes(levels[0]!.id);
+  const count = startsAtOff ? levels.length - 1 : levels.length;
+  if (special.has(current)) {
+    const label = descriptor.options.find((option) => option.id === current)?.label ?? current;
+    return { count, filled: count, special: label, label };
+  }
+  const index = levels.findIndex((option) => option.id === current);
+  return index < 0
+    ? null
+    : {
+        count,
+        filled: startsAtOff ? index : index + 1,
+        special: null,
+        label: levels[index]!.label,
+      };
+}
+
+export function effortBarHeights(count: number, maxBar: number): number[] {
+  const step = Math.max(1, Math.round(maxBar / 2 / Math.max(count - 1, 1)));
+  return Array.from({ length: count }, (_, index) => maxBar - (count - 1 - index) * step);
 }
 
 export function replaceDescriptorCurrentValue(

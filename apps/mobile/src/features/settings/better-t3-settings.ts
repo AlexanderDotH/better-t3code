@@ -1,6 +1,7 @@
 import {
   resolveBetterT3FeatureFlag,
   type CavemanMode,
+  type ContextWindowSelector,
   type ModelSelection,
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
@@ -205,11 +206,14 @@ export type MobileBetterT3SettingsDestination =
   | "SettingsProjects";
 
 export const MOBILE_BETTER_T3_DIRECT_CONTROL_IDS = [
+  "agent.reasoningVisibility",
   "agent.contextCompactionModel",
   "agent.autoReasoningModel",
   "agent.cavemanMode",
   "chat.sorting",
   "chat.settling",
+  "chat.classicSidebar",
+  "chat.contextWindowSelector",
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
 export function resolveMobileBetterT3Destination(
@@ -247,16 +251,18 @@ export function resolveMobileBetterT3Destination(
 }
 
 type MobileBetterT3DeviceControlUpdate =
+  | { readonly id: "chat.contextWindowSelector"; readonly value: ContextWindowSelector }
   | {
       readonly id: "chat.sorting.projects";
-      readonly value: Exclude<SidebarProjectSortOrder, "manual">;
+      readonly value: SidebarProjectSortOrder;
     }
   | { readonly id: "chat.sorting.threads"; readonly value: SidebarThreadSortOrder }
   | { readonly id: "chat.settling.days"; readonly value: number | null }
   | { readonly id: "chat.settling.onMerge"; readonly value: boolean };
 
 export interface MobileBetterT3DeviceControlPatch {
-  readonly sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
+  readonly contextWindowMeterEnabled?: boolean;
+  readonly sidebarProjectSortOrder?: SidebarProjectSortOrder;
   readonly sidebarThreadSortOrder?: SidebarThreadSortOrder;
   readonly sidebarAutoSettleAfterDays?: number | null;
   readonly sidebarAutoSettleOnMerge?: boolean;
@@ -267,6 +273,8 @@ export function createMobileBetterT3DeviceControlPatch(
   update: MobileBetterT3DeviceControlUpdate,
 ): MobileBetterT3DeviceControlPatch {
   switch (update.id) {
+    case "chat.contextWindowSelector":
+      return { contextWindowMeterEnabled: update.value === "better-t3" };
     case "chat.sorting.projects":
       return { sidebarProjectSortOrder: update.value };
     case "chat.sorting.threads":
@@ -370,7 +378,7 @@ export function resolveMobileBetterT3ProjectSelection<
 }
 
 /** Groups whose only row on mobile is a device preference the registry does not list. */
-const MOBILE_SUPPLEMENTAL_TARGETS = ["response-metrics", "legacy-context-window-indicator"];
+const MOBILE_SUPPLEMENTAL_TARGETS = ["response-metrics"];
 
 export interface MobileBetterT3Control {
   readonly id: BetterT3FeatureId;
@@ -447,7 +455,11 @@ export function buildMobileBetterT3Categories(input: {
 
   for (const descriptor of input.registry) {
     if (!descriptor.availability.surfaces.includes(input.surface)) continue;
-    if (descriptor.id === "knowledge.projectIndexingDefaultModel") continue;
+    if (
+      descriptor.id === "agent.reasoningWorkingOverlay" ||
+      descriptor.id === "agent.reasoningInMessage"
+    )
+      continue;
     const value = switchValue(descriptor, input.deviceSettings, input.environmentSettings);
     const unsupported =
       descriptor.availability.capabilities.some(
@@ -474,7 +486,10 @@ export function buildMobileBetterT3Categories(input: {
     controlsById.set(descriptor.id, {
       id: descriptor.id,
       descriptor,
-      controlKind: descriptor.controlKind,
+      controlKind:
+        descriptor.id === "agent.reasoningVisibility" || descriptor.id === "chat.classicSidebar"
+          ? "selector"
+          : descriptor.controlKind,
       availability,
       value,
     });

@@ -82,7 +82,8 @@ describe("mobile Better T3 settings", () => {
           BETTER_T3_FEATURE_REGISTRY.filter(
             (descriptor) =>
               descriptor.availability.surfaces.includes(surface) &&
-              descriptor.id !== "knowledge.projectIndexingDefaultModel",
+              descriptor.id !== "agent.reasoningWorkingOverlay" &&
+              descriptor.id !== "agent.reasoningInMessage",
           )
             .map((descriptor) => descriptor.id)
             .sort(),
@@ -225,6 +226,21 @@ describe("mobile Better T3 settings", () => {
 
     expect(feature(sections, "chat.sidebarPosition")).toBeUndefined();
     expect(feature(sections, "agent.fetch")?.availability).toEqual({ state: "available" });
+    expect(feature(sections, "chat.classicSidebar")?.controlKind).toBe("selector");
+    for (const id of [
+      "chat.messageEditing",
+      "chat.draftIndicators",
+      "integration.suppressErrorsAndWarnings",
+    ] as const) {
+      expect(feature(sections, id)).toMatchObject({
+        controlKind: "switch",
+        availability: { state: "available" },
+      });
+    }
+    expect(feature(sections, "chat.contextWindowSelector")).toMatchObject({
+      controlKind: "selector",
+      availability: { state: "available" },
+    });
   });
 
   it("honors clean versus migrated defaults and blocks dependent controls reversibly", () => {
@@ -433,6 +449,12 @@ describe("mobile Better T3 settings", () => {
     const direct = new Set<BetterT3FeatureId>(MOBILE_BETTER_T3_DIRECT_CONTROL_IDS);
 
     expect(direct.has("agent.autoReasoningModel")).toBe(true);
+    expect(direct.has("agent.reasoningVisibility")).toBe(true);
+    const reasoningControls = sections
+      .flatMap((section) => section.groups)
+      .find((group) => group.definition.id === "reasoning")?.controls;
+    expect(reasoningControls?.map((control) => control.id)).toEqual(["agent.reasoningVisibility"]);
+    expect(reasoningControls?.[0]?.availability.state).toBe("available");
 
     for (const control of sections.flatMap((section) =>
       section.groups.flatMap((group) => group.controls),
@@ -684,11 +706,26 @@ describe("mobile Better T3 settings", () => {
 
   it("builds effective device patches for native sorting and settling controls", () => {
     expect(
+      createMobileBetterT3DeviceControlPatch({ id: "chat.contextWindowSelector", value: "native" }),
+    ).toEqual({ contextWindowMeterEnabled: false });
+    expect(
+      createMobileBetterT3DeviceControlPatch({
+        id: "chat.contextWindowSelector",
+        value: "better-t3",
+      }),
+    ).toEqual({ contextWindowMeterEnabled: true });
+    expect(
       createMobileBetterT3DeviceControlPatch({
         id: "chat.sorting.projects",
         value: "created_at",
       }),
     ).toEqual({ sidebarProjectSortOrder: "created_at" });
+    expect(
+      createMobileBetterT3DeviceControlPatch({
+        id: "chat.sorting.projects",
+        value: "manual",
+      }),
+    ).toEqual({ sidebarProjectSortOrder: "manual" });
     expect(
       createMobileBetterT3DeviceControlPatch({
         id: "chat.sorting.threads",

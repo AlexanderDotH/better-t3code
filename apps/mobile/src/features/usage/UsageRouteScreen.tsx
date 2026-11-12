@@ -1,3 +1,4 @@
+import { useErrorsAndWarningsSuppressed } from "../agent-awareness/notificationSuppression";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
@@ -12,7 +13,6 @@ import {
 } from "@t3tools/client-runtime/state/usage-progress";
 import {
   isCompatibleUsageContractVersion,
-  isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
@@ -29,7 +29,7 @@ import {
   makeWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -56,6 +56,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import { UsageBreakdown } from "./UsageInsights";
+import { UsagePriceEditor } from "./UsagePriceEditor";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type UsageView = UsageChartMetric | "limits";
@@ -114,6 +116,7 @@ function UsageScreen(props: {
   readonly tabParam: string | undefined;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const suppressed = useErrorsAndWarningsSuppressed();
   const viewOptions = VIEW_OPTIONS.map(({ value, labelKey }) => ({
     value,
     label: translator.message(labelKey),
@@ -144,6 +147,22 @@ function UsageScreen(props: {
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
+  );
+  const [priceEditor, setPriceEditor] = useState<{ readonly model?: string } | null>(null);
+  const answeredEnvironments = useMemo(
+    () =>
+      selectedEnvironments.flatMap((environment) =>
+        environment.summary === null
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                label: environment.label,
+                summary: environment.summary,
+              },
+            ],
+      ),
+    [selectedEnvironments],
   );
   const isFocused = useIsFocused();
   const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && view === "limits");
@@ -285,9 +304,20 @@ function UsageScreen(props: {
       trailing={environmentFilter}
       workspaceRoot={props.workspace}
     >
+      {priceEditor ? (
+        <UsagePriceEditor
+          environments={selectedEnvironments}
+          initialModel={priceEditor.model}
+          onClose={() => setPriceEditor(null)}
+        />
+      ) : null}
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
-          optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
+          optionsVersion={JSON.stringify({
+            showEnvironmentFilter,
+            filterIcon,
+            environmentActions,
+          })}
           options={{
             // A native menu item, unlike a custom view, moves into the Duo's vertical bar.
             unstable_headerRightItems: () =>
@@ -387,7 +417,7 @@ function UsageScreen(props: {
                   />
                 )}
                 <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
-                {merged.duplicateSources.length > 0 ? (
+                {!suppressed && merged.duplicateSources.length > 0 ? (
                   <Text className="text-sm text-foreground-muted">
                     Counted once across environments sharing a transcript directory:{" "}
                     {merged.duplicateSources.join(", ")}
@@ -417,7 +447,7 @@ function UsageScreen(props: {
                   </View>
                 ) : (
                   <>
-                    {sourceMessages.map((message) => (
+                    {(suppressed ? [] : sourceMessages).map((message) => (
                       <Text key={message} className="text-sm text-foreground-muted">
                         {message}
                       </Text>
@@ -462,7 +492,14 @@ function UsageScreen(props: {
                       <CostSection merged={merged} wide={wide} />
                       <CallsSection merged={merged} columns={wide ? 3 : 2} />
                       <ContextDiagnosticsSection merged={merged} columns={wide ? 3 : 2} />
-                      <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
+                      <UsageBreakdown
+                        merged={merged}
+                        environments={answeredEnvironments}
+                        metric={metric}
+                        hourly={isPast24Hours}
+                        days={chartDays}
+                        onSetPrice={(model) => setPriceEditor(model === undefined ? {} : { model })}
+                      />
                     </UsageUpdating>
                   </>
                 )}
@@ -1070,68 +1107,6 @@ function ContextDiagnosticsSection(props: {
             label={translator.message(row.messageKey)}
             value={row.tokens ? formatTokens(row.value) : translator.number(row.value)}
           />
-        ))}
-      </View>
-    </SettingsSection>
-  );
-}
-
-function ModelsSection(props: {
-  readonly merged: MergedUsage;
-  readonly metric: UsageChartMetric;
-  readonly columns: 1 | 2;
-}) {
-  const translator = useMobileInterfaceTranslator();
-  const { merged, metric } = props;
-  const colors = useProviderColors();
-  if (merged.models.length === 0) return null;
-
-  // Hermes lacks toSorted.
-  const ordered = [...merged.models].sort((a, b) =>
-    metric === "cost"
-      ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens
-      : b.totalTokens - a.totalTokens || b.costUsd - a.costUsd,
-  );
-
-  return (
-    <SettingsSection title={translator.message("mobile.usage.byModel")}>
-      <View className="flex-row flex-wrap">
-        {ordered.map((model, index) => (
-          <View
-            key={`${model.provider}:${model.model}`}
-            className={cn(
-              "flex-row items-center gap-3 p-4",
-              index >= props.columns && "border-t border-border-subtle",
-              index % props.columns === 1 && "border-l border-border-subtle",
-            )}
-            style={{ width: `${100 / props.columns}%` }}
-          >
-            <View
-              className="size-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: colors[model.provider] }}
-            />
-            <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="text-base text-foreground" numberOfLines={1}>
-                {model.model}
-              </Text>
-              <Text className="text-sm text-foreground-muted">
-                {metric === "tokens"
-                  ? `${formatPercent(model.tokenShare)} of tokens · ${
-                      isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
-                    }`
-                  : isModelCostUnknown(model)
-                    ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                    : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
-              </Text>
-            </View>
-            <Text className="text-base tabular-nums text-foreground">
-              {metric === "tokens"
-                ? formatTokens(model.totalTokens)
-                : isModelCostUnknown(model)
-                  ? translator.message("mobile.usage.unpriced")
-                  : formatUsd(model.costUsd)}
-            </Text>
-          </View>
         ))}
       </View>
     </SettingsSection>

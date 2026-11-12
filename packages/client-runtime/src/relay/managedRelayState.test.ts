@@ -19,10 +19,32 @@ import {
   ManagedRelaySessionError,
   managedRelaySessionAtom,
   setManagedRelaySession,
+  managedTunnelCap,
 } from "./managedRelayState.ts";
 
 let registry = AtomRegistry.make();
 
+describe("managedTunnelCap", () => {
+  it("uses a manual override before the linked plan and respects an unavailable integration", () => {
+    const premier = {
+      available: true,
+      link: { email: "user@example.test", plan: "premier" as const },
+    };
+    expect(managedTunnelCap(premier)).toEqual({ limit: 100, upgrade: null });
+    expect(managedTunnelCap({ ...premier, maxTunnelsOverride: 0 })).toEqual({
+      limit: 0,
+      upgrade: null,
+    });
+    expect(managedTunnelCap({ ...premier, available: false })).toEqual({ limit: 3, upgrade: null });
+    expect(managedTunnelCap({ available: true, link: null })).toEqual({
+      limit: 3,
+      upgrade: "link",
+    });
+    expect(
+      managedTunnelCap({ available: true, link: { email: "user@example.test", plan: "pro" } }),
+    ).toEqual({ limit: 10, upgrade: "premier" });
+  });
+});
 const environment = {
   environmentId: EnvironmentId.make("environment-1"),
   label: "Main environment",

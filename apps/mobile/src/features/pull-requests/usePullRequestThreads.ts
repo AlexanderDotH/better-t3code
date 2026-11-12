@@ -13,6 +13,8 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
+  COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   ThreadId,
   type PullRequestDetail,
   type PullRequestLinkedThreadsResult,
@@ -49,6 +51,13 @@ import {
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
+export type PullRequestAgentContext = {
+  readonly request: string;
+  readonly text: string;
+  readonly filePath?: string;
+  readonly rangeLabel?: string;
+  readonly diff?: string;
+};
 
 export function usePullRequestThreads(
   params: PullRequestParams,
@@ -103,7 +112,11 @@ export function usePullRequestThreads(
     else navigation.dispatch(StackActions.push("Thread", destination));
   };
   const [busy, setBusy] = useState(false);
-  const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
+  const ask = async (
+    thread?: LinkedThread,
+    task: PullRequestAgentTask = "ask",
+    extra?: PullRequestAgentContext,
+  ) => {
     if (!pr || !canAsk || pending.current) return;
     const terminology = sourceControlClients.get(pr.provider).changeRequest;
     pending.current = true;
@@ -130,7 +143,7 @@ export function usePullRequestThreads(
             pullRequestReference: pr.url,
           },
         });
-      const context = pullRequestComposerContext(
+      const baseContext = pullRequestComposerContext(
         {
           number: pr.number,
           title: pr.title,
@@ -141,15 +154,27 @@ export function usePullRequestThreads(
           isDraft: pr.isDraft,
         },
         uuidv4(),
-        filePath,
+        extra?.filePath ?? filePath,
       );
+      const context = extra
+        ? {
+            ...baseContext,
+            text: `${baseContext.text}\n\n${extra.text}`.slice(
+              0,
+              COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
+            ),
+            rangeLabel: extra.rangeLabel?.slice(0, 2048) ?? baseContext.rangeLabel,
+            diff: extra.diff?.slice(0, COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS) ?? "",
+          }
+        : baseContext;
       const draft = getComposerDraftSnapshot(draftKey);
       const attached = draft.context?.records.some(
         (record) =>
           record.kind === "review-comment" &&
           "pullRequest" in record &&
           record.pullRequest?.url === pr.url &&
-          record.filePath === context.filePath,
+          record.filePath === context.filePath &&
+          (!extra || (record.text === context.text && record.diff === context.diff)),
       );
       if (
         !attached &&
@@ -166,12 +191,16 @@ export function usePullRequestThreads(
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
-        appendPullRequestAgentPrompt(
-          withContext.text,
-          task,
-          terminology,
-          previousPrompts.current.get(draftKey),
-        ),
+        extra
+          ? withContext.text.trimEnd().endsWith(extra.request)
+            ? withContext.text
+            : `${withContext.text.trimEnd()}\n\n${extra.request}`
+          : appendPullRequestAgentPrompt(
+              withContext.text,
+              task,
+              terminology,
+              previousPrompts.current.get(draftKey),
+            ),
       );
       previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task, terminology));
       if (thread) openThread(thread);

@@ -63,10 +63,11 @@ unavailable. The thread activity shows whether context was used, skipped, or ret
 
 ## Thinking traces
 
-On web and desktop, go to **Settings → Better T3 → Chat → Thinking trace display**.
+On web, desktop, or mobile, go to **Settings → Better T3 → Chat → Thinking trace display**.
 Choose **No thinking traces**, **In chat** to read full traces including completed turns,
-or **In Working dialog** to follow the latest live thoughts automatically.
-Both visible modes use your character streaming setting.
+**In message** to keep traces inside the corresponding answer, or **In Working dialog** to
+read them in a separate window. On mobile, tap a thinking activity to open that window.
+The choice applies to this device and does not change the model's reasoning effort.
 
 ## Working status in the top bar
 

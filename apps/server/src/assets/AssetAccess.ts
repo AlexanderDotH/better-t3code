@@ -66,6 +66,7 @@ import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import { mediaSnapshotPath, snapshotMediaFile } from "./MediaSnapshots.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -567,12 +568,54 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           );
         requestedPath = path.resolve(workspaceRoot, requestedPath);
       }
+      const config = yield* ServerConfig.ServerConfig;
+      const snapshotPath =
+        input.resource.disposition === "attachment"
+          ? null
+          : yield* mediaSnapshotPath({
+              attachmentsDir: config.attachmentsDir,
+              threadId: input.resource.threadId,
+              requestedPath: path.resolve(requestedPath),
+            }).pipe(Effect.orElseSucceed(() => null));
       const finalized = yield* finalizeAbsoluteMediaFileAsset({
         requestedPath,
         workspaceRoot: input.workspaceRoot,
         resource: input.resource,
         expiresAt,
-      });
+      }).pipe(
+        Effect.tap((result) =>
+          snapshotPath === null
+            ? Effect.void
+            : snapshotMediaFile({
+                sourcePath: result.claims.filePath,
+                snapshotPath,
+                fileRevision: result.fileRevision,
+              }).pipe(
+                Effect.tapError((cause) =>
+                  Effect.logWarning("Failed to keep a copy of chat media.", { cause }),
+                ),
+                Effect.ignore,
+              ),
+        ),
+        Effect.catchTags({
+          AssetWorkspaceAssetNotFoundError: (error) =>
+            snapshotPath === null
+              ? Effect.fail(error)
+              : fileSystem.exists(snapshotPath).pipe(
+                  Effect.orElseSucceed(() => false),
+                  Effect.flatMap((exists) =>
+                    exists
+                      ? finalizeAbsoluteMediaFileAsset({
+                          requestedPath: snapshotPath,
+                          workspaceRoot: undefined,
+                          resource: input.resource,
+                          expiresAt,
+                        }).pipe(Effect.mapError(() => error))
+                      : Effect.fail(error),
+                  ),
+                ),
+        }),
+      );
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;

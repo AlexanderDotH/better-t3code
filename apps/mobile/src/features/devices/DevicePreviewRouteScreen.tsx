@@ -1,4 +1,8 @@
 import { SheetCloseButton } from "../../components/ui/SheetHeader";
+import { useAtomValue } from "@effect/atom-react";
+import { DevicePicker } from "./DevicePicker";
+import { DeviceToolsSheet } from "./DeviceToolsSheet";
+import { ThreadPanelSheet } from "../threads/ThreadPanelSheet";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -12,7 +16,7 @@ import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Pressable, StatusBar, View } from "react-native";
+import { Pressable, ScrollView, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -100,20 +104,29 @@ export function DevicePreviewScreen({
   const [streamAttempt, setStreamAttempt] = useState(0);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [axOverlay, setAxOverlay] = useState(false);
+  const canShutdown = useAtomValue(deviceEnvironment.shutdown.permissionAtom(environmentId));
+  const canClose = useAtomValue(deviceEnvironment.close.permissionAtom(environmentId));
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
+  const closeSession = useAtomCommand(deviceEnvironment.close);
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
   const previews = threadDevicePreviews(state.data, threadId);
   const preview = selectedThreadDevicePreview(previews, selectedKey);
+  const [previousDeviceKey, setPreviousDeviceKey] = useState(preview?.key ?? null);
+  if ((preview?.key ?? null) !== previousDeviceKey) {
+    setPreviousDeviceKey(preview?.key ?? null);
+    setInputConnected(false);
+    setAxOverlay(false);
+    setToolsOpen(false);
+  }
   const onInputConnected = async (connected: boolean) => {
     setInputConnected(connected);
     if (connected && !embedded) setControlsVisible(false);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the focused route through the navigator once the thread has no device previews
-  useEffect(() => {
-    if (focused && state.data !== null && previews.length === 0) onClose();
-  }, [focused, state.data, previews.length, onClose]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Accelerometer while focused to toggle controls on a shake
   useEffect(() => {
     if (!focused || !foreground || embedded) return;
@@ -151,6 +164,39 @@ export function DevicePreviewScreen({
   };
 
   const controls: AppBarMenuItem[] = [
+    {
+      id: "select-device",
+      title: translator.message("mobile.panels.selectDevice"),
+      icon: "plus",
+      onPress: () => setPickerOpen(true),
+    },
+    {
+      id: "capture",
+      title: translator.message("mobile.panels.capture"),
+      icon: "camera",
+      disabled: !preview || !inputConnected,
+      onPress: () => streamRef.current?.capture(),
+    },
+    {
+      id: "advanced",
+      title: translator.message("mobile.panels.deviceTools"),
+      icon: "slider.horizontal.3",
+      disabled: !preview,
+      onPress: () => setToolsOpen(true),
+    },
+    {
+      id: "close-session",
+      title: translator.message("mobile.panels.closeSession"),
+      icon: "xmark",
+      disabled: !preview || !canClose,
+      onPress: () => {
+        if (preview)
+          void closeSession({
+            environmentId,
+            input: { threadId, hostId: preview.session.hostId, deviceId: preview.session.deviceId },
+          });
+      },
+    },
     ...(state.data?.hosts
       .filter(
         (host) =>
@@ -244,11 +290,21 @@ export function DevicePreviewScreen({
         ? translator.message("mobile.ui.shuttingDown")
         : translator.message("mobile.ui.shutDownDevice"),
       icon: "power",
-      disabled: !preview || shuttingDown,
+      disabled: !preview || shuttingDown || !canShutdown,
       onPress: () => void shutDownDevice(),
     },
   ];
   const pressHome = () => streamRef.current?.home();
+  const selectDevice = (key: string) => {
+    if (key === preview?.key) {
+      setPickerOpen(false);
+      return;
+    }
+    setInputConnected(false);
+    setAxOverlay(false);
+    setSelectedKey(key);
+    setPickerOpen(false);
+  };
   const menuItems: AppBarMenuItem[] = [
     ...(previews.length > 1
       ? [
@@ -261,7 +317,7 @@ export function DevicePreviewScreen({
               title: device.name,
               subtitle: device.description,
               selected: device.key === preview?.key,
-              onPress: () => setSelectedKey(device.key),
+              onPress: () => selectDevice(device.key),
             })),
           },
         ]
@@ -298,6 +354,16 @@ export function DevicePreviewScreen({
           streamRef={streamRef}
           onInputConnected={onInputConnected}
         />
+      ) : !preview && state.data ? (
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{
+            paddingTop: embedded ? 0 : insets.top + 64,
+            paddingBottom: insets.bottom,
+          }}
+        >
+          <DevicePicker environmentId={environmentId} threadId={threadId} onSelect={selectDevice} />
+        </ScrollView>
       ) : (
         <View className="flex-1 items-center justify-center gap-4 px-6">
           {state.error ? (
@@ -380,6 +446,28 @@ export function DevicePreviewScreen({
           <View className="h-1.5 w-10 rounded-full bg-white/40" />
         </Pressable>
       )}
+      {pickerOpen ? (
+        <ThreadPanelSheet
+          title={translator.message("mobile.panels.selectDevice")}
+          onClose={() => setPickerOpen(false)}
+        >
+          <DevicePicker environmentId={environmentId} threadId={threadId} onSelect={selectDevice} />
+        </ThreadPanelSheet>
+      ) : null}
+      {toolsOpen && preview ? (
+        <DeviceToolsSheet
+          key={preview.key}
+          environmentId={environmentId}
+          preview={preview}
+          onClose={() => setToolsOpen(false)}
+          overlay={axOverlay}
+          onOverlayChange={(enabled) => {
+            setAxOverlay(enabled);
+            streamRef.current?.setOverlay(enabled);
+            if (enabled) setToolsOpen(false);
+          }}
+        />
+      ) : null}
     </View>
   );
 }

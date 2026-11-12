@@ -182,6 +182,14 @@ describe("mobile composer context", () => {
       composerContextEditorTokens(
         text,
         collectComposerInlineTokens(text),
+        composerSkillLabels(skills),
+        false,
+      ),
+    ).toEqual([]);
+    expect(
+      composerContextEditorTokens(
+        text,
+        collectComposerInlineTokens(text),
         composerSkillLabels([]),
       ).map((token) => token.type),
     ).toEqual(["mention", "context", "context"]);

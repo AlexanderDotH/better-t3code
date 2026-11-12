@@ -22,6 +22,7 @@ export type InlineCommentParams = PullRequestParams & {
   readonly path: string;
   readonly oldPath?: string;
   readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
   readonly headSha: string;
   readonly code: string;
 };
@@ -62,6 +63,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           path: params.path,
           ...(params.oldPath ? { oldPath: params.oldPath } : {}),
           position: params.position,
+          ...(params.startPosition ? { startPosition: params.startPosition } : {}),
           headSha: params.headSha,
           code: params.code,
           body,
@@ -82,7 +84,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           ? translator.message("mobile.ui.editReviewComment")
           : translator.message("mobile.ui.reviewComment")
       }
-      subtitle={`#${params.number} · ${reviewPositionLabel(params.position)}`}
+      subtitle={`#${params.number} · ${reviewPositionLabel(params.position, params.startPosition)}`}
       footer={
         <Button
           fullWidth

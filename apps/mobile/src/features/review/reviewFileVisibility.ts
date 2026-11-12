@@ -12,9 +12,10 @@ function getDefaultReviewExpandedFileIds(
 function getValidReviewFileIds(
   files: ReadonlyArray<ReviewRenderableFile>,
   fileIds: ReadonlyArray<string> | undefined,
+  collapsedByDefault = false,
 ): ReadonlyArray<string> {
   if (fileIds === undefined) {
-    return getDefaultReviewExpandedFileIds(files);
+    return collapsedByDefault ? [] : getDefaultReviewExpandedFileIds(files);
   }
 
   const fileIdSet = new Set(files.map((file) => file.id));
@@ -46,12 +47,13 @@ export function useReviewFileVisibility(input: {
   readonly files: ReadonlyArray<ReviewRenderableFile>;
   readonly cachedExpandedFileIds: ReadonlyArray<string> | undefined;
   readonly cachedViewedFileIds: ReadonlyArray<string> | undefined;
+  readonly collapsedByDefault?: boolean;
 }) {
   const { cachedExpandedFileIds, cachedViewedFileIds, files, sectionId, threadKey } = input;
 
   const expandedFileIds = useMemo(
-    () => getValidReviewFileIds(files, cachedExpandedFileIds),
-    [cachedExpandedFileIds, files],
+    () => getValidReviewFileIds(files, cachedExpandedFileIds, input.collapsedByDefault),
+    [cachedExpandedFileIds, files, input.collapsedByDefault],
   );
   const viewedFileIds = useMemo(
     () => getValidExplicitReviewFileIds(files, cachedViewedFileIds),
@@ -74,10 +76,13 @@ export function useReviewFileVisibility(input: {
       }
 
       updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getValidReviewFileIds(files, existing), fileId),
+        toggleReviewFileId(
+          getValidReviewFileIds(files, existing, input.collapsedByDefault),
+          fileId,
+        ),
       );
     },
-    [files, sectionId, threadKey],
+    [files, sectionId, threadKey, input.collapsedByDefault],
   );
 
   const toggleViewedFile = useCallback(
@@ -93,11 +98,14 @@ export function useReviewFileVisibility(input: {
 
       if (shouldCollapse) {
         updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-          removeReviewFileId(getValidReviewFileIds(files, existing), fileId),
+          removeReviewFileId(
+            getValidReviewFileIds(files, existing, input.collapsedByDefault),
+            fileId,
+          ),
         );
       }
     },
-    [files, sectionId, threadKey, viewedFileIds],
+    [files, sectionId, threadKey, viewedFileIds, input.collapsedByDefault],
   );
 
   return {

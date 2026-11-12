@@ -30,9 +30,25 @@ const state = vi.hoisted(() => ({
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
+  preferences: {} as {
+    confirmThreadUnpin?: boolean;
+    confirmThreadArchive?: boolean;
+    confirmThreadDelete?: boolean;
+  },
   afterRequest: undefined as (() => void) | undefined,
 }));
 
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => AsyncResult.success(state.preferences),
+}));
+vi.mock("../../persistence/mobile-preferences", () => ({
+  MOBILE_CLIENT_PREFERENCE_DEFAULTS: {
+    confirmThreadUnpin: false,
+    confirmThreadArchive: false,
+    confirmThreadDelete: true,
+  },
+}));
+vi.mock("../../state/preferences", () => ({ mobilePreferencesAtom: "preferences" }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useRef: (current: unknown) => ({ current }),
@@ -138,6 +154,7 @@ vi.mock("../../state/threads", () => ({
       "reorderPin",
       "reorderActive",
       "updateMetadata",
+      "markUnread",
     ].map((action) => [
       action,
       async (request: {
@@ -188,6 +205,7 @@ const mutationCases = [
 beforeEach(() => {
   state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
   state.failedAction = null;
+  state.preferences = {};
   state.archivedRefreshes = [];
   state.pendingOrder = null;
   state.dropBusy = false;
@@ -558,4 +576,37 @@ describe("thread archive guard", () => {
     expect(state.archivedRefreshes).toEqual([]);
     expect(state.alerts.at(-1)?.title).toBe("Could not archive thread");
   });
+});
+
+describe("thread action confirmation preferences", () => {
+  it.each([
+    ["archiveThread", "confirmThreadArchive", "archive"],
+    ["unpinThread", "confirmThreadUnpin", "unpin"],
+    ["deleteThread", "confirmThreadDelete", "delete"],
+  ] as const)(
+    "%s waits for confirmation and rechecks permission",
+    async (action, preference, _mutation) => {
+      state.preferences = { [preference]: true };
+      const pending = useThreadListActions()[action](makeThread());
+      expect(state.requests).toEqual([]);
+      state.scopes.get(primaryEnvironmentId)!.clear();
+      state.dialogs[0]!.onConfirm();
+      expect(await pending).toBe(false);
+      expect(state.requests).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["archiveThread", "confirmThreadArchive", "archive"],
+    ["unpinThread", "confirmThreadUnpin", "unpin"],
+    ["deleteThread", "confirmThreadDelete", "delete"],
+  ] as const)(
+    "%s executes directly when confirmation is disabled",
+    async (action, preference, mutation) => {
+      state.preferences = { [preference]: false };
+      expect(await useThreadListActions()[action](makeThread())).toBe(true);
+      expect(state.dialogs).toEqual([]);
+      expect(state.requests.map(({ action }) => action)).toEqual([mutation]);
+    },
+  );
 });

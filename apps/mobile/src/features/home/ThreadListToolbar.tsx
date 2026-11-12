@@ -1,3 +1,4 @@
+import { CommandPaletteButton } from "../keyboard/CommandPaletteButton";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -116,7 +117,12 @@ export function ThreadListToolbar(props: {
         searchAccessibilityLabel={translator.message("mobile.navigation.searchThreads")}
         titleAccessibilityLabel="T3 Code, Threads"
         onOpenEnvironments={props.onOpenEnvironments}
-        filter={filterButton}
+        filter={
+          <View className="flex-row items-center">
+            <CommandPaletteButton />
+            {filterButton}
+          </View>
+        }
       />
     </View>
   );

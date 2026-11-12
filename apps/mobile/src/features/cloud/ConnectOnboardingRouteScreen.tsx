@@ -1,3 +1,4 @@
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { IconButton } from "../../components/ui/IconButton";
@@ -62,72 +63,78 @@ function ConfiguredConnectOnboardingRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader
-        presentation={Platform.OS === "android" ? "inline" : "native"}
-        title={translator.message("mobile.connection.setupConnect")}
-        onClose={handleClose}
-        trailing={
-          Platform.OS === "android" ? (
-            isRefreshing ? (
-              <View
-                className="size-12 items-center justify-center"
-                accessible
-                accessibilityLabel={translator.message("mobile.ui.refreshingEnvironments")}
-                accessibilityState={{ busy: true }}
-              >
-                <AppActivityIndicator />
-              </View>
-            ) : (
-              <IconButton
-                accessibilityLabel={translator.message("mobile.ui.refreshEnvironments")}
-                icon="arrow.clockwise"
-                onPress={handleRefresh}
-              />
-            )
-          ) : undefined
-        }
-      />
-      <ScrollView
-        nestedScrollEnabled
-        alwaysBounceVertical
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-        contentContainerStyle={{
-          gap: 16,
-          paddingHorizontal: 20,
-          paddingTop: 16,
-        }}
-        refreshControl={
-          Platform.OS === "ios" ? (
-            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-          ) : undefined
+      <ScreenContent
+        header={
+          <SheetHeader
+            presentation={Platform.OS === "android" ? "inline" : "native"}
+            title={translator.message("mobile.connection.setupConnect")}
+            onClose={handleClose}
+            trailing={
+              Platform.OS === "android" ? (
+                isRefreshing ? (
+                  <View
+                    className="size-12 items-center justify-center"
+                    accessible
+                    accessibilityLabel={translator.message("mobile.ui.refreshingEnvironments")}
+                    accessibilityState={{ busy: true }}
+                  >
+                    <AppActivityIndicator />
+                  </View>
+                ) : (
+                  <IconButton
+                    accessibilityLabel={translator.message("mobile.ui.refreshEnvironments")}
+                    icon="arrow.clockwise"
+                    onPress={handleRefresh}
+                  />
+                )
+              ) : undefined
+            }
+          />
         }
       >
-        {isSignedIn ? (
-          <CloudEnvironmentRows
-            connectedCloudEnvironments={connectedCloudEnvironments}
-            onSetEnvironmentEnabled={onSetEnvironmentEnabled}
-            onRemoveEnvironment={onRemoveEnvironmentPress}
-            showHeader={false}
-          />
-        ) : (
-          <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
-            <Text className="text-sm leading-normal text-foreground-muted">
-              {translator.message("mobile.connection.signInConnect")}
-            </Text>
-          </View>
-        )}
+        {" "}
+        <ScrollView
+          nestedScrollEnabled
+          alwaysBounceVertical
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
+          contentContainerStyle={{
+            gap: 16,
+            paddingHorizontal: 20,
+            paddingTop: 16,
+          }}
+          refreshControl={
+            Platform.OS === "ios" ? (
+              <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+            ) : undefined
+          }
+        >
+          {isSignedIn ? (
+            <CloudEnvironmentRows
+              connectedCloudEnvironments={connectedCloudEnvironments}
+              onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+              onRemoveEnvironment={onRemoveEnvironmentPress}
+              showHeader={false}
+            />
+          ) : (
+            <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
+              <Text className="text-sm leading-normal text-foreground-muted">
+                {translator.message("mobile.connection.signInConnect")}
+              </Text>
+            </View>
+          )}
 
-        {userId ? (
-          <Button
-            label={translator.message("mobile.ui.dontShowThisAgain")}
-            tone="text"
-            onPress={handleDontShowAgain}
-          />
-        ) : null}
-      </ScrollView>
+          {userId ? (
+            <Button
+              label={translator.message("mobile.ui.dontShowThisAgain")}
+              tone="text"
+              onPress={handleDontShowAgain}
+            />
+          ) : null}
+        </ScrollView>
+      </ScreenContent>
     </View>
   );
 }

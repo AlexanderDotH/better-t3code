@@ -18,6 +18,7 @@ import type { SettingsTarget } from "../settings-environment-filter";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
+import { SourceControlCredentialsSection } from "./SourceControlCredentialsSection";
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
@@ -58,6 +59,13 @@ export function SourceControlSignInSection(props: {
           />
         )),
       )}
+      {props.environments.map((environment) => (
+        <SourceControlCredentialsSection
+          key={environment.environmentId}
+          environment={environment}
+          disabled={!props.canWrite(environment.environmentId)}
+        />
+      ))}
     </>
   );
 }
@@ -81,18 +89,23 @@ function OfferedAppSignIn(props: {
   if (offered !== true) return null;
   return (
     <SettingsSection title={props.title}>
-      <AppSignInRow
-        environment={props.environment}
-        label={props.appSignIn.appName}
-        definition={props.definition}
-        appSignIn={props.appSignIn}
-        disabled={props.disabled}
-      />
+      {props.appSignIn.hosts.map((host) => (
+        <AppSignInRow
+          key={host}
+          host={host}
+          environment={props.environment}
+          label={`${props.appSignIn.appName} · ${host}`}
+          definition={props.definition}
+          appSignIn={props.appSignIn}
+          disabled={props.disabled}
+        />
+      ))}
     </SettingsSection>
   );
 }
 
 function AppSignInRow(props: {
+  readonly host: string;
   readonly environment: SettingsTarget;
   readonly label: string;
   readonly definition: SourceControlDefinition;
@@ -102,20 +115,31 @@ function AppSignInRow(props: {
   const translator = useMobileInterfaceTranslator();
   const { environment, definition, appSignIn } = props;
   const environmentId = environment.environmentId;
-  const host = appSignIn.hosts[0] ?? "";
+  const host = props.host;
   const { signIns } = readHostCredentialSettings(
     environment.serverConfig.settings,
     definition.kind,
   );
   const signedIn = (signIns[host] ?? "").length > 0;
-  const start = useAtomCommand(sourceControlEnvironment.startSignIn, { reportFailure: false });
-  const wait = useAtomCommand(sourceControlEnvironment.waitForSignIn, { reportFailure: false });
-  const cancel = useAtomCommand(sourceControlEnvironment.cancelSignIn, { reportFailure: false });
+  const start = useAtomCommand(sourceControlEnvironment.startSignIn, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const wait = useAtomCommand(sourceControlEnvironment.waitForSignIn, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const cancel = useAtomCommand(sourceControlEnvironment.cancelSignIn, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   // The attempt a pending `wait` belongs to; a cancel or a newer attempt makes its outcome stale.
   const attempt = useRef<SourceControlSignInPrompt | null>(null);
   const input = { provider: definition.kind, host };
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: `sign out of ${appSignIn.appName}`,
+    reportFailure: false,
+    reportDefect: false,
   });
   const [pending, setPending] = useState<SourceControlSignInPrompt | "starting" | null>(null);
 
@@ -123,7 +147,7 @@ function AppSignInRow(props: {
     void Clipboard.setStringAsync(prompt.userCode).catch(() => undefined);
     Alert.alert(
       prompt.userCode,
-      `Enter this code on GitHub, then approve ${appSignIn.appName}. It is copied. The server finishes signing in even if you leave the app.`,
+      translator.message("mobile.access.signInCodeHint", { host, app: appSignIn.appName }),
       [
         {
           text: translator.message("mobile.settings.projects.settings.cancel"),
@@ -135,7 +159,7 @@ function AppSignInRow(props: {
           },
         },
         {
-          text: translator.message("mobile.ui.openGithub"),
+          text: translator.message("mobile.access.openHost", { host }),
           onPress: () => openUrl(prompt.verificationUri),
         },
       ],
@@ -184,7 +208,7 @@ function AppSignInRow(props: {
     if (signedIn) {
       Alert.alert(
         appSignIn.appName,
-        translator.message("mobile.ui.signedInGithubRequestsUseTheApps"),
+        translator.message("mobile.access.signedInApp", { app: appSignIn.appName }),
         [
           {
             text: translator.message("mobile.ui.installOnAnOrganization"),
@@ -207,12 +231,12 @@ function AppSignInRow(props: {
       label={props.label}
       value={
         signedIn
-          ? "Signed in"
+          ? translator.message("mobile.access.signedIn")
           : pending === "starting"
-            ? "Starting…"
+            ? translator.message("mobile.access.starting")
             : pending !== null
-              ? `Enter ${pending.userCode}`
-              : "Sign in"
+              ? translator.message("mobile.access.enterCode", { code: pending.userCode })
+              : translator.message("mobile.settings.signIn")
       }
       disabled={props.disabled}
       onPress={onPress}

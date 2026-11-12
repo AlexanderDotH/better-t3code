@@ -295,6 +295,9 @@ import {
   PreviewSessionSnapshot,
   PreviewNavigateInput,
   PreviewRefreshInput,
+  PreviewPickElementInput,
+  PreviewPickElementResult,
+  PreviewPickElementError,
 } from "./preview.ts";
 import {
   DeviceActionInput,
@@ -666,6 +669,7 @@ export const WS_METHODS = {
   terminalRestart: "terminal.restart",
   previewNavigate: "preview.navigate",
   previewRefresh: "preview.refresh",
+  previewPickElementAt: "preview.pickElementAt",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -2753,6 +2757,11 @@ const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   payload: PreviewRefreshInput,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
+const WsPreviewPickElementAtRpc = Rpc.make(WS_METHODS.previewPickElementAt, {
+  payload: PreviewPickElementInput,
+  success: PreviewPickElementResult,
+  error: Schema.Union([PreviewPickElementError, EnvironmentAuthorizationError]),
+});
 const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -3011,6 +3020,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalRestartRpc,
   WsPreviewNavigateRpc,
   WsPreviewRefreshRpc,
+  WsPreviewPickElementAtRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,

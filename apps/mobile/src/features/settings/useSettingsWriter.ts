@@ -42,5 +42,6 @@ export function useSettingsWriter() {
     if (failures.length > 0) {
       Dialog.alert(translator.message("mobile.ui.couldNotSaveSettings"), failures.join("\n\n"));
     }
+    return failures.length === 0;
   };
 }

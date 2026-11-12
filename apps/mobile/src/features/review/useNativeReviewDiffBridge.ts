@@ -17,6 +17,7 @@ export function useNativeReviewDiffBridge(input: {
   readonly viewedFileIds: ReadonlyArray<string>;
   readonly selectedRowIds: ReadonlyArray<string>;
   readonly canHighlight: boolean;
+  readonly diffColorScheme?: "red-green" | "blue-orange";
 }) {
   const {
     canHighlight,
@@ -37,10 +38,20 @@ export function useNativeReviewDiffBridge(input: {
     () => new Set(),
   );
 
-  const theme = useMemo(
-    () => createNativeReviewDiffTheme(scheme, themeId, appTheme),
-    [appTheme, scheme, themeId],
-  );
+  const theme = useMemo(() => {
+    const base = createNativeReviewDiffTheme(scheme, themeId, appTheme);
+    return input.diffColorScheme === "blue-orange"
+      ? {
+          ...base,
+          addBackground: scheme === "dark" ? "#102d47" : "#e5f1ff",
+          deleteBackground: scheme === "dark" ? "#442b10" : "#fff1dd",
+          addBar: "#3b82f6",
+          deleteBar: "#f59e0b",
+          addText: scheme === "dark" ? "#93c5fd" : "#1d4ed8",
+          deleteText: scheme === "dark" ? "#fdba74" : "#b45309",
+        }
+      : base;
+  }, [appTheme, scheme, themeId, input.diffColorScheme]);
   const collapsedFileIdsSet = useMemo(() => new Set(collapsedFileIds), [collapsedFileIds]);
   const rowsJson = useMemo(() => JSON.stringify(data.rows), [data.rows]);
   const collapsedFileIdsJson = useMemo(() => JSON.stringify(collapsedFileIds), [collapsedFileIds]);

@@ -43,14 +43,16 @@ vi.mock("../../state/pull-requests", async () => {
       }),
     );
   });
-  const { pullRequestListHead } = await import("./pullRequestList");
+  const { pullRequestListHead, EMPTY_PULL_REQUEST_STATS_CACHE } = await import("./pullRequestList");
   const pages = Atom.family((_key: string) =>
     Atom.make<ReturnType<typeof pullRequestListHead> | null>(null),
   );
   return {
     pullRequestListPagesKey: (target: unknown) => JSON.stringify(target),
     pullRequestListPagesFamily: pages,
-    pullRequestListStatsFamily: Atom.family((_key: string) => Atom.make(new Map())),
+    pullRequestListStatsFamily: Atom.family((_key: string) =>
+      Atom.make(EMPTY_PULL_REQUEST_STATS_CACHE),
+    ),
     composerPullRequests: {
       list: (target: unknown) => list(JSON.stringify(target)),
       listStats: Atom.family(() => Atom.make(AsyncResult.success({ stats: [] }))),

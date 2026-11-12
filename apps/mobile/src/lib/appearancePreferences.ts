@@ -79,7 +79,7 @@ function normalizeCodeFontSize(value: number | null | undefined): number {
 }
 
 function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
-  return value === true;
+  return typeof value === "boolean" ? value : true;
 }
 
 function deriveTerminalFontSize(baseFontSize: number): number {

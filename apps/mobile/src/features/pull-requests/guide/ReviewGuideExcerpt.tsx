@@ -12,6 +12,8 @@ import { useNativeReviewDiffBridge } from "../../review/useNativeReviewDiffBridg
 import { useAppearanceCodeSurface } from "../../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 import { PullRequestMarkdown } from "../PullRequestMarkdown";
+import { Button } from "../../../components/ui/Button";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 const EMPTY_IDS: readonly string[] = [];
 
@@ -20,12 +22,17 @@ export function ReviewGuideExcerpt({
   file,
   loading,
   onOpen,
+  onAsk,
+  onComment,
 }: {
   readonly excerpt: PullRequestReviewGuideExcerpt;
   readonly file: FileDiffMetadata | undefined;
   readonly loading: boolean;
   readonly onOpen: () => void;
+  readonly onAsk?: () => void;
+  readonly onComment?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { nativeReviewDiffStyle, codeWordBreak } = useAppearanceCodeSurface();
   const { themeAppearance } = useAppearancePreferences();
   const slice = excerptPatch(file, excerpt);
@@ -120,6 +127,26 @@ export function ReviewGuideExcerpt({
           </Text>
         )}
       </View>
+      {onAsk || onComment ? (
+        <View className="flex-row flex-wrap gap-2">
+          {onAsk ? (
+            <Button
+              tone="text"
+              icon="sparkles"
+              label={translator.message("mobile.pulls.guide.askAgent")}
+              onPress={onAsk}
+            />
+          ) : null}
+          {onComment ? (
+            <Button
+              tone="text"
+              icon="bubble.left"
+              label={translator.message("mobile.review.comment")}
+              onPress={onComment}
+            />
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }

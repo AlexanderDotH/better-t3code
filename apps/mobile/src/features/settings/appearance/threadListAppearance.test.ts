@@ -7,9 +7,9 @@ import {
 } from "./threadListAppearance";
 
 describe("mobile thread list appearance", () => {
-  it("offers Current and Classic as explicit layout choices", () => {
+  it("offers Standard, Classic and Boring as explicit layout choices", () => {
     expect(THREAD_LIST_LAYOUT_OPTIONS.map(({ layout, label }) => ({ layout, label }))).toEqual([
-      { layout: "current", label: "Current" },
+      { layout: "current", label: "Standard" },
       { layout: "classic", label: "Classic" },
       { layout: "boring", label: "Boring" },
     ]);

@@ -1,3 +1,4 @@
+import { supportsAutoReasoningEvaluationProvider } from "@t3tools/client-runtime/provider-selection";
 import {
   CHAT_VISUAL_MODES,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -137,22 +138,7 @@ function selectableProviderEntries(
       entry.enabled && entry.models.some((model) => supportsModelSelectionPurpose(model, purpose)),
   );
 }
-const AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "opencode",
-  "gemini",
-  "chatgpt",
-  "openrouter",
-  "openai",
-]);
-export function supportsAutoReasoningEvaluationProvider(
-  provider: Pick<ServerProvider, "driver">,
-): boolean {
-  return AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(provider.driver);
-}
+export { supportsAutoReasoningEvaluationProvider } from "@t3tools/client-runtime/provider-selection";
 export function buildAutoReasoningModelSelectionPatch(
   selection: ModelSelection | null,
 ): ServerSettingsPatch {

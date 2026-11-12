@@ -11,6 +11,7 @@ import { serverEnvironment } from "../../state/server";
 import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { MobileProjectIndexDefaultModelSetting } from "../settings/MobileProjectIndexDefaultModelSetting";
 import { SettingsRow } from "../settings/components/SettingsRow";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 import { ModelSelectionModal, modelSelectionLabel } from "../settings/ModelSelectionModal";
@@ -45,7 +46,9 @@ export function ProjectIndexingDefaultsCard(props: {
   const save = async (
     patch: Pick<
       ServerSettingsPatch,
-      "projectIndexingEnabled" | "projectIndexingDecisionModelSelection"
+      | "projectIndexingEnabled"
+      | "projectIndexingDecisionModelSelection"
+      | "projectIndexingDefaultModelSelection"
     >,
   ) => {
     if (disabled) return;
@@ -86,6 +89,14 @@ export function ProjectIndexingDefaultsCard(props: {
             disabled={disabled}
             onValueChange={(projectIndexingEnabled) => {
               void save({ projectIndexingEnabled });
+            }}
+          />
+          <MobileProjectIndexDefaultModelSetting
+            environmentId={props.environmentId}
+            config={config}
+            disabled={disabled}
+            updateSettings={(patch) => {
+              void save(patch);
             }}
           />
           {decisionModelsSupported ? (

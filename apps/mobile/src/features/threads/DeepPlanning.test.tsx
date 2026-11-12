@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   ThreadId,
   type ComposerMode,
   type DeepPlanRun,
@@ -95,6 +96,9 @@ vi.mock("react-native-safe-area-context", () => ({
 vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "symbol" }));
 vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "switch" }));
+vi.mock("./ThreadDetailSheet", () => ({
+  ThreadDetailSheet: (props: { children: ReactNode }) => createElement("sheet", {}, props.children),
+}));
 vi.mock("../../components/ComposerToolbar", () => ({
   ComposerInlineControl: (props: { label: string; onPress: () => void; disabled: boolean }) =>
     createElement("pressable", { onPress: props.onPress, disabled: props.disabled }, props.label),
@@ -118,6 +122,7 @@ vi.mock("../../state/deep-planning", () => ({ getMobileDeepPlanningApi: vi.fn() 
 import { ComposerModeControl } from "./ComposerModeControl";
 import { DeepPlanChecklist } from "./DeepPlanChecklist";
 import { DeepPlanSourceSheet } from "./DeepPlanSources";
+import { composerModeAvailability, nextAvailableComposerMode } from "./composer-mode-availability";
 
 type NativeProps = {
   children?: ReactNode;
@@ -288,31 +293,120 @@ beforeEach(() => {
 });
 
 describe("native Deep Planning", () => {
-  it.each(["ios", "android"])(
-    "cycles Build, Plan, Deep Plan and Chat by tap and keyboard on %s",
-    (platform) => {
-      fixture.platform = platform;
-      let mode: ComposerMode = "default";
-      const modeControl = () =>
-        render(() =>
-          ComposerModeControl({
-            mode,
-            onChange: (next) => {
-              mode = next;
-            },
-          }),
-        );
-      press(modeControl(), "Build");
-      expect(mode).toBe("plan");
-      modeControl();
-      fixture.shortcut?.();
-      expect(mode).toBe("deep-plan");
-      press(modeControl(), "Deep Plan");
-      expect(mode).toBe("chat");
-      press(modeControl(), "Chat");
-      expect(mode).toBe("default");
-    },
-  );
+  it.each(["ios", "android"])("selects modes directly and cycles by keyboard on %s", (platform) => {
+    fixture.platform = platform;
+    let mode: ComposerMode = "default";
+    const modeControl = () =>
+      render(() =>
+        ComposerModeControl({
+          mode,
+          onChange: (next) => {
+            mode = next;
+          },
+        }),
+      );
+    press(modeControl(), "Build");
+    press(modeControl(), "Plan");
+    expect(mode).toBe("plan");
+    modeControl();
+    fixture.shortcut?.();
+    expect(mode).toBe("deep-plan");
+    press(modeControl(), "Deep Plan");
+    press(modeControl(), "Chat");
+    expect(mode).toBe("chat");
+    press(modeControl(), "Chat");
+    press(modeControl(), "Build");
+    expect(mode).toBe("default");
+  });
+
+  it("disables unsupported planning modes before selection and skips them on the keyboard", () => {
+    const translator = createInterfaceTranslator({ language: "en", locale: "en-US" });
+    const unavailable = composerModeAvailability(
+      { provider: null, capabilities: null, planningEnabled: false },
+      translator,
+    );
+    expect(unavailable.default).toBeNull();
+    expect(unavailable.chat).toBeNull();
+    expect(unavailable.plan).toBeTruthy();
+    expect(unavailable["deep-plan"]).toBeTruthy();
+    expect(nextAvailableComposerMode("default", unavailable)).toBe("chat");
+    const provider = {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      displayName: "Codex",
+      enabled: true,
+      installed: true,
+      version: "1",
+      status: "ready" as const,
+      availability: "available" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: now,
+      models: [],
+      slashCommands: [],
+      skills: [],
+      deepPlanning: { version: 1 as const, structuredPlans: true, durableExecution: true },
+    };
+    const supported = {
+      provider,
+      capabilities: {
+        repositoryIdentity: false,
+        deepPlanning: { version: 1 as const, sourceImport: true, sourceExport: true },
+      },
+    };
+    expect(composerModeAvailability(supported, translator)["deep-plan"]).toBeNull();
+    expect(
+      composerModeAvailability({ ...supported, connected: false }, translator)["deep-plan"],
+    ).toBeTruthy();
+    expect(
+      composerModeAvailability({ ...supported, multipleModels: true }, translator)["deep-plan"],
+    ).toBeTruthy();
+    const onChange = vi.fn();
+    press(
+      render(() => ComposerModeControl({ mode: "default", unavailable, onChange })),
+      "Build",
+    );
+    const control = render(() => ComposerModeControl({ mode: "default", unavailable, onChange }));
+    expect(
+      hosts(control, "pressable").find((button) => button.props.accessibilityLabel === "Deep Plan")
+        ?.props.disabled,
+    ).toBe(true);
+    fixture.shortcut?.();
+    expect(onChange).toHaveBeenCalledWith("chat");
+  });
+
+  it("offers explicit final validation only after every step has verification evidence", async () => {
+    const initial = runFixture();
+    const evidence = [{ kind: "test" as const, summary: "Checks passed", createdAt: now }];
+    let run = {
+      ...initial,
+      stepStates: initial.plan!.steps.map((step) => ({
+        stepId: step.id,
+        status: "verified" as const,
+        evidence,
+        updatedAt: now,
+      })),
+    };
+    const validate = vi.fn(async () => {});
+    const resume = vi.fn(async () => {});
+    const checklist = () =>
+      render(() =>
+        DeepPlanChecklist({
+          environmentId,
+          run,
+          onResume: resume,
+          onFinalValidation: validate,
+          canContinue: true,
+        }),
+      );
+    await press(checklist(), "Run final validation");
+    expect(validate).toHaveBeenCalledTimes(1);
+    expect(resume).not.toHaveBeenCalled();
+    run = {
+      ...run,
+      stepStates: [{ ...run.stepStates[0]!, evidence: [] }, ...run.stepStates.slice(1)],
+    };
+    expect(text(checklist())).not.toContain("Run final validation");
+  });
 
   it.each(["ios", "android"])(
     "keeps project chats included and edits additional archived sources on %s",

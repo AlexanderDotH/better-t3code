@@ -9,7 +9,7 @@ export const THREAD_LIST_LAYOUT_OPTIONS: ReadonlyArray<{
   {
     layout: "current",
     get label() {
-      return currentInterfaceTranslator().message("settings.betterT3.value.current");
+      return currentInterfaceTranslator().message("settings.betterT3.sidebarStyle.standard");
     },
     get description() {
       return currentInterfaceTranslator().message("mobile.ui.activeWorkAppearsAsCardsWhileSettled");

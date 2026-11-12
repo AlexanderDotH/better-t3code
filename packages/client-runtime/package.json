@@ -3,6 +3,26 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./usage-model-stats": {
+      "types": "./src/usageModelStats.ts",
+      "default": "./src/usageModelStats.ts"
+    },
+    "./thread-notifications": {
+      "types": "./src/threadNotifications.ts",
+      "default": "./src/threadNotifications.ts"
+    },
+    "./better-t3-settings-preview": {
+      "types": "./src/betterT3SettingsPreview.ts",
+      "default": "./src/betterT3SettingsPreview.ts"
+    },
+    "./chat-content-width": {
+      "types": "./src/chatContentWidth.ts",
+      "default": "./src/chatContentWidth.ts"
+    },
+    "./usage-prices": {
+      "types": "./src/usagePriceForm.ts",
+      "default": "./src/usagePriceForm.ts"
+    },
     "./better-t3-settings-layout": {
       "types": "./src/betterT3SettingsLayout.ts",
       "default": "./src/betterT3SettingsLayout.ts"
@@ -126,6 +146,10 @@
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
+    },
+    "./state/cloud-settings": {
+      "types": "./src/state/cloudSettings.ts",
+      "default": "./src/state/cloudSettings.ts"
     },
     "./state/assets": {
       "types": "./src/state/assets.ts",
@@ -322,6 +346,10 @@
     "./proposed-plan": {
       "types": "./src/proposedPlan.ts",
       "default": "./src/proposedPlan.ts"
+    },
+    "./custom-model-editor": {
+      "types": "./src/customModelEditor.ts",
+      "default": "./src/customModelEditor.ts"
     },
     "./providerSettingsForm": {
       "types": "./src/providerSettingsForm.ts",
@@ -662,6 +690,14 @@
     "./pull-request-checks": {
       "types": "./src/pullRequestChecks.ts",
       "default": "./src/pullRequestChecks.ts"
+    },
+    "./pull-request-merge-method": {
+      "types": "./src/pullRequestMergeMethod.ts",
+      "default": "./src/pullRequestMergeMethod.ts"
+    },
+    "./pull-request-list": {
+      "types": "./src/pullRequestList.ts",
+      "default": "./src/pullRequestList.ts"
     },
     "./pull-request-editing": {
       "types": "./src/pullRequestEditing.ts",

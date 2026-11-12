@@ -1,7 +1,15 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { appAtomRegistry } from "../../state/atom-registry";
+import { planMultiModelLaunch } from "./multi-model-launch";
 import {
   INITIAL_NEW_TASK_FLOW_STATE,
   newTaskFlowKey,
@@ -16,6 +24,73 @@ import {
 function draftRoute(key: string, draftId: string) {
   return { key, name: "Thread", params: { draft: { draftId } } };
 }
+
+describe("multi-model task planning", () => {
+  const primary = { instanceId: ProviderInstanceId.make("codex"), model: "primary" };
+  const other = {
+    instanceId: ProviderInstanceId.make("claude"),
+    model: "other",
+    options: [{ id: "effort", value: "low" }],
+  };
+  const message = {
+    environmentId: EnvironmentId.make("env"),
+    threadId: ThreadId.make("thread"),
+    messageId: MessageId.make("message"),
+    commandId: CommandId.make("command"),
+    text: "Build this",
+    attachments: [],
+    createdAt: "2026-11-11T00:00:00.000Z",
+    modelSelection: primary,
+    creation: {
+      projectId: ProjectId.make("project"),
+      workspaceMode: "local" as const,
+      branch: "main",
+      worktreePath: "/existing",
+    },
+  };
+  const input = {
+    message,
+    selections: [primary, other, primary],
+    baseBranch: "main",
+    providers: [],
+    metadataForSelection: (_selection: unknown, index: number) => ({
+      commandId: `command-${index}`,
+      messageId: `message-${index}`,
+      threadId: `thread-${index}`,
+      createdAt: message.createdAt,
+    }),
+  };
+  it("launches each selected model once, retaining options and giving each thread its own worktree", () => {
+    const launches = planMultiModelLaunch(input);
+    expect(launches.map((launch) => launch.modelSelection)).toEqual([primary, other]);
+    expect(launches.map((launch) => launch.threadId)).toEqual(["thread-0", "thread-1"]);
+    expect(new Set(launches.map((launch) => launch.commandId)).size).toBe(2);
+    expect(
+      launches.every(
+        (launch) =>
+          launch.creation?.workspaceMode === "worktree" &&
+          launch.creation.worktreePath === null &&
+          launch.creation.branch === "main",
+      ),
+    ).toBe(true);
+    expect(launches.every((launch) => launch.text === message.text)).toBe(true);
+    expect(
+      planMultiModelLaunch({
+        ...input,
+        selections: [primary, { ...primary, options: [{ id: "effort", value: "high" }] }],
+      }).map((launch) => launch.modelSelection),
+    ).toEqual([primary]);
+  });
+  it("rejects multi-model Deep Plan and a missing base branch before enqueueing anything", () => {
+    expect(() =>
+      planMultiModelLaunch({ ...input, message: { ...message, composerMode: "deep-plan" } }),
+    ).toThrow("one model");
+    expect(() => planMultiModelLaunch({ ...input, baseBranch: null })).toThrow("base branch");
+    expect(planMultiModelLaunch({ ...input, selections: [primary] })[0]?.creation).toEqual(
+      message.creation,
+    );
+  });
+});
 
 describe("new task flow state", () => {
   it("keeps a covered draft route's flow while another draft route is pushed above it", () => {

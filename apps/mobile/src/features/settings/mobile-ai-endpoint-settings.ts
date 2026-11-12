@@ -71,6 +71,9 @@ export function mobileAiEndpointSettingsPatch(input: {
         displayName:
           input.draft.displayName.trim() || MOBILE_AI_ENDPOINT_LABELS[input.draft.driver],
         config: {
+          ...(existing?.config !== null && typeof existing?.config === "object"
+            ? existing.config
+            : {}),
           baseUrl,
           defaultModel,
           customModels: [

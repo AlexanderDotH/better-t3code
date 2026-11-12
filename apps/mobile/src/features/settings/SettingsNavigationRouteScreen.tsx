@@ -47,9 +47,7 @@ export function SettingsNavigationRouteScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
         <Text className="px-2 text-sm text-foreground-muted">
-          {customizable
-            ? translator.message("mobile.ui.phonesShowTheFirstFourEnabledSections")
-            : translator.message("mobile.ui.tabCustomizationBecomesAvailableWhenThereAre")}
+          {translator.message("mobile.prefs.navigationDescription")}
         </Text>
         <SettingsSection title={translator.message("mobile.ui.tabOrder")}>
           {order.map((tab, index) => (
@@ -75,7 +73,7 @@ export function SettingsNavigationRouteScreen() {
                   hidden.includes(tab) ? "mobile.ui.showTab" : "mobile.ui.hideTab",
                   { tab: tabLabels[tab] },
                 )}
-                disabled={!ready}
+                disabled={!ready || (!hidden.includes(tab) && enabled.length === 1)}
                 onPress={() =>
                   save({
                     transform: (current) => ({
@@ -89,7 +87,9 @@ export function SettingsNavigationRouteScreen() {
               />
               <IconButton
                 icon="arrow.up"
-                accessibilityLabel={`Move ${tabLabels[tab]} up`}
+                accessibilityLabel={translator.message("mobile.prefs.moveUp", {
+                  tab: tabLabels[tab],
+                })}
                 disabled={!ready || index === 0}
                 onPress={() =>
                   save({
@@ -105,7 +105,9 @@ export function SettingsNavigationRouteScreen() {
               />
               <IconButton
                 icon="arrow.down"
-                accessibilityLabel={`Move ${tabLabels[tab]} down`}
+                accessibilityLabel={translator.message("mobile.prefs.moveDown", {
+                  tab: tabLabels[tab],
+                })}
                 disabled={!ready || index === order.length - 1}
                 onPress={() =>
                   save({

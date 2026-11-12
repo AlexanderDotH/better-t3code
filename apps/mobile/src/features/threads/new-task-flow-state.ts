@@ -30,6 +30,7 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
+  readonly loadBalancingResolvedDraftKey?: string;
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {

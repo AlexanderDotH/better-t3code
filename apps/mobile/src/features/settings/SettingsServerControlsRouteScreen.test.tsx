@@ -44,10 +44,24 @@ vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
 }));
+vi.mock("../../persistence/mobile-preferences", () => ({
+  MOBILE_CLIENT_PREFERENCE_DEFAULTS: { boringThreadListMultilineRows: false },
+}));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
 vi.mock("./components/SourceControlSignInSection", () => ({
   SourceControlSignInSection: () => null,
 }));
+vi.mock("./components/SourceControlWritingSettings", () => ({
+  SourceControlWritingSettings: () => null,
+}));
+vi.mock("./components/SettingsTextFieldSection", () => ({ SettingsTextFieldSection: () => null }));
+vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
+vi.mock("./SnoozePresetsSettings", () => ({ SnoozePresetsSettings: () => null }));
+vi.mock("./StorageCleanupSettings", () => ({
+  WorktreeCleanupSettings: () => null,
+  StorageRetentionSettings: () => null,
+}));
+vi.mock("./BackgroundActivityOverrides", () => ({ BackgroundActivityOverrides: () => null }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
 vi.mock("../../state/session", () => ({

@@ -11,6 +11,7 @@ import type { HomeProjectSortOrder } from "./homeThreadList";
 export interface HomeListOptions {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly selectedProjectKeys: ReadonlyArray<string>;
   readonly projectSortOrder: HomeProjectSortOrder;
 }
 
@@ -21,7 +22,13 @@ export interface ResolvedHomeListOptions extends HomeListOptions {
 function defaultHomeListOptions(filters?: ThreadListFilters): HomeListOptions {
   return {
     selectedEnvironmentId: filters?.environmentId ?? null,
-    selectedProjectKey: filters?.projectKey ?? null,
+    selectedProjectKey:
+      filters?.projectKeys?.length === 1
+        ? filters.projectKeys[0]!
+        : filters?.projectKeys?.length
+          ? null
+          : (filters?.projectKey ?? null),
+    selectedProjectKeys: filters?.projectKeys ?? (filters?.projectKey ? [filters.projectKey] : []),
     projectSortOrder:
       DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
         ? "updated_at"
@@ -29,9 +36,13 @@ function defaultHomeListOptions(filters?: ThreadListFilters): HomeListOptions {
   };
 }
 
+type HomeListOptionsUpdate =
+  | Partial<HomeListOptions>
+  | ((current: HomeListOptions) => Partial<HomeListOptions>);
+
 interface HomeListOptionsContextValue {
   readonly options: HomeListOptions;
-  readonly updateOptions: (patch: Partial<HomeListOptions>) => void;
+  readonly updateOptions: (update: HomeListOptionsUpdate) => void;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
@@ -51,18 +62,21 @@ export function HomeListOptionsProvider({
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   // Only the scope persists; the sort order is per session. Updates read the
   // registry, so several in one event each build on the last and save it.
-  const updateOptions = (patch: Partial<HomeListOptions>) => {
+  const updateOptions = (update: HomeListOptionsUpdate) => {
     const current = registry.get(optionsAtom);
+    const patch = typeof update === "function" ? update(current) : update;
     const next = { ...current, ...patch };
     registry.set(optionsAtom, next);
     if (
       next.selectedEnvironmentId !== current.selectedEnvironmentId ||
-      next.selectedProjectKey !== current.selectedProjectKey
+      next.selectedProjectKey !== current.selectedProjectKey ||
+      next.selectedProjectKeys !== current.selectedProjectKeys
     ) {
       savePreferences({
         threadListFilters: {
           environmentId: next.selectedEnvironmentId,
           projectKey: next.selectedProjectKey,
+          ...(next.selectedProjectKeys.length > 1 ? { projectKeys: next.selectedProjectKeys } : {}),
         },
       });
     }
@@ -77,7 +91,11 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
   const options = shared?.options ?? localOptions;
   const updateOptions =
     shared?.updateOptions ??
-    ((patch: Partial<HomeListOptions>) => setLocalOptions((current) => ({ ...current, ...patch })));
+    ((update: HomeListOptionsUpdate) =>
+      setLocalOptions((current) => ({
+        ...current,
+        ...(typeof update === "function" ? update(current) : update),
+      })));
   const selectedEnvironmentId =
     options.selectedEnvironmentId !== null &&
     availableEnvironmentIds.has(options.selectedEnvironmentId)
@@ -96,7 +114,28 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     updateOptions({ selectedEnvironmentId: value });
   };
   const setSelectedProjectKey = (value: string | null) => {
-    updateOptions({ selectedProjectKey: value });
+    updateOptions({
+      selectedProjectKey: value,
+      selectedProjectKeys: value === null ? [] : [value],
+    });
+  };
+  const setSelectedProjectKeys = (values: ReadonlyArray<string>) => {
+    const keys = [...new Set(values)];
+    updateOptions({
+      selectedProjectKeys: keys,
+      selectedProjectKey: keys.length === 1 ? keys[0]! : null,
+    });
+  };
+  const toggleSelectedProjectKey = (key: string | null) => {
+    updateOptions((current) => {
+      const keys =
+        key === null
+          ? []
+          : current.selectedProjectKeys.includes(key)
+            ? current.selectedProjectKeys.filter((value) => value !== key)
+            : [...current.selectedProjectKeys, key];
+      return { selectedProjectKeys: keys, selectedProjectKey: keys.length === 1 ? keys[0]! : null };
+    });
   };
   const setProjectSortOrder = (value: HomeProjectSortOrder) => {
     updateOptions({ projectSortOrder: value });
@@ -105,6 +144,8 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     options: resolvedOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
+    setSelectedProjectKeys,
+    toggleSelectedProjectKey,
     setProjectSortOrder,
   } as const;
 }

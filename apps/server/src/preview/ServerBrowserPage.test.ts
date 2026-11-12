@@ -56,6 +56,78 @@ describe("server browser element refs", () => {
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
 
+  it("picks DOM elements, open shadow roots, and scaled same-origin frames in page CSS pixels", async () => {
+    await page.setContent(`
+      <title>Pick fixture</title>
+      <style>body { margin: 0 } #save { position: absolute; left: 40px; top: 60px; width: 120px; height: 40px; color: rgb(255, 0, 0) }</style>
+      <button id="save" onclick="this.remove()">Save</button>
+      <div id="shadow" style="position:absolute;left:200px;top:60px;width:120px;height:40px"></div>
+      <iframe id="frame" style="position:absolute;left:40px;top:200px;width:200px;height:100px;border:4px solid;transform:scale(1.5);transform-origin:top left"
+        srcdoc="<style>body{margin:0}button{position:absolute;left:20px;top:10px;width:80px;height:30px}</style><button id='inside'>Inside</button>"></iframe>
+      <script>shadow.attachShadow({mode:'open'}).innerHTML = '<button id="inner" style="width:120px;height:40px">Shadow</button>';</script>`);
+    await page.frameLocator("#frame").getByRole("button").waitFor();
+    await page.locator("#save").evaluate((element) => {
+      Object.assign(element, {
+        __reactFiber$fixture: {
+          type: "button",
+          return: {
+            type: { displayName: "SaveButton" },
+            _debugSource: { fileName: "/src/Button.tsx", lineNumber: 12, columnNumber: 3 },
+          },
+        },
+      });
+    });
+    const picked = await ServerBrowserPage.pickElementAt(page, { x: 80, y: 80 });
+    expect(picked).toMatchObject({
+      element: {
+        pageTitle: "Pick fixture",
+        tagName: "button",
+        selector: "#save",
+        componentName: "SaveButton",
+        source: { fileName: "/src/Button.tsx", lineNumber: 12, columnNumber: 3 },
+      },
+      rect: { x: 40, y: 60, width: 120, height: 40 },
+    });
+    expect(picked?.element.htmlPreview).toContain('id="save"');
+    expect(picked?.element.styles).toContain("rgb(255, 0, 0)");
+    expect(await page.locator("#save").count()).toBe(1);
+    expect(await ServerBrowserPage.pickElementAt(page, { x: 220, y: 80 })).toMatchObject({
+      element: { tagName: "button", selector: "#shadow #inner" },
+      rect: { x: 200, y: 60, width: 120, height: 40 },
+    });
+    expect(await ServerBrowserPage.pickElementAt(page, { x: 100, y: 240 })).toMatchObject({
+      element: { tagName: "button", selector: "#frame >> internal:control=enter-frame >> #inside" },
+      rect: { x: 76, y: 221, width: 120, height: 45 },
+    });
+    expect(await ServerBrowserPage.pickElementAt(page, { x: -1, y: 80 })).toBeNull();
+    expect(await ServerBrowserPage.pickElementAt(page, { x: 900, y: 700 })).toBeNull();
+    await page.locator("#save").evaluate((element) => {
+      Object.assign(element, {
+        __reactFiber$fixture: {
+          type: "button",
+          return: {
+            type: { displayName: "React19Button" },
+            _debugStack: {
+              stack:
+                "Error: react-stack-top-frame\n    at React19Button (http://localhost:3000/src/Button.tsx:24:7)",
+            },
+          },
+        },
+      });
+    });
+    expect(await ServerBrowserPage.pickElementAt(page, { x: 80, y: 80 })).toMatchObject({
+      element: {
+        componentName: "React19Button",
+        source: {
+          functionName: "React19Button",
+          fileName: "http://localhost:3000/src/Button.tsx",
+          lineNumber: 24,
+          columnNumber: 7,
+        },
+      },
+    });
+  });
+
   it("clicks the fifth repeated delete control without touching row one", async () => {
     await page.setContent(repeatedRows);
     const result = await takeSnapshot();

@@ -22,6 +22,7 @@ import {
 } from "./managedRelayState";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { TunnelUsageMeter } from "./TunnelUsageMeter";
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -142,6 +143,7 @@ export function T3ConnectProfilePage() {
       }
     >
       <ClerkSectionHeader>{translator.message("mobile.ui.registeredServers")}</ClerkSectionHeader>
+      <TunnelUsageMeter />
 
       {environmentsState.error ? (
         <>

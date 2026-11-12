@@ -4,7 +4,6 @@ import { getElementContext } from "react-grab/primitives";
 import type {
   DesktopPreviewAnnotationTheme,
   PickedElementPayload,
-  PickedElementStackFrame,
   PreviewAnnotationPayload,
   PreviewAnnotationPoint,
   PreviewAnnotationRect,
@@ -17,6 +16,7 @@ import {
   translateInterfaceMessage,
   type InterfaceMessageKey,
 } from "@t3tools/shared/interfaceLanguage";
+import { buildPickedElementPayload } from "@t3tools/shared/pickedElement";
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
@@ -382,20 +382,6 @@ function updateSelectedVisual(target: SelectedElement): void {
   target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
-function toStackFrame(frame: {
-  functionName?: string;
-  fileName?: string;
-  lineNumber?: number;
-  columnNumber?: number;
-}): PickedElementStackFrame {
-  return {
-    functionName: frame.functionName ?? null,
-    fileName: frame.fileName ?? null,
-    lineNumber: frame.lineNumber ?? null,
-    columnNumber: frame.columnNumber ?? null,
-  };
-}
-
 /** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -407,14 +393,13 @@ function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A |
   ]).finally(() => clearTimeout(timer));
 }
 
-const HTML_PREVIEW_MAX_CHARS = 500;
-
 /** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
   const base = {
     pageUrl: location.href,
     pageTitle: document.title?.trim() || null,
     tagName: element.tagName.toLowerCase(),
+    outerHTML: element.outerHTML,
     pickedAt: new Date().toISOString(),
   };
   try {
@@ -423,27 +408,10 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
       ELEMENT_CONTEXT_TIMEOUT_MS,
     );
     if (context) {
-      const stack = (context.stack ?? []).map(toStackFrame);
-      return {
-        ...base,
-        selector: context.selector,
-        htmlPreview: context.htmlPreview ?? "",
-        componentName: context.componentName,
-        source: stack[0] ?? null,
-        stack,
-        styles: context.styles ?? "",
-      };
+      return buildPickedElementPayload(base, context);
     }
   } catch {}
-  return {
-    ...base,
-    selector: null,
-    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
-    componentName: null,
-    source: null,
-    stack: [],
-    styles: "",
-  };
+  return buildPickedElementPayload(base);
 }
 
 function createButton(label: string, title: string): HTMLButtonElement {

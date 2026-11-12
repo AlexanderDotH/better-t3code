@@ -1,3 +1,10 @@
+import { AsyncResult } from "effect/reactivity";
+import { useAtomSet } from "@effect/atom-react";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { ProjectFolder } from "../home/ProjectFolder";
+import { ProjectOrderMenu } from "../home/ProjectOrderMenu";
+import { useThreadBulkSelection } from "../home/useThreadBulkSelection";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -51,7 +58,11 @@ import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
-import { buildHomeProjectScopes } from "../home/homeThreadList";
+import {
+  buildGroupedThreadListItems,
+  resolveHomeProjectFilter,
+  buildHomeProjectScopes,
+} from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -67,6 +78,7 @@ import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
+  ThreadListV2ProjectSettledRow,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2OlderProjectsShelfHeader,
@@ -150,7 +162,16 @@ function ThreadNavigationSidebarPane(
 ) {
   const translator = useMobileInterfaceTranslator();
   const floatingTabsEnabled = useAndroidFloatingTabs();
-  const { themeVariables: materialTheme } = useAppearancePreferences();
+  const { themeVariables: materialTheme, appearance } = useAppearancePreferences();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value
+    : undefined;
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const groupingSettings = useMobileProjectGroupingSettings();
+  const boring = preferences?.boringThreadListEnabled === true;
+  const classic = preferences?.legacyThreadListEnabled === true || boring;
+  const [expandedProjects, setExpandedProjects] = useState<ReadonlySet<string>>(new Set());
   const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
@@ -193,8 +214,11 @@ function ThreadNavigationSidebarPane(
   const availableEnvironmentIds = new Set(
     environments.map((environment) => environment.environmentId),
   );
-  const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
-    useHomeListOptions(availableEnvironmentIds);
+  const {
+    options,
+    setSelectedEnvironmentId,
+    toggleSelectedProjectKey: setSelectedProjectKey,
+  } = useHomeListOptions(availableEnvironmentIds);
   const searchEnvironmentIds =
     options.selectedEnvironmentId === null
       ? workspaceEnvironments
@@ -207,20 +231,23 @@ function ThreadNavigationSidebarPane(
           )
         ? [options.selectedEnvironmentId]
         : [];
-  // A legacy per-environment scratch key resolves here on every render; the stored
-  // value is only rewritten when the user picks a filter.
-  const resolvedProjectKey = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
-    sidebarProjectGroupingMode: options.projectGroupingMode,
-    sidebarProjectGroupingOverrides: {},
-  });
+  const resolvedProjectKeys = options.selectedProjectKeys.map(
+    (key) => resolveScratchProjectScopeKey(key, projects, groupingSettings) ?? key,
+  );
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
         environmentId: options.selectedEnvironmentId,
         projectGroupingMode: options.projectGroupingMode,
+        projectGroupingOverrides: groupingSettings.sidebarProjectGroupingOverrides,
       }),
-    [projects, options.selectedEnvironmentId, options.projectGroupingMode],
+    [
+      projects,
+      options.selectedEnvironmentId,
+      options.projectGroupingMode,
+      groupingSettings.sidebarProjectGroupingOverrides,
+    ],
   );
   const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
     key: scope.key,
@@ -241,15 +268,18 @@ function ThreadNavigationSidebarPane(
       ),
     [projectScopes],
   );
-  // An archived project's filter reads as all projects, matching the filter menu.
-  const selectedProjectScope =
-    pickableProjectGroups(projectScopes).find((scope) => scope.key === resolvedProjectKey) ?? null;
+  const projectFilter = resolveHomeProjectFilter(
+    pickableProjectGroups(projectScopes),
+    resolvedProjectKeys,
+  );
+  const selectedProjectScope = projectFilter.scopes.length === 1 ? projectFilter.scopes[0]! : null;
+  const selectedProjectKeys = projectFilter.keys;
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
-    selectedProjectScope === null
+    projectFilter.projectRefs === null
       ? {}
-      : { projectIds: selectedProjectScope.projectRefs.map((ref) => ref.projectId) },
+      : { projectIds: projectFilter.projectRefs.map((ref) => ref.projectId) },
   );
   // This map reaches LegendList's extraData, which re-renders every row whenever it changes
   // identity; the hook keeps it stable.
@@ -266,7 +296,7 @@ function ThreadNavigationSidebarPane(
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKeys.join("|") || "all"}:${props.searchQuery.trim()}`;
   const [lastSettledResetKey, setLastSettledResetKey] = useState(settledResetKey);
   if (lastSettledResetKey !== settledResetKey) {
     setLastSettledResetKey(settledResetKey);
@@ -304,14 +334,14 @@ function ThreadNavigationSidebarPane(
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: flatThreadListItems,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
     threads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
-    projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
+    projectRefs: projectFilter.projectRefs,
     searchQuery: props.searchQuery,
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
@@ -320,19 +350,45 @@ function ThreadNavigationSidebarPane(
     activeReorderEnvironmentIds,
     queuedThreadKeys,
     settledLimit: settledVisibleCount,
+    listAllLoadedSettled: classic,
     now,
     pendingOrder,
     shelfPreferencesLoaded,
-    workingShelfEnabled,
+    workingShelfEnabled: classic ? false : workingShelfEnabled,
     workingShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
-    olderProjectGroups: selectedProjectScope === null ? projectScopes : null,
+    snoozedShelfExpanded: classic || snoozedShelfExpanded,
+    settledShelfExpanded: classic || settledShelfExpanded,
+    olderProjectGroups: classic || projectFilter.projectRefs !== null ? null : projectScopes,
     olderProjectsExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
   });
+  const selection = useThreadBulkSelection(
+    threadListV2Layout.items.map((item) => item.thread),
+    now,
+  );
+  const grouped = classic
+    ? buildGroupedThreadListItems({
+        rows: flatThreadListItems,
+        scopes: projectFilter.scopes.length > 0 ? projectFilter.scopes : projectScopes,
+        boring,
+        searching: props.searchQuery.trim().length > 0,
+        previewCount: appearance.projectThreadPreviewCount,
+        projectSortField:
+          preferences?.sidebarProjectSortOrder === "created_at" ? "createdAt" : "updatedAt",
+        threadSortField:
+          preferences?.sidebarThreadSortOrder === "created_at" ? "createdAt" : "updatedAt",
+        projectSortOrder: preferences?.sidebarProjectSortOrder ?? options.projectSortOrder,
+        projectOrder: preferences?.sidebarProjectOrder,
+        collapsedGroups: preferences?.collapsedProjectGroups,
+        openSettledGroups: preferences?.openSettledProjectGroups,
+        expandedGroups: expandedProjects,
+        selectedProjectKeys,
+        selectedThreadKey: props.selectedThreadKey,
+      })
+    : null;
+  const threadListV2Items = grouped?.items ?? flatThreadListItems;
   const listItems: readonly SidebarListItem[] =
-    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
+    (classic || settledShelfExpanded) && threadListV2Layout.hiddenSettledCount > 0
       ? [
           ...threadListV2Items,
           {
@@ -379,12 +435,14 @@ function ThreadNavigationSidebarPane(
                 id: "project:all",
                 title: translator.message("mobile.navigation.allProjects"),
                 subtitle: translator.message("mobile.navigation.allProjectsDescription"),
-                state: selectedProjectKey === null ? "on" : "off",
+                state: selectedProjectKeys.length === 0 ? "on" : "off",
               },
               ...projectFilterOptions.map((project) => ({
                 id: `project:${project.key}`,
                 title: project.label,
-                state: selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
+                state: selectedProjectKeys.includes(project.key)
+                  ? ("on" as const)
+                  : ("off" as const),
               })),
             ],
           },
@@ -475,6 +533,8 @@ function ThreadNavigationSidebarPane(
   });
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = {
+    selection,
+    grouped,
     activeNewTask,
     selectedThreadKey: props.selectedThreadKey ?? "",
     projectByKey,
@@ -512,7 +572,7 @@ function ThreadNavigationSidebarPane(
     return true;
   };
   useHardwareKeyboardCommand("focusSearch", focusSearch);
-  const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
+  const renderFlatListItem = ({ item }: { readonly item: SidebarListItem }) => {
     switch (item.type) {
       case "v2-pending": {
         const pendingScopeKey = scopedProjectKey(
@@ -593,6 +653,11 @@ function ThreadNavigationSidebarPane(
               scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
             }
             fullSwipeWidth={props.width - 20}
+            selectionMode={selection.active}
+            selectionChecked={selection.selectedKeys.has(
+              scopedThreadKey(thread.environmentId, thread.id),
+            )}
+            onToggleSelection={selection.toggle}
             onSelectThread={handleSelectThread}
             onOpenThreadPullRequests={handleOpenThreadPullRequests}
             onDeleteThread={confirmDeleteThread}
@@ -626,8 +691,26 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
-      case "v2-project-settled":
+      case "v2-project-header":
         return null;
+      case "v2-project-settled":
+        return (
+          <ThreadListV2ProjectSettledRow
+            count={item.count}
+            open={item.open}
+            onToggle={() =>
+              savePreferences({
+                transform: (current) => ({
+                  openSettledProjectGroups: current.openSettledProjectGroups?.includes(
+                    item.scopeKey,
+                  )
+                    ? current.openSettledProjectGroups.filter((key) => key !== item.scopeKey)
+                    : [...(current.openSettledProjectGroups ?? []), item.scopeKey],
+                }),
+              })
+            }
+          />
+        );
       case "v2-older-projects-shelf":
         return (
           <ThreadListV2OlderProjectsShelfHeader
@@ -682,7 +765,27 @@ function ThreadNavigationSidebarPane(
         );
     }
   };
-  const filterCustomized = options.selectedEnvironmentId !== null || selectedProjectKey !== null;
+  const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
+    const group = grouped?.groups.get(item.key);
+    if (!group) return renderFlatListItem({ item });
+    return (
+      <ProjectFolder
+        group={group}
+        onNewThread={() => props.onNewThreadInProject(group.project)}
+        onToggleExpanded={() =>
+          setExpandedProjects((current) => {
+            const next = new Set(current);
+            if (next.has(group.scopeKey)) next.delete(group.scopeKey);
+            else next.add(group.scopeKey);
+            return next;
+          })
+        }
+      >
+        {renderFlatListItem({ item })}
+      </ProjectFolder>
+    );
+  };
+  const filterCustomized = options.selectedEnvironmentId !== null || selectedProjectKeys.length > 0;
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
@@ -691,8 +794,14 @@ function ThreadNavigationSidebarPane(
     projects: projectFilterOptions,
     selectedEnvironmentId: options.selectedEnvironmentId,
     selectedProjectKey,
+    selectedProjectKeys,
     onEnvironmentChange: setSelectedEnvironmentId,
     onProjectChange: setSelectedProjectKey,
+    listOrganization: classic,
+    projectSortOrder: preferences?.sidebarProjectSortOrder ?? options.projectSortOrder,
+    threadSortOrder: preferences?.sidebarThreadSortOrder ?? "updated_at",
+    onProjectSortOrderChange: (value) => savePreferences({ sidebarProjectSortOrder: value }),
+    onThreadSortOrderChange: (value) => savePreferences({ sidebarThreadSortOrder: value }),
   });
   const nativeHeaderItems = createSidebarHeaderItems({
     filterIcon,
@@ -784,6 +893,18 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={
+                  <>
+                    {classic ? <ProjectOrderMenu scopes={projectScopes} /> : null}
+                    {selection.toolbar(
+                      threadListV2Items.flatMap((row) =>
+                        row.type === "v2-thread" && !grouped?.groups.get(row.key)?.collapsed
+                          ? [row.item.thread]
+                          : [],
+                      ),
+                    )}
+                  </>
+                }
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -855,6 +976,18 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={
+                  <>
+                    {classic ? <ProjectOrderMenu scopes={projectScopes} /> : null}
+                    {selection.toolbar(
+                      threadListV2Items.flatMap((row) =>
+                        row.type === "v2-thread" && !grouped?.groups.get(row.key)?.collapsed
+                          ? [row.item.thread]
+                          : [],
+                      ),
+                    )}
+                  </>
+                }
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>

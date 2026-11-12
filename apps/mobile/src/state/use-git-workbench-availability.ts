@@ -17,6 +17,7 @@ import {
 export function useMobileGitWorkbenchAvailability(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
+  readonly cwd?: string | null;
 }): MobileGitWorkbenchAvailability {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const serverConfig = useEnvironmentServerConfig(input.environmentId);
@@ -32,5 +33,6 @@ export function useMobileGitWorkbenchAvailability(input: {
     gitWorkbenchVersion: serverConfig?.environment.capabilities.gitWorkbenchVersion,
     environmentId: input.environmentId,
     threadId: input.threadId,
+    cwd: input.cwd,
   });
 }

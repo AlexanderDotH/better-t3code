@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
+import { PickedElementPayloadSchema, PreviewAnnotationRectSchema } from "./pickedElement.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
@@ -201,6 +202,31 @@ export const PreviewRefreshInput = Schema.Struct({
   tabId: PreviewTabId,
 });
 export type PreviewRefreshInput = typeof PreviewRefreshInput.Type;
+
+export const PreviewPickElementInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  x: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  y: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type PreviewPickElementInput = typeof PreviewPickElementInput.Type;
+
+export const PreviewPickElementResult = Schema.NullOr(
+  Schema.Struct({
+    element: PickedElementPayloadSchema,
+    rect: PreviewAnnotationRectSchema,
+  }),
+);
+export type PreviewPickElementResult = typeof PreviewPickElementResult.Type;
+
+export class PreviewPickElementError extends Schema.TaggedError<PreviewPickElementError>()(
+  "PreviewPickElementError",
+  { threadId: ThreadId, tabId: PreviewTabId, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "The browser element could not be picked. Try again or annotate the screenshot.";
+  }
+}
 
 export const PreviewResizeInput = Schema.Struct({
   threadId: ThreadId,

@@ -325,11 +325,7 @@ export function composerStateAtPromptEnd(
   };
 }
 
-/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
-export function parseSideChatCommand(text: string): { prompt: string } | null {
-  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
-  return match ? { prompt: match[1]?.trim() ?? "" } : null;
-}
+export { parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 
 /** A mode command sent alone. Plan modes need planning support; Chat and Build never do. */
 export function parseStandaloneComposerSlashCommand(

@@ -6,7 +6,8 @@ import {
 } from "./pullRequestAgentTasks";
 import type { PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestConnected } from "./usePullRequestConnected";
-import { usePullRequestThreads } from "./usePullRequestThreads";
+import { usePullRequestThreads, type PullRequestAgentContext } from "./usePullRequestThreads";
+import { usePullRequestActingEnvironment } from "./usePullRequestActingEnvironment";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function usePullRequestAgentActions(
@@ -15,20 +16,26 @@ export function usePullRequestAgentActions(
   filePath?: string,
 ) {
   const translator = useMobileInterfaceTranslator();
-  const links = usePullRequestThreads(params, pr, filePath);
-  const connected = usePullRequestConnected(params.environmentId);
+  const work = usePullRequestActingEnvironment(params);
+  const links = usePullRequestThreads(work.params, pr, filePath);
+  const connected = usePullRequestConnected(work.params.environmentId);
   const actions = pr ? pullRequestAgentActions(pr, links.canWatch) : [];
-  const disabled = links.busy || !pr || (connected && links.isPending && !links.threads.length);
-  const start = (task: PullRequestAgentTask, threadId?: string) => {
+  const disabled =
+    !work.available || links.busy || !pr || (connected && links.isPending && !links.threads.length);
+  const start = (
+    task: PullRequestAgentTask,
+    threadId?: string,
+    context?: PullRequestAgentContext,
+  ) => {
     if (disabled) return;
     const thread = pullRequestAgentThread(links.threads, threadId);
     if (threadId && threadId !== "new" && !thread) return;
-    if (task === "ask" && thread && (!links.canAsk || thread.archivedAt)) {
+    if (task === "ask" && !context && thread && (!links.canAsk || thread.archivedAt)) {
       links.openThread(thread);
       return;
     }
     if (!links.canAsk || actions.find((action) => action.task === task)?.disabled) return;
-    void links.ask(thread?.archivedAt ? undefined : thread, task);
+    void links.ask(thread?.archivedAt ? undefined : thread, task, context);
   };
   const threadActions = (task: PullRequestAgentTask) => [
     ...links.threads.map((thread) => ({

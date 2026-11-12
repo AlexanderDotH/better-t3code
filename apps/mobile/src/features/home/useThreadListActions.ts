@@ -7,6 +7,14 @@ import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import {
+  confirmThreadAction,
+  shouldConfirmThreadAction,
+  type ConfirmableThreadAction,
+} from "./thread-action-confirmation";
 
 import { withThreadDismissal } from "./thread-dismissal";
 import * as Dialog from "../../components/ui/Dialog";
@@ -176,34 +184,37 @@ function useThreadActionExecutor(
   return executeAction;
 }
 
-// Hookless use* functions skip compilation, leaving their returned handlers unstable.
-function confirmThreadDeletion(
-  executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<boolean>,
-  thread: EnvironmentThreadShell,
-) {
-  if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
-  const title = "Delete thread?";
-  const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
-  Dialog.confirm({
-    title,
-    message,
-    confirmText: currentInterfaceTranslator().message("mobile.git.delete"),
-    destructive: true,
-    onConfirm: () => {
-      void executeAction("delete", thread);
-    },
-  });
+type ThreadActionOptions = { readonly confirm?: boolean };
+
+function useThreadActionConfirmation() {
+  const result = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(result) ? result.value : {};
+  return (action: ConfirmableThreadAction, options?: ThreadActionOptions) =>
+    options?.confirm === false || !shouldConfirmThreadAction(action, preferences)
+      ? Promise.resolve(true)
+      : confirmThreadAction(action, 1);
 }
 
 export function useThreadListActions(): {
-  readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly archiveThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<boolean>;
+  readonly deleteThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<boolean>;
+  readonly markThreadUnread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly unpinThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<boolean>;
   readonly setThreadAutoSettle: (
     thread: EnvironmentThreadShell,
     enabled: boolean,
@@ -217,6 +228,8 @@ export function useThreadListActions(): {
 } {
   const translator = useMobileInterfaceTranslator();
   const executeAction = useThreadActionExecutor();
+  const confirmAction = useThreadActionConfirmation();
+  const markUnreadMutation = useAtomCommand(threadEnvironment.markUnread);
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
@@ -230,7 +243,22 @@ export function useThreadListActions(): {
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
   const titleRegenerationInFlightThreadKeys = useRef(new Set<string>());
 
-  const archiveThread = (thread: EnvironmentThreadShell) => executeAction("archive", thread);
+  const archiveThread = async (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => {
+    if (!checkThreadOperationPermission(thread, actionFailureTitle("archive"))) return false;
+    if (!threadCanArchive(thread.runtime)) return executeAction("archive", thread);
+    return (await confirmAction("archive", options)) && executeAction("archive", thread);
+  };
+  const deleteThread = async (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => {
+    if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return false;
+    return (await confirmAction("delete", options)) && executeAction("delete", thread);
+  };
+  const markThreadUnread = async (thread: EnvironmentThreadShell) => {
+    const result = await markUnreadMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id },
+    });
+    return result._tag === "Success";
+  };
   const offerUndo = (
     thread: EnvironmentThreadShell,
     action: "Settled" | "Snoozed" | "Unpinned",
@@ -445,7 +473,9 @@ export function useThreadListActions(): {
     }
     return true;
   };
-  const unpinThread = async (thread: EnvironmentThreadShell) => {
+  const unpinThread = async (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => {
+    if (!checkThreadOperationPermission(thread, "Could not unpin thread")) return false;
+    if (!(await confirmAction("unpin", options))) return false;
     if (!checkThreadOperationPermission(thread, "Could not unpin thread")) return false;
     if (!environmentConfigLoaded(thread.environmentId)) {
       Dialog.alert(
@@ -722,11 +752,12 @@ export function useThreadListActions(): {
     return moved;
   };
 
-  const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
-    confirmThreadDeletion(executeAction, thread);
+  const confirmDeleteThread = (thread: EnvironmentThreadShell) => void deleteThread(thread);
 
   return {
     archiveThread,
+    deleteThread,
+    markThreadUnread,
     confirmDeleteThread,
     settleThread,
     snoozeThread,
@@ -751,11 +782,14 @@ export function useArchivedThreadListActions(
     onCompleted(thread);
   };
   const executeAction = useThreadActionExecutor(handleCompleted);
+  const confirmAction = useThreadActionConfirmation();
   const unarchiveThread = (thread: EnvironmentThreadShell) => {
     void executeAction("unarchive", thread);
   };
-  const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
-    confirmThreadDeletion(executeAction, thread);
+  const confirmDeleteThread = async (thread: EnvironmentThreadShell) => {
+    if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
+    if (await confirmAction("delete")) await executeAction("delete", thread);
+  };
 
   return { unarchiveThread, confirmDeleteThread };
 }

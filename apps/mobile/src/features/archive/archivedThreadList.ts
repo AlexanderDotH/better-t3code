@@ -12,12 +12,15 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { buildHomeProjectScopes, findHomeProjectScope } from "../home/homeThreadList";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
 export interface ArchivedThreadGroup {
   readonly key: string;
   readonly project: EnvironmentProject;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
@@ -30,59 +33,82 @@ function matchesQuery(value: string | null, query: string): boolean {
   return value?.toLocaleLowerCase().includes(query) ?? false;
 }
 
+export function buildArchivedProjectScopes(input: {
+  readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
+  readonly environmentId: EnvironmentId | null;
+  readonly projectGroupingSettings?: ProjectGroupingSettings;
+}) {
+  return buildHomeProjectScopes({
+    projects: input.snapshots.flatMap((entry) =>
+      entry.snapshot.projects.map((project) => scopeProject(entry.environmentId, project)),
+    ),
+    environmentId: input.environmentId,
+    projectGroupingMode: input.projectGroupingSettings?.sidebarProjectGroupingMode ?? "repository",
+    projectGroupingOverrides: input.projectGroupingSettings?.sidebarProjectGroupingOverrides,
+  });
+}
+
 export function buildArchivedThreadGroups(input: {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly environmentLabels: Readonly<Record<string, string>>;
   readonly environmentId: EnvironmentId | null;
+  readonly projectKey?: string | null;
+  readonly projectGroupingSettings?: ProjectGroupingSettings;
   readonly searchQuery: string;
   readonly sortOrder: ArchivedThreadSortOrder;
 }): ReadonlyArray<ArchivedThreadGroup> {
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const foldedQuery = foldSearchQuery(input.searchQuery);
-  const groups: ArchivedThreadGroup[] = [];
-
+  const allScopes = buildArchivedProjectScopes(input);
+  const selectedScope = findHomeProjectScope(allScopes, input.projectKey ?? null);
+  const scopes = selectedScope ? [selectedScope] : allScopes;
+  const projectsByKey = new Map<string, EnvironmentProject>();
+  const threadsByProject = new Map<string, EnvironmentThreadShell[]>();
   for (const entry of input.snapshots) {
-    if (input.environmentId !== null && input.environmentId !== entry.environmentId) {
-      continue;
+    if (input.environmentId !== null && input.environmentId !== entry.environmentId) continue;
+    for (const raw of entry.snapshot.projects) {
+      const project = scopeProject(entry.environmentId, raw);
+      projectsByKey.set(scopedProjectKey(project.environmentId, project.id), project);
     }
-
-    const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
-    const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
-    for (const thread of entry.snapshot.threads) {
-      if (thread.archivedAt === null) {
-        continue;
-      }
-      const threads = threadsByProjectId.get(thread.projectId) ?? [];
-      threads.push(scopeThreadShell(entry.environmentId, thread));
-      threadsByProjectId.set(thread.projectId, threads);
+    for (const raw of entry.snapshot.threads) {
+      if (raw.archivedAt === null) continue;
+      const thread = scopeThreadShell(entry.environmentId, raw);
+      const key = scopedProjectKey(thread.environmentId, thread.projectId);
+      const threads = threadsByProject.get(key) ?? [];
+      threads.push(thread);
+      threadsByProject.set(key, threads);
     }
-
-    for (const rawProject of entry.snapshot.projects) {
-      const project = scopeProject(entry.environmentId, rawProject);
-      const projectThreads = threadsByProjectId.get(project.id) ?? [];
+  }
+  const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
+  const groups = scopes.flatMap((scope): ArchivedThreadGroup[] => {
+    const matchingThreads = scope.projectRefs.flatMap((ref) => {
+      const key = scopedProjectKey(ref.environmentId, ref.projectId);
+      const project = projectsByKey.get(key);
+      if (!project) return [];
+      const threads = threadsByProject.get(key) ?? [];
       const groupMatches =
-        query.length === 0 ||
-        matchesQuery(project.title, query) ||
+        !query ||
+        matchesQuery(scope.title, query) ||
         matchesQuery(project.workspaceRoot, query) ||
-        matchesQuery(environmentLabel, query);
-      // Threads match as in every other thread search; the list keeps its own order.
-      const matchingThreads = groupMatches
-        ? projectThreads
-        : rankSearchItems(projectThreads, (thread, options) =>
+        matchesQuery(input.environmentLabels[project.environmentId] ?? null, query);
+      return groupMatches
+        ? threads
+        : rankSearchItems(threads, (thread, options) =>
             scoreThreadSearch(foldedQuery, threadSearchSubject(thread, null), 0, {
               ...options,
               picks: false,
             }),
           ).map(({ item }) => item);
-
-      if (matchingThreads.length === 0) {
-        continue;
-      }
-
-      const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
-      groups.push({
-        key: scopedProjectKey(project.environmentId, project.id),
-        project,
+    });
+    if (matchingThreads.length === 0) return [];
+    return [
+      {
+        key: scope.key,
+        project:
+          scope.representative.title === scope.title
+            ? scope.representative
+            : { ...scope.representative, title: scope.title },
+        projects: scope.projects,
         threads: Arr.sort(
           matchingThreads,
           Order.mapInput(
@@ -90,15 +116,13 @@ export function buildArchivedThreadGroups(input: {
             (thread: EnvironmentThreadShell) => ({
               timestamp: archiveTimestamp(thread),
               title: thread.title,
-              id: thread.id,
+              id: `${thread.environmentId}:${thread.id}`,
             }),
           ),
         ),
-      });
-    }
-  }
-
-  const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
+      },
+    ];
+  });
   return Arr.sort(
     groups,
     Order.mapInput(

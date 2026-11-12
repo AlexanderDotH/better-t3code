@@ -17,11 +17,32 @@ import {
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
+  type PreviewPickElementInput,
+  type PreviewPickElementResult,
 } from "@t3tools/contracts";
+import {
+  buildPickedElementPayload,
+  type PickedElementContext,
+} from "@t3tools/shared/pickedElement";
 import { constVoid } from "effect/Function";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
+import { PICK_ELEMENT_SCRIPT } from "./PickElementScript.ts";
+
+export const pickElementAt = async (
+  page: Page,
+  point: Pick<PreviewPickElementInput, "x" | "y">,
+): Promise<PreviewPickElementResult> => {
+  const picked = await page.evaluate<{
+    capture: Parameters<typeof buildPickedElementPayload>[0];
+    context: PickedElementContext;
+    rect: NonNullable<PreviewPickElementResult>["rect"];
+  } | null>(`(${PICK_ELEMENT_SCRIPT})(${JSON.stringify(point)})`);
+  return picked === null
+    ? null
+    : { element: buildPickedElementPayload(picked.capture, picked.context), rect: picked.rect };
+};
 
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;

@@ -27,6 +27,7 @@ export interface ComposerEditorHandle {
 export interface ComposerEditorProps {
   readonly ref?: Ref<ComposerEditorHandle>;
   readonly value: string;
+  readonly richTextEnabled?: boolean;
   readonly context?: OrchestrationMessageContext;
   readonly clipboardFragment?: string;
   readonly onPasteContext?: (

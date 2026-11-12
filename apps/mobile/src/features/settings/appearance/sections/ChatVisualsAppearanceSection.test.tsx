@@ -48,6 +48,7 @@ vi.mock("../../components/SettingsSection", () => ({
   SettingsSection: ({ children }: { children?: ReactNode }) =>
     createElement("section", {}, children),
 }));
+vi.mock("../components/SettingsPreviews", () => ({ ChatPresentationSettingsPreview: () => null }));
 vi.mock("../../../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>
     createInterfaceTranslator({ language: "de", locale: "de-DE" }),

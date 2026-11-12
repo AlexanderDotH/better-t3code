@@ -4,6 +4,7 @@ import {
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
+  AuthPreviewOperateScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -33,6 +34,12 @@ import * as RpcAuthorization from "./RpcAuthorization.ts";
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
+  });
+
+  it("requires preview operation permission to pick page content", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.previewPickElementAt)).toBe(
+      AuthPreviewOperateScope,
+    );
   });
 
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {

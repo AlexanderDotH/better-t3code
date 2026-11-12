@@ -2,7 +2,6 @@ import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
-  COMPACTION_SUGGESTION_MIN_TOKENS,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import {
@@ -11,8 +10,7 @@ import {
 } from "../../providerInstances";
 import { getDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
-// Fallback TTL: Claude's 1h cache plus slack.
-const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
+export { shouldOfferResumeCompaction } from "@t3tools/client-runtime/context-window";
 
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,
@@ -60,29 +58,6 @@ export function hasDismissedResumeCompaction(
         answer === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
     );
   });
-}
-
-export function shouldOfferResumeCompaction(input: {
-  readonly provider: string | null | undefined;
-  readonly usedTokens: number | null | undefined;
-  readonly updatedAt: string | null | undefined;
-  readonly promptCacheTtlMs?: number | undefined;
-  readonly now: string;
-}): boolean {
-  if (
-    input.provider !== "claudeAgent" ||
-    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
-  ) {
-    return false;
-  }
-
-  const updatedAt = Date.parse(input.updatedAt ?? "");
-  const now = Date.parse(input.now);
-  return (
-    Number.isFinite(updatedAt) &&
-    Number.isFinite(now) &&
-    now - updatedAt >= (input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS)
-  );
 }
 
 export function resolveContextWindowModelDisplayName(

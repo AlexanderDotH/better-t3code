@@ -10,6 +10,7 @@ import type { ComposerEditorProps } from "./T3ComposerEditor.types";
 export function ComposerEditor({
   ref,
   skills: _skills,
+  richTextEnabled: _richTextEnabled,
   selection,
   onPasteImages,
   onPasteText: _onPasteText,

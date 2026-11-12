@@ -852,6 +852,56 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("keeps showing chat media after its original file is deleted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-volatile-" });
+      const filePath = path.join(tmp, "screenshot.png");
+      const archivePath = path.join(tmp, "build.zip");
+      yield* fs.writeFile(filePath, screenshotPng);
+      yield* fs.writeFileString(archivePath, "zip");
+      const input = {
+        resource: {
+          _tag: "media-file" as const,
+          threadId: ThreadId.make("thread-1"),
+          path: filePath,
+        },
+      };
+      const download = {
+        resource: {
+          _tag: "media-file" as const,
+          threadId: ThreadId.make("thread-1"),
+          path: archivePath,
+          disposition: "attachment" as const,
+        },
+      };
+      yield* issueAssetUrl(input);
+      yield* issueAssetUrl(download);
+
+      // A reboot clears temporary folders that agents commonly save screenshots to.
+      yield* fs.remove(filePath);
+      yield* fs.remove(archivePath);
+      const restored = yield* issueAssetUrl(input);
+      const suffix = restored.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      expect(asset).toMatchObject({ kind: "file", mimeType: "image/png" });
+      expect(Buffer.from(yield* fs.readFile(asset?.kind === "file" ? asset.path : ""))).toEqual(
+        Buffer.from(screenshotPng),
+      );
+      expect(restored.imageDimensions).toEqual({ width: 390, height: 844 });
+
+      const otherThread = yield* Effect.flip(
+        issueAssetUrl({ resource: { ...input.resource, threadId: ThreadId.make("thread-2") } }),
+      );
+      expect(otherThread._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      expect((yield* Effect.flip(issueAssetUrl(download)))._tag).toBe(
+        "AssetWorkspaceAssetNotFoundError",
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("versions media by file changes rather than by re-signing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

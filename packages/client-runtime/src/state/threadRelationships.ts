@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import type { ThreadStructure } from "./models.ts";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -48,7 +49,7 @@ function edgeKey(edge: ThreadRelationshipEdge): string {
 
 export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
-  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly projection: ThreadStructure | null;
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of input.threads) {

@@ -133,6 +133,8 @@ export function useReviewDiffData(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly draftMessage: string;
   readonly draftContext: OrchestrationMessageContext | undefined;
+  readonly ignoreWhitespace?: boolean;
+  readonly targetFile?: string;
 }) {
   const { draftMessage, draftContext, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
@@ -153,11 +155,20 @@ export function useReviewDiffData(input: {
     source?.kind,
     source?.baseRef,
     source?.diffHash,
+    input.ignoreWhitespace,
   ]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2] });
+  const targetIndex =
+    lazySource?.files?.findIndex(
+      (file) => file.path === input.targetFile || file.previousPath === input.targetFile,
+    ) ?? -1;
   const indices = useMemo(
-    () => new Set(requested.scope === scope ? requested.indices : [0, 1, 2]),
-    [requested, scope],
+    () =>
+      new Set([
+        ...(requested.scope === scope ? requested.indices : [0, 1, 2]),
+        ...(targetIndex >= 0 ? [targetIndex] : []),
+      ]),
+    [requested, scope, targetIndex],
   );
   const queries = useMemo(
     () =>
@@ -170,9 +181,19 @@ export function useReviewDiffData(input: {
                   input: {
                     cacheKey: scope,
                     // Newer preview revisions refresh patches read under an older one.
-                    preview: { cwd },
+                    preview: {
+                      cwd,
+                      ignoreWhitespace: input.ignoreWhitespace,
+                      ...(source?.kind === "commit" && source.headRef
+                        ? { commitSha: source.headRef }
+                        : {}),
+                    },
                     request: {
                       cwd,
+                      ignoreWhitespace: input.ignoreWhitespace,
+                      ...(source?.kind === "commit" && source.headRef
+                        ? { commitSha: source.headRef }
+                        : {}),
                       ...(lazySource.baseRef ? { baseRef: lazySource.baseRef } : {}),
                       file: {
                         path: file.path,
@@ -184,7 +205,7 @@ export function useReviewDiffData(input: {
                 })
               : null,
           ),
-    [environmentId, cwd, lazySource, indices, scope],
+    [environmentId, cwd, lazySource, indices, scope, input.ignoreWhitespace, source],
   );
   const parsedQuery = useMemo(
     () =>

@@ -2,8 +2,14 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect } from "react";
+import {
+  StackActions,
+  useNavigation,
+  useFocusEffect,
+  type StaticScreenProps,
+} from "@react-navigation/native";
+import { useCallback, useEffect } from "react";
+import type { PullRequestReviewGuideExcerpt } from "@t3tools/contracts";
 import { Platform, Pressable, View } from "react-native";
 import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,6 +17,9 @@ import {
   letterStopNotes,
   stepTourPosition,
   stopFilePaths,
+  excerptRows,
+  fileDiffRows,
+  rowsToPatch,
 } from "@t3tools/client-runtime/review-guide-tour";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { GuideOutline } from "./GuideOutline";
@@ -18,6 +27,7 @@ import { AppText as Text } from "../../../components/ui/AppText";
 import { ScreenScrollView } from "../../../components/ui/ScreenScrollView";
 import { Menu } from "../../../components/ui/Menu";
 import { IconButton } from "../../../components/ui/IconButton";
+import { Button } from "../../../components/ui/Button";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { PullRequestCardGroup, PullRequestCardRow } from "../PullRequestControls";
@@ -34,6 +44,10 @@ import { usePullRequestPermissions } from "../usePullRequestPermissions";
 import { pullRequestTarget } from "../usePullRequestDiff";
 import { useReviewGuide } from "./useReviewGuide";
 import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
+import { useGuideProgress } from "./useGuideProgress";
+import { usePullRequestAgentActions } from "../usePullRequestAgentActions";
+import { usePullRequestReviewDraft } from "../usePullRequestReviewDraft";
+import { guideExcerptComment } from "./guideExcerptComment";
 
 export type GuideStopParams = PullRequestParams & {
   readonly position: number;
@@ -60,6 +74,7 @@ export function PullRequestGuideContent({
   const navigation = useNavigation();
   const state = useReviewGuide(params, visible);
   const { guide, stale } = reviewGuideState(state.data);
+  const progress = useGuideProgress(params, guide);
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
@@ -76,7 +91,9 @@ export function PullRequestGuideContent({
             >
               <GuideOutline
                 guide={guide}
-                onOpen={(position) =>
+                progress={progress}
+                onOpen={(position) => {
+                  progress.open(position);
                   navigation.dispatch(
                     StackActions.push("PullRequestGuideStop", {
                       ...params,
@@ -84,8 +101,8 @@ export function PullRequestGuideContent({
                       guideHeadSha: guide.headSha,
                       guideGeneratedAt: guide.generatedAt,
                     }),
-                  )
-                }
+                  );
+                }}
                 onRewrite={
                   state.canWrite && !state.running && !stale && !state.startError && !state.error
                     ? () => void state.write()
@@ -109,6 +126,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   const canReview =
     permissions.verdicts.length > 0 && detail.data?.headSha === route.params.guideHeadSha;
   const { guide, stale } = reviewGuideState(state.data);
+  const progress = useGuideProgress(route.params, guide);
+  const agent = usePullRequestAgentActions(route.params, detail.data);
+  const reviewDraft = usePullRequestReviewDraft(route.params);
   const position = Math.max(0, Math.min(route.params.position, (guide?.stops.length ?? 1) - 1));
   const stop = guide?.stops[Math.max(0, position)];
   const diff = usePullRequestDiff(
@@ -133,6 +153,50 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
       guide.generatedAt !== route.params.guideGeneratedAt);
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const notes = stop ? letterStopNotes(stop).lettered : [];
+  const openProgress = progress.open;
+  useFocusEffect(
+    useCallback(() => {
+      if (guide && !changedGuide) openProgress(position);
+    }, [changedGuide, guide, openProgress, position]),
+  );
+  const canActOnGuide = !stale && !changedGuide && detail.data?.headSha === guide?.headSha;
+  const ask = (question = "", excerpt?: PullRequestReviewGuideExcerpt) => {
+    if (!stop || !guide || !canActOnGuide || agent.disabled) return;
+    const file = excerpt ? excerptFiles.get(excerpt.path) : undefined;
+    agent.start("ask", undefined, {
+      request: question || translator.message("mobile.pulls.guide.askPrompt"),
+      text: JSON.stringify({
+        guideHeadSha: guide.headSha,
+        stop: position + 1,
+        title: stop.title,
+        summary: stop.summary,
+        question,
+        ...(excerpt ? { excerpt } : {}),
+      }),
+      filePath: excerpt?.path ?? stopFilePaths(stop)[0],
+      rangeLabel: excerpt ? `${excerpt.path}:${excerpt.start}–${excerpt.end}` : stop.title,
+      ...(file && excerpt
+        ? {
+            diff: rowsToPatch(
+              excerpt.path,
+              file.prevName ?? excerpt.path,
+              excerptRows(fileDiffRows(file), excerpt),
+            ),
+          }
+        : {}),
+    });
+  };
+  const commentOnStop = () => {
+    if (!stop || !permissions.canComment || !canActOnGuide || !reviewDraft.ready) return;
+    const context = `> ${stop.title}\n> ${stop.summary.replace(/\n/g, "\n> ")}\n\n`;
+    reviewDraft.update((draft) => ({
+      ...draft,
+      comment: draft.comment.includes(context)
+        ? draft.comment
+        : `${draft.comment ? `${draft.comment.trimEnd()}\n\n` : ""}${context}`.slice(0, 65_536),
+    }));
+    navigation.navigate("PullRequestReview", { ...route.params, mode: "comment" });
+  };
   return (
     <View className="flex-1 bg-screen">
       <NativeStackScreenOptions
@@ -200,6 +264,36 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               <>
                 <GuideNotice state={state} />
                 <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
+                <View className="flex-row flex-wrap items-center gap-2">
+                  <Button
+                    tone="text"
+                    icon="checkmark.circle"
+                    label={translator.message(
+                      progress.readStops.has(position)
+                        ? "mobile.pulls.guide.markUnread"
+                        : "mobile.pulls.guide.markRead",
+                    )}
+                    onPress={() => progress.markRead(position, !progress.readStops.has(position))}
+                  />
+                  {canActOnGuide && agent.canAsk ? (
+                    <Button
+                      tone="text"
+                      icon="sparkles"
+                      disabled={agent.disabled}
+                      label={translator.message("mobile.pulls.guide.askAgent")}
+                      onPress={() => ask()}
+                    />
+                  ) : null}
+                  {canActOnGuide && permissions.canComment ? (
+                    <Button
+                      tone="text"
+                      disabled={!reviewDraft.ready}
+                      icon="bubble.left"
+                      label={translator.message("mobile.review.comment")}
+                      onPress={commentOnStop}
+                    />
+                  ) : null}
+                </View>
                 <PullRequestMarkdown lineBreaks={false} markdown={stop.summary} />
                 {stop.attention ? (
                   <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
@@ -232,6 +326,34 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                       excerpt={excerpt}
                       file={excerptFiles.get(excerpt.path)}
                       loading={diff.isPending || (missing && diff.nextCursor !== null)}
+                      onAsk={
+                        canActOnGuide && agent.canAsk && !agent.disabled
+                          ? () => ask("", excerpt)
+                          : undefined
+                      }
+                      onComment={
+                        canActOnGuide &&
+                        permissions.canInlineComment &&
+                        guideExcerptComment(
+                          excerptFiles.get(excerpt.path),
+                          excerpt,
+                          detail.data?.capabilities.review.rangeComment === true,
+                        )
+                          ? () => {
+                              const comment = guideExcerptComment(
+                                excerptFiles.get(excerpt.path),
+                                excerpt,
+                                detail.data?.capabilities.review.rangeComment === true,
+                              );
+                              if (comment && guide)
+                                navigation.navigate("PullRequestInlineComment", {
+                                  ...route.params,
+                                  ...comment,
+                                  headSha: guide.headSha,
+                                });
+                            }
+                          : undefined
+                      }
                     />
                   ))
                 )}
@@ -282,7 +404,17 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                       {translator.message("mobile.ui.questionsToConsider")}
                     </Text>
                     {stop.questions.map((question) => (
-                      <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
+                      <View key={question} className="gap-1">
+                        <PullRequestMarkdown lineBreaks={false} markdown={question} />
+                        {canActOnGuide && agent.canAsk ? (
+                          <Button
+                            tone="text"
+                            disabled={agent.disabled}
+                            label={translator.message("mobile.pulls.guide.askAgent")}
+                            onPress={() => ask(question)}
+                          />
+                        ) : null}
+                      </View>
                     ))}
                   </View>
                 ) : null}
@@ -296,21 +428,23 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                         : translator.message("mobile.ui.finishTour")
                   }
                   className="mt-2 flex-row items-center gap-4 border-t border-border-subtle pt-5 pb-2 active:opacity-60"
-                  onPress={() =>
-                    guide && position < guide.stops.length - 1
-                      ? navigation.dispatch(
-                          StackActions.push("PullRequestGuideStop", {
-                            ...route.params,
-                            position: stepTourPosition(position, 1, guide.stops.length),
-                          }),
-                        )
-                      : canReview
-                        ? navigation.navigate("PullRequestReview", {
-                            ...route.params,
-                            mode: "review",
-                          })
-                        : navigation.dispatch(StackActions.popTo("PullRequest", route.params))
-                  }
+                  onPress={() => {
+                    progress.markRead(position, true);
+                    if (guide && position < guide.stops.length - 1) {
+                      progress.open(position + 1);
+                      navigation.dispatch(
+                        StackActions.push("PullRequestGuideStop", {
+                          ...route.params,
+                          position: stepTourPosition(position, 1, guide.stops.length),
+                        }),
+                      );
+                    } else if (canReview)
+                      navigation.navigate("PullRequestReview", {
+                        ...route.params,
+                        mode: "review",
+                      });
+                    else navigation.dispatch(StackActions.popTo("PullRequest", route.params));
+                  }}
                 >
                   <View className="min-w-0 flex-1 gap-1">
                     <Text className="text-xs text-foreground-muted">

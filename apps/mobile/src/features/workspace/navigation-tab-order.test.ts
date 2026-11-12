@@ -13,10 +13,11 @@ import {
 } from "./navigation-tab-order";
 
 describe("navigation tab order", () => {
-  it("enables customization only above four registered sections, excluding Settings", () => {
-    expect(navigationCustomizationAvailable()).toBe(false);
-    expect(navigationCustomizationAvailable(3)).toBe(false);
-    expect(navigationCustomizationAvailable(4)).toBe(false);
+  it("enables customization for the three registered sections, excluding Settings", () => {
+    expect(navigationCustomizationAvailable()).toBe(true);
+    expect(navigationCustomizationAvailable(1)).toBe(false);
+    expect(navigationCustomizationAvailable(3)).toBe(true);
+    expect(navigationCustomizationAvailable(4)).toBe(true);
     expect(navigationCustomizationAvailable(5)).toBe(true);
     expect(navigationCustomizationAvailable(6)).toBe(true);
   });
@@ -59,11 +60,15 @@ describe("navigation tab order", () => {
     );
   });
 
-  it("falls back when the selected section is hidden, including when all are hidden", () => {
+  it("falls back when the selected section is hidden and keeps one section visible", () => {
     expect(resolveSelectedNavigationTab(undefined, ["threads"], "threads")).toBe("pullRequests");
     expect(resolveSelectedNavigationTab(undefined, ["threads"], "usage")).toBe("usage");
-    expect(
-      resolveSelectedNavigationTab(undefined, NAVIGATION_TAB_ORDER, "threads"),
-    ).toBeUndefined();
+    expect(resolveSelectedNavigationTab(undefined, NAVIGATION_TAB_ORDER, "threads")).toBe(
+      "threads",
+    );
+    expect(toggleNavigationTabVisibility(["pullRequests", "usage"], "threads")).toEqual([
+      "pullRequests",
+      "usage",
+    ]);
   });
 });

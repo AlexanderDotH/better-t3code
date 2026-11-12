@@ -5,15 +5,27 @@ export function ScreenContent({
   children,
   insetHorizontal = false,
   fitToContents = false,
+  header,
 }: {
   readonly children: ReactNode;
   readonly insetHorizontal?: boolean;
   readonly fitToContents?: boolean;
+  readonly header?: ReactNode;
 }) {
-  if (Platform.OS !== "android") return children;
+  if (Platform.OS !== "android")
+    return (
+      <>
+        {header}
+        {children}
+      </>
+    );
 
   return (
-    <View className={fitToContents ? "shrink bg-header" : "flex-1 bg-header"}>
+    // Material chooses the first nested-scrolling child; Compose header hosts must follow the content.
+    <View
+      className={fitToContents ? "shrink bg-header" : "flex-1 bg-header"}
+      style={header ? { flexDirection: "column-reverse" } : undefined}
+    >
       <View
         className="overflow-hidden rounded-t-[28px] bg-sheet-solid"
         style={{
@@ -25,6 +37,7 @@ export function ScreenContent({
       >
         {children}
       </View>
+      {header}
     </View>
   );
 }

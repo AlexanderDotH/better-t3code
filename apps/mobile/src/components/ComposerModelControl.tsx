@@ -5,9 +5,13 @@ import {
 } from "@t3tools/client-runtime/model-traits";
 import type { ModelOption } from "../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
-import { AppText as Text } from "./ui/AppText";
 import { ComposerInlineControl } from "./ComposerToolbar";
 import { ProviderIcon, ProviderInstanceIcon } from "./ProviderIcon";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../state/preferences";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../persistence/mobile-preferences";
+import { ComposerEffortSuffix } from "../features/threads/ComposerEffortSuffix";
 
 export function ComposerModelControl(props: {
   readonly modelOption: ModelOption | null;
@@ -22,6 +26,10 @@ export function ComposerModelControl(props: {
   readonly iconOnly?: boolean;
   readonly onPress: () => void;
 }) {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const effortDisplay = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.effortDisplay ?? MOBILE_CLIENT_PREFERENCE_DEFAULTS.effortDisplay)
+    : MOBILE_CLIENT_PREFERENCE_DEFAULTS.effortDisplay;
   const descriptors = resolveProviderOptionDescriptors({
     capabilities: props.modelOption?.capabilities,
     selections: props.selection?.options,
@@ -76,16 +84,15 @@ export function ComposerModelControl(props: {
       iconOnly={props.iconOnly}
       suffix={
         summary ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {summary}
-          </Text>
+          <ComposerEffortSuffix
+            summary={summary}
+            bars={effortDisplay === "bars"}
+            descriptors={descriptors}
+            selection={props.selection}
+            reportedSelection={props.reportedSelection}
+            promptControlled={promptTraits.ultrathinkPromptControlled}
+            large={props.size === "large"}
+          />
         ) : undefined
       }
       maxWidth="100%"

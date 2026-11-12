@@ -10,6 +10,8 @@ import {
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 
 import type { PreviewStreamConfiguration, PreviewStreamMessage } from "./preview-stream-document";
+import { createBrowserStreamCapture } from "./browserStreamCapture";
+import type { PreviewAnnotationRect } from "@t3tools/contracts";
 
 declare global {
   interface Window {
@@ -46,6 +48,12 @@ interface Viewer {
   readonly stop: () => void;
   readonly command: (input: PreviewStreamInput) => void;
   readonly togglePictureInPicture: () => void;
+  readonly capture: () => void;
+  readonly annotate: () => void;
+  readonly pickElement: () => void;
+  readonly resolveElementPick: (id: number, rect: PreviewAnnotationRect | null) => void;
+  readonly confirmElementPick: () => void;
+  readonly toggleRecording: () => void;
 }
 
 let activeViewer: Viewer | null = null;
@@ -63,6 +71,25 @@ export function pictureInPicture() {
   activeViewer?.togglePictureInPicture();
 }
 
+export function capture() {
+  activeViewer?.capture();
+}
+export function annotate() {
+  activeViewer?.annotate();
+}
+export function pickElement() {
+  activeViewer?.pickElement();
+}
+export function resolveElementPick(id: number, rect: PreviewAnnotationRect | null) {
+  activeViewer?.resolveElementPick(id, rect);
+}
+export function confirmElementPick() {
+  activeViewer?.confirmElementPick();
+}
+export function toggleRecording() {
+  activeViewer?.toggleRecording();
+}
+
 export function start(configuration: PreviewStreamConfiguration) {
   stop();
   const post = (message: PreviewStreamMessage) => {
@@ -73,6 +100,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   document.body.style.background = configuration.background;
   const container = document.createElement("div");
   const canvas = document.createElement("canvas");
+  const captures = createBrowserStreamCapture(canvas, post, () => viewport);
   canvas.setAttribute("role", "img");
   canvas.setAttribute("aria-label", "Browser page");
   const agentCursor = document.createElement("div");
@@ -155,6 +183,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
 
   const connect = () => {
+    captures.cancelElementPicking();
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -177,6 +206,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;
+          captures.cancelElementPicking();
           viewport = page;
           post({ type: "viewport", width: page.width, height: page.height });
         },
@@ -682,6 +712,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       if (mouseFrame !== null) cancelAnimationFrame(mouseFrame);
       if (agentCursorTimer !== null) clearTimeout(agentCursorTimer);
       painter.stop();
+      captures.dispose();
       client?.stop();
       client = null;
       track?.stop();
@@ -691,6 +722,12 @@ export function start(configuration: PreviewStreamConfiguration) {
       send(message);
     },
     togglePictureInPicture,
+    capture: () => captures.capture(),
+    annotate: captures.annotate,
+    pickElement: captures.pickElement,
+    resolveElementPick: captures.resolveElementPick,
+    confirmElementPick: captures.confirmElementPick,
+    toggleRecording: captures.toggleRecording,
   };
   window.addEventListener("pagehide", stop, { once: true });
   reportStatus("connecting");

@@ -1,3 +1,9 @@
+import { requestProjectContentSearch } from "./ProjectContentSearchSheet";
+import { palettePromptLink } from "./palettePromptLink";
+import { projectEnvironment } from "../../state/projects";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import { useComposerDraft } from "../../state/use-composer-drafts";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -8,7 +14,11 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  isListedThreadLineage,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -278,8 +288,43 @@ export function CommandPalette(props: {
   const serverConfigs = useServerConfigs();
   const startTriage = useStartTriage();
   const newTaskFlow = useNewTaskFlow();
+  const activeNewTask = useActiveNewTask();
+  const activeProject = activeThread
+    ? projects.find(
+        (project) =>
+          project.environmentId === activeThread.environmentId &&
+          project.id === activeThread.projectId,
+      )
+    : activeNewTask
+      ? newTaskFlow.selectedProject
+      : null;
+  const draft = useComposerDraft(
+    activeThreadRef
+      ? scopedThreadKey(activeThreadRef.environmentId, activeThreadRef.threadId)
+      : activeNewTask
+        ? newTaskFlow.draftKey
+        : null,
+  );
+  const canPinProject =
+    useEnvironmentScope(activeProject?.environmentId ?? null, AuthOrchestrationOperateScope) &&
+    activeProject !== null &&
+    activeProject !== undefined &&
+    serverConfigs.get(activeProject.environmentId)?.environment.capabilities.projectOrganization ===
+      true;
+  const updateProject = useAtomCommand(projectEnvironment.update);
+  const promptLinkInput = {
+    prompt: draft.text,
+    project: activeProject,
+    modelSelection: draft.modelSelection ?? activeThread?.modelSelection,
+    providers: activeProject
+      ? (serverConfigs.get(activeProject.environmentId)?.providers ?? [])
+      : [],
+    withContext: false,
+  };
+  const plainPromptLink = palettePromptLink(promptLinkInput);
+  const contextPromptLink = palettePromptLink({ ...promptLinkInput, withContext: true });
   const draftEnvironmentId =
-    useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
+    activeNewTask === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
   const triageEnvironmentId = pickTriageEnvironment({
     // The route names the machine even before the thread shell loads.
     onScreen: activeThreadRef?.environmentId ?? draftEnvironmentId,
@@ -355,6 +400,77 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    actions.push({
+      key: "projectContents",
+      kind: "action",
+      title: translator.message("mobile.home.searchContents"),
+      searchTerms: ["repository", "files", "regex", "grep", "content"],
+      run: () =>
+        requestProjectContentSearch(
+          activeProject ?? undefined,
+          activeThread?.worktreePath ?? undefined,
+        ),
+    });
+    actions.push({
+      key: "pullRequests",
+      kind: "action",
+      title: translator.message("mobile.navigation.prs"),
+      searchTerms: ["pull requests", "merge requests", "reviews", "github", "gitlab"],
+      run: () => selectTab("pullRequests"),
+    });
+    if (activeProject && canPinProject)
+      actions.push({
+        key: "pinProject",
+        kind: "action",
+        title: translator.message(
+          activeProject.pinnedAt == null
+            ? "sidebar.project.menu.pin"
+            : "sidebar.project.menu.unpin",
+        ),
+        detail: activeProject.title,
+        searchTerms: ["project", "pin", "favorite"],
+        run: () => {
+          if (readEnvironmentScope(activeProject.environmentId, AuthOrchestrationOperateScope))
+            void updateProject({
+              environmentId: activeProject.environmentId,
+              input: { projectId: activeProject.id, pinned: activeProject.pinnedAt == null },
+            });
+        },
+      });
+    if (plainPromptLink)
+      actions.push({
+        key: "copyPromptLink",
+        kind: "action",
+        title: translator.message("mobile.ui.copyPromptLink"),
+        searchTerms: ["prompt", "copy", "link", "share"],
+        run: () => copyTextWithHaptic(plainPromptLink),
+      });
+    if (contextPromptLink)
+      actions.push({
+        key: "copyPromptContext",
+        kind: "action",
+        title: translator.message("mobile.home.copyPromptContext"),
+        searchTerms: ["prompt", "copy", "link", "repository", "model"],
+        run: () => copyTextWithHaptic(contextPromptLink),
+      });
+    if (
+      activeThreadRef &&
+      (activeThread?.pullRequests?.length ||
+        activeThread?.linkedPullRequest ||
+        activeThread?.branchPullRequest)
+    )
+      actions.push({
+        key: "threadPullRequests",
+        kind: "action",
+        title: translator.message("mobile.navigation.prs"),
+        detail: activeThread?.title,
+        searchTerms: ["thread", "pull requests", "review"],
+        run: () =>
+          navigation.navigate("ThreadPullRequests", {
+            environmentId: activeThreadRef.environmentId,
+            threadId: activeThreadRef.threadId,
+          }),
+      });
     if (canCycleComposerMode) {
       actions.push({
         key: "cycleComposerMode",
@@ -385,9 +501,6 @@ export function CommandPalette(props: {
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
-    const activeProject = activeThread
-      ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
-      : null;
     if (activeProject) {
       actions.unshift({
         key: "newThread",
@@ -486,6 +599,11 @@ export function CommandPalette(props: {
     return [...actions, ...projectItems, ...threadItems];
   }, [
     selectTab,
+    activeProject,
+    canPinProject,
+    updateProject,
+    plainPromptLink,
+    contextPromptLink,
     activeThread,
     activeThreadRef,
     environments.length,

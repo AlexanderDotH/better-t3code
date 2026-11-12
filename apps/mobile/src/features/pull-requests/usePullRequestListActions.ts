@@ -46,6 +46,8 @@ export function usePullRequestListActions(
   const writableEnvironments = useAtomValue(permissionAtom);
   const run = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
   const pending = useRef(false);
+  const bulkPending = useRef(false);
+  const [closingMany, setClosingMany] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const params = (entry: EnvironmentPullRequestListEntry) => ({
     environmentId: String(entry.environmentId),
@@ -58,10 +60,11 @@ export function usePullRequestListActions(
   const perform = async (
     entry: EnvironmentPullRequestListEntry,
     action: PullRequestAction | "request-review",
+    reportFailure = true,
   ) => {
     const { environmentId } = entry;
     const terminology = sourceControlClients.get(entry.provider).changeRequest;
-    if (pending.current) return;
+    if (pending.current) return false;
     pending.current = true;
     setBusyKey(scopedPullRequestListKey(entry));
     const result = await settlePromise(async () => {
@@ -107,15 +110,33 @@ export function usePullRequestListActions(
     });
     pending.current = false;
     setBusyKey(null);
-    if (AsyncResult.isFailure(result)) {
+    if (reportFailure && AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         `Couldn't update this ${terminology.singular}`,
         cause instanceof Error ? cause.message : translator.message("settings.panels.tryAgain"),
       );
     }
+    return AsyncResult.isSuccess(result);
+  };
+  const closeMany = async (entries: readonly EnvironmentPullRequestListEntry[]) => {
+    if (pending.current || bulkPending.current)
+      return new Set(entries.map(scopedPullRequestListKey));
+    bulkPending.current = true;
+    setClosingMany(true);
+    const failed = new Set<string>();
+    await (async () => {
+      for (const entry of entries) {
+        if (!(await perform(entry, "close", false))) failed.add(scopedPullRequestListKey(entry));
+      }
+    })().finally(() => {
+      bulkPending.current = false;
+      setClosingMany(false);
+    });
+    return failed;
   };
   const select = (entry: EnvironmentPullRequestListEntry, action: string) => {
+    if (bulkPending.current) return;
     if (action === "open") {
       selectDetail({ name: "PullRequest", params: params(entry) });
       return;
@@ -208,5 +229,13 @@ export function usePullRequestListActions(
       },
     ];
   };
-  return { actions, select, busyKey };
+  return {
+    actions,
+    select,
+    busyKey,
+    closeMany,
+    closingMany,
+    canClose: (entry: EnvironmentPullRequestListEntry) =>
+      writableEnvironments.has(entry.environmentId) && entry.state === "open",
+  };
 }

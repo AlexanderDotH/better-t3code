@@ -1,4 +1,9 @@
 import {
+  REASONING_DISPLAY_MODES,
+  reasoningDisplayModeFlags,
+} from "@t3tools/client-runtime/chat-presentation";
+import {
+  DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
   MessageId,
   CheckpointId,
   CheckpointRef,
@@ -18,6 +23,13 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
+import {
+  createThreadReasoningCache,
+  presentThreadReasoning,
+  resolveMobileReasoningDisplayMode,
+  workingReasoningGroups,
+  workingReasoningForGroup,
+} from "./threadReasoning";
 import { getReviewSectionIdForCheckpoint } from "../features/review/reviewModel";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -29,6 +41,7 @@ import {
   createThreadFeedCache,
   deriveThreadFeedPresentation,
   messageFoldRunId,
+  deriveThreadTaskList,
   type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -37,6 +50,30 @@ import {
 const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
+
+it("presents the latest todo list with its active step and completion, and clears empty lists", () => {
+  const todo: OrchestrationV2TurnItem = {
+    ...base("tasks", "2026-08-29T00:00:00.000Z", 1),
+    type: "todo_list",
+    planId: "tasks" as import("@t3tools/contracts").PlanId,
+    steps: [
+      { id: "1", text: "Read", status: "completed" },
+      { id: "2", text: "Build", status: "running" },
+      { id: "3", text: "Verify", status: "pending" },
+    ],
+  };
+  expect(deriveThreadTaskList([todo])).toMatchObject({
+    currentStep: "Build",
+    completed: 1,
+    total: 3,
+  });
+  expect(deriveThreadTaskList([todo, { ...todo, steps: [] }])).toBeNull();
+  expect(
+    deriveThreadTaskList([
+      { ...todo, steps: todo.steps.map((step) => ({ ...step, status: "completed" })) },
+    ]),
+  ).toMatchObject({ currentStep: "Verify", completed: 3 });
+});
 
 it("shows a captured MCP app for a failed deferred write", () => {
   const mcpApp = {
@@ -1417,6 +1454,204 @@ describe("retained v2 feed presentation", () => {
   });
 });
 
+describe("reasoning display", () => {
+  it("keeps showing traces in chat until a mode is chosen on this device", () => {
+    expect(resolveMobileReasoningDisplayMode(undefined)).toBe("chat");
+    expect(resolveMobileReasoningDisplayMode(DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1)).toBe("chat");
+    for (const mode of REASONING_DISPLAY_MODES) {
+      const settings = {
+        ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+        flags: reasoningDisplayModeFlags(mode),
+      };
+      expect(resolveMobileReasoningDisplayMode(settings)).toBe(mode);
+    }
+  });
+
+  const at = "2026-06-20T00:00:02.000Z";
+  const nextRun = RunId.make("next-run");
+  const thought = (id: string, owner = runId) => ({
+    ...base(id, at, 1),
+    runId: owner,
+    type: "reasoning" as const,
+    text: id,
+    streaming: true,
+  });
+  const answer = (id: string, owner = runId, text = id): OrchestrationV2TurnItem => ({
+    ...base(id, at, 2),
+    runId: owner,
+    type: "assistant_message",
+    messageId: MessageId.make(id),
+    text,
+    streaming: false,
+  });
+  const feedFor = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    buildThreadFeed(items.map((item, position) => projected(item, position)));
+  const activities = (feed: ReadonlyArray<ThreadFeedEntry>) =>
+    feed.flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+
+  it("hides reasoning without hiding tool work or the running indicator", () => {
+    const feed = feedFor([
+      userMessage(),
+      { ...thought("hidden-reasoning"), text: "private-thought" },
+      command(at),
+    ]);
+    const cache = createThreadReasoningCache();
+    const visible = presentThreadReasoning(feed, "none", cache);
+    expect(activities(visible).map((activity) => activity.workEntry.itemType)).toEqual([
+      "command_execution",
+    ]);
+    expect(JSON.stringify(visible)).not.toContain("private-thought");
+    const work = visible.find((entry) => entry.type === "activity-group");
+    const updated = presentThreadReasoning(
+      [...feed, ...feedFor([assistantMessage()])],
+      "none",
+      cache,
+    );
+    expect(updated.find((entry) => entry.id === work?.id)).toBe(work);
+    const presented = deriveThreadFeedPresentation(
+      visible,
+      { runId, status: "running", startedAt: at, completedAt: null },
+      new Set(),
+      new Set(),
+      at,
+    );
+    expect(presented.find((row) => row.id === "live-activity-row")).toMatchObject({
+      type: "activity-group",
+      activities: [{ live: true }],
+    });
+    expect(
+      deriveThreadFeedPresentation(
+        presentThreadReasoning(feedFor([userMessage(), thought("only-thought")]), "none"),
+        { runId, status: "running", startedAt: at, completedAt: null },
+        new Set(),
+        new Set(),
+        at,
+      ).at(-1)?.type,
+    ).toBe("thinking");
+  });
+
+  it("places traces only in their request's final answer and keeps traces no answer follows yet in the timeline", () => {
+    const feed = feedFor([
+      userMessage(),
+      thought("first-thought"),
+      answer("progress"),
+      thought("last-thought"),
+      command(at),
+      answer("answer"),
+      {
+        ...userMessage(),
+        ...base("next-prompt", at, 3),
+        runId: nextRun,
+        messageId: MessageId.make("next-prompt"),
+      },
+      thought("pending-thought", nextRun),
+      answer("empty-answer", nextRun, ""),
+    ]);
+    const cache = createThreadReasoningCache();
+    const visible = presentThreadReasoning(feed, "message", cache);
+    const messages = visible.filter((entry) => entry.type === "message");
+    const completed = messages.find((entry) => entry.message.id === "answer");
+    expect(completed?.message.reasoning?.map((activity) => activity.workEntry.detail)).toEqual([
+      "first-thought",
+      "last-thought",
+    ]);
+    expect(
+      messages.find((entry) => entry.message.id === "progress")?.message.reasoning,
+    ).toBeUndefined();
+    expect(
+      messages.find((entry) => entry.message.id === "empty-answer")?.message.reasoning,
+    ).toBeUndefined();
+    expect(
+      activities(visible)
+        .filter((activity) => activity.workEntry.itemType === "reasoning")
+        .map((activity) => activity.workEntry.detail),
+    ).toEqual(["pending-thought"]);
+    expect(
+      activities(visible).some((activity) => activity.workEntry.itemType === "command_execution"),
+    ).toBe(true);
+    const updated = presentThreadReasoning(
+      [...feed, ...feedFor([answer("next-answer", nextRun)])],
+      "message",
+      cache,
+    );
+    expect(updated.find((entry) => entry.id === completed?.id)).toBe(completed);
+    const nextAnswer = updated.find(
+      (entry) => entry.type === "message" && entry.message.id === "next-answer",
+    );
+    expect(
+      nextAnswer?.type === "message" &&
+        nextAnswer.message.reasoning?.map((activity) => activity.workEntry.detail),
+    ).toEqual(["pending-thought"]);
+    const live = presentThreadReasoning(
+      feedFor([
+        userMessage(),
+        thought("first-thought"),
+        answer("progress"),
+        thought("last-thought"),
+        command(at),
+      ]),
+      "message",
+    );
+    expect(
+      live.flatMap((entry) =>
+        entry.type === "message"
+          ? (entry.message.reasoning ?? []).map((activity) => activity.workEntry.detail)
+          : [],
+      ),
+    ).toEqual(["first-thought"]);
+    expect(
+      activities(live)
+        .filter((activity) => activity.workEntry.itemType === "reasoning")
+        .map((activity) => activity.workEntry.detail),
+    ).toEqual(["last-thought"]);
+  });
+
+  it("keeps working-dialog traces separate from tool groups and opens the dialog at the tapped trace", () => {
+    const feed = feedFor([
+      userMessage(),
+      thought("before-tool"),
+      command(at),
+      thought("after-tool"),
+    ]);
+    expect(presentThreadReasoning(feed, "chat")).toBe(feed);
+    const cache = createThreadReasoningCache();
+    const visible = presentThreadReasoning(feed, "working", cache);
+    expect(activities(visible).map((activity) => activity.id)).toEqual(
+      activities(feed).map((activity) => activity.id),
+    );
+    const groups = workingReasoningGroups(visible);
+    expect(
+      [...groups.values()].map((group) => group.map((activity) => activity.workEntry.detail)),
+    ).toEqual([["before-tool"], ["after-tool"]]);
+    const firstGroupId = [...groups.keys()][0]!;
+    const updated = presentThreadReasoning(
+      [...feed, ...feedFor([thought("new-thought"), thought("another-run", nextRun)])],
+      "working",
+      cache,
+    );
+    expect(updated.find((entry) => entry.id === visible[1]?.id)).toBe(visible[1]);
+    const updatedGroups = workingReasoningGroups(updated);
+    expect(
+      workingReasoningForGroup(updatedGroups, firstGroupId)?.map(
+        (activity) => activity.workEntry.detail,
+      ),
+    ).toEqual(["before-tool", "after-tool", "new-thought"]);
+    expect(
+      workingReasoningForGroup(updatedGroups, [...groups.keys()][1]!)?.map(
+        (activity) => activity.workEntry.detail,
+      ),
+    ).toEqual(["after-tool", "new-thought"]);
+    const rows = deriveThreadFeedPresentation(
+      visible,
+      { runId, status: "running", startedAt: at, completedAt: null },
+      new Set(),
+    );
+    expect(
+      rows.filter((row) => row.type === "work-toggle" && groups.has(row.groupId)),
+    ).toHaveLength(2);
+  });
+});
+
 describe("subagent continued by a later turn", () => {
   const run2 = RunId.make("run-2");
   const at = (second: number) => `2026-10-09T10:00:${String(second).padStart(2, "0")}.000Z`;
@@ -1919,4 +2154,27 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(activity.detail).toBe(text);
   expect(JSON.parse(activity.getFullDetail()!).item).toMatchObject({ text });
   expect(activity.getCopyText()).toContain(text);
+  const titled: OrchestrationV2TurnItem = {
+    ...base("titled-thought", at, 1),
+    type: "reasoning",
+    text: "**Inspecting the feed**\n\nI need to read `threadActivity.ts` first.",
+    streaming: false,
+  };
+  const settledFeed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected(titled, 1),
+    projected(assistantMessage(), 2),
+  ]);
+  const settledRows = deriveThreadFeedPresentation(
+    settledFeed,
+    { runId, status: "completed", startedAt: at, completedAt: at },
+    new Set([runId]),
+  );
+  expect(settledRows.find((row) => row.type === "work-toggle")).toMatchObject({
+    summary: "Inspecting the feed",
+  });
+  const settled = settledFeed.flatMap((row) =>
+    row.type === "activity-group" ? row.activities : [],
+  )[0]!;
+  expect(workEntryRowLabel(settled.workEntry)).toBe("Inspecting the feed");
 });

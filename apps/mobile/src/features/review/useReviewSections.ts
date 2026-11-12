@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { Atom } from "effect/reactivity";
+import { useState } from "react";
 
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { EnvironmentId, ReviewDiffPreviewSource, ThreadId } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ import {
 } from "./reviewModel";
 import { setReviewSelectedSectionId, type ReviewCacheForThread } from "./reviewState";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { reviewTargetSectionId } from "./review-preferences";
 
 const NO_GIT_SECTIONS_ATOM = Atom.make<ReadonlyArray<ReviewDiffPreviewSource>>([]).pipe(
   Atom.keepAlive,
@@ -38,10 +40,20 @@ export function useReviewSections(input: {
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
   readonly reviewCache: ReviewCacheForThread;
+  readonly ignoreWhitespace?: boolean;
+  readonly revision?: string | number;
 }) {
   const translator = useMobileInterfaceTranslator();
   const { environmentId, reviewCache, threadId } = input;
   const enabled = input.enabled ?? true;
+  const ignoreWhitespace = input.ignoreWhitespace ?? false;
+  const revision = input.revision;
+  const commitSha =
+    typeof revision === "string" && /^[a-f\d]{40,64}$/i.test(revision) ? revision : undefined;
+  const [sectionOverride, setSectionOverride] = useState<{
+    revision: typeof revision;
+    id: string;
+  } | null>(null);
   const fileAccessSession = useEnvironmentQuery(
     environmentId === undefined ? null : environmentSession.sessionStateAtom(environmentId),
   );
@@ -59,7 +71,7 @@ export function useReviewSections(input: {
     canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadCwd, ignoreWhitespace, ...(commitSha ? { commitSha } : {}) },
         })
       : null,
   );
@@ -86,13 +98,19 @@ export function useReviewSections(input: {
   const cachedSections = buildReviewSectionItems({
     checkpoints: readyCheckpoints,
     gitSections:
-      canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
-    turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
+      canReadFiles || fileAccess.isPending
+        ? (diffPreview.data?.sources ?? (ignoreWhitespace || commitSha ? [] : lastGitSections))
+        : [],
+    turnDiffById: ignoreWhitespace
+      ? {}
+      : reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
     loadingGitSections: fileAccess.isPending || diffPreview.isPending,
   });
   const selectedSectionId = resolveReviewSelectedSectionId(
     cachedSections,
-    reviewCache.selectedSectionId,
+    (sectionOverride && sectionOverride.revision === revision ? sectionOverride.id : null) ??
+      reviewTargetSectionId(revision) ??
+      reviewCache.selectedSectionId,
   );
 
   const selectedCheckpoint =
@@ -107,7 +125,7 @@ export function useReviewSections(input: {
     fromTurnCount:
       enabled && activeCheckpoint ? Math.max(0, activeCheckpoint.checkpointTurnCount - 1) : null,
     toTurnCount: enabled ? (activeCheckpoint?.checkpointTurnCount ?? null) : null,
-    ignoreWhitespace: false,
+    ignoreWhitespace,
   });
 
   const reviewSections = cachedSections.map((section): ReviewSectionItem => {
@@ -138,6 +156,7 @@ export function useReviewSections(input: {
   };
 
   const selectSection = (sectionId: string) => {
+    setSectionOverride({ revision, id: sectionId });
     if (reviewCache.threadKey) {
       setReviewSelectedSectionId(reviewCache.threadKey, sectionId);
     }

@@ -45,5 +45,23 @@ it("saves the scope from every update made in one event", async () => {
   });
   expect(controls!.options.selectedEnvironmentId).toBe(ENVIRONMENT);
   expect(controls!.options.selectedProjectKey).toBe("env-1:project-1");
+  act(() => {
+    controls!.toggleSelectedProjectKey("env-1:project-2");
+    controls!.toggleSelectedProjectKey("env-1:project-3");
+  });
+  expect(controls!.options.selectedProjectKeys).toEqual([
+    "env-1:project-1",
+    "env-1:project-2",
+    "env-1:project-3",
+  ]);
+  expect(harness.saved.at(-1)).toEqual({
+    threadListFilters: {
+      environmentId: ENVIRONMENT,
+      projectKey: null,
+      projectKeys: ["env-1:project-1", "env-1:project-2", "env-1:project-3"],
+    },
+  });
+  act(() => controls!.toggleSelectedProjectKey(null));
+  expect(controls!.options.selectedProjectKeys).toEqual([]);
   act(() => root.unmount());
 });

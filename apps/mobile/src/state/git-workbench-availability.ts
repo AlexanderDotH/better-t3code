@@ -12,11 +12,12 @@ export function resolveMobileGitWorkbenchAvailability(input: {
   readonly gitWorkbenchVersion: number | undefined;
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
+  readonly cwd?: string | null;
 }): MobileGitWorkbenchAvailability {
   if (input.featureEnabled === null) return { state: "loading" };
   if (!input.featureEnabled) return { state: "disabled" };
   if ((input.gitWorkbenchVersion ?? 0) < 1) return { state: "unsupported" };
-  if (input.environmentId === null || input.threadId === null) {
+  if (input.environmentId === null || (input.threadId === null && !input.cwd?.trim())) {
     return { state: "context-required" };
   }
   return { state: "available" };

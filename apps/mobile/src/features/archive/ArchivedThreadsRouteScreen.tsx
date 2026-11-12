@@ -10,7 +10,12 @@ import {
   ArchivedThreadsScreen,
   type ArchivedThreadsHeaderEnvironment,
 } from "./ArchivedThreadsScreen";
-import { buildArchivedThreadGroups, type ArchivedThreadSortOrder } from "./archivedThreadList";
+import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import {
+  buildArchivedProjectScopes,
+  buildArchivedThreadGroups,
+  type ArchivedThreadSortOrder,
+} from "./archivedThreadList";
 import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
@@ -20,6 +25,8 @@ export function ArchivedThreadsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const groupingSettings = useMobileProjectGroupingSettings();
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<ArchivedThreadSortOrder>("newest");
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
@@ -52,11 +59,33 @@ export function ArchivedThreadsRouteScreen() {
         snapshots,
         environmentLabels,
         environmentId: selectedEnvironmentId,
+        projectKey: selectedProjectKey,
+        projectGroupingSettings: groupingSettings,
         searchQuery,
         sortOrder,
       }),
-    [environmentLabels, searchQuery, selectedEnvironmentId, snapshots, sortOrder],
+    [
+      environmentLabels,
+      searchQuery,
+      selectedEnvironmentId,
+      selectedProjectKey,
+      groupingSettings,
+      snapshots,
+      sortOrder,
+    ],
   );
+  const projectScopes = useMemo(
+    () =>
+      buildArchivedProjectScopes({
+        snapshots,
+        environmentId: selectedEnvironmentId,
+        projectGroupingSettings: groupingSettings,
+      }),
+    [snapshots, selectedEnvironmentId, groupingSettings],
+  );
+  const resolvedProjectKey = projectScopes.some((scope) => scope.key === selectedProjectKey)
+    ? selectedProjectKey
+    : null;
   const refreshChangedEnvironment = (thread: { readonly environmentId: EnvironmentId }) => {
     refreshArchivedThreadsForEnvironment(thread.environmentId);
   };
@@ -74,6 +103,9 @@ export function ArchivedThreadsRouteScreen() {
       environments={environments}
       error={error}
       groups={groups}
+      projects={projectScopes.map((scope) => ({ key: scope.key, title: scope.title }))}
+      selectedProjectKey={resolvedProjectKey}
+      onProjectChange={setSelectedProjectKey}
       isLoading={isLoading}
       onDeleteThread={confirmDeleteThread}
       onEnvironmentChange={setSelectedEnvironmentId}

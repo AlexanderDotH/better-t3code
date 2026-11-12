@@ -1,4 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  DEFAULT_MANAGED_TUNNEL_LIMIT,
+  T3CHAT_PLAN_TUNNEL_LIMITS,
+  type RelayT3ChatLinkResponse,
+} from "@t3tools/contracts/relay";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -16,6 +21,27 @@ const DEFAULT_STALE_TIME_MS = 15_000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
 const CLERK_TOKEN_EXPIRY_SKEW_MS = 5_000;
 const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
+
+export type ManagedTunnelUpgrade = "link" | "pro" | "premier" | null;
+
+export function managedTunnelCap(t3Chat: RelayT3ChatLinkResponse): {
+  readonly limit: number;
+  readonly upgrade: ManagedTunnelUpgrade;
+} {
+  if (t3Chat.maxTunnelsOverride !== undefined)
+    return { limit: t3Chat.maxTunnelsOverride, upgrade: null };
+  if (!t3Chat.available) return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: null };
+  switch (t3Chat.link?.plan) {
+    case "premier":
+      return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.premier, upgrade: null };
+    case "pro":
+      return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.pro, upgrade: "premier" };
+    case "free":
+      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "pro" };
+    case undefined:
+      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "link" };
+  }
+}
 
 export interface ManagedRelaySession {
   readonly accountId: string;

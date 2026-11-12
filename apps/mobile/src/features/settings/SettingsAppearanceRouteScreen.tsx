@@ -12,6 +12,7 @@ import { ThreadListAppearanceSection } from "./appearance/sections/ThreadListApp
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
 import { InterfaceLanguageSection } from "./appearance/sections/InterfaceLanguageSection";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { InterfaceAppearanceSection } from "./appearance/sections/InterfaceAppearanceSection";
 
 export function SettingsAppearanceRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -28,6 +29,7 @@ export function SettingsAppearanceRouteScreen() {
         <ThemeAppearanceSection />
         {Platform.OS === "android" ? <AndroidNavigationAppearanceSection /> : null}
         <InterfaceLanguageSection />
+        <InterfaceAppearanceSection />
         <ThreadListAppearanceSection />
         <ProjectThreadPreviewCountSection />
         <ChatVisualsAppearanceSection />

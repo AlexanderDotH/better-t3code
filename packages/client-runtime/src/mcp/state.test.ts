@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   EnvironmentId,
   McpServerId,
   McpRuntimeServerKey,
@@ -14,6 +15,7 @@ import {
   type McpRuntimeSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -33,6 +35,25 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { runAtomCommand } from "../state/runtime.ts";
 import { createMcpEnvironmentAtoms } from "./state.ts";
+
+vi.mock("../state/session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({
+    sessionStateAtom: () =>
+      Atom.make(
+        AsyncResult.success({
+          authenticated: true,
+          auth: {
+            policy: "remote-reachable",
+            bootstrapMethods: [],
+            sessionMethods: [],
+            sessionCookieName: "test",
+          },
+          scopes: [AuthOrchestrationOperateScope],
+          permissions: [AuthOrchestrationOperateScope],
+        }),
+      ),
+  }),
+}));
 
 const environmentId = EnvironmentId.make("environment-one");
 const providerInstanceId = ProviderInstanceId.make("codex-work");

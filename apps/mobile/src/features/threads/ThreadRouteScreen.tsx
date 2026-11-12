@@ -3,7 +3,10 @@ import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
-import { useWorkingStatusInHeader } from "./use-working-status-in-header";
+import {
+  useWorkingHeaderTokenLabel,
+  useWorkingStatusInHeader,
+} from "./use-working-status-in-header";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { AppBar } from "../../components/ui/AppBar";
@@ -578,6 +581,7 @@ function ThreadRouteContent(
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
   const workingStatusInHeader = useWorkingStatusInHeader();
+  const workingHeaderTokenLabel = useWorkingHeaderTokenLabel(workingStatusInHeader);
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
@@ -1076,6 +1080,7 @@ function ThreadRouteContent(
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
                 workingStartedAt={workingStatusInHeader ? activeWorkStartedAt : null}
+                workingTokenLabel={workingHeaderTokenLabel}
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}

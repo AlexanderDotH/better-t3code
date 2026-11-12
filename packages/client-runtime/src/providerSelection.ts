@@ -1,4 +1,4 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
 
 export function isStartedThreadModelChangeAllowed(input: {
   readonly hasStarted: boolean;
@@ -17,4 +17,22 @@ export function isStartedThreadModelChangeAllowed(input: {
   )
     return true;
   return !input.currentRequiresNewThread && !input.nextRequiresNewThread;
+}
+
+const AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "opencode",
+  "gemini",
+  "chatgpt",
+  "openrouter",
+  "openai",
+]);
+
+export function supportsAutoReasoningEvaluationProvider(
+  provider: Pick<ServerProvider, "driver">,
+): boolean {
+  return AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(provider.driver);
 }

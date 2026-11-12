@@ -5,6 +5,7 @@ import {
   deregisterManagedRelayEnvironment,
   ManagedRelay,
   managedRelaySessionAtom,
+  managedTunnelCap,
   readManagedRelaySnapshotState,
   unlinkManagedRelayT3Chat,
 } from "@t3tools/client-runtime/relay";
@@ -13,8 +14,6 @@ import {
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  DEFAULT_MANAGED_TUNNEL_LIMIT,
-  T3CHAT_PLAN_TUNNEL_LIMITS,
   type RelayClientDeviceRecord,
   type RelayClientEnvironmentRecord,
   type RelayT3ChatLinkResponse,
@@ -147,29 +146,7 @@ export function useManagedRelayDevices() {
   };
 }
 
-/** How this account can raise its tunnel cap: link T3 Chat, or upgrade the linked plan. */
-export type ManagedTunnelUpgrade = "link" | "pro" | "premier" | null;
-
-// Mirrors the relay's cap: a manual override is exact, otherwise the T3 Chat plan raises the default.
-function managedTunnelCap(t3Chat: RelayT3ChatLinkResponse): {
-  readonly limit: number;
-  readonly upgrade: ManagedTunnelUpgrade;
-} {
-  if (t3Chat.maxTunnelsOverride !== undefined) {
-    return { limit: t3Chat.maxTunnelsOverride, upgrade: null };
-  }
-  if (!t3Chat.available) return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: null };
-  switch (t3Chat.link?.plan) {
-    case "premier":
-      return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.premier, upgrade: null };
-    case "pro":
-      return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.pro, upgrade: "premier" };
-    case "free":
-      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "pro" };
-    case undefined:
-      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "link" };
-  }
-}
+export type { ManagedTunnelUpgrade } from "@t3tools/client-runtime/relay";
 
 /** Refetches the account's environments and T3 Chat plan after a tunnel changes. */
 export function refreshManagedTunnelUsage() {

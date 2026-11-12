@@ -11,7 +11,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow.ts";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+  shouldOfferResumeCompaction,
+  shouldCompactBeforeSend,
+} from "./contextWindow.ts";
 
 function makeActivity(id: string, kind: string, payload: unknown): UsageActivity {
   return {
@@ -26,6 +31,30 @@ function makeActivity(id: string, kind: string, payload: unknown): UsageActivity
 }
 
 describe("contextWindow", () => {
+  it("offers stale Claude context at the cache threshold and honours the send override", () => {
+    const stale = {
+      provider: "claudeAgent",
+      usedTokens: 200_000,
+      updatedAt: "2026-11-11T10:00:00.000Z",
+      now: "2026-11-11T11:10:00.000Z",
+    };
+    expect(shouldOfferResumeCompaction(stale)).toBe(true);
+    for (const override of [
+      { provider: "codex" },
+      { usedTokens: 199_999 },
+      { updatedAt: "invalid" },
+      { now: "2026-11-11T11:09:59.000Z" },
+      { promptCacheTtlMs: 80 * 60_000 },
+    ]) {
+      expect(shouldOfferResumeCompaction({ ...stale, ...override })).toBe(false);
+    }
+    expect(shouldOfferResumeCompaction({ ...stale, promptCacheTtlMs: 5 * 60_000 })).toBe(true);
+    const send = { offered: true, keepFullHistory: false, text: "Continue this work" };
+    expect(shouldCompactBeforeSend(send)).toBe(true);
+    expect(shouldCompactBeforeSend({ ...send, keepFullHistory: true })).toBe(false);
+    expect(shouldCompactBeforeSend({ ...send, offered: false })).toBe(false);
+    expect(shouldCompactBeforeSend({ ...send, text: " /compact preserve decisions" })).toBe(false);
+  });
   it("derives the latest valid context window snapshot", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       makeActivity("activity-1", "context-window.updated", {
@@ -222,6 +251,7 @@ describe("contextWindow", () => {
       durationMs: 2_000,
       compactsAutomatically: true,
       autoCompactThreshold: 80_000,
+      cost: { amount: 0.0081, currency: "USD" },
     };
 
     expect(

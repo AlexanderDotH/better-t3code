@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   mobileProviderCatalogModels,
   mobileProviderSettingsDefinition,
+  isMobileProviderConfigValid,
   parseMobileNumberDraft,
 } from "./mobile-provider-settings";
 
@@ -28,6 +29,24 @@ describe("mobile provider settings", () => {
   it("maps supported native providers to their annotated schemas", () => {
     expect(mobileProviderSettingsDefinition(ProviderDriverKind.make("openrouter"))).not.toBeNull();
     expect(mobileProviderSettingsDefinition(ProviderDriverKind.make("custom"))).toBeNull();
+    for (const [driver, expected] of Object.entries({
+      codex: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+      claudeAgent: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+      cursor: ["binaryPath", "apiEndpoint"],
+      opencode: ["binaryPath", "serverUrl", "serverPassword"],
+      antigravity: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"],
+      acpRegistry: ["source", "agentId", "commandPath", "authMethodId"],
+      pi: ["binaryPath", "launchArgs"],
+      muse: ["binaryPath"],
+      fx: ["binaryPath"],
+    })) {
+      const definition = mobileProviderSettingsDefinition(ProviderDriverKind.make(driver));
+      expect(definition, driver).not.toBeNull();
+      const keys = deriveProviderSettingsFields(definition!, { value: {} }).map(
+        (field) => field.key,
+      );
+      expect(keys, driver).toEqual(expect.arrayContaining(expected));
+    }
     for (const driver of ["openaiCompatible", "lmstudio"]) {
       const definition = mobileProviderSettingsDefinition(ProviderDriverKind.make(driver));
       expect(definition).not.toBeNull();
@@ -77,5 +96,29 @@ describe("mobile provider settings", () => {
     });
     expect(parseMobileNumberDraft("nope", { min: 0 })).toEqual({ valid: false });
     expect(parseMobileNumberDraft("-1", { min: 0 })).toEqual({ valid: false });
+    expect(
+      isMobileProviderConfigValid(ProviderDriverKind.make("claudeAgent"), {
+        autoCompactWindow: "50000",
+      }),
+    ).toBe(false);
+    expect(
+      isMobileProviderConfigValid(ProviderDriverKind.make("claudeAgent"), {
+        autoCompactWindow: "300000",
+        idleCompaction: "default",
+      }),
+    ).toBe(true);
+    expect(
+      isMobileProviderConfigValid(ProviderDriverKind.make("acpRegistry"), {
+        source: "local",
+        commandArgs: ["", "--flag", "value with spaces", "--flag"],
+        customModels: [
+          {
+            slug: "custom",
+            name: "Custom",
+            capabilities: { optionDescriptors: [{ id: "fast", label: "Fast", type: "boolean" }] },
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 });

@@ -5,10 +5,13 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   approveDeepPlanImplementation,
   buildDeepPlanImplementationPrompt,
-  getDeepPlanApprovalBlockReason,
+  getDeepPlanProposalBlockReason,
+  selectDurableDeepPlan,
+  formatDeepPlanForDisplay,
 } from "@t3tools/client-runtime/deep-planning";
 import {
   buildPlanImplementationPrompt,
+  resolvePlanImplementationSuggestion,
   type PlanImplementationStrategy,
 } from "@t3tools/client-runtime/plan-implementation";
 import {
@@ -18,10 +21,11 @@ import {
   PlanId,
   ThreadId,
   type OrchestrationV2TurnItem,
+  type DeepPlanRun,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { getMobileDeepPlanningApi } from "../../state/deep-planning";
-import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
+import { useEnvironmentServerConfig, useThreadShell, useThreadShells } from "../../state/entities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
@@ -54,12 +58,21 @@ import { CopyTextButton } from "./CopyTextButton";
 import { ThreadForkButton } from "./ThreadForkButton";
 import { useThreadForkAction } from "./use-thread-fork-action";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { DeepPlanChecklist } from "./DeepPlanChecklist";
+import { sharePlanMarkdown } from "./share-plan-markdown";
+import { buildCollapsedProposedPlanPreviewMarkdown } from "@t3tools/client-runtime/proposed-plan";
+import { stashComposerDraft } from "../../state/composer-library";
 
 export function ProposedPlanCard(props: {
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string | null | undefined;
   readonly markdown: string;
-  readonly plan: Extract<OrchestrationV2TurnItem, { readonly type: "proposed_plan" }>;
+  readonly plan: Pick<
+    Extract<OrchestrationV2TurnItem, { readonly type: "proposed_plan" }>,
+    "threadId" | "planId" | "updatedAt" | "deepPlan"
+  >;
+  readonly deepPlan?: DeepPlanRun | null;
+  readonly onActionComplete?: () => void;
   readonly renderMarkdown: (text: string) => ReactNode;
 }) {
   const translator = useMobileInterfaceTranslator();
@@ -72,47 +85,69 @@ export function ProposedPlanCard(props: {
   const implementationModel = draftSettings.modelSelection ?? thread?.modelSelection;
   const preferences = useAtomValue(mobilePreferencesAtom);
   const projection = useSelectedThreadProjection();
+  const threadShells = useThreadShells();
+  const durableRun = props.deepPlan ?? selectDurableDeepPlan(thread, threadShells);
   const deepPlanReference =
     props.plan.deepPlan ??
     projection?.projection.plans.find((plan) => plan.id === props.plan.planId)?.deepPlan;
+  const fullMarkdown =
+    deepPlanReference && durableRun?.plan
+      ? formatDeepPlanForDisplay(durableRun, translator)
+      : props.markdown;
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const forkAction = useThreadForkAction({
     environmentId: props.environmentId,
     threadId: props.plan.threadId,
   });
-  const available = thread !== null && canOperate && !threadRuntimeIsActive(thread.runtime);
+  const canRefine = thread !== null && canOperate && !threadRuntimeIsActive(thread.runtime);
+  const available =
+    canRefine &&
+    getDeepPlanProposalBlockReason({ deepPlan: deepPlanReference }, durableRun) === null;
   const parallelEnabled =
     AsyncResult.isSuccess(preferences) &&
     preferences.value.experimentalParallelPlanImplementation === true;
   const implementationProvider =
     config?.providers.find((provider) => provider.instanceId === implementationModel?.instanceId) ??
     null;
-  const reviewedCount = useMobilePlanParallelismReview({
+  const review = useMobilePlanParallelismReview({
     enabled: parallelEnabled,
     environmentId: props.environmentId,
     threadId: props.plan.threadId,
     plan: {
       id: PlanId.make(props.plan.planId),
       updatedAt: DateTime.formatIso(props.plan.updatedAt),
-      planMarkdown: props.markdown,
+      planMarkdown: fullMarkdown,
       implementedAt: null,
       ...(deepPlanReference ? { deepPlan: deepPlanReference } : {}),
     },
-    deepPlanRun: projection?.projection.thread.deepPlan,
+    deepPlanRun: durableRun,
     implementationProvider,
     reviewerSelection: config?.settings.parallelPlanReviewModelSelection ?? null,
     providers: config?.providers ?? [],
   });
   const suggestedParallelism =
-    reviewedCount ??
-    Math.min(2, implementationProvider?.nativeSubagents?.maxRecommendedSubagents ?? 0);
+    resolvePlanImplementationSuggestion({
+      featureEnabled: parallelEnabled,
+      planMarkdown: fullMarkdown,
+      provider: implementationProvider,
+      reviewedSubagentCount: review.reviewedSubagentCount,
+    })?.strategy.count ?? 0;
   const [implementing, setImplementing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = props.markdown.length > 2_400 || props.markdown.split("\n").length > 40;
   const implementationPending = useRef(false);
   const implement = async (
     newThread: boolean,
     strategy: PlanImplementationStrategy = { kind: "standard" },
   ) => {
-    if (!available || !thread || !config || implementationPending.current) return;
+    if (
+      !available ||
+      !thread ||
+      !config ||
+      implementationPending.current ||
+      review.status === "reviewing"
+    )
+      return;
     implementationPending.current = true;
     setImplementing(true);
     await Promise.resolve()
@@ -127,12 +162,12 @@ export function ProposedPlanCard(props: {
         if (deepPlanReference) {
           const api = getMobileDeepPlanningApi(props.environmentId);
           const run = await api.getRun({
-            threadId: props.plan.threadId,
+            threadId: durableRun?.threadId ?? props.plan.threadId,
             runId: deepPlanReference.runId,
           });
           if (!run)
             throw new Error("The Deep Plan is unavailable. Refresh the thread and try again.");
-          const reason = getDeepPlanApprovalBlockReason(run);
+          const reason = getDeepPlanProposalBlockReason({ deepPlan: deepPlanReference }, run);
           if (reason) throw new Error(reason);
           const approved = await approveDeepPlanImplementation({
             run,
@@ -180,6 +215,7 @@ export function ProposedPlanCard(props: {
               }
             : {}),
         });
+        props.onActionComplete?.();
         if (newThread)
           navigation.dispatch(
             StackActions.push("Thread", {
@@ -202,18 +238,27 @@ export function ProposedPlanCard(props: {
   const refine = () => {
     if (!thread) return;
     const key = scopedThreadKey(props.environmentId, thread.id);
+    stashComposerDraft(key, props.environmentId);
     updateComposerDraftSettings(key, {
       composerMode: deepPlanReference ? "deep-plan" : "plan",
       interactionMode: "plan",
     });
     setComposerDraftText(key, "Revise this plan: ");
+    props.onActionComplete?.();
+    if (projection?.projection.thread.id !== thread.id)
+      navigation.dispatch(
+        StackActions.push("Thread", {
+          environmentId: String(props.environmentId),
+          threadId: String(thread.id),
+        }),
+      );
   };
   const canWrite = useAtomValue(projectEnvironment.writeFile.permissionAtom(props.environmentId));
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const inFlight = useRef(false);
   const [saving, setSaving] = useState(false);
   const [lastPath, setLastPath] = useState("plan.md");
-  const contents = `${props.markdown.trimEnd()}\n`;
+  const contents = `${fullMarkdown.trimEnd()}\n`;
 
   const save = async (path: string) => {
     const relativePath = path.trim();
@@ -253,7 +298,7 @@ export function ProposedPlanCard(props: {
           accessibilityLabel={translator.message("mobile.ui.copyPlan")}
           text={contents}
         />
-        {forkAction ? (
+        {forkAction && !props.deepPlan ? (
           <ThreadForkButton
             boundary={{ kind: "proposed-plan", planId: PlanId.make(props.plan.planId) }}
             action={forkAction}
@@ -262,7 +307,32 @@ export function ProposedPlanCard(props: {
           />
         ) : null}
       </View>
-      {props.renderMarkdown(stripDisplayedPlanMarkdown(props.markdown))}
+      {props.renderMarkdown(
+        collapsible && !expanded
+          ? buildCollapsedProposedPlanPreviewMarkdown(props.markdown)
+          : stripDisplayedPlanMarkdown(props.markdown),
+      )}
+      {collapsible ? (
+        <Button
+          label={translator.message(
+            expanded ? "mobile.composer.collapsePlan" : "mobile.composer.expandPlan",
+          )}
+          tone="text"
+          onPress={() => setExpanded(!expanded)}
+        />
+      ) : null}
+      {deepPlanReference && durableRun ? (
+        <DeepPlanChecklist embedded environmentId={props.environmentId} run={durableRun} />
+      ) : null}
+      {review.status === "reviewing" ? (
+        <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-muted">
+          {translator.message("chat.composer.analyzingPlan")}
+        </Text>
+      ) : review.status === "fallback" ? (
+        <Text className="text-xs text-foreground-muted">
+          {translator.message("chat.composer.planReviewFallback")}
+        </Text>
+      ) : null}
       <View className="flex-row flex-wrap gap-2">
         <Button
           label={
@@ -270,29 +340,51 @@ export function ProposedPlanCard(props: {
               ? translator.message("mobile.ui.starting")
               : translator.message("mobile.thread.implement")
           }
-          disabled={!available || implementing}
+          disabled={!available || implementing || review.status === "reviewing"}
           onPress={() => void implement(false)}
         />
         <Button
-          label={translator.message("sidebar.thread.new")}
+          label={translator.message("chat.composer.implementNewThread")}
           tone="secondary"
-          disabled={!available || implementing}
+          disabled={!available || implementing || review.status === "reviewing"}
           onPress={() => void implement(true)}
         />
         {parallelEnabled && suggestedParallelism >= 2 ? (
           <Button
-            label={`Use ${suggestedParallelism} agents`}
+            label={translator.message("mobile.composer.useAgents", { count: suggestedParallelism })}
             tone={deepPlanReference ? "deep-plan" : "secondary"}
-            disabled={!available || implementing}
+            disabled={!available || implementing || review.status === "reviewing"}
             onPress={() =>
               void implement(false, { kind: "subagents", count: suggestedParallelism })
             }
           />
         ) : null}
+        {parallelEnabled && suggestedParallelism >= 2 ? (
+          <Button
+            label={translator.message("mobile.composer.parallelNewThread", {
+              count: suggestedParallelism,
+            })}
+            tone={deepPlanReference ? "deep-plan" : "secondary"}
+            disabled={!available || implementing || review.status === "reviewing"}
+            onPress={() => void implement(true, { kind: "subagents", count: suggestedParallelism })}
+          />
+        ) : null}
+        <Button
+          label={translator.message("mobile.composer.sharePlan")}
+          tone="secondary"
+          onPress={() =>
+            void sharePlanMarkdown(contents).catch((error: unknown) =>
+              Dialog.alert(
+                translator.message("mobile.composer.shareFailed"),
+                error instanceof Error ? error.message : String(error),
+              ),
+            )
+          }
+        />
         <Button
           label={translator.message("chat.composer.refine")}
           tone="secondary"
-          disabled={!available || implementing}
+          disabled={!canRefine || implementing}
           onPress={refine}
         />
 
