@@ -8,7 +8,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { formatTimelineTimestamp } from "../../lib/timelineTimestamp";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
-import type { ThreadFeedHistoryControls } from "./ThreadFeed";
+import type { ThreadFeedHistoryControls } from "./threadFeedHistory";
 
 export function TimelineJumpList(props: {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;

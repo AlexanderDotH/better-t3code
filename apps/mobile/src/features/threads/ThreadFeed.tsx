@@ -360,6 +360,7 @@ import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-pref
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { formatTimelineTimestamp } from "../../lib/timelineTimestamp";
 import { TimelineJumpList } from "./TimelineJumpList";
+import type { ThreadFeedHistoryControls } from "./threadFeedHistory";
 import type { TimestampFormat } from "@t3tools/contracts";
 import type { TimelineToolDiffTarget } from "./use-timeline-review-sections";
 import {
@@ -395,15 +396,6 @@ const FRESH_ENTRY_WINDOW_MS = 3_000;
 function isFreshTimestamp(input: string): boolean {
   const timestamp = Date.parse(input);
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ENTRY_WINDOW_MS;
-}
-
-export interface ThreadFeedHistoryControls {
-  readonly hasMoreHistory: boolean;
-  readonly loading: boolean;
-  readonly error: string | null;
-  readonly onLoadEarlier: () => void;
-  /** Loads earlier history down to the entry, in one request. */
-  readonly onLoadThrough: (entryId: string) => void;
 }
 
 export interface ThreadFeedHandle {

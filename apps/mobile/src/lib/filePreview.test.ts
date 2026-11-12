@@ -187,10 +187,29 @@ vi.mock("../state/projects", () => ({
 vi.mock("../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../state/session", () => ({
   readEnvironmentScope: () => true,
+  useEnvironmentScope: () => false,
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("expo-secure-store", () => ({
+  deleteItemAsync: vi.fn(),
+  getItemAsync: vi.fn(),
+  setItemAsync: vi.fn(),
+}));
+vi.mock("../features/threads/ThreadReplyTopicStatus", () => ({
+  MessageReplyTopicStatus: () => null,
+  useTimelineReplyTopics: () => new Map(),
+}));
+vi.mock("../features/threads/TimelinePullRequestCards", () => ({
+  TimelinePullRequestCards: () => null,
+  useTimelinePullRequestLinks: () => ({ actions: () => [], perform: () => {} }),
+}));
+vi.mock("../state/terminal", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const permission = Atom.make(false);
+  return { terminalEnvironment: { open: { permissionAtom: () => permission } } };
+});
 vi.mock("../state/preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
@@ -203,6 +222,7 @@ vi.mock("../state/entities", () => ({
   useThreadChipIcons: () => new Map(),
   useEnvironmentServerConfig: () => null,
   useQuietThreadShell: () => null,
+  useThreadShells: () => [],
 }));
 vi.mock("../state/use-remote-environment-registry", () => ({
   useRemoteEnvironmentRuntime: () => null,
@@ -222,7 +242,7 @@ vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
-vi.mock("../state/use-atom-command", () => ({}));
+vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/v2-item-support", () => ({}));
 vi.mock("../native/SelectableMarkdownText", () => ({
   SelectableMarkdownText: (props: {
