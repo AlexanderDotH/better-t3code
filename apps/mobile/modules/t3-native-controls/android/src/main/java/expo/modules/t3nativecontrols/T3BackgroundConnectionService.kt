@@ -44,7 +44,11 @@ class T3BackgroundConnectionService : Service() {
         checkNotNull(intent.getStringExtra(EXTRA_CHANNEL_NAME)),
       )
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        startForeground(
+          NOTIFICATION_ID,
+          notification,
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        )
       } else {
         startForeground(NOTIFICATION_ID, notification)
       }
@@ -62,12 +66,18 @@ class T3BackgroundConnectionService : Service() {
           ),
         )
       }
-    } catch (error: RuntimeException) {
-      Log.w(TASK_NAME, "Could not keep server connections active", error)
-      stopSelf()
+    } catch (error: IllegalStateException) {
+      stopAfterStartFailure(error)
+    } catch (error: SecurityException) {
+      stopAfterStartFailure(error)
     }
     // Restore from the saved preference on app launch, never resurrect an unmounted JS runtime.
     return START_NOT_STICKY
+  }
+
+  private fun stopAfterStartFailure(error: RuntimeException) {
+    Log.w(TASK_NAME, "Could not keep server connections active", error)
+    stopSelf()
   }
 
   @Synchronized
@@ -163,13 +173,13 @@ class T3BackgroundConnectionService : Service() {
 
     fun canNotify(context: Context): Boolean {
       val manager = context.getSystemService(NotificationManager::class.java)
-      if (!manager.areNotificationsEnabled()) return false
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-        return false
-      }
-      return Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-        manager.getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
+      val permitted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+      val channelOpen = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+        manager.getNotificationChannel(CHANNEL_ID)?.importance !=
+        NotificationManager.IMPORTANCE_NONE
+      return manager.areNotificationsEnabled() && permitted && channelOpen
     }
 
     fun start(context: Context, title: String, body: String, channelName: String) {

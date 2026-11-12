@@ -9,7 +9,12 @@ class T3BackgroundConnectionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3BackgroundConnection")
 
-    Function("setConnection") { enabled: Boolean, title: String, body: String, channelName: String ->
+    Function("setConnection") {
+        enabled: Boolean,
+        title: String,
+        body: String,
+        channelName: String
+      ->
       val context = appContext.reactContext ?: return@Function false
       if (!enabled || !T3BackgroundConnectionService.canNotify(context)) {
         T3BackgroundConnectionService.stop(context)
