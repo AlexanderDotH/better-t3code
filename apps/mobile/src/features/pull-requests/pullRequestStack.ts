@@ -1,6 +1,24 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
 
+export function pullRequestStackRebase(stack: PullRequestStack) {
+  const layers = stack.layers.filter((layer) => layer.state !== "merged");
+  const heads = layers.flatMap((layer) =>
+    layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+  );
+  const top = stack.layers.at(-1);
+  return {
+    layers,
+    heads,
+    top,
+    ready:
+      layers.length > 0 &&
+      layers.every((layer) => layer.state === "open") &&
+      heads.length === layers.length &&
+      Boolean(top?.headSha),
+  };
+}
+
 export function pullRequestStackMerge(
   stack: PullRequestStack,
   number: number,

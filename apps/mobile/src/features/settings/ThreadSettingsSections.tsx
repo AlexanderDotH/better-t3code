@@ -30,6 +30,7 @@ import {
   uniformMobileSetting,
 } from "./settings-scoped-server";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-preferences";
 
 export function SettingsLabsRouteScreen() {
   const translator = useMobileInterfaceTranslator();
@@ -45,6 +46,7 @@ export function SettingsLabsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <BetaSettingsSection />
+        <ParityLabsSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
     </SettingsScreen>
@@ -91,6 +93,7 @@ export function AutoSettleSettingsRows(props: {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      sidebarAutoSettleKeepPullRequests?: boolean;
     },
   ) => props.write(patch);
 
@@ -166,6 +169,16 @@ export function AutoSettleSettingsRows(props: {
               onValueChange={(value) => writeToAll({ sidebarAutoSettleAfterDays: value })}
             />
           </View>
+        ) : null}
+        {afterDays !== null ? (
+          <SettingsSwitchRow
+            icon="arrow.triangle.branch"
+            label={translator.message("mobile.ui.keepThreadsWithPullRequest")}
+            subtitle={translator.message("mobile.ui.keepThreadsWithPullRequestDescription")}
+            value={uniformMobileSetting(displayTargets, "sidebarAutoSettleKeepPullRequests")}
+            disabled={disabledFor("sidebarAutoSettleKeepPullRequests")}
+            onValueChange={(value) => writeToAll({ sidebarAutoSettleKeepPullRequests: value })}
+          />
         ) : null}
       </SettingsSection>
       {!props.pending && mismatches.length > 0 ? (
@@ -276,6 +289,65 @@ function BetaSettingsSection() {
       <Text className="px-2 text-sm text-foreground-muted">
         {translator.message("mobile.ui.letAgentsOnAMachineWorkOn")}
       </Text>
+    </View>
+  );
+}
+
+function ParityLabsSettingsSection() {
+  const translator = useMobileInterfaceTranslator();
+  const { environments } = useEnvironments();
+  const connected = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" && environment.serverConfig !== null,
+  );
+  const writable = useEnvironmentsWithScope(connected, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "Labs settings",
+    reportFailure: true,
+  });
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  return (
+    <View className="gap-4">
+      {connected.map((environment) => (
+        <SettingsSection key={environment.environmentId} title={environment.label}>
+          {(["guestSharingEnabled", "simlockDeviceHostsEnabled"] as const).map((key) => (
+            <SettingsSwitchRow
+              key={key}
+              icon="sparkles"
+              label={translator.message(`mobile.projects.labs.${key}`)}
+              value={environment.serverConfig?.settings[key] === true}
+              disabled={
+                !writable.has(environment.environmentId) ||
+                isManagedSettingPath(environment.serverConfig?.managedPolicy, key)
+              }
+              onValueChange={(value) =>
+                void update({
+                  environmentId: environment.environmentId,
+                  input: { patch: { [key]: value } },
+                })
+              }
+            />
+          ))}
+        </SettingsSection>
+      ))}
+      <SettingsSection title={translator.message("mobile.appearance.sidebar")}>
+        <SettingsSwitchRow
+          icon="text.alignleft"
+          label={translator.message("mobile.projects.labs.multiline")}
+          subtitle={translator.message("mobile.projects.labs.multilineDescription")}
+          value={
+            AsyncResult.isSuccess(preferences)
+              ? (preferences.value.boringThreadListMultilineRows ??
+                MOBILE_CLIENT_PREFERENCE_DEFAULTS.boringThreadListMultilineRows)
+              : MOBILE_CLIENT_PREFERENCE_DEFAULTS.boringThreadListMultilineRows
+          }
+          disabled={!AsyncResult.isSuccess(preferences) || preferences.waiting}
+          onValueChange={(boringThreadListMultilineRows) =>
+            savePreferences({ boringThreadListMultilineRows })
+          }
+        />
+      </SettingsSection>
     </View>
   );
 }

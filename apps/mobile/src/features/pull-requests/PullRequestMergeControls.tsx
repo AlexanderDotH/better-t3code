@@ -2,6 +2,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { resolvePullRequestMergeMethod } from "@t3tools/client-runtime/pull-request-merge-method";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import type { PullRequestDetail, PullRequestMergeMethod } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -10,6 +12,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SplitButton } from "../../components/ui/SplitButton";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -38,23 +41,33 @@ export function PullRequestMergeControls(props: {
   const target = pullRequestTarget(props.params);
   const permissions = usePullRequestPermissions(props.params, pr);
   const preferences = useAtomValue(mobilePreferencesAtom);
+  const { presentation } = useEnvironmentPresentation(target.environmentId);
+  const settings = presentation?.serverConfig?.settings;
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const runAction = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
-  const [selectedMethod, setSelectedMethod] = useState<PullRequestMergeMethod | null>(null);
+  const selectionKey = JSON.stringify(target);
+  const [selection, setSelection] = useState<{
+    readonly key: string;
+    readonly method: PullRequestMergeMethod;
+  } | null>(null);
+  const selectedMethod = selection?.key === selectionKey ? selection.method : null;
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const methods = allowedMergeMethods(pr);
-  const preferred =
-    selectedMethod ??
-    (AsyncResult.isSuccess(preferences) ? preferences.value.pullRequestMergeMethod : undefined) ??
-    "squash";
-  const method = methods.includes(preferred)
-    ? preferred
-    : methods.includes("squash")
-      ? "squash"
-      : methods[0];
+  const method = methods.length
+    ? resolvePullRequestMergeMethod(
+        methods,
+        selectedMethod,
+        settings
+          ? resolveProjectSettings(settings, target.input.projectId).settings.pullRequestMergeMethod
+          : undefined,
+        (AsyncResult.isSuccess(preferences)
+          ? preferences.value.pullRequestMergeMethod
+          : undefined) ?? "squash",
+      )
+    : undefined;
   const scope = stack.stack ? pullRequestStackMerge(stack.stack, pr.number, terminology) : null;
   const canMergeSingle = singlePullRequestMergeAllowed({
     supportsStackActions: stack.supportsStackActions,
@@ -78,7 +91,7 @@ export function PullRequestMergeControls(props: {
           ? "Couldn't check stack membership. Refresh before merging."
           : translator.message("mobile.ui.checkingStackMembership")
         : null);
-  const canMerge = !busy && method !== undefined && !reason;
+  const canMerge = !busy && settings !== undefined && method !== undefined && !reason;
   const label = method
     ? scope && scope.layers.length > 1
       ? `${MERGE_METHODS[method].title} stack (${scope.layers.length})`
@@ -87,6 +100,7 @@ export function PullRequestMergeControls(props: {
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
+    settings !== undefined &&
     (autoAction === "disable-auto-merge" || (!stack.stack && canMergeSingle)) &&
     permissions.canWrite &&
     canPerformPullRequestAction(pr, autoAction);
@@ -206,7 +220,7 @@ export function PullRequestMergeControls(props: {
         onPressAction={(id) => {
           const selected = methods.find((method) => method === id);
           if (selected) {
-            setSelectedMethod(selected);
+            setSelection({ key: selectionKey, method: selected });
             savePreferences({ pullRequestMergeMethod: selected });
           } else if (id === autoAction && canAutoMerge) confirm(autoAction);
         }}

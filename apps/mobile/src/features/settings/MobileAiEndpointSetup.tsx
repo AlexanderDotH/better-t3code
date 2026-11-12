@@ -16,7 +16,7 @@ import {
 import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, View } from "react-native";
+import { Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -181,11 +181,13 @@ export function MobileAiEndpointSetup(props: {
   readonly provider?: ServerProvider;
   readonly readOnly: boolean;
   readonly onClose: () => void;
-  readonly updateSettings: (patch: ServerSettingsPatch, label: string) => Promise<boolean>;
 }) {
   const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const mutateInstance = useAtomCommand(serverEnvironment.mutateProviderInstance, {
     reportFailure: false,
   });
   const setProviderAuthCredential = useAtomCommand(serverEnvironment.setProviderAuthCredential, {
@@ -234,7 +236,23 @@ export function MobileAiEndpointSetup(props: {
     }
     setSaving(true);
     const persistEndpoint = async () => {
-      if (!(await props.updateSettings(patch, label))) return;
+      const instance = patch.providerInstances?.[props.instanceId];
+      if (!instance) return;
+      const result = await mutateInstance({
+        environmentId: props.environmentId,
+        input: {
+          patch: {},
+          providerInstanceMutation: {
+            operation: hasSaved ? "upsert" : "create",
+            instanceId: props.instanceId,
+            instance,
+          },
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) throw squashAtomCommandFailure(result);
+        return;
+      }
       setHasSaved(true);
       const savedDraft = mobileAiEndpointDraft(
         draft.driver,
@@ -257,15 +275,15 @@ export function MobileAiEndpointSetup(props: {
         props.onClose();
         return;
       }
-      const result = await refreshProviders({
+      const refreshed = await refreshProviders({
         environmentId: props.environmentId,
         input: { instanceId: props.instanceId, refreshModels: true },
       });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) throw squashAtomCommandFailure(result);
+      if (refreshed._tag === "Failure") {
+        if (!isAtomCommandInterrupted(refreshed)) throw squashAtomCommandFailure(refreshed);
         return;
       }
-      const provider = result.value.providers.find(
+      const provider = refreshed.value.providers.find(
         (provider) => provider.instanceId === props.instanceId,
       );
       const models =
@@ -296,7 +314,10 @@ export function MobileAiEndpointSetup(props: {
         if (!saving) props.onClose();
       }}
     >
-      <View className="flex-1 bg-sheet">
+      <View
+        className="flex-1 bg-sheet"
+        style={{ paddingTop: Platform.OS === "android" ? insets.top : 0 }}
+      >
         <View className="flex-row items-center gap-3 border-b border-border px-5 py-4">
           <ProviderIcon provider={draft.driver} size={24} />
           <Text className="flex-1 text-xl font-t3-semibold text-foreground">{label}</Text>

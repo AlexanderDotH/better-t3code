@@ -91,6 +91,54 @@ import {
   type SidebarInterfaceMessageKey,
 } from "./interfaceLanguageCatalog.sidebar.ts";
 import {
+  mobileParityAgentsInterfaceCatalog,
+  type MobileParityAgentsInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityAgents.ts";
+import {
+  mobileParityProjectsInterfaceCatalog,
+  type MobileParityProjectsInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityProjects.ts";
+import {
+  mobileParityAccessInterfaceCatalog,
+  type MobileParityAccessInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityAccess.ts";
+import {
+  mobileParityMcpInterfaceCatalog,
+  type MobileParityMcpInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityMcp.ts";
+import {
+  mobileParityPrefsInterfaceCatalog,
+  type MobileParityPrefsInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityPrefs.ts";
+import {
+  mobileParityTimelineInterfaceCatalog,
+  type MobileParityTimelineInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityTimeline.ts";
+import {
+  mobileParityComposerInterfaceCatalog,
+  type MobileParityComposerInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityComposer.ts";
+import {
+  mobileParityGitInterfaceCatalog,
+  type MobileParityGitInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityGit.ts";
+import {
+  mobileParityPanelsInterfaceCatalog,
+  type MobileParityPanelsInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityPanels.ts";
+import {
+  mobileParityHomeInterfaceCatalog,
+  type MobileParityHomeInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityHome.ts";
+import {
+  mobileParityPullsInterfaceCatalog,
+  type MobileParityPullsInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityPulls.ts";
+import {
+  mobileParityInsightsInterfaceCatalog,
+  type MobileParityInsightsInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.mobileParityInsights.ts";
+import {
   type InterfaceCatalogLanguage,
   type InterfaceMessageTemplate,
   type LocalizedInterfaceCatalog,
@@ -126,6 +174,18 @@ export type InterfaceMessageKey =
   | DesktopInterfaceMessageKey
   | GitInterfaceMessageKey
   | MobileInterfaceMessageKey
+  | MobileParityAgentsInterfaceMessageKey
+  | MobileParityProjectsInterfaceMessageKey
+  | MobileParityAccessInterfaceMessageKey
+  | MobileParityMcpInterfaceMessageKey
+  | MobileParityPrefsInterfaceMessageKey
+  | MobileParityTimelineInterfaceMessageKey
+  | MobileParityComposerInterfaceMessageKey
+  | MobileParityGitInterfaceMessageKey
+  | MobileParityPanelsInterfaceMessageKey
+  | MobileParityHomeInterfaceMessageKey
+  | MobileParityPullsInterfaceMessageKey
+  | MobileParityInsightsInterfaceMessageKey
   | SettingsInterfaceMessageKey
   | SettingsApplicationInterfaceMessageKey
   | SettingsConnectionsInterfaceMessageKey
@@ -155,6 +215,18 @@ const catalogs = [
   desktopInterfaceCatalog,
   gitInterfaceCatalog,
   mobileInterfaceCatalog,
+  mobileParityAgentsInterfaceCatalog,
+  mobileParityProjectsInterfaceCatalog,
+  mobileParityAccessInterfaceCatalog,
+  mobileParityMcpInterfaceCatalog,
+  mobileParityPrefsInterfaceCatalog,
+  mobileParityTimelineInterfaceCatalog,
+  mobileParityComposerInterfaceCatalog,
+  mobileParityGitInterfaceCatalog,
+  mobileParityPanelsInterfaceCatalog,
+  mobileParityHomeInterfaceCatalog,
+  mobileParityPullsInterfaceCatalog,
+  mobileParityInsightsInterfaceCatalog,
   settingsInterfaceCatalog,
   settingsApplicationInterfaceCatalog,
   settingsConnectionsInterfaceCatalog,

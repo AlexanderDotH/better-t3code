@@ -59,17 +59,7 @@ export function allowsSinglePullRequestMerge(input: {
   );
 }
 
-export function resolvePullRequestMergeMethod(
-  allowed: ReadonlyArray<PullRequestMergeMethod>,
-  current: PullRequestMergeMethod | null,
-  projectDefault: PullRequestMergeMethod | undefined,
-  lastSelected: PullRequestMergeMethod,
-): PullRequestMergeMethod {
-  for (const method of [current, projectDefault, lastSelected]) {
-    if (method && allowed.includes(method)) return method;
-  }
-  return allowed[0] ?? "merge";
-}
+export { resolvePullRequestMergeMethod } from "@t3tools/client-runtime/pull-request-merge-method";
 
 type PullRequestPrimaryControl =
   | "resolve"

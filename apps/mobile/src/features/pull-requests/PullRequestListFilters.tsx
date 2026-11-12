@@ -78,6 +78,12 @@ const CHECKS = {
   },
 } as const;
 const SORTS = {
+  get ready() {
+    return currentInterfaceTranslator().message("mobile.pulls.sort.ready");
+  },
+  get blocked() {
+    return currentInterfaceTranslator().message("mobile.pulls.sort.blocked");
+  },
   get updated() {
     return currentInterfaceTranslator().message("settings.betterT3.value.updated");
   },
@@ -86,6 +92,12 @@ const SORTS = {
   },
   get oldest() {
     return currentInterfaceTranslator().message("mobile.ui.oldestUpdated");
+  },
+  get largest() {
+    return currentInterfaceTranslator().message("mobile.pulls.sort.largest");
+  },
+  get smallest() {
+    return currentInterfaceTranslator().message("mobile.pulls.sort.smallest");
   },
 } as const;
 // A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.

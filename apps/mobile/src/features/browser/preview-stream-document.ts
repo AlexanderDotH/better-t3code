@@ -1,5 +1,5 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
-import type { PreviewStreamHostSetup } from "@t3tools/contracts";
+import type { PreviewStreamHostSetup, PreviewAnnotationPoint } from "@t3tools/contracts";
 import type {
   PreviewStreamControl,
   PreviewStreamDownload,
@@ -15,6 +15,13 @@ export interface PreviewStreamConfiguration {
 }
 
 export type PreviewStreamMessage =
+  | { readonly type: "elementPicking"; readonly active: boolean }
+  | { readonly type: "elementPick"; readonly id: number; readonly point: PreviewAnnotationPoint }
+  | { readonly type: "elementCapture"; readonly id: number; readonly dataUrl: string }
+  | { readonly type: "annotation"; readonly active: boolean }
+  | { readonly type: "capture"; readonly dataUrl: string; readonly annotation: boolean }
+  | { readonly type: "captureError"; readonly unavailable?: boolean }
+  | { readonly type: "recording"; readonly active: boolean }
   | ({ readonly type: "control" } & PreviewStreamControl)
   | {
       readonly type: "status";

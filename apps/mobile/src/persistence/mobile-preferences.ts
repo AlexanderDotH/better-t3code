@@ -6,6 +6,13 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
+  AppearanceContrast,
+  BrowserSearchEngine,
+  BrowserCustomSearchUrl,
+  DiffColorScheme,
+  EffortDisplay,
+  FontFamilyPreference,
+  TimestampFormat,
   EnvironmentId,
   PullRequestInvolvement,
   PullRequestListFilters,
@@ -69,13 +76,22 @@ export const PullRequestListControls = Schema.Struct({
   filters: PullRequestListFilters,
   projectId: Schema.optional(Schema.String),
   projectEnvironmentId: Schema.optional(Schema.String),
-  sort: Schema.Literals(["updated", "created", "oldest"]),
+  sort: Schema.Literals([
+    "updated",
+    "created",
+    "oldest",
+    "ready",
+    "blocked",
+    "largest",
+    "smallest",
+  ]),
 });
 export type PullRequestListControls = typeof PullRequestListControls.Type;
 
 const ThreadListFilters = Schema.Struct({
   environmentId: Schema.NullOr(EnvironmentId),
   projectKey: Schema.NullOr(Schema.String),
+  projectKeys: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ThreadListFilters = typeof ThreadListFilters.Type;
 
@@ -115,6 +131,13 @@ const WorkspaceSelections = Schema.Struct({
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
+const isTimestampFormat = Schema.is(TimestampFormat);
+const isAppearanceContrast = Schema.is(AppearanceContrast);
+const isFontFamilyPreference = Schema.is(FontFamilyPreference);
+const isEffortDisplay = Schema.is(EffortDisplay);
+const isDiffColorScheme = Schema.is(DiffColorScheme);
+const isBrowserSearchEngine = Schema.is(BrowserSearchEngine);
+const isBrowserCustomSearchUrl = Schema.is(BrowserCustomSearchUrl);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
@@ -175,7 +198,9 @@ export interface Preferences {
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
-  readonly sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
+  readonly sidebarProjectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
+  readonly sidebarProjectOrder?: ReadonlyArray<string>;
+  readonly sidebarProjectSortOrder?: SidebarProjectSortOrder;
   readonly sidebarThreadSortOrder?: SidebarThreadSortOrder;
   readonly sidebarAutoSettleAfterDays?: number | null;
   readonly sidebarAutoSettleOnMerge?: boolean;
@@ -204,7 +229,56 @@ export interface Preferences {
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
+  /** Client preferences mirrored from web `ClientSettings`; unset uses `MOBILE_CLIENT_PREFERENCE_DEFAULTS`. */
+  readonly confirmThreadUnpin?: boolean;
+  readonly confirmThreadArchive?: boolean;
+  readonly confirmThreadDelete?: boolean;
+  readonly timestampFormat?: TimestampFormat;
+  readonly appearanceContrast?: AppearanceContrast;
+  readonly fontFamilySans?: FontFamilyPreference;
+  readonly fontFamilyComposer?: FontFamilyPreference;
+  readonly fontFamilyCode?: FontFamilyPreference;
+  readonly fontFamilyTerminal?: FontFamilyPreference;
+  readonly effortDisplay?: EffortDisplay;
+  readonly composerRichTextEnabled?: boolean;
+  readonly showSkillsInSlashMenu?: boolean;
+  readonly pullRequestLinksOpenInApp?: boolean;
+  readonly diffIgnoreWhitespace?: boolean;
+  readonly diffFilesCollapsed?: boolean;
+  readonly diffColorScheme?: typeof DiffColorScheme.Type;
+  readonly browserSearchEngine?: typeof BrowserSearchEngine.Type;
+  readonly browserCustomSearchUrl?: string;
+  readonly inAppNotificationsEnabled?: boolean;
+  readonly androidBackgroundConnectionEnabled?: boolean;
+  readonly boringThreadListMultilineRows?: boolean;
+  readonly loadBalancingEnabled?: boolean;
+  readonly loadBalancingWeights?: Readonly<Record<string, number>>;
 }
+
+/** Defaults for device-local client preferences. */
+export const MOBILE_CLIENT_PREFERENCE_DEFAULTS = {
+  confirmThreadUnpin: false,
+  confirmThreadArchive: false,
+  confirmThreadDelete: true,
+  timestampFormat: "locale",
+  appearanceContrast: 100,
+  fontFamilySans: "",
+  fontFamilyComposer: "",
+  fontFamilyCode: "",
+  fontFamilyTerminal: "",
+  effortDisplay: "label",
+  composerRichTextEnabled: true,
+  showSkillsInSlashMenu: true,
+  pullRequestLinksOpenInApp: true,
+  diffIgnoreWhitespace: true,
+  diffFilesCollapsed: true,
+  diffColorScheme: "red-green",
+  browserSearchEngine: "duckduckgo",
+  browserCustomSearchUrl: "",
+  inAppNotificationsEnabled: false,
+  androidBackgroundConnectionEnabled: false,
+  boringThreadListMultilineRows: false,
+} as const satisfies Partial<Preferences>;
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
   "MobilePreferencesLoadError",
@@ -294,15 +368,40 @@ export function sanitizeMobilePreferences(
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
+    sidebarProjectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
+    sidebarProjectOrder?: ReadonlyArray<string>;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
     workingShelfEnabled?: boolean;
+    confirmThreadUnpin?: boolean;
+    confirmThreadArchive?: boolean;
+    confirmThreadDelete?: boolean;
+    timestampFormat?: TimestampFormat;
+    appearanceContrast?: AppearanceContrast;
+    fontFamilySans?: FontFamilyPreference;
+    fontFamilyComposer?: FontFamilyPreference;
+    fontFamilyCode?: FontFamilyPreference;
+    fontFamilyTerminal?: FontFamilyPreference;
+    effortDisplay?: EffortDisplay;
+    composerRichTextEnabled?: boolean;
+    showSkillsInSlashMenu?: boolean;
+    pullRequestLinksOpenInApp?: boolean;
+    diffIgnoreWhitespace?: boolean;
+    diffFilesCollapsed?: boolean;
+    diffColorScheme?: typeof DiffColorScheme.Type;
+    browserSearchEngine?: typeof BrowserSearchEngine.Type;
+    browserCustomSearchUrl?: string;
+    inAppNotificationsEnabled?: boolean;
+    androidBackgroundConnectionEnabled?: boolean;
+    boringThreadListMultilineRows?: boolean;
+    loadBalancingEnabled?: boolean;
+    loadBalancingWeights?: Readonly<Record<string, number>>;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
-    sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
+    sidebarProjectSortOrder?: SidebarProjectSortOrder;
     sidebarThreadSortOrder?: SidebarThreadSortOrder;
     sidebarAutoSettleAfterDays?: number | null;
     sidebarAutoSettleOnMerge?: boolean;
@@ -511,8 +610,28 @@ export function sanitizeMobilePreferences(
     preferences.projectGroupingMode = parsed.projectGroupingMode;
   }
   if (
+    typeof parsed.sidebarProjectGroupingOverrides === "object" &&
+    parsed.sidebarProjectGroupingOverrides !== null &&
+    !Array.isArray(parsed.sidebarProjectGroupingOverrides)
+  ) {
+    preferences.sidebarProjectGroupingOverrides = Object.fromEntries(
+      Object.entries(parsed.sidebarProjectGroupingOverrides).filter(
+        (entry): entry is [string, SidebarProjectGroupingMode] =>
+          entry[1] === "repository" || entry[1] === "repository_path" || entry[1] === "separate",
+      ),
+    );
+  }
+  if (Array.isArray(parsed.sidebarProjectOrder)) {
+    preferences.sidebarProjectOrder = [
+      ...new Set(
+        parsed.sidebarProjectOrder.filter((key): key is string => typeof key === "string"),
+      ),
+    ];
+  }
+  if (
     parsed.sidebarProjectSortOrder === "updated_at" ||
-    parsed.sidebarProjectSortOrder === "created_at"
+    parsed.sidebarProjectSortOrder === "created_at" ||
+    parsed.sidebarProjectSortOrder === "manual"
   ) {
     preferences.sidebarProjectSortOrder = parsed.sidebarProjectSortOrder;
   }
@@ -546,6 +665,58 @@ export function sanitizeMobilePreferences(
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
   }
+  for (const key of [
+    "confirmThreadUnpin",
+    "confirmThreadArchive",
+    "confirmThreadDelete",
+    "composerRichTextEnabled",
+    "showSkillsInSlashMenu",
+    "pullRequestLinksOpenInApp",
+    "diffIgnoreWhitespace",
+    "diffFilesCollapsed",
+    "inAppNotificationsEnabled",
+    "androidBackgroundConnectionEnabled",
+    "boringThreadListMultilineRows",
+    "loadBalancingEnabled",
+  ] as const) {
+    if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
+  if (
+    typeof parsed.loadBalancingWeights === "object" &&
+    parsed.loadBalancingWeights !== null &&
+    !Array.isArray(parsed.loadBalancingWeights)
+  ) {
+    preferences.loadBalancingWeights = Object.fromEntries(
+      Object.entries(parsed.loadBalancingWeights).filter(
+        ([id, weight]) =>
+          id.trim().length > 0 &&
+          typeof weight === "number" &&
+          Number.isInteger(weight) &&
+          weight >= 0 &&
+          weight <= 100,
+      ),
+    );
+  }
+  for (const key of [
+    "fontFamilySans",
+    "fontFamilyComposer",
+    "fontFamilyCode",
+    "fontFamilyTerminal",
+  ] as const) {
+    if (isFontFamilyPreference(parsed[key])) preferences[key] = parsed[key];
+  }
+  if (isTimestampFormat(parsed.timestampFormat))
+    preferences.timestampFormat = parsed.timestampFormat;
+  if (isAppearanceContrast(parsed.appearanceContrast)) {
+    preferences.appearanceContrast = parsed.appearanceContrast;
+  }
+  if (isEffortDisplay(parsed.effortDisplay)) preferences.effortDisplay = parsed.effortDisplay;
+  if (isDiffColorScheme(parsed.diffColorScheme))
+    preferences.diffColorScheme = parsed.diffColorScheme;
+  if (isBrowserSearchEngine(parsed.browserSearchEngine))
+    preferences.browserSearchEngine = parsed.browserSearchEngine;
+  if (isBrowserCustomSearchUrl(parsed.browserCustomSearchUrl))
+    preferences.browserCustomSearchUrl = parsed.browserCustomSearchUrl;
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;
   }

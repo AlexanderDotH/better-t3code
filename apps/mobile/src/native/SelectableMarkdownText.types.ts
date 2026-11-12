@@ -76,6 +76,15 @@ export interface MarkdownLinkCustomization {
 }
 
 export interface SelectableMarkdownTextProps {
+  readonly onSelectionAction?: (
+    selection: {
+      readonly text: string;
+      readonly selection: { readonly start: number; readonly end: number };
+      readonly markdown?: string;
+    },
+    action: "quote" | "comment",
+  ) => void;
+  readonly onRunCommand?: (command: string) => void;
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;

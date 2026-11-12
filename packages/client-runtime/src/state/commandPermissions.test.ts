@@ -69,33 +69,37 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
-  it.effect("requires the destination preview grant to close a browser tab", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const close = createCommandPermissions(runtime, WS_METHODS.previewClose);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(close.permissionAtom(env))).toBe(false);
-        expect((yield* close.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
-          "EnvironmentAuthorizationError",
-        );
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(false),
-            scopes: [AuthPreviewOperateScope],
-            permissions: [AuthPreviewOperateScope],
-          }),
-        );
-        expect(registry.get(close.permissionAtom(env))).toBe(true);
-        yield* close.authorize(registry, env);
-        registry.set(sessions(other), AsyncResult.success(grant(false)));
-        expect(registry.get(close.permissionAtom(other))).toBe(false);
-        expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
-          "EnvironmentAuthorizationError",
-        );
-      }),
-    ),
+  it.effect(
+    "requires the destination preview grant to close a browser tab or pick an element",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          for (const method of [WS_METHODS.previewClose, WS_METHODS.previewPickElementAt]) {
+            const close = createCommandPermissions(runtime, method);
+            registry.set(sessions(env), AsyncResult.success(grant(true)));
+            expect(registry.get(close.permissionAtom(env))).toBe(false);
+            expect((yield* close.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+              "EnvironmentAuthorizationError",
+            );
+            registry.set(
+              sessions(env),
+              AsyncResult.success({
+                ...grant(false),
+                scopes: [AuthPreviewOperateScope],
+                permissions: [AuthPreviewOperateScope],
+              }),
+            );
+            expect(registry.get(close.permissionAtom(env))).toBe(true);
+            yield* close.authorize(registry, env);
+            registry.set(sessions(other), AsyncResult.success(grant(false)));
+            expect(registry.get(close.permissionAtom(other))).toBe(false);
+            expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+              "EnvironmentAuthorizationError",
+            );
+          }
+        }),
+      ),
   );
 
   it.effect("requires the destination settings grant to run storage cleanup", () =>
@@ -147,6 +151,20 @@ describe("command permissions", () => {
 
   it.effect.each([
     WS_METHODS.scheduledTasksDelete,
+    WS_METHODS.skillsCreate,
+    WS_METHODS.skillsUpdate,
+    WS_METHODS.skillsRename,
+    WS_METHODS.skillsDelete,
+    WS_METHODS.skillsSetEnabled,
+    WS_METHODS.skillsImportSources,
+    WS_METHODS.mcpCreate,
+    WS_METHODS.mcpUpdate,
+    WS_METHODS.mcpDelete,
+    WS_METHODS.mcpSetEnabled,
+    WS_METHODS.mcpSetProviderEnabled,
+    WS_METHODS.mcpImportCursorJson,
+    WS_METHODS.mcpImportSources,
+    WS_METHODS.mcpRuntimeAction,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ])("uses the target grant for both availability and execution of %s", (method) =>

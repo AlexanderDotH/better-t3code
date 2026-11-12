@@ -6,6 +6,8 @@ import {
 import { AppText } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { Pressable } from "react-native";
+import * as Dialog from "../../components/ui/Dialog";
 
 interface Props {
   readonly snapshot: ResponseMetrics | null;
@@ -36,14 +38,24 @@ function ResponseMetricsLabels(props: Props & { readonly nowMs?: number }) {
   return (
     <>
       {Object.entries(metrics).map(([key, metric]) => (
-        <AppText
+        <Pressable
           key={key}
+          accessibilityRole="button"
+          accessibilityLabel={translator.message("mobile.timeline.explainMetric", {
+            metric: metric.text,
+          })}
           accessibilityHint={metric.tooltip}
-          className="shrink-0 text-xs tabular-nums text-foreground-secondary"
-          numberOfLines={1}
+          hitSlop={8}
+          className="min-h-8 justify-center"
+          onPress={() => Dialog.alert(metric.text, metric.tooltip)}
         >
-          {metric.text}
-        </AppText>
+          <AppText
+            className="shrink-0 text-xs tabular-nums text-foreground-secondary"
+            numberOfLines={1}
+          >
+            {metric.text}
+          </AppText>
+        </Pressable>
       ))}
     </>
   );

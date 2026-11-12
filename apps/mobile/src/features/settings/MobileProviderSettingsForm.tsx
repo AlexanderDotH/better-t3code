@@ -9,9 +9,17 @@ import {
   type ProviderSettingsFieldModel,
   type ProviderSettingsFieldValue,
 } from "@t3tools/client-runtime/providerSettingsForm";
-import type { ServerProvider } from "@t3tools/contracts";
+import {
+  acceptsSecretReference,
+  isSecretReference,
+  isSecretSetting,
+  type ServerConfig,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import { MobileSecretValueEditor } from "./MobileProviderEnvironmentEditor";
 import { useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
+import { AgentSettingsSheet } from "./AgentSettingsSheet";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
@@ -22,7 +30,9 @@ import {
 } from "./mobile-provider-settings";
 
 interface MobileProviderSettingsFormProps {
-  readonly provider: ServerProvider;
+  readonly provider: Pick<ServerProvider, "driver" | "models">;
+  readonly config?: ServerConfig;
+  readonly commitWhileEditing?: boolean;
   readonly value: unknown;
   readonly disabled: boolean;
   readonly onChange: (config: Record<string, unknown> | undefined) => void;
@@ -46,6 +56,7 @@ function MobileSelectField(props: {
   readonly value: unknown;
   readonly disabled: boolean;
   readonly onCommit: (value: string) => void;
+  readonly commitWhileEditing?: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
   const [open, setOpen] = useState(false);
@@ -80,8 +91,13 @@ function MobileSelectField(props: {
           autoCapitalize="none"
           autoCorrect={false}
           editable={!props.disabled}
-          onChangeText={setManualDraft}
-          onBlur={() => props.onCommit(manualDraft)}
+          onChangeText={(text) => {
+            setManualDraft(text);
+            if (props.commitWhileEditing) props.onCommit(text);
+          }}
+          onEndEditing={() => {
+            if (!props.commitWhileEditing && manualDraft !== selected) props.onCommit(manualDraft);
+          }}
           placeholder={props.field.placeholder ?? translator.message("mobile.ui.modelId")}
           value={manualDraft}
           className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
@@ -96,55 +112,39 @@ function MobileSelectField(props: {
       >
         <Text className="text-base text-foreground">{displayValue}</Text>
       </Pressable>
-      <Modal
-        animationType="slide"
-        presentationStyle="pageSheet"
-        visible={open}
-        onRequestClose={() => setOpen(false)}
-      >
-        <View className="flex-1 bg-sheet">
-          <View className="flex-row items-center border-b border-border px-5 py-4">
-            <Text className="flex-1 text-xl font-t3-semibold text-foreground">
-              {props.field.label}
-            </Text>
-            <Pressable accessibilityRole="button" onPress={() => setOpen(false)}>
-              <Text className="font-t3-medium text-foreground">
-                {translator.message("common.close")}
-              </Text>
-            </Pressable>
+      {open ? (
+        <AgentSettingsSheet title={props.field.label} onClose={() => setOpen(false)}>
+          <View className="overflow-hidden rounded-[24px] bg-card">
+            {props.field.options?.map((option, index) => (
+              <Pressable
+                key={option.value}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: option.value === selected }}
+                className={
+                  index === 0
+                    ? "gap-0.5 px-4 py-3"
+                    : "gap-0.5 border-t border-border-subtle px-4 py-3"
+                }
+                onPress={() => {
+                  props.onCommit(option.value);
+                  setOpen(false);
+                }}
+              >
+                <Text className="text-base text-foreground">{option.label}</Text>
+                {option.description ? (
+                  <Text className="text-sm text-foreground-muted">{option.description}</Text>
+                ) : null}
+              </Pressable>
+            ))}
           </View>
-          <ScrollView className="flex-1" contentContainerClassName="p-5">
-            <View className="overflow-hidden rounded-[24px] bg-card">
-              {props.field.options?.map((option, index) => (
-                <Pressable
-                  key={option.value}
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: option.value === selected }}
-                  className={
-                    index === 0
-                      ? "gap-0.5 px-4 py-3"
-                      : "gap-0.5 border-t border-border-subtle px-4 py-3"
-                  }
-                  onPress={() => {
-                    props.onCommit(option.value);
-                    setOpen(false);
-                  }}
-                >
-                  <Text className="text-base text-foreground">{option.label}</Text>
-                  {option.description ? (
-                    <Text className="text-sm text-foreground-muted">{option.description}</Text>
-                  ) : null}
-                </Pressable>
-              ))}
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
+        </AgentSettingsSheet>
+      ) : null}
     </View>
   );
 }
 
 function textDraft(field: ProviderSettingsFieldModel, value: unknown): string {
+  if (field.control === "password") return "";
   if (field.control === "ordered-string-list") {
     return readProviderConfigStringArray(value, field.key, field.defaultStringArrayValue).join(
       "\n",
@@ -162,6 +162,7 @@ function MobileTextField(props: {
   readonly value: unknown;
   readonly disabled: boolean;
   readonly onCommit: (value: ProviderSettingsFieldValue) => void;
+  readonly commitWhileEditing?: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
   const resolvedDraft = textDraft(props.field, props.value);
@@ -181,6 +182,7 @@ function MobileTextField(props: {
     }));
 
   const commit = () => {
+    if (draft === resolvedDraft) return;
     if (props.field.control === "number") {
       const parsed = parseMobileNumberDraft(draft, props.field);
       if (!parsed.valid) {
@@ -211,9 +213,24 @@ function MobileTextField(props: {
         keyboardType={props.field.control === "number" ? "decimal-pad" : "default"}
         multiline={multiline}
         numberOfLines={multiline ? 4 : 1}
-        onBlur={commit}
-        onChangeText={setDraft}
-        placeholder={props.field.placeholder}
+        onEndEditing={commit}
+        onChangeText={(text) => {
+          setDraft(text);
+          if (!props.commitWhileEditing) return;
+          if (props.field.control === "number") {
+            const parsed = parseMobileNumberDraft(text, props.field);
+            props.onCommit(parsed.valid ? parsed.value : text);
+          } else
+            props.onCommit(
+              props.field.control === "ordered-string-list" ? text.split(/\r?\n/) : text,
+            );
+        }}
+        placeholder={
+          props.field.control === "password" &&
+          readProviderConfigString(props.value, props.field.key)
+            ? translator.message("mobile.agents.storedSecret")
+            : props.field.placeholder
+        }
         secureTextEntry={props.field.control === "password"}
         value={draft}
         className={
@@ -222,6 +239,20 @@ function MobileTextField(props: {
             : "rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
         }
       />
+      {props.field.control === "password" &&
+      readProviderConfigString(props.value, props.field.key) ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.disabled}
+          onPress={() => {
+            setDraft("");
+            props.onCommit("");
+          }}
+          className="py-2"
+        >
+          <Text className="text-danger-foreground">{translator.message("common.clear")}</Text>
+        </Pressable>
+      ) : null}
       {props.field.control === "ordered-string-list" ? (
         <Text className="text-xs text-foreground-muted">
           {translator.message("mobile.settings.provider.onePerLine")}
@@ -272,6 +303,7 @@ function MobileSwitchField(props: {
 
 export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProps) {
   const translator = useMobileInterfaceTranslator();
+  const [secretDraftKeys, setSecretDraftKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [configEdit, setConfigEdit] = useState<{
     readonly source: unknown;
     readonly value: unknown;
@@ -283,8 +315,26 @@ export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProp
 
   const fields = useMemo(
     () =>
-      definition ? deriveProviderSettingsFields(definition, { value: draftConfig, models }) : [],
-    [definition, draftConfig, models],
+      definition
+        ? deriveProviderSettingsFields(definition, { value: draftConfig, models }).flatMap(
+            (field) => {
+              if (
+                props.provider.driver === "acpRegistry" &&
+                readProviderConfigString(draftConfig, "source", "registry") === "local" &&
+                !["source", "commandPath"].includes(field.key)
+              )
+                return [];
+              const schema = definition.settingsSchema.fields[field.key];
+              return [
+                {
+                  ...field,
+                  ...(schema && isSecretSetting(schema) ? { control: "password" as const } : {}),
+                },
+              ];
+            },
+          )
+        : [],
+    [definition, draftConfig, models, props.provider.driver],
   );
 
   if (fields.length === 0) return null;
@@ -301,6 +351,36 @@ export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProp
         {translator.message("mobile.settings.provider.configuration")}
       </Text>
       {fields.map((field) => {
+        const schema = definition?.settingsSchema.fields[field.key];
+        if (schema && acceptsSecretReference(schema) && props.config) {
+          const raw =
+            draftConfig !== null && typeof draftConfig === "object"
+              ? (draftConfig as Record<string, unknown>)[field.key]
+              : undefined;
+          return (
+            <View key={field.key} className="gap-2">
+              <FieldLabel field={field} />
+              <MobileSecretValueEditor
+                config={props.config}
+                label={field.label}
+                value={isSecretReference(raw) || typeof raw === "string" ? raw : ""}
+                disabled={props.disabled}
+                redacted={
+                  typeof raw === "string" && raw.length > 0 && !secretDraftKeys.has(field.key)
+                }
+                onChange={(value) => {
+                  setSecretDraftKeys((keys) => new Set(keys).add(field.key));
+                  const next = {
+                    ...(draftConfig !== null && typeof draftConfig === "object" ? draftConfig : {}),
+                    [field.key]: value,
+                  };
+                  setConfigEdit({ source: props.value, value: next });
+                  props.onChange(next);
+                }}
+              />
+            </View>
+          );
+        }
         if (field.control === "switch") {
           return (
             <MobileSwitchField
@@ -320,6 +400,7 @@ export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProp
               field={field}
               value={draftConfig}
               onCommit={(value) => commit(field, value)}
+              commitWhileEditing={props.commitWhileEditing}
             />
           );
         }
@@ -330,6 +411,7 @@ export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProp
             field={field}
             value={draftConfig}
             onCommit={(value) => commit(field, value)}
+            commitWhileEditing={props.commitWhileEditing}
           />
         );
       })}

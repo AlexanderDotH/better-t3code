@@ -383,6 +383,7 @@ export interface ComposerDraft {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
+  readonly additionalModelSelections?: ReadonlyArray<ModelSelection>;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly composerMode?: ComposerMode;
@@ -424,6 +425,7 @@ export interface ComposerDraftWorkspaceSelection {
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
   | "modelSelection"
+  | "additionalModelSelections"
   | "runtimeMode"
   | "interactionMode"
   | "composerMode"
@@ -465,6 +467,7 @@ const ComposerDraftSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
+  additionalModelSelections: Schema.optional(Schema.Array(ModelSelectionSchema)),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   composerMode: Schema.optional(ComposerModeSchema),
@@ -648,6 +651,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.text.length === 0 &&
     draft.attachments.length === 0 &&
     draft.modelSelection === undefined &&
+    (draft.additionalModelSelections?.length ?? 0) === 0 &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
     draft.composerMode === undefined &&
@@ -717,6 +721,7 @@ export function decodePersistedComposerState(value: unknown): {
             key,
             isNewTaskDraftKey(key) &&
               draft.modelSelection &&
+              (draft.additionalModelSelections?.length ?? 0) === 0 &&
               draft.text.length === 0 &&
               draft.attachments.length === 0 &&
               draft.runtimeMode === undefined &&
@@ -1693,6 +1698,7 @@ export function clearComposerDraftContentState(
     context: _context,
     messageReply: _messageReply,
     modelSelection,
+    additionalModelSelections,
     workspaceSelection,
     project: _project,
     ...retained
@@ -1700,6 +1706,9 @@ export function clearComposerDraftContentState(
   const draft = {
     ...retained,
     ...(options?.clearModelSelection || modelSelection === undefined ? {} : { modelSelection }),
+    ...(options?.clearModelSelection || additionalModelSelections === undefined
+      ? {}
+      : { additionalModelSelections }),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
@@ -1864,6 +1873,7 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.messageReply === b.messageReply &&
     a.importedShareIds === b.importedShareIds &&
     a.modelSelection === b.modelSelection &&
+    a.additionalModelSelections === b.additionalModelSelections &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
     a.composerMode === b.composerMode &&

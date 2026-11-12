@@ -22,10 +22,12 @@ export function lastReviewGitSectionsAtom(environmentId: EnvironmentId, cwd: str
 
 export const reviewEnvironment = createReviewEnvironmentAtoms(connectionAtomRuntime, {
   onDiffPreviewAnswer: (target, value, registry) =>
-    Effect.sync(() =>
-      registry.set(
-        lastReviewGitSectionsAtom(target.environmentId, target.input.cwd),
-        value.sources,
-      ),
-    ),
+    target.input.ignoreWhitespace || target.input.commitSha || target.input.file
+      ? Effect.void
+      : Effect.sync(() =>
+          registry.set(
+            lastReviewGitSectionsAtom(target.environmentId, target.input.cwd),
+            value.sources,
+          ),
+        ),
 });

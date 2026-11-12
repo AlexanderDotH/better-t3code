@@ -26,6 +26,7 @@ import { importComposerContextClipboard } from "../lib/composerContextClipboard"
 import { startComposerDraftOperation } from "../state/composerDraftOperations";
 import { appAtomRegistry } from "../state/atom-registry";
 import { mobilePreferencesAtom } from "../state/preferences";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../persistence/mobile-preferences";
 import { useOpenLinkedThread } from "../features/threads/useOpenLinkedThread";
 import { useLinkedEnvironments } from "../state/peerLinks";
 import { ComposerContextSheet } from "./ComposerContextSheet";
@@ -63,6 +64,10 @@ export function ComposerEditor({
   const preferredEnterBehavior = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.composerEnterBehavior
     : undefined;
+  const richTextEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.composerRichTextEnabled ??
+      MOBILE_CLIENT_PREFERENCE_DEFAULTS.composerRichTextEnabled)
+    : MOBILE_CLIENT_PREFERENCE_DEFAULTS.composerRichTextEnabled;
   const contextHistory = createComposerDraftContextHistory();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the attachment file leases held for native text undo when the history is replaced or unmounts
   useEffect(() => () => contextHistory.dispose(), [contextHistory]);
@@ -180,6 +185,7 @@ export function ComposerEditor({
         key={hidden ? "hidden" : "visible"}
         {...props}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
+        richTextEnabled={props.richTextEnabled ?? richTextEnabled}
         onChangeText={changeText}
         readOnly={props.readOnly || importing}
         onSubmit={importing ? undefined : props.onSubmit}

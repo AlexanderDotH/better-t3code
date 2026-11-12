@@ -14,6 +14,7 @@ import {
   stepProjectThreadPreviewCount,
 } from "../projectThreadPreviewAppearance";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { ThreadListSettingsPreview } from "../components/SettingsPreviews";
 
 export function ProjectThreadPreviewCountSection() {
   const translator = useMobileInterfaceTranslator();
@@ -118,6 +119,7 @@ export function ProjectThreadPreviewCountSection() {
           ))}
         </View>
       ) : null}
+      <ThreadListSettingsPreview interactive />
     </SettingsSection>
   );
 }

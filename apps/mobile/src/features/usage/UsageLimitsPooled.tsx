@@ -22,6 +22,7 @@ import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { UsagePaceDetails } from "./UsagePaceDetails";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -334,8 +335,23 @@ function PoolWindowCard({
       })}
     </View>
   );
+  const pacing = (
+    <View>
+      {pool.columns.map(({ account, window }) =>
+        window ? (
+          <UsagePaceDetails
+            key={account.key}
+            accountLabel={accountName(account)}
+            window={window}
+            now={now}
+          />
+        ) : null,
+      )}
+    </View>
+  );
   const legend = (
     <View>
+      {pacing}
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
@@ -403,7 +419,7 @@ function PoolWindowCard({
         <View className="w-44 gap-1">{summary}</View>
         <View className="min-w-0 flex-1 gap-1">
           {bar}
-          {inlineLabels ? null : legend}
+          {inlineLabels ? pacing : legend}
         </View>
       </View>
     );

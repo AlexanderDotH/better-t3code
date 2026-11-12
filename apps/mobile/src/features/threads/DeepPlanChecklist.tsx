@@ -81,6 +81,8 @@ export function DeepPlanChecklist(props: {
   readonly maxHeight?: number;
   readonly embedded?: boolean;
   readonly onResume?: (automatic?: boolean) => Promise<void>;
+  readonly onFinalValidation?: () => Promise<void>;
+  readonly onOpenImplementation?: () => void;
   readonly resumeDisabled?: boolean;
   readonly canContinue?: boolean;
   readonly connected?: boolean;
@@ -145,15 +147,22 @@ export function DeepPlanChecklist(props: {
     ["paused", "failed", "blocked"].includes(run.phase) ||
     (props.canContinue &&
       ["collecting", "planning", "implementing", "validating"].includes(run.phase));
+  const canValidate =
+    progress.allStepsVerified &&
+    run.approval !== null &&
+    run.finalValidation.status !== "passed" &&
+    run.finalValidation.status !== "inProgress";
   const { onResume, resumeDisabled } = props;
-  const performResume = async (automatic = false) => {
-    if (!onResume || resumeDisabled || resumeInFlight.current) return;
+  const showValidationAction = canValidate && props.onFinalValidation !== undefined;
+  const performResume = async (automatic = false, validate = false) => {
+    const operation = validate ? props.onFinalValidation : onResume;
+    if (!operation || resumeDisabled || resumeInFlight.current) return;
     resumeInFlight.current = true;
     attemptedContinuation.current = continuationKey;
     setResuming(true);
     setResumeError(null);
     await Promise.resolve()
-      .then(() => onResume(automatic))
+      .then(() => (validate ? props.onFinalValidation?.() : onResume?.(automatic)))
       .catch((error: unknown) => {
         setResumeError({
           revision: run.revision,
@@ -253,7 +262,7 @@ export function DeepPlanChecklist(props: {
             tintColorClassName="accent-icon-muted"
           />
         </Pressable>
-        {resumable && props.onResume ? (
+        {showValidationAction || (resumable && props.onResume) ? (
           <Pressable
             accessibilityRole="button"
             accessibilityState={{
@@ -271,14 +280,31 @@ export function DeepPlanChecklist(props: {
                   })
                 : undefined
             }
-            onPress={() => performResume()}
+            onPress={() => performResume(false, showValidationAction)}
           >
             <Text className="text-sm font-t3-medium text-foreground">
-              {translator.message(resuming ? "chat.deepPlan.resuming" : "chat.deepPlan.resume")}
+              {translator.message(
+                resuming
+                  ? "chat.deepPlan.resuming"
+                  : showValidationAction
+                    ? "chat.deepPlan.startFinalValidation"
+                    : "chat.deepPlan.resume",
+              )}
             </Text>
           </Pressable>
         ) : null}
       </View>
+      {props.onOpenImplementation ? (
+        <Pressable
+          accessibilityRole="button"
+          className="min-h-11 justify-center px-3"
+          onPress={props.onOpenImplementation}
+        >
+          <Text className="text-sm text-primary-text">
+            {translator.message("mobile.composer.openImplementation")}
+          </Text>
+        </Pressable>
+      ) : null}
       {run.pauseReason ? (
         <Text accessibilityRole="alert" className="px-3 pb-2 text-xs text-danger">
           {run.pauseReason}
@@ -312,9 +338,9 @@ export function DeepPlanChecklist(props: {
                 {translator.message("chat.deepPlan.collectingHint")}
               </Text>
             ) : null}
-            {!plan && run.phase !== "collecting"
+            {!plan
               ? sourceAnalysis
-                  .filter((entry) => !entry.complete && !entry.failed)
+                  .filter((entry) => !entry.failed)
                   .map(({ source, label }) => (
                     <View key={source.sourceId} className="gap-1">
                       <Text className="text-xs text-foreground">{source.threadTitle}</Text>

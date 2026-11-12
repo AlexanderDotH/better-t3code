@@ -15,6 +15,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { NewThreadSettingsSection, WorkingSectionSettings } from "./ThreadSettingsSections";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { MobileClientPreferenceRows } from "./MobileClientPreferenceRows";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
   readonly mode: SidebarProjectGroupingMode;
@@ -90,6 +91,7 @@ export function SettingsProjectGroupingRouteScreen() {
         </SettingsSection>
         <WorkingSectionSettings />
         <NewThreadSettingsSection />
+        <MobileClientPreferenceRows group="general" />
       </ScrollView>
     </SettingsScreen>
   );

@@ -4,7 +4,7 @@ export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
 export function navigationCustomizationAvailable(
   registeredSections: number = NAVIGATION_TAB_ORDER.length,
 ) {
-  return registeredSections > 4;
+  return registeredSections > 1;
 }
 
 function isNavigationTab(value: unknown): value is NavigationTab {
@@ -31,7 +31,10 @@ export function moveNavigationTab(
 }
 
 export function resolveHiddenNavigationTabs(saved?: readonly unknown[]): readonly NavigationTab[] {
-  return [...new Set(saved?.filter(isNavigationTab) ?? [])];
+  const hidden = [...new Set(saved?.filter(isNavigationTab) ?? [])];
+  return hidden.length === NAVIGATION_TAB_ORDER.length
+    ? hidden.filter((tab) => tab !== "threads")
+    : hidden;
 }
 
 export function toggleNavigationTabVisibility(
@@ -39,6 +42,7 @@ export function toggleNavigationTabVisibility(
   tab: NavigationTab,
 ) {
   const hidden = resolveHiddenNavigationTabs(saved);
+  if (!hidden.includes(tab) && hidden.length === NAVIGATION_TAB_ORDER.length - 1) return hidden;
   return hidden.includes(tab) ? hidden.filter((candidate) => candidate !== tab) : [...hidden, tab];
 }
 

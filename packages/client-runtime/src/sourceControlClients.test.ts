@@ -1,7 +1,13 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
+import {
+  appSignInTargetForRemote,
+  sourceControlClients,
+  hostTokenSettingsPatch,
+  normalizedCredentialHost,
+  directCredentialSettingsPatch,
+} from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 const parse = (url: string) => {
@@ -384,5 +390,60 @@ describe("appSignInTargetForRemote", () => {
   it("skips hosts the app is not registered on", () => {
     expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
+  });
+});
+
+describe("source-control credential patches", () => {
+  it("replaces one host token, retaining other hosts' redaction markers", () => {
+    const tokens = { "github.com": "configured-marker", "ghe.example.test:8443": "other-marker" };
+    expect(
+      hostTokenSettingsPatch({
+        kind: "github",
+        host: " GITHUB.COM ",
+        token: " replacement ",
+        tokens,
+      }),
+    ).toEqual({
+      sourceControlHosts: { github: { tokens: { ...tokens, "github.com": "replacement" } } },
+    });
+    expect(
+      hostTokenSettingsPatch({ kind: "github", host: "github.com", token: "", tokens }),
+    ).toEqual({ sourceControlHosts: { github: { tokens: { ...tokens, "github.com": "" } } } });
+    expect(tokens["github.com"]).toBe("configured-marker");
+  });
+
+  it.each([
+    "https://github.com",
+    "github.com/path",
+    "user@github.com",
+    "github.com?token=x",
+    "github.com#token=x",
+    "git hub.com",
+    "github.com:99999",
+    "",
+  ])("rejects invalid credential host %s", (host) => {
+    expect(normalizedCredentialHost(host)).toBeNull();
+    expect(hostTokenSettingsPatch({ kind: "github", host, token: "value", tokens: {} })).toBeNull();
+  });
+
+  it("patches only edited direct credential fields and validates Bitbucket email", () => {
+    expect(
+      directCredentialSettingsPatch("bitbucket", {
+        email: " user@example.test ",
+        apiToken: " token ",
+      }),
+    ).toEqual({
+      sourceControlHosts: { bitbucket: { email: "user@example.test", apiToken: "token" } },
+    });
+    expect(directCredentialSettingsPatch("bitbucket", { accessToken: "" })).toEqual({
+      sourceControlHosts: { bitbucket: { accessToken: "" } },
+    });
+    expect(directCredentialSettingsPatch("gitcafe", { token: " token " })).toEqual({
+      sourceControlHosts: { gitcafe: { token: "token" } },
+    });
+    expect(directCredentialSettingsPatch("bitbucket", { email: "not-email" })).toBeNull();
+    expect(directCredentialSettingsPatch("bitbucket", { unsupportedField: "token" })).toBeNull();
+    expect(directCredentialSettingsPatch("gitcafe", {})).toBeNull();
+    expect(directCredentialSettingsPatch("unknown", { token: "value" })).toBeNull();
   });
 });

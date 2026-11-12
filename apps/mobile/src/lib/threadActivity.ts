@@ -47,6 +47,7 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItem,
+  OrchestrationV2PlanStep,
   OrchestrationV2UserMessageInputIntent,
   RunAttemptId,
   ScheduledTaskId,
@@ -80,6 +81,29 @@ import { currentInterfaceTranslator } from "../localization/currentInterfaceTran
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
+
+export function deriveThreadTaskList(
+  items: ReadonlyArray<
+    Pick<OrchestrationV2TurnItem, "type" | "id"> & {
+      readonly steps?: ReadonlyArray<OrchestrationV2PlanStep>;
+    }
+  >,
+) {
+  const list = items.findLast((item) => item.type === "todo_list");
+  const steps = list?.steps;
+  if (list?.type !== "todo_list" || !steps?.length) return null;
+  return {
+    id: list.id,
+    steps,
+    currentStep: (
+      steps.find((step) => step.status === "running") ??
+      steps.find((step) => step.status === "pending") ??
+      steps.at(-1)!
+    ).text,
+    completed: steps.filter((step) => step.status === "completed").length,
+    total: steps.length,
+  };
+}
 
 export interface ThreadFeedActivity {
   readonly id: string;
@@ -125,6 +149,7 @@ export interface ThreadFeedActivity {
 }
 
 export interface ThreadFeedMessage {
+  readonly reasoning?: ReadonlyArray<ThreadFeedActivity>;
   readonly replyTo?: import("@t3tools/contracts").MessageReplyReference;
   readonly replyTopicId?: import("@t3tools/contracts").SubagentId;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
@@ -261,10 +286,12 @@ function compactWorkEntryText(value: string): string {
 
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (entry.itemType === "fork") return entry.label;
-  if (expanded && entry.itemType === "reasoning")
+  if (entry.itemType === "reasoning") {
+    if (!expanded) return compactWorkEntryText(liveThoughtLine(entry.detail ?? "")) || entry.label;
     return entry.toolLifecycleStatus === "inProgress"
       ? currentInterfaceTranslator().message("chat.timeline.thinking")
       : currentInterfaceTranslator().message("chat.timeline.thought");
+  }
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -868,7 +895,7 @@ function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): s
   if (activity.workEntry.itemType === "reasoning")
     return expanded
       ? currentInterfaceTranslator().message("chat.timeline.thought")
-      : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
+      : compactWorkEntryText(liveThoughtLine(activity.workEntry.detail ?? "")) || "Thought";
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();

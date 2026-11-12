@@ -1,5 +1,6 @@
 import { Fragment, isValidElement, useMemo, type ReactNode } from "react";
-import { markdownCodeBlocks } from "./markdownCodeBlocks";
+import { markdownActionBlocks } from "./markdownActionBlocks";
+import { MarkdownTableActions, MarkdownTerminalAction } from "./MarkdownBlockActions";
 import { Platform } from "react-native";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
@@ -28,16 +29,28 @@ export function SelectableMarkdownText(props: SelectableMarkdownTextProps) {
     Platform.OS === "android"
       ? { selectionColor, selectionHandleColor, ...props.textStyle }
       : props.textStyle;
-  const blocks = useMemo(
-    () => (props.renderCodeBlock ? markdownCodeBlocks(props.markdown) : []),
-    [props.markdown, props.renderCodeBlock],
-  );
-  if (!props.renderCodeBlock || blocks.length === 0)
-    return <MobileEnrichedMarkdownText {...props} textStyle={textStyle} />;
+  const blocks = useMemo(() => markdownActionBlocks(props.markdown), [props.markdown]);
+  if (blocks.length === 0) return <MobileEnrichedMarkdownText {...props} textStyle={textStyle} />;
   const parts: ReactNode[] = [];
   let offset = 0;
   for (const block of blocks) {
-    const rendered = props.renderCodeBlock(block.request);
+    const rendered =
+      block.kind === "table" ? (
+        <MarkdownTableActions
+          markdown={block.markdown}
+          csv={block.csv}
+          textProps={{ ...props, textStyle }}
+        />
+      ) : (
+        (props.renderCodeBlock?.(block.request) ??
+        (props.onRunCommand && block.runnable ? (
+          <MarkdownTerminalAction
+            markdown={block.markdown}
+            command={block.request.code.trim()}
+            textProps={{ ...props, textStyle }}
+          />
+        ) : null))
+      );
     if (!isValidElement(rendered)) continue;
     if (block.start > offset)
       parts.push(
@@ -48,7 +61,7 @@ export function SelectableMarkdownText(props: SelectableMarkdownTextProps) {
           textStyle={textStyle}
         />,
       );
-    parts.push(<Fragment key={`code:${block.start}`}>{rendered}</Fragment>);
+    parts.push(<Fragment key={`block:${block.start}`}>{rendered}</Fragment>);
     offset = block.end;
   }
   if (offset === 0) return <MobileEnrichedMarkdownText {...props} textStyle={textStyle} />;

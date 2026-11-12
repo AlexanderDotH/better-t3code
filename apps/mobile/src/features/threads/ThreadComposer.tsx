@@ -8,7 +8,11 @@ import { activeMobileHarnessSession } from "../../state/active-harness-session";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useEnvironmentQuery } from "../../state/query";
 import { resolveMobileResourceProtectionStatus } from "./resource-protection-status";
-import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
+import {
+  deriveLatestContextWindowSnapshot,
+  shouldOfferResumeCompaction,
+  shouldCompactBeforeSend,
+} from "@t3tools/client-runtime/context-window";
 import { resolveDeepPlanningAvailability } from "@t3tools/client-runtime/deep-planning";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { resumeMobileDeepPlan } from "../../state/deep-planning";
@@ -18,8 +22,13 @@ import { ThreadReplyTopicStatus } from "./ThreadReplyTopicStatus";
 import {
   getProviderInteractionMode,
   resolveComposerMode,
+  selectDurableDeepPlan,
 } from "@t3tools/client-runtime/deep-planning";
-import { resolveBetterT3FeatureFlag, type ComposerMode } from "@t3tools/contracts";
+import {
+  resolveBetterT3FeatureFlag,
+  resolveIdleCompaction,
+  type ComposerMode,
+} from "@t3tools/contracts";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadMessageReplies } from "../../state/use-thread-message-replies";
 import { updateComposerDraftSettings } from "../../state/use-composer-drafts";
@@ -61,7 +70,15 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { I18nManager, Keyboard, Platform, ScrollView, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
@@ -92,10 +109,11 @@ import {
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
+  sameComposerDraftState,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
-import { useProject, useVisibleThreadShells } from "../../state/entities";
+import { useProject, useVisibleThreadShells, useThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -154,6 +172,18 @@ import {
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { ComposerDraftLibrary } from "./ComposerDraftLibrary";
+import { composerModeAvailability } from "./composer-mode-availability";
+import { parseMobileSideChatCommand, useComposerSideChat } from "./use-composer-side-chat";
+import { useNowMinuteMs } from "../../lib/clock";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
+import { ThreadDetailSheet } from "./ThreadDetailSheet";
+import { DeepPlanReviewCard } from "./DeepPlanReviewCard";
+import { ComposerPlanBanner } from "./ComposerPlanBanner";
+import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import { formatDeepPlanForDisplay } from "@t3tools/client-runtime/deep-planning";
+import { ComposerContextWindowPicker } from "./ComposerContextWindowPicker";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
@@ -515,7 +545,20 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ? selectedProjection.projection
       : null;
   const contextSnapshot = projection ? deriveLatestContextWindowSnapshot(projection) : null;
-  const deepPlan = projection?.thread.deepPlan;
+  const threadShells = useThreadShells();
+  const projectedThread = projection?.thread;
+  const deepPlan = useMemo(
+    () =>
+      selectDurableDeepPlan(
+        projectedThread
+          ? { ...projectedThread, environmentId: props.environmentId }
+          : props.selectedThread,
+        threadShells,
+      ),
+    [projectedThread, props.selectedThread, props.environmentId, threadShells],
+  );
+  const [reviewRunId, setReviewRunId] = useState<string | null>(null);
+  const closeDeepPlanReview = useCallback(() => setReviewRunId(null), [setReviewRunId]);
   const translator = useMobileInterfaceTranslator();
   const activeHarness = activeMobileHarnessSession(
     props.isDraft ? null : props.selectedThread.id,
@@ -683,9 +726,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const selectedProviderStatus = (() => {
     if (!props.serverConfig) return null;
     return (
-      props.serverConfig.providers.find(
-        (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
-      ) ?? null
+      props.serverConfig.providers.find((p) => p.instanceId === currentModelSelection.instanceId) ??
+      null
     );
   })();
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
@@ -727,6 +769,45 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   };
 
   const mentionableEnvironments = useMentionableEnvironments();
+  const unavailableModes = composerModeAvailability(
+    {
+      provider: selectedProviderStatus,
+      capabilities: props.serverConfig?.environment.capabilities,
+      connected: props.connectionState === "connected",
+      planningEnabled: props.onUpdateInteractionMode !== undefined,
+      multipleModels: draft.additionalModelSelections?.some(
+        (selection) =>
+          selection.instanceId !== currentModelSelection.instanceId ||
+          selection.model !== currentModelSelection.model,
+      ),
+    },
+    translator,
+  );
+  const sideChatsAvailable =
+    !props.isDraft &&
+    !queuedEdit &&
+    !draft.messageReply &&
+    props.canOperateThread &&
+    props.connectionState === "connected" &&
+    props.serverConfig?.environment.capabilities.sideChats === true &&
+    props.selectedThread.lineage.sideChat !== true &&
+    props.selectedThread.lineage.relationshipToParent !== "subagent";
+  const openSideChat = useComposerSideChat({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    available: sideChatsAvailable,
+  });
+  const startSideChat = async (prompt?: string) => {
+    try {
+      return await openSideChat(prompt);
+    } catch (error) {
+      Dialog.alert(
+        translator.message("mobile.composer.sideFailed"),
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
+  };
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
     ownerKey: composerDraftKey,
@@ -743,13 +824,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
     hasThread: !props.isDraft,
+    sideChatAvailable: sideChatsAvailable,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
-    onUpdateComposerMode: draft.messageReply ? undefined : setComposerMode,
-    onUpdateInteractionMode:
-      selectedProviderStatus?.showInteractionModeToggle === false
-        ? undefined
-        : props.onUpdateInteractionMode,
+    onUpdateComposerMode:
+      draft.messageReply || unavailableModes["deep-plan"] ? undefined : setComposerMode,
+    onUpdateInteractionMode: unavailableModes.plan ? undefined : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
@@ -770,6 +850,73 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     voiceInput.blocksSubmission ||
     voiceDictation.active ||
     replies.sending;
+  const compactThread = useAtomCommand(serverEnvironment.compactThread, { reportFailure: false });
+  const canCompactThread = useAtomValue(
+    serverEnvironment.compactThread.permissionAtom(props.environmentId),
+  );
+  const [compacting, setCompacting] = useState(false);
+  const compactionInFlight = useRef(false);
+  const compactOffered =
+    !props.isDraft &&
+    currentModelSelection.instanceId === props.selectedThread.modelSelection.instanceId &&
+    selectedProviderStatus?.slashCommands.some((command) => command.name === "compact");
+  const compactDisabledReason =
+    !compactOffered ||
+    !canCompactThread ||
+    props.connectionState !== "connected" ||
+    props.activeThreadBusy ||
+    !props.hasCompactableConversation ||
+    isSubmissionLocked ||
+    compacting ||
+    queuedEdit ||
+    activeHarness
+      ? translator.message("mobile.composer.compactUnavailable")
+      : null;
+  const performCompact = async () => {
+    if (compactDisabledReason || compactionInFlight.current) return false;
+    compactionInFlight.current = true;
+    setCompacting(true);
+    return await (async () => {
+      const result = await compactThread({
+        environmentId: props.environmentId,
+        input: { threadId: props.selectedThread.id },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return true;
+    })()
+      .catch((error) => {
+        Dialog.alert(
+          translator.message("mobile.composer.compactFailed"),
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      })
+      .finally(() => {
+        compactionInFlight.current = false;
+        setCompacting(false);
+      });
+  };
+  const now = useNowMinuteMs();
+  const [keepHistoryFor, setKeepHistoryFor] = useState<string | null>(null);
+  const historyScope = JSON.stringify([composerDraftKey, contextSnapshot?.updatedAt]);
+  const keepFullHistory = keepHistoryFor === historyScope;
+  const offerCompaction =
+    compactDisabledReason === null &&
+    !draft.messageReply &&
+    props.queueCount === 0 &&
+    composerMode !== "deep-plan" &&
+    contextSnapshot != null &&
+    props.serverConfig != null &&
+    resolveIdleCompaction(props.serverConfig.settings, currentModelSelection.instanceId) !==
+      "off" &&
+    shouldOfferResumeCompaction({
+      provider: selectedProviderStatus?.driver,
+      usedTokens: contextSnapshot.usedTokens,
+      updatedAt: contextSnapshot.updatedAt,
+      promptCacheTtlMs: projection?.providerTurns.findLast((turn) => turn.tokenUsage)?.tokenUsage
+        ?.promptCacheTtlMs,
+      now: new Date(now).toISOString(),
+    });
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
@@ -811,7 +958,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ? translator.message("mobile.ui.attachingPastedText")
       : null) ??
     attachmentBlockReason ??
-    (composerMode === "deep-plan" && !draft.messageReply
+    (composerMode === "deep-plan" &&
+    !draft.messageReply &&
+    !parseMobileSideChatCommand(draftMessage)
       ? resolveDeepPlanningAvailability({
           capabilities: props.serverConfig?.environment.capabilities,
           provider: selectedProviderStatus,
@@ -899,17 +1048,44 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       return (
         pendingPastedTextAttachmentCountRef.current === 0 &&
         pendingNativeImagePasteCountRef.current === 0 &&
-        draft.text === draftAtSend.text &&
-        draft.attachments.length === draftAtSend.attachments.length &&
-        draft.attachments.every(
-          (attachment, index) => attachment.id === draftAtSend.attachments[index]?.id,
-        )
+        sameComposerDraftState(draft, draftAtSend)
       );
     };
+    const sideCommand =
+      !draftAtSend.messageReply && !queuedEdit
+        ? parseMobileSideChatCommand(draftAtSend.text)
+        : null;
+    if (sideCommand) {
+      await (async () => {
+        if (!sideChatsAvailable)
+          Dialog.alert(translator.message("mobile.composer.sideUnavailable"));
+        else if (
+          draftAtSend.attachments.length ||
+          draftAtSend.context ||
+          draftAtSend.voiceFileReferences?.length
+        )
+          Dialog.alert(translator.message("mobile.composer.sideTextOnly"));
+        else if (await startSideChat(sideCommand.prompt)) {
+          if (stillSendable()) onChangeDraftMessage("");
+        }
+      })().finally(() => {
+        inFlightThreadIdsRef.current.delete(threadKey);
+      });
+      return;
+    }
+    const compactBeforeSend = shouldCompactBeforeSend({
+      offered: offerCompaction,
+      keepFullHistory,
+      text: draftAtSend.text,
+    });
+    if (compactBeforeSend && (!(await performCompact()) || !stillSendable())) {
+      inFlightThreadIdsRef.current.delete(threadKey);
+      return;
+    }
     const sent = await settlePromise(() =>
       draftAtSend.messageReply
         ? replies.sendReply(draftAtSend)
-        : onSendMessage(followUp, stillSendable),
+        : onSendMessage(compactBeforeSend ? "queue" : followUp, stillSendable),
     );
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
@@ -940,6 +1116,44 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         option.selection.instanceId === currentModelSelection.instanceId &&
         option.selection.model === currentModelSelection.model,
     ) ?? null;
+  const proposedPlan = projection?.plans.findLast(
+    (plan) =>
+      plan.kind === "proposed_plan" && (plan.status === "active" || plan.status === "draft"),
+  );
+  const readyPlanMarkdown = useMemo(
+    () =>
+      deepPlan?.phase === "awaitingApproval" && deepPlan.plan
+        ? formatDeepPlanForDisplay(deepPlan, translator)
+        : composerMode === "plan" && proposedPlan?.kind === "proposed_plan"
+          ? proposedPlan.markdown
+          : null,
+    [deepPlan, translator, composerMode, proposedPlan],
+  );
+  const ownsDeepPlanContinuation =
+    !deepPlan?.approval || deepPlan.approval.implementationThreadId === props.selectedThread.id;
+  const resumeDeepPlan = async (automatic = false) => {
+    if (
+      !deepPlan ||
+      !props.canOperateThread ||
+      !ownsDeepPlanContinuation ||
+      props.activeThreadBusy ||
+      props.connectionState !== "connected"
+    )
+      return;
+    await resumeMobileDeepPlan(props.environmentId, deepPlan, {
+      automatic,
+      projectId: props.selectedThread.projectId,
+      threadId: props.selectedThread.id,
+      fallbackModelSelection: currentModelSelection,
+      runtimeMode: props.selectedThread.runtimeMode,
+      providers: props.serverConfig?.providers,
+      idleGuard: {
+        latestRunId: projection?.runs.at(-1)?.id ?? null,
+        latestUserMessageId:
+          projection?.messages.findLast((message) => message.role === "user")?.id ?? null,
+      },
+    });
+  };
   const openSettings = () => {
     settingsSheetPresentation.open();
   };
@@ -1044,6 +1258,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           iconOnly={!compactEditor.isExpanded}
           size={usesLargeControls ? "large" : "regular"}
           onChange={setComposerMode}
+          unavailable={unavailableModes}
         />
       ) : null}
       <ComposerModelControl
@@ -1061,6 +1276,16 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         iconOnly={!compactEditor.isExpanded}
         onPress={openSettings}
       />
+      {!AsyncResult.isSuccess(preferencesResult) ||
+      preferencesResult.value.contextWindowMeterEnabled !== false ? (
+        <ComposerContextWindowPicker
+          draftKey={composerDraftKey}
+          selection={currentModelSelection}
+          modelOption={currentModelOption}
+          provider={selectedProviderStatus?.driver}
+          disabled={isSubmissionLocked || !props.canOperateThread}
+        />
+      ) : null}
     </View>
   );
 
@@ -1151,38 +1376,116 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             threadId={props.selectedThread.id}
           />
         ) : null}
+        {offerCompaction ? (
+          <View className="mx-3 mb-2 gap-2 rounded-2xl border border-border p-3">
+            <Text className="text-sm text-foreground-muted">
+              {translator.message("mobile.composer.compactBeforeSend", {
+                tokens: translator.number(contextSnapshot!.usedTokens),
+              })}
+            </Text>
+            <View className="flex-row items-center justify-between gap-3">
+              <Text className="text-sm text-foreground">
+                {translator.message("mobile.composer.keepFullHistory")}
+              </Text>
+              <ThemedSwitch
+                accessibilityLabel={translator.message("mobile.composer.keepFullHistory")}
+                value={keepFullHistory}
+                onValueChange={(keep) => setKeepHistoryFor(keep ? historyScope : null)}
+              />
+            </View>
+          </View>
+        ) : null}
+        {!queuedEdit && !draft.messageReply ? (
+          <View className="items-end px-2">
+            <ComposerDraftLibrary
+              draftKey={composerDraftKey}
+              environmentId={props.environmentId}
+              disabled={isSubmissionLocked}
+              messages={projection?.messages ?? []}
+            />
+          </View>
+        ) : null}
         {contextSnapshot &&
         (!AsyncResult.isSuccess(preferencesResult) ||
           preferencesResult.value.contextWindowMeterEnabled !== false) ? (
           <View className="items-end px-3">
-            <ThreadContextMeter snapshot={contextSnapshot} />
+            <ThreadContextMeter
+              snapshot={contextSnapshot}
+              onCompact={compactOffered ? () => void performCompact() : undefined}
+              compactDisabledReason={compactDisabledReason}
+            />
           </View>
         ) : null}
-        {composerMode === "deep-plan" && deepPlan ? (
+        {deepPlan ? (
           <DeepPlanChecklist
             latestRunId={projection?.runs.at(-1)?.id ?? null}
             run={deepPlan}
             environmentId={props.environmentId}
             threadId={props.selectedThread.id}
             connected={props.connectionState === "connected"}
-            canContinue={!props.activeThreadBusy}
-            resumeDisabled={props.connectionState !== "connected" || props.activeThreadBusy}
-            onResume={(automatic) =>
-              resumeMobileDeepPlan(props.environmentId, deepPlan, {
-                automatic,
-                projectId: props.selectedThread.projectId,
-                threadId: props.selectedThread.id,
-                fallbackModelSelection: props.selectedThread.modelSelection,
-                runtimeMode: props.selectedThread.runtimeMode,
-                providers: props.serverConfig?.providers,
-                idleGuard: {
-                  latestRunId: projection?.runs.at(-1)?.id ?? null,
-                  latestUserMessageId:
-                    projection?.messages.findLast((message) => message.role === "user")?.id ?? null,
-                },
-              })
+            canContinue={!props.activeThreadBusy && ownsDeepPlanContinuation}
+            resumeDisabled={
+              props.connectionState !== "connected" ||
+              props.activeThreadBusy ||
+              !props.canOperateThread ||
+              !ownsDeepPlanContinuation
+            }
+            onResume={resumeDeepPlan}
+            onFinalValidation={() => resumeDeepPlan()}
+            onOpenImplementation={
+              deepPlan.approval && !ownsDeepPlanContinuation
+                ? () =>
+                    navigation.dispatch(
+                      StackActions.push("Thread", {
+                        environmentId: String(props.environmentId),
+                        threadId: String(deepPlan.approval!.implementationThreadId),
+                      }),
+                    )
+                : undefined
             }
           />
+        ) : null}
+        {readyPlanMarkdown && !props.activeThreadBusy ? (
+          <ComposerPlanBanner
+            markdown={readyPlanMarkdown}
+            title={
+              deepPlan?.phase === "awaitingApproval"
+                ? (deepPlan.plan?.goal ?? null)
+                : proposedPlanTitle(readyPlanMarkdown)
+            }
+            deepPlan={deepPlan?.phase === "awaitingApproval"}
+            modelSelection={currentModelSelection}
+            descriptors={resolveProviderOptionDescriptors({
+              capabilities: currentModelOption?.capabilities,
+              selections: currentModelSelection.options,
+            })}
+            autoReasoningEffort={threadAutoReasoningEffort(
+              currentModelSelection,
+              projection?.runs.at(-1),
+            )}
+          />
+        ) : null}
+        {deepPlan?.plan ? (
+          <View className="px-3 pb-2">
+            <Button
+              label={translator.message("mobile.composer.reviewDeepPlan")}
+              tone="deep-plan"
+              onPress={() => setReviewRunId(deepPlan.id)}
+            />
+          </View>
+        ) : null}
+        {deepPlan?.plan && reviewRunId === deepPlan.id ? (
+          <ThreadDetailSheet
+            title={translator.message("chat.deepPlan.label")}
+            onClose={closeDeepPlanReview}
+          >
+            <DeepPlanReviewCard
+              run={deepPlan}
+              environmentId={props.environmentId}
+              workspaceRoot={props.projectCwd}
+              onActionComplete={closeDeepPlanReview}
+            />
+          </ThreadDetailSheet>
         ) : null}
         {draft.messageReply ? (
           <MessageReplyPreview

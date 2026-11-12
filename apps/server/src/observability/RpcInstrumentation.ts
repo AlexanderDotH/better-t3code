@@ -92,6 +92,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.terminalRestart]: "terminal",
   [WS_METHODS.previewNavigate]: "preview",
   [WS_METHODS.previewRefresh]: "preview",
+  [WS_METHODS.previewPickElementAt]: "preview",
   [WS_METHODS.previewAutomationConnect]: "preview-automation",
   [WS_METHODS.previewAutomationRespond]: "preview-automation",
   [WS_METHODS.previewAutomationFocusHost]: "preview-automation",

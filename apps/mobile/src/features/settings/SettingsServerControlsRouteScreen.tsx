@@ -1,5 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
+import { BrowserSearchSettings } from "../browser/BrowserSearchSettings";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -45,9 +46,22 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { SourceControlWritingSettings } from "./components/SourceControlWritingSettings";
+import { SettingsTextFieldSection } from "./components/SettingsTextFieldSection";
+import {
+  buildBackgroundActivityProfilePatch,
+  uniformBackgroundActivityProfile,
+  planMobileScopedSettingsTransform,
+} from "./server-controls-settings";
+import type { BackgroundActivityProfile } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+
+import { SnoozePresetsSettings } from "./SnoozePresetsSettings";
+import { WorktreeCleanupSettings, StorageRetentionSettings } from "./StorageCleanupSettings";
+import { BackgroundActivityOverrides } from "./BackgroundActivityOverrides";
+import { ProjectSettingsSelect } from "./ProjectSettingsFields";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
@@ -66,9 +80,20 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "enableAgentBrowserAccess",
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
+    "sidebarAutoSettleKeepPullRequests",
+    "threadTitleInstructions",
   ],
-  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
+  "source-control": [
+    "pullRequestMergeMethod",
+    "defaultAutoPull",
+    "removeAgentCreditsOnMerge",
+    "sourceControlWritingStyle",
+    "sourceControlWriterModelSelection",
+    "reviewGuideModelSelection",
+    "reviewGuideInstructions",
+  ],
   worktrees: [
+    "worktreeCleanup",
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
     "branchNamingMode",
@@ -77,6 +102,24 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   ],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
+
+const BACKGROUND_PROFILES = [
+  [
+    "balanced",
+    "settings.panels.background.profile.balanced",
+    "settings.panels.background.profile.balancedDescription",
+  ],
+  [
+    "performance",
+    "settings.panels.background.profile.performance",
+    "settings.panels.background.profile.performanceDescription",
+  ],
+  [
+    "battery-saver",
+    "settings.panels.background.profile.batterySaver",
+    "settings.panels.background.profile.batterySaverDescription",
+  ],
+] as const satisfies ReadonlyArray<readonly [BackgroundActivityProfile, string, string]>;
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
   readonly mode: WorktreeSubmodules | null;
@@ -190,6 +233,7 @@ const STREAMING_CHOICES: ReadonlyArray<{
 const AUTO_SETTLE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoSettleKeepPullRequests",
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
 ]);
@@ -314,6 +358,29 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       queuedPatch.current = null;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
+    });
+  };
+  const writeEach = (build: (settings: ServerSettings) => ServerSettingsPatch) => {
+    if (
+      writeInFlight.current ||
+      targets.length === 0 ||
+      !targets.every((target) =>
+        readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
+      )
+    )
+      return;
+    const writes = planMobileScopedSettingsTransform(targets, projectSelected, build);
+    if (writes.length === 0) return;
+    writeInFlight.current = true;
+    setPendingTargets(targets);
+    setPendingWrites((count) => count + 1);
+    void writeSettings(targets, writes).finally(() => {
+      writeInFlight.current = false;
+      setPendingTargets(null);
+      setPendingWrites((count) => count - 1);
+      const queued = queuedPatch.current;
+      queuedPatch.current = null;
+      if (queued?.key === targetsKey) write(queued.patch);
     });
   };
   const disabled = !canWriteSettings || pendingWrites > 0 || !hasConnectedSelection;
@@ -457,7 +524,39 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
                   </SettingsSection>
+                  <BrowserSearchSettings />
+                  <SettingsSection title={translator.message("mobile.projects.scripts.title")}>
+                    <SettingsRow
+                      icon="terminal"
+                      label={translator.message("mobile.projects.scripts.title")}
+                      target="SettingsProjectScripts"
+                    />
+                  </SettingsSection>
                   <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+                  {!projectSelected ? (
+                    <SnoozePresetsSettings
+                      key={`${targetsKey}:${JSON.stringify(reference.settings.snoozePresets)}`}
+                      presets={reference.settings.snoozePresets}
+                      disabled={disabledFor("snoozePresets")}
+                      onSave={(snoozePresets) => write({ snoozePresets })}
+                    />
+                  ) : null}
+                  <SettingsTextFieldSection
+                    key={targetsKey}
+                    title={translator.message("mobile.ui.threadTitles")}
+                    footer={
+                      managed("threadTitleInstructions") ??
+                      translator.message("mobile.ui.threadTitleInstructionsDescription")
+                    }
+                    label={translator.message("mobile.ui.threadTitleInstructions")}
+                    placeholder={translator.message("mobile.ui.threadTitleInstructionsPlaceholder")}
+                    mixedPlaceholder={translator.message(
+                      "mobile.ui.mixedEnterInstructionsForAllSelectedTargets",
+                    )}
+                    value={uniform("threadTitleInstructions")}
+                    disabled={disabledFor("threadTitleInstructions")}
+                    onCommit={(threadTitleInstructions) => write({ threadTitleInstructions })}
+                  />
                 </>
               ) : null}
 
@@ -482,6 +581,33 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
                     />
                   </SettingsSection>
+                  <SettingsSection title={translator.message("mobile.projects.merge.title")}>
+                    <ProjectSettingsSelect
+                      label={translator.message("mobile.projects.merge.title")}
+                      value={
+                        isMixed("pullRequestMergeMethod")
+                          ? null
+                          : (reference.settings.pullRequestMergeMethod ?? "last")
+                      }
+                      options={(["last", "merge", "squash", "rebase"] as const).map((value) => ({
+                        value,
+                        label: translator.message(`mobile.projects.merge.${value}`),
+                      }))}
+                      disabled={disabledFor("pullRequestMergeMethod")}
+                      onChange={(value) =>
+                        write({ pullRequestMergeMethod: value === "last" ? null : value })
+                      }
+                    />
+                  </SettingsSection>
+                  <SourceControlWritingSettings
+                    key={targetsKey}
+                    targets={displayTargets}
+                    projectSelected={projectSelected}
+                    pending={pendingWrites > 0}
+                    disabledFor={disabledFor}
+                    managed={managed}
+                    write={write}
+                  />
                   <SettingsSection title={translator.message("mobile.git.defaultBranch")}>
                     <SettingsSwitchRow
                       icon="arrow.down.circle"
@@ -551,6 +677,29 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     }}
                     onChange={write}
                   />
+                  <WorktreeCleanupSettings
+                    key={targetsKey}
+                    targets={displayTargets}
+                    projectSelected={projectSelected}
+                    disabledFor={disabledFor}
+                    writeEach={writeEach}
+                  />
+                  {!projectSelected ? (
+                    <SettingsTextFieldSection
+                      key={`worktrees-path:${targetsKey}`}
+                      title={translator.message("mobile.projects.cleanup.directory")}
+                      label={translator.message("mobile.projects.cleanup.directory")}
+                      footer={
+                        managed("worktreesDirectory") ??
+                        translator.message("mobile.projects.cleanup.directoryDescription")
+                      }
+                      placeholder=""
+                      mixedPlaceholder={translator.message("git.operation.mixed")}
+                      value={uniform("worktreesDirectory")}
+                      disabled={disabledFor("worktreesDirectory")}
+                      onCommit={(worktreesDirectory) => write({ worktreesDirectory })}
+                    />
+                  ) : null}
                 </>
               ) : null}
 
@@ -580,6 +729,59 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         />
                       ))}
                     </SettingsSection>
+                  ) : null}
+                  {!projectSelected ? (
+                    <SettingsSection
+                      title={translator.message("settings.general.backgroundActivity")}
+                      footer={managed("backgroundActivity")}
+                      trailing={
+                        pendingWrites === 0 &&
+                        uniformBackgroundActivityProfile(displayTargets) === null ? (
+                          <MixedValuesLabel projectSelected={false} />
+                        ) : null
+                      }
+                    >
+                      {BACKGROUND_PROFILES.map(([profile, label, description], index) => (
+                        <SettingsChoiceRow
+                          key={profile}
+                          label={translator.message(label)}
+                          description={translator.message(description)}
+                          selected={uniformBackgroundActivityProfile(displayTargets) === profile}
+                          separated={index > 0}
+                          disabled={disabledFor("backgroundActivity")}
+                          onPress={() =>
+                            writeEach((settings) =>
+                              buildBackgroundActivityProfilePatch(settings, profile),
+                            )
+                          }
+                        />
+                      ))}
+                    </SettingsSection>
+                  ) : null}
+                  {!projectSelected ? (
+                    <SettingsSection title={translator.message("mobile.projects.devices.title")}>
+                      <SettingsRow
+                        icon="iphone"
+                        label={translator.message("mobile.projects.devices.title")}
+                        target="SettingsDevices"
+                      />
+                    </SettingsSection>
+                  ) : null}
+                  {!projectSelected ? (
+                    <>
+                      <BackgroundActivityOverrides
+                        key={targetsKey}
+                        targets={displayTargets}
+                        disabledFor={disabledFor}
+                        writeEach={writeEach}
+                      />
+                      <StorageRetentionSettings
+                        key={targetsKey}
+                        targets={displayTargets}
+                        disabledFor={disabledFor}
+                        write={write}
+                      />
+                    </>
                   ) : null}
                   <SettingsSection title={translator.message("mobile.ui.updates")}>
                     <SettingsSwitchRow

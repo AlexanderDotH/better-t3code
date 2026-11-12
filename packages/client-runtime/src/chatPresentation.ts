@@ -1,4 +1,25 @@
-import type { ChatVisualMode } from "@t3tools/contracts";
+import {
+  resolveBetterT3FeatureFlag,
+  type BetterT3SettingsV1,
+  type ChatVisualMode,
+} from "@t3tools/contracts";
+
+export const REASONING_DISPLAY_MODES = ["none", "chat", "working", "message"] as const;
+export type ReasoningDisplayMode = (typeof REASONING_DISPLAY_MODES)[number];
+
+export function reasoningDisplayModeFlags(mode: ReasoningDisplayMode) {
+  return {
+    "agent.reasoningVisibility": mode !== "none",
+    "agent.reasoningWorkingOverlay": mode === "working",
+    "agent.reasoningInMessage": mode === "message",
+  } as const;
+}
+
+export function resolveReasoningDisplayMode(settings: BetterT3SettingsV1): ReasoningDisplayMode {
+  if (!resolveBetterT3FeatureFlag(settings, "agent.reasoningVisibility")) return "none";
+  if (resolveBetterT3FeatureFlag(settings, "agent.reasoningWorkingOverlay")) return "working";
+  return resolveBetterT3FeatureFlag(settings, "agent.reasoningInMessage") ? "message" : "chat";
+}
 
 export const CHAT_THINKING_PHRASE_KEYS = [
   "chat.thinking.squiggling",

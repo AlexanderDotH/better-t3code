@@ -60,11 +60,13 @@ describe("workspace root navigation", () => {
     expect(workspaceUsesColumns("pullRequests")).toBe(true);
   });
 
-  it("keeps the registered defaults while customization is unavailable", () => {
+  it("honours saved tab order while dropping removed sections", () => {
     expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
-    expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
-      resolveWorkspaceTabOrder(undefined),
-    );
+    expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual([
+      "usage",
+      "threads",
+      "pullRequests",
+    ]);
   });
 
   it("retains separate queries and positions across tabs, and cancels only the current search", () => {

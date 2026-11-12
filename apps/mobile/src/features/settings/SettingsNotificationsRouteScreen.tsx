@@ -1,3 +1,4 @@
+import { LocalNotificationSettings } from "../agent-awareness/LocalNotificationSettings";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   AuthRelayWriteScope,
@@ -18,7 +19,6 @@ import { useRef, useState, useSyncExternalStore } from "react";
 import { Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/ui/AppText";
 import {
   isAtomCommandInterrupted,
   reportAtomCommandResult,
@@ -111,16 +111,16 @@ function useDeviceRegistered(): boolean {
 
 export function SettingsNotificationsRouteScreen() {
   const translator = useMobileInterfaceTranslator();
+  const insets = useSafeAreaInsets();
   if (!hasCloudPublicConfig()) {
     return (
       <SettingsScreen title={translator.message("mobile.ui.notifications")}>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           contentContainerClassName="px-5 pt-4"
+          contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         >
-          <Text className="text-base text-foreground-muted">
-            {translator.message("mobile.ui.notificationsRequireT3ConnectInThisApp")}
-          </Text>
+          <LocalNotificationSettings />
         </ScrollView>
       </SettingsScreen>
     );
@@ -455,6 +455,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
+        <LocalNotificationSettings />
         <SettingsSection title={translator.message("mobile.ui.agentActivity")}>
           <SettingsSwitchRow
             icon="bell.badge"

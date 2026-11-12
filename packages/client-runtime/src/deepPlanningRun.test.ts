@@ -166,6 +166,33 @@ describe("DeepPlan durable client state", () => {
       ),
     ).toBeNull();
     expect(selectDurableDeepPlan({ id: ThreadId.make("unrelated"), deepPlan: plan })).toBeNull();
+    const worker = {
+      id: ThreadId.make("source-analysis"),
+      environmentId,
+      deepPlanExecution: {
+        runId: plan.id,
+        runThreadId: owner.id,
+        approvedPlanVersion: null,
+        phase: "planning" as const,
+        modelSelection: {
+          ...plan.approval!.implementation,
+          options: plan.approval!.implementation.options ?? [],
+        },
+      },
+    };
+    expect(selectDurableDeepPlan(worker, [owner])).toBe(plan);
+    expect(
+      selectDurableDeepPlan(
+        {
+          ...worker,
+          deepPlanExecution: {
+            ...worker.deepPlanExecution,
+            runId: DeepPlanRunId.make("older-run"),
+          },
+        },
+        [owner],
+      ),
+    ).toBeNull();
   });
 
   it("keeps missing steps pending and dependencies blocked until verified", () => {

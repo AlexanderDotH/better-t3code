@@ -12,6 +12,7 @@ import {
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { FontFamilyChoiceRow } from "../components/FontFamilyChoiceRow";
 
 export function CodeAppearanceSection() {
   const translator = useMobileInterfaceTranslator();
@@ -29,6 +30,7 @@ export function CodeAppearanceSection() {
         wordBreak={appearance.codeWordBreak}
       />
       <AppearancePreviewSeparator />
+      <FontFamilyChoiceRow preferenceKey="fontFamilyCode" />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="chevron.left.forwardslash.chevron.right"

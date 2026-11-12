@@ -21,6 +21,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    pickElementAt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:pick-element-at",
+      tag: WS_METHODS.previewPickElementAt,
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:preview:list",
       tag: WS_METHODS.previewList,

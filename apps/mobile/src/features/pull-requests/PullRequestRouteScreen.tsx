@@ -34,7 +34,11 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { usePullRequestAction } from "./usePullRequestAction";
-import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
+import {
+  annotatePullRequestDiff,
+  buildReviewCommentRange,
+  reviewPositionLabel,
+} from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import {
   handlePullRequestDiffDebugEvent,
@@ -122,6 +126,7 @@ import {
   PullRequestReviewersRow,
 } from "./PullRequestStatusRows";
 import { PullRequestMergeControls } from "./PullRequestMergeControls";
+import { PullRequestWorkControls } from "./PullRequestWorkControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
@@ -311,7 +316,8 @@ function PullRequestOverview(props: {
   const { pr } = props;
   return (
     <View className="gap-5">
-      <PullRequestStackCard params={props.params} state={props.stack} />
+      <PullRequestWorkControls pr={pr} params={props.params} />
+      <PullRequestStackCard params={props.params} state={props.stack} pr={pr} />
       <PullRequestCardGroup>
         <PullRequestChecksRow pr={pr} params={props.params} />
         <PullRequestReviewersRow pr={pr} params={props.params} />
@@ -1027,14 +1033,33 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     .filter((file) => (commit ? commitViewedPaths.has(file.path) : viewed.isViewed(file.path)))
     .map((file) => file.id);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [rangeAnchorId, setRangeAnchorId] = useState<string | null>(null);
   const selectedRow = data.rows.find((row) => row.id === selectedRowId);
   const selectedFile = data.files.find((file) => file.id === selectedRow?.fileId);
+  const supportsRangeComments = detail.data?.capabilities.review.rangeComment === true;
+  const commentSelection = useMemo(
+    () =>
+      selectedRowId
+        ? buildReviewCommentRange(
+            data.rows,
+            rangeAnchorId ?? selectedRowId,
+            selectedRowId,
+            supportsRangeComments,
+          )
+        : null,
+    [data.rows, supportsRangeComments, rangeAnchorId, selectedRowId],
+  );
   const commentOnLine = (rowId = selectedRowId) => {
     const row = data.rows.find((row) => row.id === rowId);
     const file = data.files.find((file) => file.id === row?.fileId);
     if (!row || !file || !diffHead.sha || !canCommentOnDiff) return;
-    const position = reviewPosition(row);
-    if (!position) return;
+    const selection = buildReviewCommentRange(
+      data.rows,
+      rangeAnchorId ?? row.id,
+      row.id,
+      supportsRangeComments,
+    );
+    if (!selection) return;
     const oldPath =
       parsed.kind === "files"
         ? parsed.files.find((entry) => entry.id === file.id)?.previousPath
@@ -1045,9 +1070,10 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       ...(route.params.replacingDraftId ? { draftId: route.params.replacingDraftId } : {}),
       path: file.path,
       ...(oldPath ? { oldPath } : {}),
-      position,
+      position: selection.position,
+      ...(selection.startPosition ? { startPosition: selection.startPosition } : {}),
       headSha: diffHead.sha,
-      code: row.content ?? "",
+      code: selection.code,
     });
   };
   const [jumpPath, setJumpPath] = useState(route.params.path);
@@ -1086,6 +1112,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const jumpToFile = useEffectEvent((path: string) => {
     setJumpPath(path);
     setSelectedRowId(null);
+    setRangeAnchorId(null);
     jumpedUnder.current = null;
     const file = data.files.find((entry) => entry.path === path);
     if (!file) return;
@@ -1105,7 +1132,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     data,
     collapsedFileIds: collapsedIds,
     viewedFileIds: viewedIds,
-    selectedRowIds: selectedRowId ? [selectedRowId] : focusedRows.map((row) => row.id),
+    selectedRowIds:
+      commentSelection?.rowIds ??
+      (selectedRowId ? [selectedRowId] : focusedRows.map((row) => row.id)),
     canHighlight: true,
   });
   const [NativeDiffView] = useState(() => resolveNativeReviewDiffView());
@@ -1299,6 +1328,33 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       {viewed.error ? (
         <Text className="px-4 py-2 text-xs text-danger-foreground">{viewed.error}</Text>
       ) : null}
+      {canCommentOnDiff ? (
+        <View className="flex-row flex-wrap items-center gap-2 px-4 py-2">
+          <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
+            {rangeAnchorId && commentSelection
+              ? reviewPositionLabel(commentSelection.position, commentSelection.startPosition)
+              : translator.message("mobile.pulls.comment.rangeHint")}
+          </Text>
+          {rangeAnchorId ? (
+            <>
+              <Button
+                tone="text"
+                disabled={!commentSelection}
+                label={translator.message("mobile.ui.addReviewComment")}
+                onPress={() => commentOnLine()}
+              />
+              <Button
+                tone="text"
+                label={translator.message("mobile.settings.projects.settings.cancel")}
+                onPress={() => {
+                  setRangeAnchorId(null);
+                  setSelectedRowId(null);
+                }}
+              />
+            </>
+          ) : null}
+        </View>
+      ) : null}
       {staleDiff ? (
         <View
           className="flex-row items-center gap-2 px-4 py-2"
@@ -1314,6 +1370,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
               jumpedUnder.current = null;
               setSelectedRowId(null);
+              setRangeAnchorId(null);
               setCollapsedIds(EMPTY_IDS);
             }}
           />
@@ -1357,7 +1414,8 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               onPressLine={(event) => {
                 const rowId = event.nativeEvent.rowId ?? null;
                 setSelectedRowId(rowId);
-                if (event.nativeEvent.gesture !== "longPress") commentOnLine(rowId);
+                if (event.nativeEvent.gesture === "longPress") setRangeAnchorId(rowId);
+                else if (!rangeAnchorId) commentOnLine(rowId);
               }}
               onToggleViewedFile={(event) => {
                 const file = data.files.find((file) => file.id === event.nativeEvent.fileId);

@@ -1,4 +1,11 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { ProjectContentSearchOverlay } from "./ProjectContentSearchSheet";
+import { canRestoreForwardNavigation } from "./forwardNavigation";
+import {
+  CommonActions,
+  StackActions,
+  useNavigation,
+  type NavigationState,
+} from "@react-navigation/native";
 import { Platform } from "react-native";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
@@ -27,6 +34,7 @@ import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import { CommandPalette } from "./CommandPalette";
 import {
   dispatchHardwareKeyboardCommand,
+  useHardwareKeyboardCommand,
   getHardwareKeyboardCommandRegistrationVersion,
   getRegisteredHardwareKeyboardCommands,
   parseActiveThreadPath,
@@ -56,6 +64,11 @@ export function HardwareKeyboardCommandProvider({
   const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [forwardStates, setForwardStates] = useState<ReadonlyArray<NavigationState>>([]);
+  useHardwareKeyboardCommand("commandPalette", () => {
+    setPaletteOpen(true);
+    return true;
+  });
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const activeThreadRef = useMemo(() => parseActiveThreadPath(pathname), [pathname]);
   const activeThread = useThreadShell(activeThreadRef);
@@ -116,6 +129,10 @@ export function HardwareKeyboardCommandProvider({
       }
     }
     if (pathname !== "/" || navigation.canGoBack()) commands.add("back");
+    const forward = forwardStates.at(-1);
+    const current = navigation.getState();
+    if (current && forward && canRestoreForwardNavigation(current, forward))
+      commands.add("forward");
     if (activeThreadRef !== null) {
       commands.add("files");
       commands.add("terminal");
@@ -124,7 +141,7 @@ export function HardwareKeyboardCommandProvider({
     }
     return [...commands];
     // oxlint-disable-next-line react/memo-dependencies -- registrationVersion invalidates the snapshot of the external keyboard-command registry.
-  }, [activeThreadRef, pathname, registrationVersion, navigation]);
+  }, [activeThreadRef, pathname, registrationVersion, navigation, forwardStates]);
 
   const onCommand = useCallback(
     (command: HardwareKeyboardCommand) => {
@@ -160,11 +177,28 @@ export function HardwareKeyboardCommandProvider({
         navigation.dispatch(selectWorkspaceDetail({ name: "Thread", params: { draft: {} } }));
         return;
       }
+      if (command === "forward") {
+        const destination = forwardStates.at(-1);
+        const current = navigation.getState();
+        if (current && destination && canRestoreForwardNavigation(current, destination)) {
+          setForwardStates((states) => states.slice(0, -1));
+          navigation.dispatch(CommonActions.reset(destination));
+        } else setForwardStates([]);
+        return;
+      }
       if (command === "back") {
         // Beside a visible list, the first detail page has nothing to go back to.
         if (Platform.OS === "ios" && workspaceHasColumns() && firstWorkspaceDetailOpen(navigation))
           return;
         if (navigation.canGoBack()) {
+          const current = navigation.getState();
+          if (current)
+            setForwardStates((states) => {
+              const next = states.at(-1);
+              return next && !canRestoreForwardNavigation(current, next)
+                ? [current]
+                : [...states, current];
+            });
           navigation.goBack();
         } else {
           navigation.dispatch(StackActions.replace("Home"));
@@ -184,14 +218,18 @@ export function HardwareKeyboardCommandProvider({
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [copyTarget, navigation, pathname, showCopyFeedback, translator],
+    [copyTarget, navigation, pathname, showCopyFeedback, translator, forwardStates],
   );
 
   const palette = useMemo(
-    () =>
-      paletteOpen ? (
-        <CommandPalette pathname={pathname} onClose={closePalette} onCommand={onCommand} />
-      ) : null,
+    () => (
+      <>
+        {paletteOpen ? (
+          <CommandPalette pathname={pathname} onClose={closePalette} onCommand={onCommand} />
+        ) : null}
+        <ProjectContentSearchOverlay />
+      </>
+    ),
     [closePalette, onCommand, paletteOpen, pathname],
   );
 

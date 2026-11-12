@@ -25,6 +25,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { GUEST_PENDING_BUBBLE_CLASS_NAME, GuestMessageName } from "./guestMessageStyle";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { useThreadGuestSharing } from "./useThreadGuestSharing";
 
 const NO_GUEST_SHARE_ATOM = Atom.make<ThreadGuestShare | null>(null);
 
@@ -59,11 +60,6 @@ function alertOnFailure(failureTitle: string, result: AtomCommandResult<unknown,
   }
 }
 
-/**
- * Owner controls for a guest link, above the composer: who the link is for and a way to stop
- * sharing. Links are created on web. Waiting messages show in the feed, see
- * `ThreadGuestPendingMessage`.
- */
 export function ThreadGuestShareBar(props: {
   readonly threadRef: ScopedThreadRef | null;
   readonly canOperateThread: boolean;
@@ -71,6 +67,7 @@ export function ThreadGuestShareBar(props: {
   const translator = useMobileInterfaceTranslator();
   const { threadRef } = props;
   const share = useThreadGuestShare(threadRef);
+  const sharing = useThreadGuestSharing(threadRef);
   const closeGuestShare = useAtomCommand(threadEnvironment.closeGuestShare, "stop guest sharing");
   const [busy, setBusy] = useState(false);
   // The server keeps an expired link so waiting messages stay resolvable; the label flips when
@@ -119,6 +116,14 @@ export function ThreadGuestShareBar(props: {
             ? translator.message("mobile.ui.guestLinkActive")
             : `${share.guestName} is a guest`}
       </Text>
+      {sharing.allowed ? (
+        <Button
+          label={translator.message("mobile.panels.copyGuest")}
+          tone="text"
+          disabled={busy || sharing.pending}
+          onPress={() => void sharing.createAndCopy()}
+        />
+      ) : null}
       <Button
         label={translator.message("mobile.ui.stopSharing")}
         tone="text"

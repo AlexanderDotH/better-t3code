@@ -3,6 +3,7 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { type ChangeRequestTerminology, sourceControlClients } from "../sourceControlClients.ts";
 
 export type GitActionIconName = "commit" | "push" | "pr";
@@ -53,6 +54,7 @@ export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasOriginRemote = true,
+  translate?: InterfaceTranslator["message"],
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
   const terminology = changeRequestTerminologyFor(gitStatus);
@@ -82,7 +84,7 @@ export function buildMenuItems(
   return [
     {
       id: "commit",
-      label: "Commit",
+      label: translate?.("git.common.commit") ?? "Commit",
       disabled: !canCommit,
       icon: "commit",
       kind: "open_dialog",
@@ -90,7 +92,7 @@ export function buildMenuItems(
     },
     {
       id: "push",
-      label: "Push",
+      label: translate?.("git.common.push") ?? "Push",
       disabled: !canPush,
       icon: "push",
       kind: "open_dialog",
@@ -99,14 +101,18 @@ export function buildMenuItems(
     hasOpenPr
       ? {
           id: "pr",
-          label: `View ${terminology.shortLabel}`,
+          label:
+            translate?.("git.commit.viewRequest", { kind: terminology.shortLabel }) ??
+            `View ${terminology.shortLabel}`,
           disabled: !canOpenPr,
           icon: "pr",
           kind: "open_pr",
         }
       : {
           id: "pr",
-          label: `Create ${terminology.shortLabel}`,
+          label:
+            translate?.("git.commit.createRequest", { kind: terminology.shortLabel }) ??
+            `Create ${terminology.shortLabel}`,
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",
@@ -256,11 +262,13 @@ export function getGitActionDisabledReason(input: {
   gitStatus: VcsStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
+  translate?: InterfaceTranslator["message"];
 }): string | null {
-  const { item, gitStatus, isBusy, hasOriginRemote } = input;
+  const { item, gitStatus, isBusy, hasOriginRemote, translate } = input;
   if (!item.disabled) return null;
-  if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
+  if (isBusy) return translate?.("git.actions.inProgress") ?? "Git action in progress.";
+  if (!gitStatus)
+    return translate?.("git.actions.statusUnavailable") ?? "Git status is unavailable.";
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -271,46 +279,76 @@ export function getGitActionDisabledReason(input: {
 
   if (item.id === "commit") {
     if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
+      return (
+        translate?.("git.actions.worktreeClean") ??
+        "Worktree is clean. Make changes before committing."
+      );
     }
-    return "Commit is currently unavailable.";
+    return translate?.("git.actions.commitUnavailable") ?? "Commit is currently unavailable.";
   }
 
   if (item.id === "push") {
     if (!hasBranch) {
-      return "Detached HEAD: checkout a branch before pushing.";
+      return (
+        translate?.("git.actions.detachedPush") ??
+        "Detached HEAD: checkout a branch before pushing."
+      );
     }
     if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
+      return (
+        translate?.("git.actions.commitBeforePush") ??
+        "Commit or stash local changes before pushing."
+      );
     }
     if (isBehind) {
-      return "Branch is behind upstream. Pull/rebase before pushing.";
+      return (
+        translate?.("git.actions.behindBeforePush") ??
+        "Branch is behind upstream. Pull/rebase before pushing."
+      );
     }
     if (!gitStatus.hasUpstream && !hasOriginRemote) {
-      return 'Add an "origin" remote before pushing.';
+      return translate?.("git.actions.addOriginPush") ?? 'Add an "origin" remote before pushing.';
     }
     if (!isAhead) {
-      return "No local commits to push.";
+      return translate?.("git.actions.noCommitsPush") ?? "No local commits to push.";
     }
-    return "Push is currently unavailable.";
+    return translate?.("git.actions.pushUnavailable") ?? "Push is currently unavailable.";
   }
 
   if (hasOpenPr) {
-    return `View ${terminology.shortLabel} is currently unavailable.`;
+    return (
+      translate?.("git.actions.viewUnavailable", { changeRequest: terminology.shortLabel }) ??
+      `View ${terminology.shortLabel} is currently unavailable.`
+    );
   }
   if (!hasBranch) {
-    return `Detached HEAD: checkout a branch before creating ${terminology.shortLabelWithArticle}.`;
+    return (
+      translate?.("git.actions.detachedCreate", { changeRequest: terminology.shortLabel }) ??
+      `Detached HEAD: checkout a branch before creating ${terminology.shortLabelWithArticle}.`
+    );
   }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
-    return `Add an "origin" remote before creating ${terminology.shortLabelWithArticle}.`;
+    return (
+      translate?.("git.actions.addOriginCreate", { changeRequest: terminology.shortLabel }) ??
+      `Add an "origin" remote before creating ${terminology.shortLabelWithArticle}.`
+    );
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return `No local commits to include in ${terminology.shortLabelWithArticle}.`;
+    return (
+      translate?.("git.actions.noCommitsCreate", { changeRequest: terminology.shortLabel }) ??
+      `No local commits to include in ${terminology.shortLabelWithArticle}.`
+    );
   }
   if (isBehind) {
-    return `Branch is behind upstream. Pull/rebase before creating ${terminology.shortLabelWithArticle}.`;
+    return (
+      translate?.("git.actions.behindCreate", { changeRequest: terminology.shortLabel }) ??
+      `Branch is behind upstream. Pull/rebase before creating ${terminology.shortLabelWithArticle}.`
+    );
   }
-  return `Create ${terminology.shortLabel} is currently unavailable.`;
+  return (
+    translate?.("git.actions.createUnavailable", { changeRequest: terminology.shortLabel }) ??
+    `Create ${terminology.shortLabel} is currently unavailable.`
+  );
 }
 
 export function requiresDefaultBranchConfirmation(

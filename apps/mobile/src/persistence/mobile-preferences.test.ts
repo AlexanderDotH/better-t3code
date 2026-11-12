@@ -13,6 +13,7 @@ vi.mock("expo-secure-store", () => ({
 
 import {
   finalizeMobilePreferencesMigration,
+  MOBILE_CLIENT_PREFERENCE_DEFAULTS,
   make,
   mergeMobilePreferencesPatch,
   resolveMobileSidebarSettlingPreferences,
@@ -65,6 +66,55 @@ function makeMemoryPreferenceDependencies() {
 }
 
 describe("sanitizeMobilePreferences", () => {
+  it.each([
+    [undefined, false],
+    [true, true],
+    [false, false],
+    ["true", false],
+    ["false", false],
+    [1, false],
+    [null, false],
+  ])("keeps Android background connections opt-in for stored value %s", (stored, expected) => {
+    const preferences = sanitizeMobilePreferences({
+      androidBackgroundConnectionEnabled: stored,
+    } as never);
+    expect(
+      preferences.androidBackgroundConnectionEnabled ??
+        MOBILE_CLIENT_PREFERENCE_DEFAULTS.androidBackgroundConnectionEnabled,
+    ).toBe(expected);
+    if (typeof stored !== "boolean")
+      expect(preferences).not.toHaveProperty("androidBackgroundConnectionEnabled");
+  });
+
+  it("keeps valid load-balancing weights and rejects invalid persisted choices", () => {
+    expect(
+      sanitizeMobilePreferences({
+        loadBalancingEnabled: true,
+        loadBalancingWeights: { first: 100, second: 0, third: 25 },
+      }),
+    ).toMatchObject({
+      loadBalancingEnabled: true,
+      loadBalancingWeights: { first: 100, second: 0, third: 25 },
+    });
+    expect(
+      sanitizeMobilePreferences({
+        loadBalancingWeights: {
+          valid: 50,
+          negative: -1,
+          tooHigh: 101,
+          fraction: 0.5,
+          invalid: "100",
+          " ": 50,
+        },
+      } as never).loadBalancingWeights,
+    ).toEqual({ valid: 50 });
+    expect(
+      sanitizeMobilePreferences({
+        loadBalancingEnabled: "true",
+        loadBalancingWeights: [],
+      } as never),
+    ).not.toHaveProperty("loadBalancingEnabled");
+  });
   it("rejects malformed checklist expansion preferences", () => {
     expect(sanitizeMobilePreferences({})).not.toHaveProperty("deepPlanChecklistExpandedByThread");
     for (const value of [null, [], "expanded", { thread: "false" }]) {
@@ -502,26 +552,29 @@ describe("sanitizeMobilePreferences", () => {
     });
   });
 
-  it("persists valid Better T3 sorting and settling controls", () => {
-    expect(
-      sanitizeMobilePreferences({
-        sidebarProjectSortOrder: "created_at",
+  it.each(["created_at", "manual"] as const)(
+    "persists valid Better T3 sorting and settling controls with %s project order",
+    (sidebarProjectSortOrder) => {
+      expect(
+        sanitizeMobilePreferences({
+          sidebarProjectSortOrder,
+          sidebarThreadSortOrder: "updated_at",
+          sidebarAutoSettleAfterDays: null,
+          sidebarAutoSettleOnMerge: false,
+        }),
+      ).toEqual({
+        sidebarProjectSortOrder,
         sidebarThreadSortOrder: "updated_at",
         sidebarAutoSettleAfterDays: null,
         sidebarAutoSettleOnMerge: false,
-      }),
-    ).toEqual({
-      sidebarProjectSortOrder: "created_at",
-      sidebarThreadSortOrder: "updated_at",
-      sidebarAutoSettleAfterDays: null,
-      sidebarAutoSettleOnMerge: false,
-    });
-  });
+      });
+    },
+  );
 
   it("drops malformed Better T3 sorting and settling controls", () => {
     expect(
       sanitizeMobilePreferences({
-        sidebarProjectSortOrder: "manual",
+        sidebarProjectSortOrder: "invalid",
         sidebarThreadSortOrder: "manual",
         sidebarAutoSettleAfterDays: 0,
         sidebarAutoSettleOnMerge: "yes",
@@ -550,6 +603,33 @@ describe("sanitizeMobilePreferences", () => {
         sidebarAutoSettleOnMerge: false,
       }),
     ).toEqual({ afterDays: null, onMerge: false });
+  });
+
+  it("keeps valid web-parity client preferences and drops malformed ones", () => {
+    const valid = {
+      confirmThreadDelete: false,
+      timestampFormat: "24-hour",
+      appearanceContrast: 120,
+      fontFamilyCode: "JetBrains Mono",
+      effortDisplay: "bars",
+      diffColorScheme: "blue-orange",
+      browserSearchEngine: "custom",
+      browserCustomSearchUrl: "https://search.example/?q=%s",
+      boringThreadListMultilineRows: true,
+    } as const;
+    expect(sanitizeMobilePreferences(valid)).toEqual(valid);
+    expect(
+      sanitizeMobilePreferences({
+        confirmThreadDelete: "no",
+        timestampFormat: "military",
+        appearanceContrast: 1000,
+        fontFamilyCode: 4,
+        effortDisplay: "stars",
+        diffColorScheme: "purple",
+        browserSearchEngine: "invalid",
+        browserCustomSearchUrl: 42,
+      } as unknown as Parameters<typeof sanitizeMobilePreferences>[0]),
+    ).toEqual({});
   });
 
   it("drops malformed workflow preferences from untrusted storage", () => {

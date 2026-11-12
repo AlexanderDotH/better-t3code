@@ -372,6 +372,7 @@ function ProjectSettingsCard(props: {
       {config ? (
         <ModelSelectionModal
           config={config}
+          projectId={props.project.id}
           current={props.project.defaultModelSelection}
           defaultLabel={translator.message("mobile.settings.projects.settings.environmentDefault")}
           visible={modelPickerOpen}

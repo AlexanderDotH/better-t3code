@@ -7,9 +7,14 @@ import type {
   ScheduledTask,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
+  ThreadId,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import {
+  ScheduledTaskWebhookSignature as WebhookSignatureSchema,
+  DEFAULT_SERVER_SETTINGS,
+} from "@t3tools/contracts";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -26,6 +31,8 @@ import {
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
 } from "../../lib/modelOptions";
+
+const isWebhookSignature = Schema.is(WebhookSignatureSchema);
 
 export function scheduledTaskDefaultModel(
   config: ServerConfig | null,
@@ -58,6 +65,8 @@ export type ScheduleDraft = {
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
+  readonly signatureSecret: string;
+  readonly signatureEdited: boolean;
   readonly maxDeliveryAgeMinutes: string;
   readonly replayKey: string;
   readonly coalesceKey: string;
@@ -74,6 +83,8 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
   signature: null,
+  signatureSecret: "",
+  signatureEdited: false,
   maxDeliveryAgeMinutes: "",
   replayKey: "",
   coalesceKey: "",
@@ -144,16 +155,19 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
       return null;
     const parsedFilters = parseWebhookFilterDrafts(draft.filters);
     if (!("filters" in parsedFilters)) return null;
-    // No secret is sent, so the server keeps the stored one.
+    const signature =
+      draft.signature === null
+        ? null
+        : { ...draft.signature, header: draft.signature.header.trim() };
+    if (signature !== null && !isWebhookSignature(signature)) return null;
     return {
       type: "webhook",
       signature:
-        draft.signature === null
+        signature === null
           ? null
           : {
-              header: draft.signature.header,
-              encoding: draft.signature.encoding,
-              prefix: draft.signature.prefix,
+              ...signature,
+              ...(draft.signatureSecret.trim() ? { secret: draft.signatureSecret.trim() } : {}),
             },
       maxDeliveryAgeMinutes,
       ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
@@ -201,6 +215,7 @@ export type ScheduledTaskDraft = {
   readonly title: string;
   readonly prompt: string;
   readonly projectId: ProjectId | null;
+  readonly destinationThreadId: ThreadId | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
@@ -217,6 +232,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.title,
     draft.prompt,
     draft.projectId,
+    draft.destinationThreadId,
     draft.modelSelection?.instanceId,
     draft.modelSelection?.model,
     [...(draft.modelSelection?.options ?? [])]
@@ -227,6 +243,12 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.runAt,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
+    draft.schedule.signature && [
+      draft.schedule.signature.header,
+      draft.schedule.signature.prefix,
+      draft.schedule.signature.encoding,
+    ],
+    draft.schedule.signatureSecret,
     draft.schedule.maxDeliveryAgeMinutes,
     draft.schedule.replayKey,
     draft.schedule.coalesceKey,
@@ -257,6 +279,7 @@ export function createDraft(
     title: "",
     prompt: "",
     projectId,
+    destinationThreadId: null,
     modelSelection,
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
@@ -275,6 +298,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
+    destinationThreadId: task.threadId,
     modelSelection: task.modelSelection,
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),

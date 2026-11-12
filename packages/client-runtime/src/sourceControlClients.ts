@@ -9,6 +9,16 @@ import type { ServerSettings, SourceControlAppAccessInput } from "@t3tools/contr
 import { parseGitRemoteRepository } from "@t3tools/shared/git";
 
 export {
+  groupHostAccounts,
+  nextHostAccountChoices,
+  normalizedCredentialHost,
+  hostTokenSettingsPatch,
+  directCredentialSettingsPatch,
+  type DiscoveredAccount,
+  type HostAccountGroup,
+} from "./sourceControlCredentialSettings.ts";
+
+export {
   isMonochromeSourceControlIcon,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
   type ChangeRequestLink,

@@ -99,6 +99,9 @@ import { mobilePreferencesAtom } from "../../state/preferences";
 import { resolveComposerSendWorkflow } from "@t3tools/client-runtime/composer-send-workflow";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useComposerDraft } from "../../state/use-composer-drafts";
+import { ComposerMultiModelPicker } from "./ComposerMultiModelPicker";
+import { planMultiModelLaunch, uniqueLaunchModels } from "./multi-model-launch";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -160,6 +163,8 @@ export function NewTaskDraftScreen(props: {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
   const flow = useNewTaskFlow();
+  const composerDraft = useComposerDraft(flow.draftKey);
+  const launchMetadata = useRef(new Map<string, ReturnType<typeof makeTurnCommandMetadata>>());
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   const goBack = useWorkspaceBackNavigation("threads");
@@ -673,24 +678,90 @@ export function NewTaskDraftScreen(props: {
           AsyncResult.isSuccess(preferences) && preferences.value.improvePromptBeforeSend === true,
       }),
     };
+    const selections = uniqueLaunchModels([
+      modelSelection,
+      ...(draft.additionalModelSelections ?? []),
+    ]);
+    const multipleModels = selections.length > 1;
+    if (
+      multipleModels &&
+      selectedEnvironmentServerConfig?.environment.capabilities.requiredWorktreeBootstrap !== true
+    ) {
+      Dialog.alert(translator.message("mobile.composer.multiModelServer"));
+      return null;
+    }
+    if (multipleModels && (!flow.isGitRepo || !flow.isGitRepoKnown || !selectedBranchName)) {
+      Dialog.alert(translator.message("mobile.composer.multiModelNeedsGit"));
+      return null;
+    }
+    if (
+      multipleModels &&
+      (message.composerMode === "deep-plan" || /^\s*\/deep-plan(?:\s|$)/i.test(draft.text))
+    ) {
+      Dialog.alert(translator.message("mobile.composer.deepPlanSingleModel"));
+      return null;
+    }
+    for (const selection of selections) {
+      if (
+        environmentConnected &&
+        isModelSelectionUnavailable(selectedEnvironmentServerConfig, selection, selectedProject.id)
+      ) {
+        const { title, detail } = describeUnavailableModelSelection(
+          selectedEnvironmentServerConfig,
+          selection,
+          selectedProject.id,
+        );
+        Dialog.alert(title, detail);
+        return null;
+      }
+    }
+    const messages = planMultiModelLaunch({
+      message,
+      selections,
+      providers: selectedEnvironmentServerConfig?.providers ?? [],
+      baseBranch: selectedBranchName,
+      metadataForSelection: (selection, index) => {
+        const key = JSON.stringify({ ...message, modelSelection: selection });
+        const metadata =
+          launchMetadata.current.get(key) ??
+          (index === 0 && launchMetadata.current.size === 0
+            ? creationMetadata
+            : makeTurnCommandMetadata());
+        launchMetadata.current.set(key, metadata);
+        return metadata;
+      },
+    });
     // Persist locally before clearing or leaving the draft; server setup runs on the thread.
     flow.setSubmitting(true);
-    const queued = await settlePromise(() => enqueueThreadOutboxMessage(message));
+    let queuedCount = 0;
+    const queued = await settlePromise(async () => {
+      for (const target of messages) {
+        await enqueueThreadOutboxMessage(target);
+        queuedCount += 1;
+      }
+    });
     flow.setSubmitting(false);
     if (AsyncResult.isFailure(queued)) {
       const error = squashAtomCommandFailure(queued);
       Dialog.alert(
         translator.message("mobile.ui.couldNotQueueTask"),
-        error instanceof Error
-          ? error.message
-          : translator.message("mobile.ui.theTaskCouldNotBeSavedTo"),
+        [
+          queuedCount > 0
+            ? translator.message("mobile.composer.multiModelPartial", { count: queuedCount })
+            : null,
+          error instanceof Error
+            ? error.message
+            : translator.message("mobile.ui.theTaskCouldNotBeSavedTo"),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       );
       return null;
     }
     promptInputRef.current?.blur();
     navigation.dispatch(
       CommonActions.setParams(
-        submittedThreadParams(String(message.environmentId), String(message.threadId)),
+        submittedThreadParams(String(message.environmentId), String(messages[0]!.threadId)),
       ),
     );
     // The composer has moved to the submitted thread; a pick still converting
@@ -705,7 +776,7 @@ export function NewTaskDraftScreen(props: {
       deferAttachmentCleanup: true,
     });
     scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
-    return message.messageId;
+    return messages[0]!.messageId;
   }
 
   // Keep the current surface until the local draft selection is ready. Publishing
@@ -958,6 +1029,21 @@ export function NewTaskDraftScreen(props: {
                 </View>
               ) : null}
               {flow.canChooseWorkspace ? workspaceControls : null}
+              {flow.selectedModel ? (
+                <View className="px-2 py-1">
+                  <ComposerMultiModelPicker
+                    options={flow.modelOptions}
+                    primary={flow.selectedModel}
+                    additional={composerDraft.additionalModelSelections ?? []}
+                    disabled={isComposerInteractionLocked}
+                    singleModelOnly={composerDraft.composerMode === "deep-plan"}
+                    onChange={(additionalModelSelections) =>
+                      flow.draftKey &&
+                      updateComposerDraftSettings(flow.draftKey, { additionalModelSelections })
+                    }
+                  />
+                </View>
+              ) : null}
             </View>
           ),
           editorRef: promptInputRef,

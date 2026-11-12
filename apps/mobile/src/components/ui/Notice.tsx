@@ -1,3 +1,4 @@
+import { useErrorsAndWarningsSuppressed } from "../../features/agent-awareness/notificationSuppression";
 import { useEffect } from "react";
 import { AccessibilityInfo, Platform, Pressable, View } from "react-native";
 
@@ -7,7 +8,7 @@ import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { GlassSurface } from "./GlassSurface";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
-export function Notice(props: {
+function NoticeContent(props: {
   readonly message: string;
   readonly tone?: "default" | "danger";
   readonly icon?: AppSymbolName;
@@ -15,6 +16,7 @@ export function Notice(props: {
   readonly floating?: boolean;
   readonly onDismiss?: () => void;
   readonly dismissLabel?: string;
+  readonly critical?: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
   const danger = props.tone === "danger";
@@ -85,4 +87,17 @@ export function Notice(props: {
       {content}
     </View>
   );
+}
+
+export function Notice(props: Parameters<typeof NoticeContent>[0]) {
+  const suppressed = useErrorsAndWarningsSuppressed();
+  if (
+    !props.critical &&
+    suppressed &&
+    (props.tone === "danger" ||
+      props.iconTone === "danger" ||
+      props.icon === "exclamationmark.triangle")
+  )
+    return null;
+  return <NoticeContent {...props} />;
 }

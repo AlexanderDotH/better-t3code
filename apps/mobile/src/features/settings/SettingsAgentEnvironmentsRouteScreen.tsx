@@ -4,22 +4,21 @@ import { useNavigation } from "@react-navigation/native";
 import { type EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   ProviderInstanceId,
+  isManagedDriverAllowed,
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  type ProviderDriverKind,
   type EnvironmentId,
-  type McpServerDefinition,
-  type ModelSelection,
-  type ModelSelectionPurpose,
   type ServerConfig,
   type ServerProvider,
   type ServerSettingsPatch,
-  type SkillDescriptor,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import { isProviderInstanceEnabled } from "@t3tools/shared/serverSettings";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Alert, Linking, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -29,38 +28,39 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { uuidv4 } from "../../lib/uuid";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
-import { environmentSession } from "../../state/session";
+import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   mobileProviderAuthEventPresentation,
   providerAuthenticationPresentation,
   providerAuthMutationAccess,
-  providerConfigSettingsPatch,
-  providerEnabledSettingsPatch,
   providerRateLimitLabel,
   providerStatusLabel,
-  skillMutationTarget,
   supportsEnvironmentAgentSettings,
 } from "./environment-agent-settings";
-import { MobileProviderSettingsForm } from "./MobileProviderSettingsForm";
+import { providerClients } from "@t3tools/client-runtime/provider-clients";
+import { AgentSettingsSheet } from "./AgentSettingsSheet";
+import { AgentSettingsButton } from "./AgentSettingsFields";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { MobileProviderInstanceEditor } from "./MobileProviderInstanceEditor";
+import { MobileProviderModelsEditor } from "./MobileProviderModelsEditor";
+import { mobileProviderInstanceFor } from "./mobile-provider-instance-settings";
 import { MobileAssemblyAiVoiceSettings } from "./MobileAssemblyAiVoiceSettings";
-import { ModelSelectionModal, modelSelectionLabel } from "./ModelSelectionModal";
+import { MobileAgentModelSettings } from "./MobileAgentModelSettings";
+import { MobileProviderAdvancedSettings } from "./MobileProviderAdvancedSettings";
 export { ModelSelectionModal, modelSelectionLabel } from "./ModelSelectionModal";
 import { MobileAiEndpointSetup } from "./MobileAiEndpointSetup";
 import {
   isMobileAiEndpointKind,
-  MOBILE_AI_ENDPOINT_LABELS,
   mobileAiEndpointDraft,
-  removeMobileAiEndpointSettingsPatch,
   type MobileAiEndpointKind,
 } from "./mobile-ai-endpoint-settings";
-import { SettingsRow } from "./components/SettingsRow";
+import { McpSettingsEntry as McpSettings } from "./mcp/McpManagementScreen";
+import { SkillsSettingsEntry as SkillSettings } from "./skills/SkillsManagementScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
@@ -81,43 +81,6 @@ function failureMessage(
   return error instanceof Error ? error.message : fallback;
 }
 
-function ModelSelectionSetting(props: {
-  readonly config: ServerConfig;
-  readonly icon: "sparkles" | "arrow.triangle.branch" | "mic" | "text.bubble";
-  readonly label: string;
-  readonly selection: ModelSelection | null;
-  readonly purpose: ModelSelectionPurpose;
-  readonly allowDefault?: boolean;
-  readonly defaultLabel?: string;
-  readonly onSelect: (selection: ModelSelection | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <SettingsRow
-        icon={props.icon}
-        label={props.label}
-        value={
-          props.selection === null
-            ? (props.defaultLabel ?? "Default text model")
-            : modelSelectionLabel(props.config, props.selection)
-        }
-        onPress={() => setOpen(true)}
-      />
-      <ModelSelectionModal
-        config={props.config}
-        current={props.selection}
-        allowDefault={props.allowDefault}
-        defaultLabel={props.defaultLabel}
-        purpose={props.purpose}
-        visible={open}
-        onClose={() => setOpen(false)}
-        onSelect={props.onSelect}
-      />
-    </>
-  );
-}
-
 function InlineSettingsSwitch(props: {
   readonly disabled?: boolean;
   readonly label: string;
@@ -136,23 +99,46 @@ function InlineSettingsSwitch(props: {
   );
 }
 
-function ProviderSettings(props: {
+export function MobileProviderSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly config: ServerConfig;
   readonly readOnly: boolean;
-  readonly updateSettings: (patch: ServerSettingsPatch, label: string) => Promise<boolean>;
+  readonly hideAuthentication?: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, { reportFailure: false });
+  const mutateInstance = useAtomCommand(serverEnvironment.mutateProviderInstance, {
+    reportFailure: true,
+    label: "provider settings",
+  });
+  const [adding, setAdding] = useState(false);
+  const [instanceSetup, setInstanceSetup] = useState<{
+    readonly driver: ProviderDriverKind;
+    readonly instanceId: ProviderInstanceId;
+  } | null>(null);
+  const [modelsInstanceId, setModelsInstanceId] = useState<ProviderInstanceId | null>(null);
+  const canWritePreferences = readEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const [refreshing, setRefreshing] = useState(false);
   const [updating, setUpdating] = useState<ReadonlySet<string>>(() => new Set());
   const [endpointSetup, setEndpointSetup] = useState<{
     readonly driver: MobileAiEndpointKind;
     readonly instanceId: ProviderInstanceId;
   } | null>(null);
+
+  const setupProvider = props.config.providers.find(
+    (provider) => provider.instanceId === instanceSetup?.instanceId,
+  );
+  const setupInstance = setupProvider
+    ? mobileProviderInstanceFor(props.config.settings, setupProvider)
+    : instanceSetup
+      ? props.config.settings.providerInstances[instanceSetup.instanceId]
+      : undefined;
+  const modelsProvider = props.config.providers.find(
+    (provider) => provider.instanceId === modelsInstanceId,
+  );
 
   const refresh = useCallback(async () => {
     if (refreshing) return;
@@ -193,13 +179,8 @@ function ProviderSettings(props: {
   return (
     <SettingsSection title={translator.message("mobile.settings.agents.providers")}>
       {props.config.providers.map((provider, index) => {
-        const enabledPatch = providerEnabledSettingsPatch({
-          provider,
-          settings: props.config.settings,
-          enabled: !provider.enabled,
-        });
         const title = provider.displayName ?? String(provider.instanceId);
-        const configuredInstance = props.config.settings.providerInstances[provider.instanceId];
+        const configuredInstance = mobileProviderInstanceFor(props.config.settings, provider);
         const endpointDriver = isMobileAiEndpointKind(provider.driver) ? provider.driver : null;
         const authPresentation = providerAuthenticationPresentation(provider);
         const updateAvailable = provider.versionAdvisory?.canUpdate === true;
@@ -217,16 +198,24 @@ function ProviderSettings(props: {
                 </Text>
               </View>
               <InlineSettingsSwitch
-                disabled={props.readOnly || enabledPatch === null}
+                disabled={
+                  props.readOnly ||
+                  !isManagedDriverAllowed(props.config.managedPolicy, provider.driver)
+                }
                 label={`${title} enabled`}
                 value={provider.enabled}
                 onValueChange={(enabled) => {
-                  const patch = providerEnabledSettingsPatch({
-                    provider,
-                    settings: props.config.settings,
-                    enabled,
+                  void mutateInstance({
+                    environmentId: props.environmentId,
+                    input: {
+                      patch: {},
+                      providerInstanceMutation: {
+                        operation: "upsert",
+                        instanceId: provider.instanceId,
+                        instance: { ...configuredInstance, enabled },
+                      },
+                    },
                   });
-                  if (patch) void props.updateSettings(patch, `${title} setting`);
                 }}
               />
             </View>
@@ -235,7 +224,7 @@ function ProviderSettings(props: {
                 {provider.message}
               </Text>
             ) : null}
-            {authPresentation ? (
+            {authPresentation && !props.hideAuthentication ? (
               <MobileProviderAuthentication
                 key={
                   endpointDriver
@@ -247,72 +236,63 @@ function ProviderSettings(props: {
                 readOnly={props.readOnly}
               />
             ) : null}
-            {configuredInstance && endpointDriver ? (
-              <View className="flex-row gap-4 pt-2">
-                <Pressable
-                  accessibilityRole="button"
+            <View className="gap-2 pt-2">
+              <AgentSettingsButton
+                label={translator.message("mobile.agents.editProvider")}
+                disabled={props.readOnly}
+                onPress={() =>
+                  setInstanceSetup({ driver: provider.driver, instanceId: provider.instanceId })
+                }
+              />
+              {endpointDriver ? (
+                <AgentSettingsButton
+                  label={translator.message("mobile.settings.provider.configuration")}
                   disabled={props.readOnly}
                   onPress={() =>
                     setEndpointSetup({ driver: endpointDriver, instanceId: provider.instanceId })
                   }
-                  className="py-2 disabled:opacity-40"
-                >
-                  <Text className="font-t3-medium text-foreground">
-                    {translator.message("common.edit")}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={props.readOnly}
-                  onPress={() =>
-                    Alert.alert(
-                      translator.message("mobile.settings.endpoint.removeTitle", {
-                        provider: title,
-                      }),
-                      translator.message("mobile.settings.endpoint.removeDescription"),
-                      [
-                        { text: translator.message("common.cancel"), style: "cancel" },
-                        {
-                          text: translator.message("mobile.settings.agents.remove"),
-                          style: "destructive",
-                          onPress: () =>
-                            void props.updateSettings(
-                              removeMobileAiEndpointSettingsPatch(
-                                props.config.settings,
-                                provider.instanceId,
-                              ),
-                              title,
-                            ),
-                        },
-                      ],
-                    )
-                  }
-                  className="py-2 disabled:opacity-40"
-                >
-                  <Text className="font-t3-medium text-danger-foreground">
-                    {translator.message("mobile.settings.agents.remove")}
-                  </Text>
-                </Pressable>
-              </View>
-            ) : configuredInstance ? (
-              <MobileProviderSettingsForm
-                disabled={props.readOnly}
-                provider={provider}
-                value={configuredInstance.config}
-                onChange={(config) => {
-                  const patch = providerConfigSettingsPatch({
-                    instanceId: provider.instanceId,
-                    settings: props.config.settings,
-                    config,
-                  });
-                  if (patch) void props.updateSettings(patch, `${title} settings`);
-                }}
+                />
+              ) : null}
+              <AgentSettingsButton
+                label={translator.message("mobile.agents.providerModels")}
+                onPress={() => setModelsInstanceId(provider.instanceId)}
               />
-            ) : null}
+              <AgentSettingsButton
+                label={translator.message("mobile.settings.agents.remove")}
+                destructive
+                disabled={props.readOnly}
+                onPress={() =>
+                  Alert.alert(
+                    translator.message("mobile.settings.endpoint.removeTitle", {
+                      provider: title,
+                    }),
+                    translator.message("mobile.settings.endpoint.removeDescription"),
+                    [
+                      { text: translator.message("common.cancel"), style: "cancel" },
+                      {
+                        text: translator.message("mobile.settings.agents.remove"),
+                        style: "destructive",
+                        onPress: () =>
+                          void mutateInstance({
+                            environmentId: props.environmentId,
+                            input: {
+                              patch: {},
+                              providerInstanceMutation: {
+                                operation: "remove",
+                                instanceId: provider.instanceId,
+                              },
+                            },
+                          }),
+                      },
+                    ],
+                  )
+                }
+              />
+            </View>
             {updateAvailable ? (
               <Pressable
                 accessibilityRole="button"
-                disabled={updating.has(provider.instanceId)}
+                disabled={props.readOnly || updating.has(provider.instanceId)}
                 onPress={() => void runUpdate(provider)}
                 className="self-start py-1"
               >
@@ -327,28 +307,68 @@ function ProviderSettings(props: {
         );
       })}
       <View className="gap-3 border-t border-border-subtle p-4">
-        {(Object.keys(MOBILE_AI_ENDPOINT_LABELS) as MobileAiEndpointKind[]).map((driver) => (
-          <Pressable
-            key={driver}
-            accessibilityRole="button"
-            disabled={props.readOnly}
-            onPress={() =>
-              setEndpointSetup({
-                driver,
-                instanceId: ProviderInstanceId.make(`${driver}_${uuidv4()}`),
-              })
-            }
-            className="flex-row items-center gap-3 py-2 disabled:opacity-40"
-          >
-            <ProviderIcon provider={driver} size={20} />
-            <Text className="font-t3-medium text-foreground">
-              {translator.message("mobile.settings.endpoint.add", {
-                provider: MOBILE_AI_ENDPOINT_LABELS[driver],
-              })}
-            </Text>
-          </Pressable>
-        ))}
+        <AgentSettingsButton
+          label={translator.message("mobile.agents.addProvider")}
+          disabled={
+            props.readOnly ||
+            props.config.managedPolicy?.limits?.providers?.allowedDrivers?.length === 0
+          }
+          onPress={() => setAdding(true)}
+        />
       </View>
+      {adding ? (
+        <AgentSettingsSheet
+          title={translator.message("mobile.agents.addProvider")}
+          onClose={() => setAdding(false)}
+        >
+          {providerClients.definitions
+            .filter((definition) =>
+              isManagedDriverAllowed(props.config.managedPolicy, definition.driverKind),
+            )
+            .map((definition) => (
+              <ListChoiceRow
+                key={definition.driverKind}
+                label={definition.label}
+                selected={false}
+                onPress={() => {
+                  const instanceId = ProviderInstanceId.make(
+                    `${definition.driverKind}_${uuidv4()}`,
+                  );
+                  if (isMobileAiEndpointKind(definition.driverKind))
+                    setEndpointSetup({ driver: definition.driverKind, instanceId });
+                  else setInstanceSetup({ driver: definition.driverKind, instanceId });
+                  setAdding(false);
+                }}
+              />
+            ))}
+        </AgentSettingsSheet>
+      ) : null}
+      {instanceSetup ? (
+        <MobileProviderInstanceEditor
+          key={instanceSetup.instanceId}
+          environmentId={props.environmentId}
+          serverConfig={props.config}
+          instanceId={instanceSetup.instanceId}
+          driver={instanceSetup.driver}
+          instance={setupInstance}
+          provider={setupProvider}
+          disabled={props.readOnly}
+          onClose={() => setInstanceSetup(null)}
+        />
+      ) : null}
+      {modelsProvider ? (
+        <MobileProviderModelsEditor
+          key={modelsProvider.instanceId}
+          environmentId={props.environmentId}
+          config={props.config}
+          instanceId={modelsProvider.instanceId}
+          instance={mobileProviderInstanceFor(props.config.settings, modelsProvider)}
+          provider={modelsProvider}
+          canManage={!props.readOnly}
+          canWritePreferences={canWritePreferences}
+          onClose={() => setModelsInstanceId(null)}
+        />
+      ) : null}
       {endpointSetup ? (
         <MobileAiEndpointSetup
           key={`${props.environmentId}:${endpointSetup.instanceId}`}
@@ -361,7 +381,6 @@ function ProviderSettings(props: {
             (provider) => provider.instanceId === endpointSetup.instanceId,
           )}
           readOnly={props.readOnly}
-          updateSettings={props.updateSettings}
           onClose={() => setEndpointSetup(null)}
         />
       ) : null}
@@ -654,233 +673,6 @@ function MobileProviderAuthentication(props: {
   );
 }
 
-function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
-  const translator = useMobileInterfaceTranslator();
-  const listSkills = useAtomCommand(agentSettingsEnvironment.skills.list, { reportFailure: false });
-  const setSkillEnabled = useAtomCommand(agentSettingsEnvironment.skills.setEnabled, {
-    reportFailure: false,
-  });
-  const [skills, setSkills] = useState<ReadonlyArray<SkillDescriptor> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setError(null);
-    const result = await listSkills({ environmentId: props.environmentId, input: {} });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result))
-        setError(failureMessage(result, translator.message("mobile.ui.couldNotLoadSkills")));
-      return;
-    }
-    setSkills(result.value.skills);
-  }, [listSkills, props.environmentId, translator]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote skill catalog for this environment.
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Clear the previous error when starting this environment skill-catalog request.
-    void reload();
-  }, [reload]);
-
-  return (
-    <SettingsSection title={translator.message("mobile.settings.agents.skills")}>
-      {skills === null ? (
-        <Pressable onPress={() => void reload()} className="p-4">
-          <Text className="text-sm text-foreground-muted">
-            {error ?? translator.message("mobile.settings.agents.loadingSkills")}
-          </Text>
-        </Pressable>
-      ) : skills.length === 0 ? (
-        <Text className="p-4 text-sm text-foreground-muted">
-          {translator.message("mobile.settings.agents.noSkills")}
-        </Text>
-      ) : (
-        skills.map((skill, index) => (
-          <View
-            key={skill.id}
-            className={
-              index === 0
-                ? "flex-row items-center gap-3 p-4"
-                : "flex-row items-center gap-3 border-t border-border-subtle p-4"
-            }
-          >
-            <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="text-base text-foreground">{skill.displayName || skill.name}</Text>
-              <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                {skill.shortDescription || skill.description || skill.scope}
-              </Text>
-            </View>
-            <InlineSettingsSwitch
-              disabled={skill.readOnly}
-              label={`${skill.displayName || skill.name} enabled`}
-              value={skill.enabled}
-              onValueChange={(enabled) => {
-                void (async () => {
-                  const result = await setSkillEnabled({
-                    environmentId: props.environmentId,
-                    input: { target: skillMutationTarget(skill), enabled },
-                  });
-                  if (result._tag === "Failure") {
-                    if (!isAtomCommandInterrupted(result)) {
-                      Alert.alert(
-                        translator.message("mobile.ui.couldNotUpdateSkill"),
-                        failureMessage(result, translator.message("mobile.ui.skillUpdateFailed")),
-                      );
-                    }
-                    return;
-                  }
-                  setSkills(
-                    (current) =>
-                      current?.map((candidate) =>
-                        candidate.id === skill.id ? { ...candidate, enabled } : candidate,
-                      ) ?? null,
-                  );
-                })();
-              }}
-            />
-          </View>
-        ))
-      )}
-    </SettingsSection>
-  );
-}
-
-function McpSettings(props: { readonly environmentId: EnvironmentId }) {
-  const translator = useMobileInterfaceTranslator();
-  const config = useEnvironmentServerConfig(props.environmentId);
-  const nativeQuery = useEnvironmentQuery(
-    agentSettingsEnvironment.mcp.providerStatusQuery({
-      environmentId: props.environmentId,
-      input: { includeNative: true, scope: "global" },
-    }),
-  );
-  const nativeProviders = (nativeQuery.data?.providers ?? []).filter(
-    (provider) =>
-      config != null &&
-      isProviderInstanceEnabled(config.settings, provider.instanceId) &&
-      (provider.nativeServers?.length ?? 0) > 0,
-  );
-  const listMcp = useAtomCommand(agentSettingsEnvironment.mcp.list, { reportFailure: false });
-  const setMcpEnabled = useAtomCommand(agentSettingsEnvironment.mcp.setEnabled, {
-    reportFailure: false,
-  });
-  const [servers, setServers] = useState<ReadonlyArray<McpServerDefinition> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setError(null);
-    const result = await listMcp({ environmentId: props.environmentId, input: {} });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result))
-        setError(failureMessage(result, translator.message("mobile.ui.couldNotLoadMcpServers")));
-      return;
-    }
-    setServers(result.value.servers);
-  }, [listMcp, props.environmentId, translator]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote MCP server catalog for this environment.
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Clear the previous error when starting this environment MCP-catalog request.
-    void reload();
-  }, [reload]);
-
-  return (
-    <SettingsSection title={translator.message("mobile.settings.agents.mcpServers")}>
-      {servers === null ? (
-        <Pressable onPress={() => void reload()} className="p-4">
-          <Text className="text-sm text-foreground-muted">
-            {error ?? translator.message("mobile.settings.agents.loadingMcp")}
-          </Text>
-        </Pressable>
-      ) : servers.length === 0 && nativeProviders.length === 0 && !nativeQuery.isPending ? (
-        <Text className="p-4 text-sm text-foreground-muted">
-          {translator.message("mobile.settings.agents.noMcp")}
-        </Text>
-      ) : (
-        servers.map((server, index) => (
-          <View
-            key={server.id}
-            className={
-              index === 0
-                ? "flex-row items-center gap-3 p-4"
-                : "flex-row items-center gap-3 border-t border-border-subtle p-4"
-            }
-          >
-            <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="text-base text-foreground">{server.name}</Text>
-              <Text className="text-sm text-foreground-muted">{server.transport}</Text>
-            </View>
-            <InlineSettingsSwitch
-              label={`${server.name} enabled`}
-              value={server.enabled}
-              onValueChange={(enabled) => {
-                void (async () => {
-                  const result = await setMcpEnabled({
-                    environmentId: props.environmentId,
-                    input: { id: server.id, enabled },
-                  });
-                  if (result._tag === "Failure") {
-                    if (!isAtomCommandInterrupted(result)) {
-                      Alert.alert(
-                        translator.message("settings.mcp.toast.updateFailed"),
-                        failureMessage(result, translator.message("mobile.ui.mcpUpdateFailed")),
-                      );
-                    }
-                    return;
-                  }
-                  setServers(
-                    (current) =>
-                      current?.map((candidate) =>
-                        candidate.id === server.id ? { ...candidate, enabled } : candidate,
-                      ) ?? null,
-                  );
-                })();
-              }}
-            />
-          </View>
-        ))
-      )}
-      {servers !== null && nativeQuery.data === null && nativeQuery.isPending ? (
-        <Text className="p-4 text-sm text-foreground-muted">
-          {translator.message("mobile.settings.agents.loadingMcp")}
-        </Text>
-      ) : null}
-      {nativeProviders.map((provider) => (
-        <View key={provider.instanceId} className="border-t border-border-subtle">
-          <Text className="px-4 pt-4 text-sm font-medium text-foreground">
-            {config?.providers.find((entry) => entry.instanceId === provider.instanceId)
-              ?.displayName ?? provider.instanceId}
-            {" · "}
-            {translator.message("settings.mcp.workspace.providerManaged")}
-          </Text>
-          {provider.nativeServers?.map((server) => (
-            <View key={server.name} className="gap-1 p-4">
-              <Text className="text-base text-foreground">{server.name}</Text>
-              <Text className="text-sm text-foreground-muted">
-                {server.transport}
-                {" · "}
-                {translator.message(
-                  server.enabled
-                    ? "settings.mcp.runtime.state.not-started"
-                    : "settings.mcp.runtime.state.disabled",
-                )}
-              </Text>
-              <Text className="text-xs text-foreground-muted">
-                {translator.message("settings.mcp.provider.discoveredIn", {
-                  path: server.configPath,
-                })}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ))}
-      {nativeQuery.error ? (
-        <Pressable onPress={nativeQuery.refresh} className="p-4">
-          <Text className="text-sm text-foreground-muted">{nativeQuery.error}</Text>
-        </Pressable>
-      ) : null}
-    </SettingsSection>
-  );
-}
-
 function EnvironmentAgentSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
@@ -945,10 +737,15 @@ function EnvironmentAgentSettings(props: {
         </Text>
       </View>
 
-      <ProviderSettings
+      <MobileProviderSettings
         environmentId={props.environmentId}
         config={config}
-        readOnly={providerAuthMutationAccess(authSession) === "read-only"}
+        readOnly={!readEnvironmentScope(props.environmentId, AuthProvidersManageScope)}
+      />
+
+      <MobileProviderAdvancedSettings
+        config={config}
+        disabled={!readEnvironmentScope(props.environmentId, AuthSettingsWriteScope)}
         updateSettings={updateSettings}
       />
 
@@ -984,54 +781,11 @@ function EnvironmentAgentSettings(props: {
       </SettingsSection>
 
       <SettingsSection title={translator.message("mobile.settings.agents.models")}>
-        <ModelSelectionSetting
-          allowDefault={false}
+        <MobileAgentModelSettings
           config={config}
-          icon="text.bubble"
-          label={translator.message("mobile.settings.agents.textGeneration")}
-          purpose="text-generation"
-          selection={settings.textGenerationModelSelection}
-          onSelect={(selection) => {
-            if (selection)
-              void updateSettings({ textGenerationModelSelection: selection }, "text model");
-          }}
-        />
-        <ModelSelectionSetting
-          config={config}
-          defaultLabel={translator.message("mobile.settings.agents.automatic")}
-          icon="sparkles"
-          label={translator.message("mobile.settings.agents.fetchWorkers")}
-          purpose="agent"
-          selection={settings.fetchModelSelection}
-          onSelect={(selection) =>
-            void updateSettings({ fetchModelSelection: selection }, "Fetch model")
-          }
-        />
-        <ModelSelectionSetting
-          allowDefault={false}
-          config={config}
-          icon="arrow.triangle.branch"
-          label={translator.message("mobile.settings.agents.parallelReview")}
-          purpose="text-generation"
-          selection={settings.parallelPlanReviewModelSelection}
-          onSelect={(selection) => {
-            if (selection)
-              void updateSettings(
-                { parallelPlanReviewModelSelection: selection },
-                "plan review model",
-              );
-          }}
-        />
-        <ModelSelectionSetting
-          config={config}
-          defaultLabel={translator.message("mobile.settings.agents.textGenerationModel")}
-          icon="mic"
-          label={translator.message("mobile.settings.agents.voiceTranslation")}
-          purpose="text-generation"
-          selection={settings.voiceTranslationModelSelection}
-          onSelect={(selection) =>
-            void updateSettings({ voiceTranslationModelSelection: selection }, "voice model")
-          }
+          projects={props.projects}
+          disabled={!readEnvironmentScope(props.environmentId, AuthSettingsWriteScope)}
+          updateSettings={updateSettings}
         />
       </SettingsSection>
 

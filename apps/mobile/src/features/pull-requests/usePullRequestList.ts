@@ -28,6 +28,7 @@ import {
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type ListTarget = { readonly environmentId: EnvironmentId; readonly input: PullRequestListInput };
+const STATS_BATCH_SIZE = 500;
 type Read = <A>(atom: Atom.Atom<A>) => A;
 
 /** The head the list query holds now, cached or answered. */
@@ -155,7 +156,7 @@ const sessionsFamily = Atom.family((scopeKey: string) =>
 const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
   AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
-export function usePullRequestList(targets: readonly ListTarget[]) {
+export function usePullRequestList(targets: readonly ListTarget[], eagerStats = false) {
   const translator = useMobileInterfaceTranslator();
   const registry = use(RegistryContext);
   const scopeKey = JSON.stringify(targets);
@@ -239,8 +240,11 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
         : { key: scopeKey, rows },
     );
   };
-  const visibleRows =
-    visible.key === scopeKey && visible.rows.length ? visible.rows : data.entries.slice(0, 8);
+  const visibleRows = eagerStats
+    ? data.entries
+    : visible.key === scopeKey && visible.rows.length
+      ? visible.rows
+      : data.entries.slice(0, 8);
   // Visible rows carry the cached-answer overlay below. Decide which still need stats on the rows
   // without it, so a cached answer shown offline does not unmount the query that holds it.
   const withoutCachedOverlay = new Map(
@@ -259,7 +263,10 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           repository,
           number,
         }));
-      return refs.length ? [{ environmentId, input: { refs } }] : [];
+      return Array.from({ length: Math.ceil(refs.length / STATS_BATCH_SIZE) }, (_, index) => ({
+        environmentId,
+        input: { refs: refs.slice(index * STATS_BATCH_SIZE, (index + 1) * STATS_BATCH_SIZE) },
+      }));
     }),
   );
   const statsAtom = useMemo(() => {
@@ -281,6 +288,21 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const entries = useMemo(
     () => withShownPullRequestStats(data.entries, shown.answers),
     [data.entries, shown.answers],
+  );
+  const measuredSizeKeys = useMemo(
+    () =>
+      new Set([
+        ...sources.flatMap(({ target, stats }) =>
+          [...stats.stats.keys()].map((key) => `${target.environmentId}:${key}`),
+        ),
+        ...shown.answers.flatMap(({ environmentId, stats }) =>
+          stats.map((row) => `${environmentId}:${statKey(row)}`),
+        ),
+        ...data.entries
+          .filter((row) => row.additions + row.deletions > 0)
+          .map((row) => `${row.environmentId}:${statKey(row)}`),
+      ]),
+    [data.entries, shown.answers, sources],
   );
 
   const updateEntry = (
@@ -326,6 +348,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   return {
     data: listing,
     entries,
+    measuredSizeKeys,
     error: errors.map((error) => error.message).join("\n") || null,
     isPending: sources.some(({ result }) => result.waiting) && !data.entries.length,
     continued: data.continued,

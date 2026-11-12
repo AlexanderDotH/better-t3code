@@ -4,7 +4,10 @@ import {
   GuardedGitCommitSheet,
   GuardedGitConfirmSheet,
 } from "./features/threads/git/MobileGitRouteGate";
+import { ProjectGitWorkbenchScreen } from "./features/threads/git/ProjectGitWorkbenchScreen";
 import { SettingsAgentEnvironmentsRouteScreen } from "./features/settings/SettingsAgentEnvironmentsRouteScreen";
+import { SettingsProjectScriptsRouteScreen } from "./features/settings/SettingsProjectScriptsRouteScreen";
+import { SettingsDevicesRouteScreen } from "./features/settings/SettingsDevicesRouteScreen";
 import { SettingsProjectsRouteScreen } from "./features/settings/SettingsProjectsRouteScreen";
 import { SettingsProjectIndexingRouteScreen } from "./features/settings/SettingsProjectIndexingRouteScreen";
 import {
@@ -105,12 +108,16 @@ import { newTaskFlowKey } from "./features/threads/new-task-flow-state";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
+import { SettingsDiffsRouteScreen } from "./features/settings/SettingsDiffsRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
+import { SettingsUpdateEverythingRouteScreen } from "./features/updates/SettingsUpdateEverythingRouteScreen";
+import { SettingsServerDiagnosticsRouteScreen } from "./features/diagnostics/SettingsServerDiagnosticsRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
+import { SettingsSecretsRouteScreen } from "./features/settings/SettingsSecretsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
@@ -265,6 +272,14 @@ const SETTINGS_SCREENS = {
       title: currentInterfaceTranslator().message("mobile.settings.environments"),
     }),
   }),
+  SettingsSecrets: createNativeStackScreen({
+    screen: SettingsSecretsRouteScreen,
+    linking: "settings/secrets",
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.access.secrets"),
+    }),
+  }),
   SettingsEnvironmentDetail: createNativeStackScreen({
     screen: SettingsEnvironmentDetailRouteScreen,
     linking: "settings/environments/:environmentId",
@@ -296,6 +311,22 @@ const SETTINGS_SCREENS = {
     options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
       title: currentInterfaceTranslator().message("mobile.settings.section.threads"),
+    }),
+  }),
+  SettingsProjectScripts: createNativeStackScreen({
+    screen: SettingsProjectScriptsRouteScreen,
+    linking: "settings/project-scripts",
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.projects.scripts.title"),
+    }),
+  }),
+  SettingsDevices: createNativeStackScreen({
+    screen: SettingsDevicesRouteScreen,
+    linking: "settings/devices",
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.projects.devices.title"),
     }),
   }),
   SettingsWorktrees: createNativeStackScreen({
@@ -429,6 +460,14 @@ const SETTINGS_SCREENS = {
       title: currentInterfaceTranslator().message("mobile.settings.section.appearance"),
     }),
   }),
+  SettingsDiffs: createNativeStackScreen({
+    screen: SettingsDiffsRouteScreen,
+    linking: "settings/diffs",
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.prefs.diffs"),
+    }),
+  }),
   SettingsProjectGrouping: createNativeStackScreen({
     screen: SettingsProjectGroupingRouteScreen,
     linking: "settings/project-grouping",
@@ -526,6 +565,22 @@ const SETTINGS_SCREENS = {
     options: () => ({
       ...SETTINGS_PAGE_OPTIONS,
       title: currentInterfaceTranslator().message("mobile.ui.clientStorage"),
+    }),
+  }),
+  SettingsUpdateEverything: createNativeStackScreen({
+    screen: SettingsUpdateEverythingRouteScreen,
+    linking: "settings/update-everything",
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.insights.updates.title"),
+    }),
+  }),
+  SettingsServerDiagnostics: createNativeStackScreen({
+    screen: SettingsServerDiagnosticsRouteScreen,
+    linking: "settings/server-diagnostics",
+    options: () => ({
+      ...SETTINGS_PAGE_OPTIONS,
+      title: currentInterfaceTranslator().message("mobile.insights.serverDiagnostics"),
     }),
   }),
   SettingsDiagnostics: createNativeStackScreen({
@@ -1047,6 +1102,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetAllowedDetents: formSheetDetents(0.55),
         sheetGrabberVisible: true,
       },
+    }),
+    ProjectGitWorkbench: createNativeStackScreen({
+      screen: ProjectGitWorkbenchScreen,
+      options: { headerShown: false },
     }),
     ThreadPullRequests: createNativeStackScreen({
       screen: ThreadPullRequestsSheet,

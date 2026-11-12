@@ -48,6 +48,8 @@ interface SourceFileSurfaceProps {
   readonly headerInsetTop?: number;
   readonly selectable?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly onSelectLine?: (index: number) => void;
+  readonly selectedLines?: { readonly start: number; readonly end: number } | null;
 }
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
@@ -59,6 +61,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly tokens: ReadonlyArray<HighlightedToken> | null;
   readonly highlighted: boolean;
   readonly wordBreak: boolean;
+  readonly onSelectLine?: () => void;
 }) {
   return (
     <View
@@ -66,6 +69,8 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
       style={{ minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
+        onPress={props.onSelectLine}
+        accessibilityRole={props.onSelectLine ? "button" : undefined}
         className="select-none pr-3 text-right text-foreground-tertiary"
         style={{
           width: props.codeSurface.gutterWidth,
@@ -201,7 +206,14 @@ function NativeSourceFileSurface(
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(onRefresh);
   const tokensJson = JSON.stringify(buildNativeSourceTokens(tokens));
   const selectedRowIdsJson = JSON.stringify(
-    targetIndex === null ? [] : [nativeSourceRowId(targetIndex)],
+    props.selectedLines
+      ? Array.from(
+          { length: props.selectedLines.end - props.selectedLines.start + 1 },
+          (_, index) => nativeSourceRowId(props.selectedLines!.start + index),
+        )
+      : targetIndex === null
+        ? []
+        : [nativeSourceRowId(targetIndex)],
   );
   const themeJson = JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId, appTheme));
   const styleJson = JSON.stringify(nativeSourceStyle);
@@ -228,6 +240,14 @@ function NativeSourceFileSurface(
         styleJson={styleJson}
         themeJson={themeJson}
         tokensJson={tokensJson}
+        onPressLine={
+          props.onSelectLine
+            ? (event) => {
+                const match = /^source-line:(\d+)$/.exec(event.nativeEvent.rowId ?? "");
+                if (match) props.onSelectLine?.(Number(match[1]));
+              }
+            : undefined
+        }
         {...(onRefresh
           ? {
               refreshing: isPullRefreshing,
@@ -269,8 +289,13 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       index={index}
       line={item}
       tokens={tokens?.[index] ?? null}
-      highlighted={index === targetIndex}
+      highlighted={
+        props.selectedLines
+          ? index >= props.selectedLines.start && index <= props.selectedLines.end
+          : index === targetIndex
+      }
       wordBreak={codeWordBreak}
+      onSelectLine={props.onSelectLine ? () => props.onSelectLine?.(index) : undefined}
     />
   );
 

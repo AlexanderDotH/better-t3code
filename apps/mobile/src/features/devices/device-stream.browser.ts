@@ -4,6 +4,8 @@ import {
 } from "@t3tools/client-runtime/device/stream";
 
 import type { DeviceStreamConfiguration } from "./device-stream-document";
+import { captureDeviceScreenshot } from "@t3tools/client-runtime/device/screenshot";
+import { createDeviceAccessibilityOverlay } from "./deviceAccessibilityOverlay";
 
 declare global {
   interface Window {
@@ -12,10 +14,24 @@ declare global {
 }
 
 let activeClient: ReturnType<typeof createDeviceStreamClient> | null = null;
+let activeTools: {
+  readonly capture: () => void;
+  readonly overlay: (enabled: boolean) => void;
+  readonly dispose: () => void;
+} | null = null;
 
 export function stop() {
+  activeTools?.dispose();
+  activeTools = null;
   activeClient?.stop();
   activeClient = null;
+}
+
+export function capture() {
+  activeTools?.capture();
+}
+export function overlay(enabled: boolean) {
+  activeTools?.overlay(enabled);
 }
 
 export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
@@ -153,6 +169,35 @@ export function start(configuration: DeviceStreamConfiguration) {
     },
   );
   activeClient = client;
+  const captures = new AbortController();
+  const accessibility = createDeviceAccessibilityOverlay(configuration, frame, () =>
+    post({ type: "captureError" }),
+  );
+  activeTools = {
+    capture: () => {
+      void captureDeviceScreenshot(configuration, captures.signal)
+        .then((blob) => {
+          if (captures.signal.aborted) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (!captures.signal.aborted && typeof reader.result === "string")
+              post({ type: "capture", dataUrl: reader.result });
+          };
+          reader.onerror = () => post({ type: "captureError" });
+          reader.readAsDataURL(blob);
+        })
+        .catch(() => {
+          if (!captures.signal.aborted) post({ type: "captureError" });
+        });
+    },
+    overlay: (enabled) => {
+      void accessibility.setEnabled(enabled);
+    },
+    dispose: () => {
+      captures.abort();
+      accessibility.dispose();
+    },
+  };
   client.setMjpegImage(image);
   const touch = (event: PointerEvent, phase: "begin" | "move" | "end") => {
     const rect = frame.getBoundingClientRect();

@@ -9,21 +9,30 @@ import { Menu } from "../../../components/ui/Menu";
 
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
+import type { GuideProgress } from "./guideProgress";
 
 export function GuideOutline({
   guide,
   onOpen,
   onRewrite,
+  progress,
 }: {
   readonly guide: PullRequestReviewGuide;
   readonly onOpen: (position: number) => void;
   readonly onRewrite?: () => void;
+  readonly progress: GuideProgress;
 }) {
   const translator = useMobileInterfaceTranslator();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const files = new Set(guide.stops.flatMap(stopFilePaths));
   return (
     <View>
+      <Text className="mb-3 text-xs text-foreground-muted">
+        {translator.message("mobile.pulls.guide.progress", {
+          read: progress.readStops.size,
+          count: guide.stops.length,
+        })}
+      </Text>
       <View className="mb-5 flex-row items-center justify-between">
         <View className="flex-row items-baseline gap-2">
           <Text className="text-base font-t3-semibold">{guide.stops.length} stops</Text>
@@ -78,13 +87,17 @@ export function GuideOutline({
           <Pressable
             key={`${guide.headSha}:${JSON.stringify(stop)}`}
             accessibilityRole="button"
-            accessibilityLabel={`Stop ${position + 1}: ${stop.title}`}
+            accessibilityLabel={`Stop ${position + 1}: ${stop.title}${progress.readStops.has(position) ? ` · ${translator.message("mobile.pulls.guide.read")}` : ""}`}
             onPress={() => onOpen(position)}
             className="flex-row gap-4 active:opacity-60"
           >
             <View className="w-8 items-center">
               <View className="h-8 w-8 items-center justify-center rounded-full border border-border bg-grouped-card">
-                <Text className="text-sm font-t3-medium tabular-nums">{position + 1}</Text>
+                {progress.readStops.has(position) ? (
+                  <SymbolView name="checkmark" size={16} tintColorClassName="accent-primary-text" />
+                ) : (
+                  <Text className="text-sm font-t3-medium tabular-nums">{position + 1}</Text>
+                )}
               </View>
               {position < guide.stops.length - 1 ? (
                 <View className="min-h-5 w-px flex-1 bg-border-subtle" />
@@ -111,9 +124,13 @@ export function GuideOutline({
       {guide.stops.length ? (
         <View className="self-end">
           <Button
-            label={translator.message("mobile.ui.startTour")}
+            label={translator.message(
+              progress.position > 0 || progress.readStops.size
+                ? "mobile.pulls.guide.resume"
+                : "mobile.ui.startTour",
+            )}
             tone="text"
-            onPress={() => onOpen(0)}
+            onPress={() => onOpen(progress.position)}
             icon="arrow.right"
           />
         </View>

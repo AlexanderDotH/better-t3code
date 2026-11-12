@@ -1,6 +1,7 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useAtomValue, useAtomSet } from "@effect/atom-react";
+import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -10,7 +11,14 @@ import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import type { ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
-import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
+import {
+  type Ref,
+  type ReactElement,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import {
   FlatList,
   Platform,
@@ -20,6 +28,7 @@ import {
   type NativeSyntheticEvent,
   StyleSheet,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReduceMotionEnabled } from "../../lib/appState";
@@ -44,7 +53,7 @@ import {
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { useReviewCacheForThread } from "./reviewState";
+import { useReviewCacheForThread, updateReviewExpandedFileIds } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
   type NativeReviewDiffViewHandle,
@@ -55,7 +64,7 @@ import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCo
 import { useReviewDiffData } from "./useReviewDiffData";
 import { useReviewDiffPrewarming } from "./useReviewDiffPrewarming";
 import { useReviewFileVisibility } from "./reviewFileVisibility";
-import { useReviewSections } from "./useReviewSections";
+import { useTimelineReviewSections as useReviewSections } from "../threads/use-timeline-review-sections";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
 import { resolveReviewAvailability } from "./reviewAvailability";
@@ -64,6 +73,10 @@ import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-preferences";
+import { reviewDiffPreferences } from "./review-preferences";
+import { ReviewDiffList } from "./ReviewDiffList";
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
@@ -73,6 +86,7 @@ function ReviewHeader(
     readonly showChangedFilesToggle: boolean;
     readonly onSelectSection: (sectionId: string) => void;
     readonly onReturnToThread: () => void;
+    readonly diffActions: ReadonlyArray<AppBarMenuItem>;
   },
 ) {
   const translator = useMobileInterfaceTranslator();
@@ -120,6 +134,7 @@ function ReviewHeader(
                 title: translator.message("mobile.ui.selectDiff"),
                 icon: presentation.menuIcon,
                 items: [
+                  ...props.diffActions,
                   {
                     id: "sections",
                     inline: true,
@@ -155,6 +170,7 @@ function ReviewHeader(
 }
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
+const SPLIT_DIFF_MIN_WIDTH = 800;
 
 const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
   const translator = useMobileInterfaceTranslator();
@@ -432,6 +448,12 @@ function ReviewFileNavigator({
 type ReviewSheetProps = StaticScreenProps<{
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly file?: string;
+  readonly filePath?: string;
+  readonly revision?: string | number;
+  readonly toolSourceThreadId?: ThreadId;
+  readonly toolItemId?: TurnItemId;
+  readonly toolRevision?: string;
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
@@ -446,6 +468,18 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
   const headerIcon = String(useUniwindTheme()["--color-icon"]);
   const { environmentId, threadId } = props.route.params;
+  const targetFile = props.route.params.filePath ?? props.route.params.file;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const updatePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const diffPreferences = reviewDiffPreferences(
+    AsyncResult.isSuccess(preferences) ? preferences.value : undefined,
+    MOBILE_CLIENT_PREFERENCE_DEFAULTS,
+  );
+  const { width } = useWindowDimensions();
+  const [surfaceWidth, setSurfaceWidth] = useState(width);
+  const [splitOverride, setSplitOverride] = useState<boolean | null>(null);
+  const supportsSplit = surfaceWidth >= SPLIT_DIFF_MIN_WIDTH;
+  const split = supportsSplit && (splitOverride ?? true);
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
@@ -470,6 +504,19 @@ export function ReviewSheet(props: ReviewSheetProps) {
     environmentId,
     threadId,
     reviewCache,
+    ignoreWhitespace: diffPreferences.diffIgnoreWhitespace,
+    revision: props.route.params.revision,
+    ...(props.route.params.toolSourceThreadId &&
+    props.route.params.toolItemId &&
+    props.route.params.toolRevision
+      ? {
+          toolTarget: {
+            threadId: props.route.params.toolSourceThreadId,
+            itemId: props.route.params.toolItemId,
+            revision: props.route.params.toolRevision,
+          },
+        }
+      : {}),
   });
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
@@ -490,6 +537,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectedSection,
     draftMessage,
     draftContext,
+    ignoreWhitespace: diffPreferences.diffIgnoreWhitespace,
+    targetFile,
   });
   // Expo may return null before registration or in older binaries; use the fallback.
   const NativeReviewDiffView = resolveNativeReviewDiffView();
@@ -512,6 +561,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
     if (isRefreshing) setFallbackScrollViewKey((key) => key + 1);
   }
   const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
+  const [requestedFile, setRequestedFile] = useState<{
+    readonly sectionId: string;
+    readonly fileId: string;
+  } | null>(null);
   const reviewFiles = parsedDiff.kind === "files" ? parsedDiff.files : [];
   const fileVisibility = useReviewFileVisibility({
     threadKey: reviewCache.threadKey,
@@ -523,6 +576,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     cachedViewedFileIds: selectedSection?.id
       ? reviewCache.viewedFileIdsBySection[selectedSection.id]
       : undefined,
+    collapsedByDefault: diffPreferences.diffFilesCollapsed,
   });
   const { collapsedFileIds, toggleExpandedFile, toggleViewedFile, viewedFileIds } = fileVisibility;
   const commentSelection = useReviewCommentSelectionController({
@@ -540,6 +594,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     viewedFileIds,
     selectedRowIds: commentSelection.selectedRowIds,
     canHighlight: parsedDiff.kind === "files",
+    diffColorScheme: diffPreferences.diffColorScheme,
   });
   const showcaseReviewKey =
     SHOWCASE_ENABLED && parsedDiff.kind === "files" && selectedSection
@@ -559,6 +614,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   };
 
   const handleSelectFile = async (fileId: string | null) => {
+    if (fileId && selectedSection) setRequestedFile({ sectionId: selectedSection.id, fileId });
     loadVisibleFile(fileId, true);
     commentSelection.clearSelection();
     if (fileId !== null && collapsedFileIds.includes(fileId)) {
@@ -581,6 +637,20 @@ export function ReviewSheet(props: ReviewSheetProps) {
     loadVisibleFile(event.nativeEvent.fileId ?? null);
     reviewFileNavigatorRef.current?.setVisibleFile(event.nativeEvent.fileId ?? null);
   };
+  const revealTargetKey = useRef<string | null>(null);
+  const targetFileId = reviewFiles.find(
+    (file) => file.path === targetFile || file.previousPath === targetFile,
+  )?.id;
+  const revealKey =
+    targetFileId && targetFile
+      ? JSON.stringify([environmentId, threadId, selectedSection?.id, targetFile])
+      : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Route targets load and reveal the requested file in the external native diff surface.
+  useEffect(() => {
+    if (!targetFile || !targetFileId || !revealKey || revealTargetKey.current === revealKey) return;
+    revealTargetKey.current = revealKey;
+    void handleSelectFile(targetFileId);
+  }, [targetFile, targetFileId, revealKey, handleSelectFile]);
   const renderInspector = () => (
     <ReviewFileNavigator
       ref={reviewFileNavigatorRef}
@@ -641,10 +711,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     .join(" · ");
 
   const showChangedFilesPane =
-    !showConnectionNotice &&
-    selectedSection !== null &&
-    parsedDiff.kind === "files" &&
-    NativeReviewDiffView !== null;
+    !showConnectionNotice && selectedSection !== null && parsedDiff.kind === "files";
   useRegisterWorkspaceInspector(showChangedFilesPane ? renderInspector : undefined);
   const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
@@ -706,10 +773,52 @@ export function ReviewSheet(props: ReviewSheetProps) {
         onRefresh={handlePullToRefresh}
         onSelectSection={selectSection}
         onReturnToThread={handleReturnToThread}
+        diffActions={[
+          ...(supportsSplit
+            ? [
+                {
+                  id: "diff-layout",
+                  title: translator.message(
+                    split ? "mobile.gitParity.unified" : "mobile.gitParity.split",
+                  ),
+                  onPress: () => setSplitOverride(!split),
+                },
+              ]
+            : []),
+          {
+            id: "diff-whitespace",
+            title: translator.message(
+              diffPreferences.diffIgnoreWhitespace
+                ? "mobile.gitParity.showWhitespace"
+                : "mobile.gitParity.ignoreWhitespace",
+            ),
+            onPress: () =>
+              updatePreferences({ diffIgnoreWhitespace: !diffPreferences.diffIgnoreWhitespace }),
+          },
+          {
+            id: "diff-collapse",
+            title: translator.message(
+              diffPreferences.diffFilesCollapsed
+                ? "mobile.gitParity.expandFiles"
+                : "mobile.gitParity.collapseFiles",
+            ),
+            onPress: () => {
+              const collapse = !diffPreferences.diffFilesCollapsed;
+              updatePreferences({ diffFilesCollapsed: collapse });
+              if (reviewCache.threadKey && selectedSection)
+                updateReviewExpandedFileIds(reviewCache.threadKey, selectedSection.id, () =>
+                  collapse ? [] : reviewFiles.map((file) => file.id),
+                );
+            },
+          },
+        ]}
       />
 
       <ScreenContent>
-        <View className="flex-1 bg-sheet android:bg-sheet-solid">
+        <View
+          className="flex-1 bg-sheet android:bg-sheet-solid"
+          onLayout={(event) => setSurfaceWidth(event.nativeEvent.layout.width)}
+        >
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
@@ -725,6 +834,28 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 onRetry={handleRetryEnvironment}
               />
             </View>
+          ) : selectedSection && parsedDiff.kind === "files" && (split || !NativeReviewDiffView) ? (
+            <ReviewDiffList
+              files={parsedDiff.files}
+              data={nativeReviewDiffData}
+              split={split}
+              ignoreWhitespace={diffPreferences.diffIgnoreWhitespace}
+              blueOrange={diffPreferences.diffColorScheme === "blue-orange"}
+              collapsedFileIds={collapsedFileIds}
+              targetFile={
+                requestedFile?.sectionId === selectedSection.id ? requestedFile.fileId : targetFile
+              }
+              insetTop={topContentInset}
+              insetBottom={bottomContentInset}
+              onToggleFile={(id) => {
+                loadVisibleFile(id, true);
+                toggleExpandedFile(id);
+              }}
+              onPressLine={(rowId, gesture) =>
+                commentSelection.onPressLine({ nativeEvent: { rowId, gesture } })
+              }
+              onVisibleFile={(id) => loadVisibleFile(id)}
+            />
           ) : selectedSection && parsedDiff.kind === "files" && NativeReviewDiffView ? (
             <View
               className="flex-1"
@@ -756,6 +887,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     contentInsetBottom={bottomContentInset}
                     nativeViewRef={nativeReviewDiffViewRef}
                     rowHeight={nativeReviewDiffStyle.rowHeight}
+                    initialRowIndex={
+                      targetFileId
+                        ? nativeReviewDiffData.rows.findIndex(
+                            (row) => row.kind === "file" && row.fileId === targetFileId,
+                          )
+                        : -1
+                    }
                     rowsJson={nativeBridge.rowsJson}
                     selectedRowIdsJson={nativeBridge.selectedRowIdsJson}
                     styleJson={nativeBridge.styleJson}

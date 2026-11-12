@@ -1,3 +1,5 @@
+import { useNavigation } from "@react-navigation/native";
+import { useErrorsAndWarningsSuppressed } from "../agent-awareness/notificationSuppression";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -30,6 +32,8 @@ export function OutdatedServerUpdateSection({
   readonly label: string;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const navigation = useNavigation();
+  const suppressed = useErrorsAndWarningsSuppressed();
   const describe = useAtomCommand(describeOutdatedServer, { reportFailure: false });
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
   const state = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
@@ -95,7 +99,7 @@ export function OutdatedServerUpdateSection({
                 : translator.message("mobile.ui.noNewerVersionIsAvailableYet")
               : translator.message("mobile.ui.thisAppNeedsANewerVersionOf")}
         </Text>
-        {error || state.status === "failed" ? (
+        {(!suppressed && error) || state.status === "failed" ? (
           <Text selectable accessibilityRole="alert" className="text-sm text-danger-foreground">
             {error ?? (state.status === "failed" ? state.message : null)}
           </Text>
@@ -107,6 +111,11 @@ export function OutdatedServerUpdateSection({
         disabled={busy}
         loading={checking}
         onPress={check}
+      />
+      <SettingsActionRow
+        icon="arrow.clockwise"
+        label={translator.message("mobile.insights.updates.title")}
+        onPress={() => navigation.navigate("SettingsUpdateEverything")}
       />
       {release?.targetVersion ? (
         <SettingsActionRow

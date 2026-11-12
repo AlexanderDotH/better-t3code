@@ -5,12 +5,15 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
+  createDraft,
+  hasScheduledTaskDraftChanges,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -62,6 +65,14 @@ describe("scheduleDraftForTask", () => {
     );
     expect(saved).toEqual({ type: "webhook", signature, maxDeliveryAgeMinutes: null, dedupe: {} });
     expect(saved?.type === "webhook" && saved.signature && "secret" in saved.signature).toBe(false);
+    const editable = scheduleDraftForTask({ schedule: { type: "webhook", signature } });
+    expect(scheduleFromDraft({ ...editable, signatureSecret: " replacement " })).toMatchObject({
+      signature: { ...signature, secret: "replacement" },
+    });
+    expect(scheduleFromDraft({ ...editable, signature: { ...signature, header: " " } })).toBeNull();
+    expect(
+      scheduleFromDraft({ ...editable, signature: null, signatureSecret: "replacement" }),
+    ).toMatchObject({ signature: null });
   });
 
   it("round-trips webhook filters and refuses an invalid one", () => {
@@ -206,4 +217,32 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("scheduled task destination and signature edits", () => {
+  it("includes signature configuration and replacement secrets in unsaved changes", () => {
+    const initial = createDraft(null, null);
+    expect(initial.destinationThreadId).toBeNull();
+    expect(
+      hasScheduledTaskDraftChanges(initial, {
+        ...initial,
+        destinationThreadId: ThreadId.make("destination"),
+      }),
+    ).toBe(true);
+    expect(
+      hasScheduledTaskDraftChanges(initial, {
+        ...initial,
+        schedule: {
+          ...initial.schedule,
+          signature: { header: "x-signature", encoding: "hex", prefix: "" },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      hasScheduledTaskDraftChanges(initial, {
+        ...initial,
+        schedule: { ...initial.schedule, signatureSecret: "replacement" },
+      }),
+    ).toBe(true);
+  });
 });

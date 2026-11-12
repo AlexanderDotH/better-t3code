@@ -1,4 +1,10 @@
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
+import {
+  groupPullRequestsByInvolvement,
+  sortPullRequestGroups,
+  type PullRequestGroupKey,
+} from "@t3tools/client-runtime/pull-request-list";
 import {
   applyPullRequestDraftFilterChange,
   parsePullRequestQuery,
@@ -40,6 +46,7 @@ import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
   filterPullRequestList,
   pullRequestListFacets,
+  pullRequestStatKey,
   pullRequestListInput,
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
@@ -52,6 +59,19 @@ import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+
+type PullRequestListItem =
+  | EnvironmentPullRequestListEntry
+  | {
+      readonly groupKey: PullRequestGroupKey;
+      readonly count: number;
+    };
+const listItemKey = (item: PullRequestListItem) =>
+  "groupKey" in item ? `group:${item.groupKey}` : pullRequestKey(item);
+const listItemsEqual = (previous: PullRequestListItem, next: PullRequestListItem) =>
+  "groupKey" in previous
+    ? "groupKey" in next && previous.groupKey === next.groupKey && previous.count === next.count
+    : !("groupKey" in next) && pullRequestListRowsAreEqual(previous, next);
 
 function PullRequestScrollView(props: ScrollViewProps) {
   return (
@@ -136,6 +156,8 @@ export function PullRequestsScreen(
   const typedQuery = tab.searchMode === "resting" ? "" : tab.query;
   const typedDraft = parsePullRequestQuery(typedQuery).filters.draft;
   const listControls = usePullRequestListControls();
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const selectedEnvironmentId = listControls.environmentId;
   const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
     ? selectedEnvironmentId
@@ -176,7 +198,10 @@ export function PullRequestsScreen(
         })),
     [environments, environmentId, configs, controls, query],
   );
-  const result = usePullRequestList(targets);
+  const result = usePullRequestList(
+    targets,
+    ["ready", "largest", "smallest"].includes(controls.sort),
+  );
   const connectedTargets = targets.filter((target) =>
     environments.some(
       (environment) =>
@@ -184,7 +209,7 @@ export function PullRequestsScreen(
         environment.connectionState === "connected",
     ),
   );
-  const { actions, select, busyKey } = usePullRequestListActions(
+  const { actions, select, busyKey, closeMany, closingMany, canClose } = usePullRequestListActions(
     connectedTargets.map((target) => target.environmentId),
     result.updateEntry,
   );
@@ -203,6 +228,62 @@ export function PullRequestsScreen(
       ),
     [result.entries, controls, query, result.data, connectedKey],
   );
+  const listItems = useMemo(() => {
+    const groups =
+      controls.involvement === "all"
+        ? groupPullRequestsByInvolvement(entries, result.data.viewers)
+        : [{ key: "others" as const, label: "", entries }];
+    const sort =
+      controls.sort === "created"
+        ? "newest"
+        : controls.sort === "oldest"
+          ? "updated"
+          : controls.sort;
+    return sortPullRequestGroups(
+      groups,
+      sort,
+      parsePullRequestQuery(query).text,
+      (entry) => result.measuredSizeKeys.has(`${entry.environmentId}:${pullRequestStatKey(entry)}`),
+      controls.involvement,
+    ).flatMap<PullRequestListItem>((group) =>
+      controls.involvement === "all"
+        ? [{ groupKey: group.key, count: group.entries.length }, ...group.entries]
+        : group.entries,
+    );
+  }, [
+    controls.involvement,
+    controls.sort,
+    entries,
+    query,
+    result.data.viewers,
+    result.measuredSizeKeys,
+  ]);
+  const selectedEntries = entries.filter(
+    (entry) => selectedKeys.has(pullRequestKey(entry)) && canClose(entry),
+  );
+  const closeSelection = () =>
+    Dialog.alert(
+      translator.message("mobile.pulls.closeConfirm", { count: selectedEntries.length }),
+      selectedEntries
+        .map((entry) => `${entry.repository} #${entry.number} · ${entry.title}`)
+        .join("\n"),
+      [
+        { text: translator.message("mobile.settings.projects.settings.cancel"), style: "cancel" },
+        {
+          text: translator.message("mobile.pulls.closeSelected", { count: selectedEntries.length }),
+          style: "destructive",
+          onPress: () =>
+            void closeMany(selectedEntries).then((failed) => {
+              setSelectedKeys(failed);
+              if (failed.size)
+                Dialog.alert(
+                  translator.message("mobile.pulls.closeFailed", { count: failed.size }),
+                );
+              else setSelectionMode(false);
+            }),
+        },
+      ],
+    );
   const facets = pullRequestListFacets(result.entries);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
   if (knownFacets.environmentId !== environmentId || knownFacets.source !== facets) {
@@ -270,31 +351,64 @@ export function PullRequestsScreen(
         labelColors,
       }),
   });
-  const renderPullRequest = ({ item }: { readonly item: EnvironmentPullRequestListEntry }) => (
-    <PullRequestListRow
-      item={item}
-      onSelect={selectPullRequest}
-      getActions={actions}
-      onAction={select}
-      busy={busyKey === pullRequestKey(item)}
-      selected={selectedKey === pullRequestKey(item)}
-      sidebar={sidebar}
-    />
-  );
+  const renderPullRequest = ({ item }: { readonly item: PullRequestListItem }) =>
+    "groupKey" in item ? (
+      <Text
+        accessibilityRole="header"
+        className="px-4 pb-2 pt-4 text-xs font-semibold text-foreground-muted"
+      >
+        {translator.message(`mobile.pulls.group.${item.groupKey}`)} · {item.count}
+      </Text>
+    ) : (
+      <PullRequestListRow
+        item={item}
+        onSelect={
+          selectionMode
+            ? (entry) => {
+                if (!canClose(entry) || closingMany) return;
+                setSelectedKeys((previous) => {
+                  const next = new Set(previous);
+                  const key = pullRequestKey(entry);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                });
+              }
+            : selectPullRequest
+        }
+        getActions={actions}
+        onAction={select}
+        busy={closingMany || busyKey === pullRequestKey(item)}
+        selectionMode={selectionMode}
+        selected={
+          selectionMode
+            ? selectedKeys.has(pullRequestKey(item))
+            : selectedKey === pullRequestKey(item)
+        }
+        sidebar={sidebar}
+      />
+    );
   const list = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
-        data={entries}
-        extraData={`${selectedKey}:${busyKey}`}
-        keyExtractor={pullRequestKey}
-        itemsAreEqual={pullRequestListRowsAreEqual}
+        data={listItems}
+        extraData={`${selectedKey}:${busyKey}:${selectionMode}:${[...selectedKeys].join()}:${closingMany}`}
+        keyExtractor={listItemKey}
+        itemsAreEqual={listItemsEqual}
+        getItemType={(item) => ("groupKey" in item ? "group" : "pull")}
         estimatedItemSize={88}
         drawDistance={1_000}
         maintainVisibleContentPosition={result.continued ? maintainVisiblePosition : false}
         onEndReached={() => void result.loadMore()}
         onEndReachedThreshold={0.5}
-        onViewableItemsChanged={result.onViewableItemsChanged}
+        onViewableItemsChanged={({ viewableItems }) =>
+          result.onViewableItemsChanged({
+            viewableItems: viewableItems.flatMap((token) =>
+              "groupKey" in token.item ? [] : [{ item: token.item, isViewable: token.isViewable }],
+            ),
+          })
+        }
         refreshControl={
           <RefreshControl
             refreshing={result.refreshing}
@@ -340,6 +454,41 @@ export function PullRequestsScreen(
         ListHeaderComponent={
           <>
             <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <View className="flex-row flex-wrap items-center gap-2 px-4 py-2">
+              <Button
+                label={
+                  selectionMode
+                    ? translator.message("mobile.settings.projects.settings.cancel")
+                    : translator.message("mobile.pulls.select")
+                }
+                tone="text"
+                disabled={closingMany}
+                onPress={() => {
+                  setSelectionMode(!selectionMode);
+                  setSelectedKeys(new Set());
+                }}
+              />
+              {selectionMode ? (
+                <>
+                  <Button
+                    tone="text"
+                    label={translator.message("mobile.pulls.selectAll")}
+                    disabled={closingMany}
+                    onPress={() =>
+                      setSelectedKeys(new Set(entries.filter(canClose).map(pullRequestKey)))
+                    }
+                  />
+                  <Button
+                    label={translator.message("mobile.pulls.closeSelected", {
+                      count: selectedEntries.length,
+                    })}
+                    disabled={selectedEntries.length === 0 || busyKey !== null || closingMany}
+                    loading={closingMany}
+                    onPress={closeSelection}
+                  />
+                </>
+              ) : null}
+            </View>
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (

@@ -5,7 +5,10 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
+import {
+  buildBetterT3SettingsPreviewModel,
+  resolveBetterT3ThreadListPreview,
+} from "./betterT3SettingsPreview.ts";
 
 function feature(
   id: BetterT3FeatureId,
@@ -153,4 +156,40 @@ it("keeps motion choices independent and follows the actual chat width", () => {
       chatWidthAdjustmentPercent: -100,
     }).chat.contentWidthPercent,
   ).toBe(30);
+});
+
+describe("thread list preview", () => {
+  const items = [
+    { id: "recent-work", created: 1, updated: 4, settled: false },
+    { id: "new-thread", created: 3, updated: 3, settled: false },
+    { id: "older-thread", created: 2, updated: 2, settled: false },
+    { id: "done", created: 0, updated: 0, settled: true },
+  ];
+  it("uses the selected sort and count without mutating the sample", () => {
+    expect(
+      resolveBetterT3ThreadListPreview(items, { sort: "updated_at", count: 1, settleId: null }),
+    ).toMatchObject({
+      visible: [{ id: "recent-work" }],
+      hiddenCount: 2,
+      settled: [{ id: "done" }],
+    });
+    expect(
+      resolveBetterT3ThreadListPreview(items, {
+        sort: "created_at",
+        count: 2,
+        settleId: null,
+      }).visible.map((item) => item.id),
+    ).toEqual(["new-thread", "older-thread"]);
+    expect(items[0]?.id).toBe("recent-work");
+  });
+  it("moves settled work out of the visible limit and restores it reversibly", () => {
+    const input = { sort: "updated_at" as const, count: 2 };
+    const after = resolveBetterT3ThreadListPreview(items, { ...input, settleId: "recent-work" });
+    expect(after.visible.map((item) => item.id)).toEqual(["new-thread", "older-thread"]);
+    expect(after.settled.map((item) => item.id)).toEqual(["recent-work", "done"]);
+    expect(after.hiddenCount).toBe(0);
+    expect(
+      resolveBetterT3ThreadListPreview(items, { ...input, settleId: null }).visible[0]?.id,
+    ).toBe("recent-work");
+  });
 });

@@ -27,6 +27,10 @@ import { environmentSession, useEnvironmentScope, readEnvironmentScope } from ".
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { AuthorizedClientsSection } from "../connection/AuthorizedClientsSection";
+import { LinkedEnvironmentsSection } from "../connection/LinkedEnvironmentsSection";
+import { EnvironmentIconSection } from "../connection/EnvironmentIconSection";
+import { EnvironmentCloudSettingsSection } from "../cloud/EnvironmentCloudSettingsSection";
 import { useEnvironmentRecoveryNavigation } from "../connection/useEnvironmentRecoveryNavigation";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
@@ -216,6 +220,17 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 navigation.navigate("SettingsEnvironmentNew", { routeFor: environmentId })
               }
             />
+            {connected && !outdated ? (
+              <>
+                <EnvironmentIconSection environmentId={environmentId} />
+                <AuthorizedClientsSection environmentId={environmentId} />
+                <LinkedEnvironmentsSection
+                  environmentId={environmentId}
+                  environmentLabel={environment.environmentLabel}
+                />
+                <EnvironmentCloudSettingsSection environmentId={environmentId} />
+              </>
+            ) : null}
             {outdated ? (
               <OutdatedServerUpdateSection
                 environmentId={environmentId}

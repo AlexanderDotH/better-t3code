@@ -1,3 +1,4 @@
+import { useErrorsAndWarningsSuppressed } from "../../features/agent-awareness/notificationSuppression";
 import { MOBILE_MOTION, MOBILE_SHAPE } from "../../lib/designTokens";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { AccessibilityInfo, Platform, StyleSheet, View, useWindowDimensions } from "react-native";
@@ -29,6 +30,7 @@ export type ToastProps = {
   readonly singleLine?: boolean;
   readonly tone?: "default" | "success" | "danger";
   readonly busy?: boolean;
+  readonly critical?: boolean;
   readonly action?: { readonly label: string; readonly onPress: () => void };
 } & (
   | { readonly dismissMode: "swipe"; readonly onDismiss: () => void }
@@ -36,6 +38,8 @@ export type ToastProps = {
 );
 
 export function Toast(props: ToastProps) {
+  const suppressed = useErrorsAndWarningsSuppressed();
+  if (!props.critical && suppressed && props.tone === "danger") return null;
   return props.dismissMode === "swipe" ? (
     <SwipeableToast {...props} />
   ) : (

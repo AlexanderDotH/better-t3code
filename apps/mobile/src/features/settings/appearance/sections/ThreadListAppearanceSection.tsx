@@ -12,6 +12,7 @@ import {
   THREAD_LIST_LAYOUT_OPTIONS,
 } from "../threadListAppearance";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { ThreadListSettingsPreview } from "../components/SettingsPreviews";
 
 export function ThreadListAppearanceSection() {
   const translator = useMobileInterfaceTranslator();
@@ -60,6 +61,7 @@ export function ThreadListAppearanceSection() {
           ) : null}
         </Pressable>
       ))}
+      <ThreadListSettingsPreview layout={selectedLayout ?? "current"} />
     </SettingsSection>
   );
 }

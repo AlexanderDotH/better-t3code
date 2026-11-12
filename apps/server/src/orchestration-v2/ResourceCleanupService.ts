@@ -5,10 +5,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
+import { mediaSnapshotDirectory } from "../assets/MediaSnapshots.ts";
 import * as ServerConfig from "../config.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -46,6 +48,7 @@ export const layer = Layer.effect(
     const terminals = yield* TerminalManager.TerminalManager;
     const previews = yield* PreviewManager.PreviewManager;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const config = yield* ServerConfig.ServerConfig;
     const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
     const sql = yield* SqlClient.SqlClient;
@@ -76,13 +79,17 @@ export const layer = Layer.effect(
       cleanupPreviews: Effect.fn("ResourceCleanupService.cleanupPreviews")(function (
         threadId: string,
       ) {
-        return previews
-          .close({ threadId: ThreadId.make(threadId) })
-          .pipe(
-            Effect.mapError(
-              (cause) => new ResourceCleanupError({ operation: "preview", threadId, cause }),
-            ),
-          );
+        const snapshots = mediaSnapshotDirectory(path, config.attachmentsDir, threadId);
+        return previews.close({ threadId: ThreadId.make(threadId) }).pipe(
+          Effect.andThen(
+            snapshots === null
+              ? Effect.void
+              : fileSystem.remove(snapshots, { recursive: true, force: true }),
+          ),
+          Effect.mapError(
+            (cause) => new ResourceCleanupError({ operation: "preview", threadId, cause }),
+          ),
+        );
       }),
       cleanupAttachments: Effect.fn("ResourceCleanupService.cleanupAttachments")(function* (
         attachmentIds: ReadonlyArray<string>,

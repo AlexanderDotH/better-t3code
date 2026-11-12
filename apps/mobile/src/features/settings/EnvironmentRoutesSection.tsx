@@ -31,6 +31,7 @@ import { cn } from "../../lib/cn";
 import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectionTone } from "../connection/connectionTone";
+import { accessScopeCopy } from "../connection/access-scope-copy";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
@@ -162,9 +163,9 @@ export function EnvironmentRoutesSection({
               <Text className="text-sm text-foreground-muted">
                 {translator.message("mobile.ui.appliesToTheRouteMarkedInUse")}
               </Text>
-              {AUTH_SCOPE_OPTIONS.map(({ scope, title }) => (
+              {AUTH_SCOPE_OPTIONS.map(({ scope }) => (
                 <Text key={scope} className="text-sm text-foreground">
-                  {title}:{" "}
+                  {translator.message(accessScopeCopy[scope][0])}:{" "}
                   {sessionGrantsScope(session, scope)
                     ? translator.message("mobile.ui.allowed")
                     : translator.message("mobile.ui.notGranted")}

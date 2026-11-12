@@ -26,18 +26,18 @@ export interface PreviewStreamControl {
   };
 }
 
-export const previewStreamControlLabel = (control: PreviewStreamControl | null): string =>
+export const previewStreamControlLabelKey = (control: PreviewStreamControl | null) =>
   !control
-    ? "Connecting..."
+    ? ("browser.stream.connecting" as const)
     : !control.canOperate
-      ? "Read-only"
+      ? ("browser.stream.readOnly" as const)
       : control.controller === "you"
-        ? "You have control"
+        ? ("browser.stream.youControl" as const)
         : control.controller === "agent"
-          ? "Agent has control"
+          ? ("browser.stream.agentControl" as const)
           : control.controller === "another-viewer"
-            ? "Another viewer has control"
-            : "Watching";
+            ? ("browser.stream.otherViewerControl" as const)
+            : ("browser.stream.watching" as const);
 
 const isPreviewStreamDialog = (value: unknown): value is PreviewStreamControl["dialog"] =>
   value === null ||

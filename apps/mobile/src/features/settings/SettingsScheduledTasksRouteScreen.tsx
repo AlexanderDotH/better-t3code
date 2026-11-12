@@ -93,6 +93,9 @@ import {
   formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { ProjectSettingsSelect } from "./ProjectSettingsFields";
+import { WebhookSignatureSettings, WebhookDeliveriesSettings } from "./WebhookTaskSettings";
+import { useThreadShells } from "../../state/entities";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
 type ScheduledTaskRoutes = {
@@ -750,6 +753,12 @@ function TaskForm({
           project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+  const destinationThreads = useThreadShells().filter(
+    (thread) =>
+      thread.environmentId === environmentId &&
+      thread.projectId === draft.projectId &&
+      thread.deletedAt == null,
+  );
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.
@@ -791,10 +800,12 @@ function TaskForm({
       environmentUnavailable
     )
       return;
-    // Preserve signatures edited on other clients by sending the task's current value.
+    // Keep remote edits until this form changes signature configuration.
     const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
     const schedule = scheduleFromDraft(
-      draft.schedule.mode === "webhook" && liveTask?.schedule.type === "webhook"
+      draft.schedule.mode === "webhook" &&
+        !draft.schedule.signatureEdited &&
+        liveTask?.schedule.type === "webhook"
         ? { ...draft.schedule, signature: liveTask.schedule.signature }
         : draft.schedule,
     );
@@ -848,6 +859,23 @@ function TaskForm({
       );
       return;
     }
+    if (
+      draft.destinationThreadId !== null &&
+      !destinationThreads.some((thread) => thread.id === draft.destinationThreadId) &&
+      draft.destinationThreadId !== draft.task?.threadId
+    ) {
+      Dialog.alert(translator.message("mobile.projects.tasks.destinationUnavailable"));
+      return;
+    }
+    if (
+      schedule.type === "webhook" &&
+      schedule.signature &&
+      !draft.schedule.signatureSecret.trim() &&
+      !liveTask?.webhook?.hasSecret
+    ) {
+      Dialog.alert(translator.message("mobile.projects.tasks.secretRequired"));
+      return;
+    }
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -856,7 +884,7 @@ function TaskForm({
       modelSelection: draft.modelSelection,
       schedule,
       enabled: draft.enabled,
-      threadId: draft.task?.threadId ?? null,
+      threadId: draft.destinationThreadId,
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -882,6 +910,7 @@ function TaskForm({
       failure("Could not save task", result);
       return;
     }
+    setDraft({ ...draft, schedule: { ...draft.schedule, signatureSecret: "" } });
     onSaved();
   };
 
@@ -974,6 +1003,7 @@ function TaskForm({
               setDraft({
                 ...draft,
                 projectId: project.id,
+                destinationThreadId: null,
                 modelSelection: keepsExplicitModel
                   ? draft.modelSelection
                   : scheduledTaskDefaultModel(config, project),
@@ -1000,6 +1030,38 @@ function TaskForm({
           />
         </SettingsSection>
 
+        <SettingsSection title={translator.message("mobile.projects.tasks.destination")}>
+          <ProjectSettingsSelect
+            label={translator.message("mobile.projects.tasks.destination")}
+            value={draft.destinationThreadId ?? "new"}
+            options={[
+              { value: "new", label: translator.message("mobile.projects.tasks.newThread") },
+              ...destinationThreads.map((thread) => ({ value: thread.id, label: thread.title })),
+              ...(draft.destinationThreadId !== null &&
+              !destinationThreads.some((thread) => thread.id === draft.destinationThreadId)
+                ? [{ value: draft.destinationThreadId, label: draft.destinationThreadId }]
+                : []),
+            ]}
+            disabled={saving || environmentUnavailable}
+            onChange={(value) =>
+              setDraft({
+                ...draft,
+                destinationThreadId:
+                  value === "new"
+                    ? null
+                    : (destinationThreads.find((thread) => thread.id === value)?.id ??
+                      draft.destinationThreadId),
+              })
+            }
+          />
+          <Text className="px-4 pb-3 text-sm text-foreground-muted">
+            {translator.message(
+              draft.destinationThreadId
+                ? "mobile.projects.tasks.continueThread"
+                : "mobile.projects.tasks.newThreadDescription",
+            )}
+          </Text>
+        </SettingsSection>
         <SettingsSection
           title={translator.message("mobile.settings.projects.settings.workspaceTitle")}
         >
@@ -1248,8 +1310,13 @@ function TaskForm({
                     ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
                     : draft.task
                 }
-                signatureConfigured={draft.schedule.signature !== null}
                 disabled={!canOperate || saving || environmentUnavailable}
+              />
+              <WebhookSignatureSettings
+                schedule={draft.schedule}
+                hasSavedSecret={draft.task?.webhook?.hasSecret === true}
+                disabled={saving || !canOperate || environmentUnavailable}
+                onChange={(schedule) => setDraft({ ...draft, schedule })}
               />
               <FormField
                 label={translator.message("mobile.ui.skipRequestsOlderThanMinutes")}
@@ -1376,12 +1443,10 @@ function TaskForm({
 function WebhookScheduleDetails({
   environmentId,
   task,
-  signatureConfigured,
   disabled,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
-  readonly signatureConfigured: boolean;
   readonly disabled: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
@@ -1468,10 +1533,8 @@ function WebhookScheduleDetails({
           />
         </>
       )}
-      {signatureConfigured ? (
-        <Text className="text-sm text-foreground-muted">
-          {translator.message("mobile.ui.signatureCheckConfiguredOnDesktopWeb")}
-        </Text>
+      {task?.schedule.type === "webhook" ? (
+        <WebhookDeliveriesSettings environmentId={environmentId} task={task} />
       ) : null}
     </View>
   );

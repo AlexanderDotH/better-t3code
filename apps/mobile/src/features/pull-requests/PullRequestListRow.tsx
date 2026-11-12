@@ -41,6 +41,7 @@ export const PullRequestListRow = memo(
     readonly selected: boolean;
     readonly sidebar: boolean;
     readonly busy: boolean;
+    readonly selectionMode?: boolean;
     readonly getActions: (item: EnvironmentPullRequestListEntry) => MenuProps["actions"];
     readonly onAction: (item: EnvironmentPullRequestListEntry, action: string) => void;
   }) {
@@ -74,8 +75,12 @@ export const PullRequestListRow = memo(
           onPressAction={({ nativeEvent }) => props.onAction(item, nativeEvent.event)}
         >
           <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: props.selected, busy: props.busy }}
+            accessibilityRole={props.selectionMode ? "checkbox" : "button"}
+            accessibilityState={{
+              selected: props.selected,
+              busy: props.busy,
+              checked: props.selectionMode ? props.selected : undefined,
+            }}
             accessibilityLabel={`${capitalizeTerm(sourceControlClients.get(item.provider).changeRequest.singular)} ${item.number}, ${item.title}, ${status.label}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, by ${item.author?.login ?? "unknown author"}${review ? `, ${review.accessibleLabel}` : ""}${item.checksState ? `, checks ${item.checksState}` : ""}${item.stack ? `, stack ${item.stack.position} of ${item.stack.size}` : ""}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}, ${item.additions} additions, ${item.deletions} deletions`}
             accessibilityHint={translator.message("mobile.ui.doubleTapToOpenTouchAndHold")}
             onPress={() => props.onSelect(item)}
@@ -91,7 +96,17 @@ export const PullRequestListRow = memo(
             )}
           >
             <View className={cn("self-start", props.sidebar ? "pt-0.5" : "pt-2.5")}>
-              <SymbolView name={status.icon} size={20} tintColorClassName={status.tint} />
+              <SymbolView
+                name={
+                  props.selectionMode
+                    ? props.selected
+                      ? "checkmark.circle.fill"
+                      : "circle"
+                    : status.icon
+                }
+                size={20}
+                tintColorClassName={status.tint}
+              />
               {conflict ? (
                 <PullRequestConflictBadge
                   surfaceClassName={
@@ -206,6 +221,7 @@ export const PullRequestListRow = memo(
     previous.selected === next.selected &&
     previous.sidebar === next.sidebar &&
     previous.busy === next.busy &&
+    previous.selectionMode === next.selectionMode &&
     previous.onSelect === next.onSelect &&
     previous.onAction === next.onAction &&
     previous.getActions === next.getActions,

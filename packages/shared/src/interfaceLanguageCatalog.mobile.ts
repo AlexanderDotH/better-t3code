@@ -8319,6 +8319,58 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Täglich verarbeitete Tokens",
     "Tokens traités par jour",
   ],
+  "mobile.ui.reviewGuides": ["Review guides", "Review-Leitfäden", "Guides de revue"],
+  "mobile.ui.reviewGuidesDescription": [
+    "Add a Guide tab to pull requests. An agent explains the changes and points out decisions that need review.",
+    "Fügt Pull Requests einen Leitfaden-Tab hinzu. Ein Agent erklärt die Änderungen und weist auf Entscheidungen hin, die geprüft werden müssen.",
+    "Ajoute un onglet Guide aux pull requests. Un agent explique les changements et signale les décisions à examiner.",
+  ],
+  "mobile.ui.reviewGuideModel": [
+    "Review guide model",
+    "Modell für Review-Leitfäden",
+    "Modèle des guides de revue",
+  ],
+  "mobile.ui.reviewGuideInstructions": [
+    "Review guide instructions",
+    "Anweisungen für Review-Leitfäden",
+    "Instructions des guides de revue",
+  ],
+  "mobile.ui.reviewGuideInstructionsDescription": [
+    "Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same.",
+    "Deine Vorgaben für Review-Leitfäden: was zuerst gezeigt, vertieft oder übersprungen wird. Format und Umfang des Leitfadens bleiben gleich.",
+    "Vos préférences pour les guides de revue : ce qu’il faut montrer en premier, approfondir ou ignorer. Le format et la couverture du guide ne changent pas.",
+  ],
+  "mobile.ui.reviewGuideInstructionsPlaceholder": [
+    "Lead with risky changes. Skip generated files.",
+    "Beginne mit riskanten Änderungen. Überspringe generierte Dateien.",
+    "Commencez par les changements risqués. Ignorez les fichiers générés.",
+  ],
+  "mobile.ui.keepThreadsWithPullRequest": [
+    "Keep threads with a PR",
+    "Chats mit PR behalten",
+    "Garder les discussions avec une PR",
+  ],
+  "mobile.ui.keepThreadsWithPullRequestDescription": [
+    "Inactivity does not settle threads with a pull request. Merge and close still do.",
+    "Inaktivität erledigt keine Chats mit Pull Request. Merge und Schließen erledigen sie weiterhin.",
+    "L’inactivité ne règle pas les discussions avec une pull request. La fusion et la fermeture le font toujours.",
+  ],
+  "mobile.ui.threadTitles": ["Thread titles", "Chat-Titel", "Titres des discussions"],
+  "mobile.ui.threadTitleInstructions": [
+    "Thread title instructions",
+    "Anweisungen für Chat-Titel",
+    "Instructions des titres de discussion",
+  ],
+  "mobile.ui.threadTitleInstructionsDescription": [
+    "Your preferences for generated thread titles, such as style or naming. Applies to new and regenerated titles.",
+    "Deine Vorgaben für generierte Chat-Titel, etwa Stil oder Benennung. Gilt für neue und neu erzeugte Titel.",
+    "Vos préférences pour les titres générés, comme le style ou le nommage. S’applique aux titres nouveaux et régénérés.",
+  ],
+  "mobile.ui.threadTitleInstructionsPlaceholder": [
+    "Keep titles under six words. Start with a verb.",
+    "Halte Titel unter sechs Wörtern. Beginne mit einem Verb.",
+    "Gardez les titres sous six mots. Commencez par un verbe.",
+  ],
 });
 
 export type MobileInterfaceMessageKey = (typeof mobileInterfaceCatalog.keys)[number];

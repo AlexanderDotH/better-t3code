@@ -10,7 +10,7 @@ export function ChangedFilesSummary(props: {
   readonly checkpoint: OrchestrationCheckpointSummary;
   readonly expanded: boolean;
   readonly onToggle: () => void;
-  readonly onOpenReview: () => void;
+  readonly onOpenReview: (path: string) => void;
 }) {
   const translator = useMobileInterfaceTranslator();
   const files = props.expanded
@@ -28,7 +28,7 @@ export function ChangedFilesSummary(props: {
             accessibilityLabel={file.path}
             accessibilityHint={translator.message("chat.changedFiles.openFullDiff")}
             className="min-h-[44px] min-w-0 flex-row items-center gap-2 active:opacity-70"
-            onPress={props.onOpenReview}
+            onPress={() => props.onOpenReview(file.path)}
           >
             <PierreEntryIcon path={file.path} kind="file" size={18} />
             <AppText

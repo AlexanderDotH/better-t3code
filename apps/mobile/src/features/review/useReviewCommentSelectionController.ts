@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { NativeSyntheticEvent } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -81,12 +80,12 @@ export function useReviewCommentSelectionController(input: {
       ? { title: translator.message("mobile.ui.selectRangeEnd"), onOpenComment: null }
       : null;
 
-  const onPressLine = (
-    event: NativeSyntheticEvent<{
+  const onPressLine = (event: {
+    readonly nativeEvent: {
       readonly rowId?: string;
       readonly gesture?: "tap" | "longPress";
-    }>,
-  ) => {
+    };
+  }) => {
     if (!selectedSection || scope === null) {
       return;
     }

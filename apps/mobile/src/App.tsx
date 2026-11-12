@@ -93,6 +93,9 @@ import {
 } from "./lib/rootNavigation";
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
+import { LocalNotificationToast } from "./features/agent-awareness/LocalNotificationToast";
+import { ReviewGuideRunToast } from "./features/pull-requests/guide/ReviewGuideRunToast";
+import { installReviewGuideRunNotifications } from "./features/pull-requests/guide/reviewGuideRunNotifications";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
 
 import "../global.css";
@@ -188,6 +191,7 @@ const appServiceDisposers = [
   installComposerAttachmentUploads(),
   startIncomingShareInbox(),
   installAgentNotificationNavigation(linkToAppPath),
+  installReviewGuideRunNotifications(),
   installAppShortcuts(linkToAppPath),
   installAppUpdateChecks(),
   installShowcaseCapture(rootPathnameFromState),
@@ -249,6 +253,8 @@ function AppContent() {
               </NativeLayoutMetricsProvider>
             </GlobalVoiceInputControl>
             <OverlayPortalHost />
+            <LocalNotificationToast />
+            <ReviewGuideRunToast />
           </SafeAreaProvider>
         </KeyboardProvider>
       </GestureHandlerRootView>

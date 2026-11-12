@@ -114,7 +114,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  const currentStatusSummary = statusSummary(gitStatus.data, translator);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -122,7 +122,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
+  const menuItems = isRepo
+    ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote, translator.message)
+    : [];
 
   const sheetMenuItems = menuItems.map((item) => ({
     item: {
@@ -131,12 +133,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     },
     disabledReason:
       !canWriteSourceControl && item.kind !== "open_pr"
-        ? "This connection cannot change source control."
+        ? translator.message("mobile.ui.thisConnectionCannotChangeSourceControl")
         : getGitActionDisabledReason({
             item,
             gitStatus: gitStatus.data,
             isBusy: busy,
             hasOriginRemote: hasPrimaryRemote,
+            translate: translator.message,
           }),
   }));
 
@@ -217,14 +220,20 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     }
     if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
       const fileCount = status.workingTree?.files.length ?? 0;
-      return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+      return translator.message("git.overview.filesChanged", { count: fileCount });
     }
     if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
       const ahead = status.aheadCount ?? 0;
-      return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
+      return translator.message("git.overview.commitsAhead", { count: ahead });
     }
     if (item.kind === "open_pr" && status.pr?.number != null) {
-      return `${shortLabel} #${status.pr.number} ${status.pr.state ?? "open"}`;
+      return `${shortLabel} #${status.pr.number} ${translator.message(
+        status.pr.state === "closed"
+          ? "pullRequest.state.closed"
+          : status.pr.state === "merged"
+            ? "pullRequest.state.merged"
+            : "pullRequest.state.open",
+      )}`;
     }
     return undefined;
   };
@@ -275,7 +284,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             label={translator.message("mobile.git.pullLatest")}
             description={
               canWriteSourceControl
-                ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
+                ? translator.message("mobile.git.commitsBehind", { count: behindCount })
                 : translator.message("mobile.ui.thisConnectionCannotChangeSourceControl")
             }
             disabled={!canWriteSourceControl || busy || !isRepo}
@@ -315,15 +324,23 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {linkedPrActions.canLink ? (
           <ListRow
             icon="link"
-            label={`Link ${linkedPrActions.terminology.singular}`}
-            description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
+            label={translator.message("git.overview.linkRequest", {
+              kind: linkedPrActions.terminology.shortLabel,
+            })}
+            description={translator.message("git.overview.attachRequest", {
+              kind: linkedPrActions.terminology.shortLabel,
+            })}
             onPress={linkedPrActions.promptLink}
           />
         ) : null}
       </ListSection>
 
       {linkedPrLines.length > 0 ? (
-        <ListSection title={`Linked ${linkedPrActions.terminology.plural}`}>
+        <ListSection
+          title={translator.message("git.overview.linkedRequests", {
+            kind: linkedPrActions.terminology.shortLabel,
+          })}
+        >
           {linkedPrLines.map((line, index) => (
             <LinkedPullRequestRow
               key={linkedPullRequestKey(line)}
@@ -339,9 +356,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
       <GitWorkbenchSection
         enabled={mobileGitWorkbenchCanActivate(gitWorkbenchAvailability)}
-        canWrite={canWriteSourceControl && !busy}
+        canWrite={canWriteSourceControl}
         environmentId={environmentId}
         cwd={selectedThreadCwd}
+        threadId={threadId}
       />
 
       {currentWorktreePath ? (
@@ -479,29 +497,24 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             {currentStatusSummary}
           </Text>
         </View>
-      ) : (
-        <AndroidSheetHeader
-          title={currentBranchLabel}
-          hideBottomBorder={Platform.OS === "android"}
-          subtitle={currentStatusSummary}
-          onBack={() => navigation.goBack()}
-          trailing={Platform.OS === "android" ? refreshMenu : undefined}
-          actions={
-            Platform.OS === "android"
-              ? undefined
-              : [
-                  {
-                    accessibilityLabel: translator.message("mobile.git.refreshStatus"),
-                    disabled: busy,
-                    icon: "arrow.clockwise",
-                    onPress: () => void gitActions.refreshSelectedThreadGitStatus(),
-                  },
-                ]
-          }
-        />
-      )}
+      ) : null}
 
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      <ScreenContent
+        insetHorizontal={layout.usesSplitView}
+        header={
+          !isInspector ? (
+            <AndroidSheetHeader
+              title={currentBranchLabel}
+              hideBottomBorder
+              subtitle={currentStatusSummary}
+              onBack={() => navigation.goBack()}
+              trailing={refreshMenu}
+            />
+          ) : undefined
+        }
+      >
+        {content}
+      </ScreenContent>
     </View>
   );
 }

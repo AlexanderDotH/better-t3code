@@ -1,3 +1,4 @@
+import { UsagePaceDetails } from "./UsagePaceDetails";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -124,6 +125,7 @@ function WindowRow(props: {
           />
         ) : null}
       </View>
+      <UsagePaceDetails window={window} now={now} />
       {pace || resetsIn ? (
         <View className="flex-row justify-between gap-3">
           <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>

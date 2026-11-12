@@ -1,3 +1,4 @@
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AsyncResult } from "effect/reactivity";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -141,12 +142,6 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   };
   return (
     <View className="flex-1 bg-sheet">
-      <SheetHeader
-        title={translator.message("mobile.ui.requestReview")}
-        subtitle={`#${route.params.number} · ${route.params.repository}`}
-        onClose={() => navigation.goBack()}
-        accessibilityLabel={translator.message("mobile.ui.closeRequestReview")}
-      />
       <NativeStackScreenOptions
         options={{
           headerSearchBarOptions: listCandidates ? searchOptions : undefined,
@@ -163,167 +158,184 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               : [],
         }}
       />
-      {listCandidates ? (
-        <FlatList
-          ref={listRef}
-          data={candidates}
-          keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          renderScrollComponent={
-            Platform.OS === "ios" ? (props) => <ReviewerScrollView {...props} /> : undefined
-          }
-          contentInsetAdjustmentBehavior="never"
-          automaticallyAdjustKeyboardInsets
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 24 }}
-          ListHeaderComponent={
-            <View className="gap-3 px-4 py-4">
-              <Text className="text-xs text-foreground-muted">
-                {translator.message("mobile.ui.tapSomeoneToRequestAReviewTap")}
-              </Text>
-              {Platform.OS === "android" ? (
+      <ScreenContent
+        header={
+          <SheetHeader
+            title={translator.message("mobile.ui.requestReview")}
+            subtitle={`#${route.params.number} · ${route.params.repository}`}
+            onClose={() => navigation.goBack()}
+            accessibilityLabel={translator.message("mobile.ui.closeRequestReview")}
+          />
+        }
+      >
+        {" "}
+        {listCandidates ? (
+          <FlatList
+            nestedScrollEnabled
+            ref={listRef}
+            data={candidates}
+            keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
+            renderScrollComponent={
+              Platform.OS === "ios" ? (props) => <ReviewerScrollView {...props} /> : undefined
+            }
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustKeyboardInsets
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: 24 }}
+            ListHeaderComponent={
+              <View className="gap-3 px-4 py-4">
+                <Text className="text-xs text-foreground-muted">
+                  {translator.message("mobile.ui.tapSomeoneToRequestAReviewTap")}
+                </Text>
+                {Platform.OS === "android" ? (
+                  <TextInput
+                    accessibilityLabel={translator.message("mobile.ui.searchReviewers")}
+                    placeholder={translator.message("mobile.ui.searchReviewers")}
+                    placeholderTextColorClassName="accent-foreground-muted"
+                    value={query}
+                    onChangeText={search}
+                    autoCapitalize="none"
+                    className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
+                  />
+                ) : null}
+                {!allowed ? (
+                  <Text className="text-xs text-foreground-muted">
+                    Requesting reviews requires write access and an open {singular}.
+                  </Text>
+                ) : null}
+                {error ? (
+                  <Text selectable className="text-sm text-danger-foreground">
+                    {error}
+                  </Text>
+                ) : null}
+              </View>
+            }
+            renderItem={({ item }) => {
+              const id = `${item.kind}:${item.id}`;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
+                  accessibilityState={{ disabled: !allowed || pending !== null }}
+                  disabled={!allowed || pending !== null}
+                  onPress={() => void update(item)}
+                  className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
+                >
+                  <PullRequestAvatar actor={item} size={32} />
+                  <View className="min-w-0 flex-1 gap-0.5">
+                    <Text className="text-sm font-t3-medium" numberOfLines={1}>
+                      {item.name || item.login}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                      {item.login}
+                      {item.kind === "team" ? " · Team" : ""}
+                    </Text>
+                  </View>
+                  {pending === id ? (
+                    <AppActivityIndicator />
+                  ) : item.isRequested ? (
+                    <View className="flex-row items-center gap-1.5">
+                      <Text className="text-xs text-foreground-muted">
+                        {translator.message("mobile.ui.requested")}
+                      </Text>
+                      <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />
+                    </View>
+                  ) : (
+                    <SymbolView name="plus" size={16} tintColorClassName="accent-icon-muted" />
+                  )}
+                </Pressable>
+              );
+            }}
+            ListEmptyComponent={
+              result.isPending && !result.data ? (
+                <AppActivityIndicator className="my-8" />
+              ) : (
+                <View className="px-4 py-6">
+                  <EmptyState
+                    title={
+                      result.error
+                        ? translator.message("mobile.ui.couldntLoadReviewers")
+                        : query.trim()
+                          ? translator.message("mobile.ui.noMatchingReviewers")
+                          : translator.message("mobile.ui.noReviewersAvailable")
+                    }
+                    detail={
+                      result.error ??
+                      translator.message("mobile.ui.searchPeopleAndTeamsWithAccessTo")
+                    }
+                    variant="plain"
+                  />
+                  {result.error ? (
+                    <Button label={translator.message("common.retry")} onPress={result.refresh} />
+                  ) : null}
+                </View>
+              )
+            }
+            ListFooterComponent={
+              result.data?.truncated ? (
+                <Text className="px-4 py-4 text-xs text-foreground-muted">
+                  {translator.message("mobile.ui.theProviderHasMoreReviewersThanIt")}
+                </Text>
+              ) : undefined
+            }
+          />
+        ) : (
+          <ScrollView
+            nestedScrollEnabled
+            contentInsetAdjustmentBehavior="automatic"
+            automaticallyAdjustKeyboardInsets
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: 16, gap: 16 }}
+          >
+            {!pr ? (
+              detail.isPending ? (
+                <AppActivityIndicator />
+              ) : (
+                <Text className="text-danger-foreground">
+                  {detail.error ?? `Couldn't load this ${singular}.`}
+                </Text>
+              )
+            ) : (
+              <>
+                <Text className="text-sm text-foreground-muted">
+                  {translator.message("mobile.ui.thisProviderAcceptsAReviewerIdBut")}
+                </Text>
                 <TextInput
-                  accessibilityLabel={translator.message("mobile.ui.searchReviewers")}
-                  placeholder={translator.message("mobile.ui.searchReviewers")}
+                  accessibilityLabel={translator.message("mobile.ui.reviewerId")}
+                  placeholder={translator.message("mobile.ui.reviewerLoginOrId")}
                   placeholderTextColorClassName="accent-foreground-muted"
                   value={query}
                   onChangeText={search}
                   autoCapitalize="none"
-                  className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
+                  autoCorrect={false}
+                  className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
                 />
-              ) : null}
-              {!allowed ? (
-                <Text className="text-xs text-foreground-muted">
-                  Requesting reviews requires write access and an open {singular}.
-                </Text>
-              ) : null}
-              {error ? (
-                <Text selectable className="text-sm text-danger-foreground">
-                  {error}
-                </Text>
-              ) : null}
-            </View>
-          }
-          renderItem={({ item }) => {
-            const id = `${item.kind}:${item.id}`;
-            return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
-                accessibilityState={{ disabled: !allowed || pending !== null }}
-                disabled={!allowed || pending !== null}
-                onPress={() => void update(item)}
-                className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
-              >
-                <PullRequestAvatar actor={item} size={32} />
-                <View className="min-w-0 flex-1 gap-0.5">
-                  <Text className="text-sm font-t3-medium" numberOfLines={1}>
-                    {item.name || item.login}
-                  </Text>
-                  <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                    {item.login}
-                    {item.kind === "team" ? " · Team" : ""}
-                  </Text>
-                </View>
-                {pending === id ? (
-                  <AppActivityIndicator />
-                ) : item.isRequested ? (
-                  <View className="flex-row items-center gap-1.5">
-                    <Text className="text-xs text-foreground-muted">
-                      {translator.message("mobile.ui.requested")}
-                    </Text>
-                    <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />
-                  </View>
-                ) : (
-                  <SymbolView name="plus" size={16} tintColorClassName="accent-icon-muted" />
-                )}
-              </Pressable>
-            );
-          }}
-          ListEmptyComponent={
-            result.isPending && !result.data ? (
-              <AppActivityIndicator className="my-8" />
-            ) : (
-              <View className="px-4 py-6">
-                <EmptyState
-                  title={
-                    result.error
-                      ? translator.message("mobile.ui.couldntLoadReviewers")
-                      : query.trim()
-                        ? translator.message("mobile.ui.noMatchingReviewers")
-                        : translator.message("mobile.ui.noReviewersAvailable")
+                <Button
+                  label={translator.message("mobile.ui.requestReview")}
+                  fullWidth
+                  disabled={!allowed || !query.trim() || pending !== null}
+                  onPress={() =>
+                    void update({ id: query.trim(), kind: "user", isRequested: false })
                   }
-                  detail={
-                    result.error ?? translator.message("mobile.ui.searchPeopleAndTeamsWithAccessTo")
-                  }
-                  variant="plain"
                 />
-                {result.error ? (
-                  <Button label={translator.message("common.retry")} onPress={result.refresh} />
+                <Button
+                  label={translator.message("mobile.ui.removeReviewRequest")}
+                  fullWidth
+                  tone="text"
+                  disabled={!allowed || !query.trim() || pending !== null}
+                  onPress={() => void update({ id: query.trim(), kind: "user", isRequested: true })}
+                />
+                {error ? (
+                  <Text selectable className="text-danger-foreground">
+                    {error}
+                  </Text>
                 ) : null}
-              </View>
-            )
-          }
-          ListFooterComponent={
-            result.data?.truncated ? (
-              <Text className="px-4 py-4 text-xs text-foreground-muted">
-                {translator.message("mobile.ui.theProviderHasMoreReviewersThanIt")}
-              </Text>
-            ) : undefined
-          }
-        />
-      ) : (
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          automaticallyAdjustKeyboardInsets
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ padding: 16, gap: 16 }}
-        >
-          {!pr ? (
-            detail.isPending ? (
-              <AppActivityIndicator />
-            ) : (
-              <Text className="text-danger-foreground">
-                {detail.error ?? `Couldn't load this ${singular}.`}
-              </Text>
-            )
-          ) : (
-            <>
-              <Text className="text-sm text-foreground-muted">
-                {translator.message("mobile.ui.thisProviderAcceptsAReviewerIdBut")}
-              </Text>
-              <TextInput
-                accessibilityLabel={translator.message("mobile.ui.reviewerId")}
-                placeholder={translator.message("mobile.ui.reviewerLoginOrId")}
-                placeholderTextColorClassName="accent-foreground-muted"
-                value={query}
-                onChangeText={search}
-                autoCapitalize="none"
-                autoCorrect={false}
-                className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
-              />
-              <Button
-                label={translator.message("mobile.ui.requestReview")}
-                fullWidth
-                disabled={!allowed || !query.trim() || pending !== null}
-                onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
-              />
-              <Button
-                label={translator.message("mobile.ui.removeReviewRequest")}
-                fullWidth
-                tone="text"
-                disabled={!allowed || !query.trim() || pending !== null}
-                onPress={() => void update({ id: query.trim(), kind: "user", isRequested: true })}
-              />
-              {error ? (
-                <Text selectable className="text-danger-foreground">
-                  {error}
-                </Text>
-              ) : null}
-            </>
-          )}
-        </ScrollView>
-      )}
+              </>
+            )}
+          </ScrollView>
+        )}
+      </ScreenContent>
     </View>
   );
 }

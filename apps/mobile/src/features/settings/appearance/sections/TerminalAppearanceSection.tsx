@@ -12,6 +12,7 @@ import {
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { FontFamilyChoiceRow } from "../components/FontFamilyChoiceRow";
 
 export function TerminalAppearanceSection() {
   const translator = useMobileInterfaceTranslator();
@@ -26,6 +27,7 @@ export function TerminalAppearanceSection() {
     <SettingsSection card title={translator.message("mobile.appearance.terminal")}>
       <TerminalAppearancePreview fontSize={appearance.terminalFontSize} />
       <AppearancePreviewSeparator />
+      <FontFamilyChoiceRow preferenceKey="fontFamilyTerminal" />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="terminal"

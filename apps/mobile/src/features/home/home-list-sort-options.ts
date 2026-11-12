@@ -8,6 +8,12 @@ export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
   readonly label: string;
 }> = [
   {
+    value: "manual",
+    get label() {
+      return currentInterfaceTranslator().message("sidebar.sort.manual");
+    },
+  },
+  {
     value: "updated_at",
     get label() {
       return currentInterfaceTranslator().message("mobile.navigation.lastUserMessage");

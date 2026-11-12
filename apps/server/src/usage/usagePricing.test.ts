@@ -77,15 +77,23 @@ describe("usage pricing", () => {
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
     const table = parseRateTable({});
-    const overrides = createOverrideRateTable({
-      "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
-    });
-
-    expect(priceUsage(table, record("example-model"), overrides)).toMatchObject({
-      costUsd: 14,
-      costSource: "modelPriced",
-    });
-    expect(cacheSavingsUsd(table, record("example-model"), overrides)).toBe(0);
+    for (const [cacheReadRate, costUsd, savings] of [
+      [undefined, 14, 0],
+      [0, 12, 2],
+    ] as const) {
+      const overrides = createOverrideRateTable({
+        "example-model": {
+          inputCostPerMillionTokens: 2,
+          outputCostPerMillionTokens: 8,
+          ...(cacheReadRate === undefined ? {} : { cacheReadCostPerMillionTokens: cacheReadRate }),
+        },
+      });
+      expect(priceUsage(table, record("example-model"), overrides)).toMatchObject({
+        costUsd,
+        costSource: "modelPriced",
+      });
+      expect(cacheSavingsUsd(table, record("example-model"), overrides)).toBe(savings);
+    }
   });
 
   it("preserves explicit zero rates and matches only the exact trimmed model ID", () => {

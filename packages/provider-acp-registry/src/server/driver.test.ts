@@ -213,7 +213,18 @@ describe("acpRegistrySnapshotReadiness", () => {
       ...identity,
       settings: decodeSettings({
         agentId: "test-agent",
-        customModels: [" custom-model ", "gpt-discovered"],
+        customModels: [
+          {
+            slug: " custom-model ",
+            name: "Custom model",
+            capabilities: {
+              optionDescriptors: [
+                { id: "fast", label: "Fast", type: "boolean", currentValue: true },
+              ],
+            },
+          },
+          "gpt-discovered",
+        ],
       }),
       checkedAt: "2026-08-13T10:00:00.000Z",
       inspection: {
@@ -256,7 +267,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       },
       {
         slug: "custom-model",
-        name: "custom-model",
+        name: "Custom model",
         isCustom: true,
         isDefault: undefined,
       },
@@ -267,6 +278,10 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(snapshot.skills).toEqual([
       { name: "workspace-skill", path: "acp://skill/workspace-skill", enabled: true },
     ]);
+    expect(
+      snapshot.models.find((model) => model.slug === "custom-model")?.capabilities
+        ?.optionDescriptors,
+    ).toEqual([{ id: "fast", label: "Fast", type: "boolean", currentValue: true }]);
   });
 
   it("keeps a default model only when the agent advertises none", () => {

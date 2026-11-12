@@ -30,5 +30,10 @@ describe("mobile review draft recovery", () => {
       comment: draft.comment,
       comments: [],
     });
+    const changedRange = {
+      ...draft,
+      comments: [{ ...comment, startPosition: { kind: "deleted" as const, oldLine: 4 } }],
+    };
+    expect(clearSubmittedReview(changedRange, draft).comments).toEqual(changedRange.comments);
   });
 });

@@ -38,6 +38,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { isMobileSecretsFeatureEnabled } from "./secret-provider-settings";
 
 export function SettingsRouteScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -155,6 +156,12 @@ function LocalSettingsRouteScreen() {
           Object.keys(savedConnectionsById).length,
           translator.message("mobile.settings.environments"),
         ),
+        {
+          id: "SettingsNotifications",
+          icon: "bell.badge",
+          label: translator.message("mobile.ui.notifications"),
+          target: "SettingsNotifications",
+        },
       ]}
     />
   );
@@ -265,6 +272,11 @@ function useSettingsIndexSections(): SettingsListSection[] {
       rows: [
         page("SettingsOrganization", "gearshape", translator.message("settings.general.title")),
         page("SettingsAppearance", "paintbrush", translator.message("settings.appearance.title")),
+        page(
+          "SettingsDiffs",
+          "chevron.left.forwardslash.chevron.right",
+          translator.message("mobile.prefs.diffs"),
+        ),
         page("SettingsBetterT3", "sparkles", "Better T3"),
         page("SettingsAgents", "person.2", translator.message("mobile.settings.agentSettings")),
         page(
@@ -286,12 +298,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
               ),
             ]
           : []),
-        ...(Platform.OS === "ios"
-          ? [
-              page("SettingsKeyboard", "keyboard", translator.message("mobile.settings.keyboard")),
-              page("SettingsMicrophone", "mic", translator.message("mobile.settings.microphone")),
-            ]
-          : []),
+        page("SettingsKeyboard", "keyboard", translator.message("mobile.settings.keyboard")),
+        page("SettingsMicrophone", "mic", translator.message("mobile.settings.microphone")),
+        page("SettingsUsage", "chart.bar.xaxis", translator.message("sidebar.navigation.usage")),
       ],
     },
     {
@@ -302,10 +311,23 @@ function useSettingsIndexSections(): SettingsListSection[] {
           "person.crop.circle",
           translator.message("settings.application.section.providers"),
         ),
+        ...(isMobileSecretsFeatureEnabled
+          ? [serverPage("SettingsSecrets", "lock", translator.message("mobile.access.secrets"))]
+          : []),
+        serverPage(
+          "SettingsDevices",
+          "iphone",
+          translator.message("mobile.projects.devices.title"),
+        ),
         serverPage(
           "SettingsThreads",
           "text.bubble",
           translator.message("mobile.settings.section.threads"),
+        ),
+        page(
+          "SettingsProjects",
+          "text.bubble",
+          translator.message("settings.application.title.importChats"),
         ),
         page(
           "SettingsScheduledTasks",
@@ -329,6 +351,11 @@ function useSettingsIndexSections(): SettingsListSection[] {
           translator.message("settings.application.title.sourceControl"),
         ),
         serverPage(
+          "SettingsProjectScripts",
+          "terminal",
+          translator.message("mobile.projects.scripts.title"),
+        ),
+        serverPage(
           "SettingsWorktrees",
           "square.on.square",
           translator.message("mobile.settings.worktrees"),
@@ -344,6 +371,16 @@ function useSettingsIndexSections(): SettingsListSection[] {
         ),
         page("SettingsLabs", "sparkles", translator.message("mobile.settings.labs")),
         page("SettingsAbout", "info.circle", translator.message("settings.about.title")),
+        page(
+          "SettingsUpdateEverything",
+          "arrow.clockwise",
+          translator.message("mobile.insights.updates.title"),
+        ),
+        page(
+          "SettingsServerDiagnostics",
+          "stethoscope",
+          translator.message("mobile.insights.serverDiagnostics"),
+        ),
         page(
           "SettingsArchive",
           "archivebox",

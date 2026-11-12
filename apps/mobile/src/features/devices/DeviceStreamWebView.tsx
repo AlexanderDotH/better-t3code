@@ -22,12 +22,16 @@ import {
   type DeviceStreamConfiguration,
 } from "./device-stream-document";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { shareGeneratedAttachment } from "../../lib/attachmentDownload";
+import * as Dialog from "../../components/ui/Dialog";
 
 export interface DeviceStreamRef {
   home: () => void;
   back: () => void;
   appSwitcher: () => void;
   rotate: () => void;
+  capture: () => void;
+  setOverlay: (enabled: boolean) => void;
 }
 
 type NativeStreamBridge = {
@@ -139,7 +143,7 @@ function DeviceStreamDocumentView({
     html: deviceStreamDocument(configuration, deviceStreamScript),
     baseUrl,
   };
-  const command = (button: keyof DeviceStreamRef) => {
+  const command = (button: "home" | "back" | "appSwitcher" | "rotate") => {
     webView.current?.injectJavaScript(
       `window.T3DeviceStream?.command(${JSON.stringify(button)}); true;`,
     );
@@ -149,6 +153,11 @@ function DeviceStreamDocumentView({
     back: () => command("back"),
     appSwitcher: () => command("appSwitcher"),
     rotate: () => command("rotate"),
+    capture: () => webView.current?.injectJavaScript("window.T3DeviceStream?.capture(); true;"),
+    setOverlay: (enabled) =>
+      webView.current?.injectJavaScript(
+        `window.T3DeviceStream?.overlay(${JSON.stringify(enabled)}); true;`,
+      ),
   }));
   const processTerminated = () => {
     if (!active.current || failed.current) return;
@@ -178,7 +187,21 @@ function DeviceStreamDocumentView({
         onMessage={(event) => {
           if (!active.current || failed.current) return;
           const message = deviceStreamMessage(event.nativeEvent.data);
-          if (message?.type === "unauthorized") void onUnauthorized();
+          if (message?.type === "capture") {
+            const base64 = message.dataUrl.split(",")[1];
+            if (!base64) return;
+            void shareGeneratedAttachment({
+              bytes: Uint8Array.from(atob(base64), (character) => character.charCodeAt(0)),
+              attachment: { name: "device-screenshot.png", mimeType: "image/png" },
+              signal: new AbortController().signal,
+            })
+              .then((shared) => {
+                if (!shared) Dialog.alert(translator.message("mobile.panels.failed"));
+              })
+              .catch(() => Dialog.alert(translator.message("mobile.panels.failed")));
+          } else if (message?.type === "captureError")
+            Dialog.alert(translator.message("mobile.panels.failed"));
+          else if (message?.type === "unauthorized") void onUnauthorized();
           else if (message?.type === "input") void onInputConnected(message.connected);
           else if (message?.type === "retry") onRetry();
           else if (message?.type === "status") {

@@ -1,8 +1,37 @@
 import { describe, expect, it } from "vite-plus/test";
+import { DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1 } from "@t3tools/contracts";
 
-import { createChatReasoningScope, resolveChatPresentation } from "./chatPresentation.ts";
+import {
+  createChatReasoningScope,
+  resolveChatPresentation,
+  resolveReasoningDisplayMode,
+  reasoningDisplayModeFlags,
+} from "./chatPresentation.ts";
 
 describe("chat presentation", () => {
+  it("ignores stale reasoning destinations while hidden and gives the Working dialog precedence", () => {
+    const settings = {
+      ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+      flags: {
+        "agent.reasoningVisibility": false,
+        "agent.reasoningWorkingOverlay": true,
+        "agent.reasoningInMessage": true,
+      },
+    };
+    expect(resolveReasoningDisplayMode(settings)).toBe("none");
+    expect(
+      resolveReasoningDisplayMode({
+        ...settings,
+        flags: { ...settings.flags, "agent.reasoningVisibility": true },
+      }),
+    ).toBe("working");
+    expect(
+      resolveReasoningDisplayMode({
+        ...settings,
+        flags: { ...settings.flags, ...reasoningDisplayModeFlags("chat") },
+      }),
+    ).toBe("chat");
+  });
   it("keeps reasoning with its user request while isolating side replies and later requests", () => {
     const scope = createChatReasoningScope();
     const leading = scope({ id: "orphan-1", role: "reasoning" });

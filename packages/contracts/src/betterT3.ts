@@ -353,7 +353,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "agent-workflows",
     scope: "device",
     controlKind: "switch",
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
     mirrors: [clientMirror("showReasoning")],
   }),
   descriptor({
@@ -361,7 +361,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "agent-workflows",
     scope: "device",
     controlKind: "switch",
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
     dependencies: [{ featureId: "agent.reasoningVisibility", condition: "enabled" }],
   }),
   descriptor({
@@ -369,7 +369,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "agent-workflows",
     scope: "device",
     controlKind: "switch",
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
     dependencies: [{ featureId: "agent.reasoningVisibility", condition: "enabled" }],
   }),
   descriptor({
@@ -426,7 +426,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     controlKind: "switch",
     existing: true,
     clean: true,
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
   }),
   descriptor({
     id: "chat.messageReplies",
@@ -468,7 +468,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "composer",
     scope: "device",
     controlKind: "selector",
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
     mirrors: [clientMirror("contextWindowSelector")],
   }),
   descriptor({
@@ -532,7 +532,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     scope: "device",
     controlKind: "switch",
     existing: true,
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
   }),
   descriptor({
     id: "chat.sidebarPosition",
@@ -693,7 +693,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "integration-status",
     scope: "device",
     controlKind: "switch",
-    surfaces: ["web", "desktop"],
+    surfaces: ["web", "desktop", "phone", "tablet"],
   }),
   descriptor({
     id: "integration.analyticsRemoval",

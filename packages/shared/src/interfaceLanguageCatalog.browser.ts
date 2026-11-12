@@ -487,6 +487,26 @@ export const browserInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "L’agent contrôle le navigateur",
   ],
   "browser.preview.humanControl": ["Human control", "Menschliche Steuerung", "Contrôle humain"],
+  "browser.stream.connecting": ["Connecting...", "Verbindung wird hergestellt…", "Connexion…"],
+  "browser.stream.readOnly": ["Read-only", "Nur Ansicht", "Lecture seule"],
+  "browser.stream.youControl": [
+    "You have control",
+    "Du hast die Kontrolle",
+    "Vous avez le contrôle",
+  ],
+  "browser.stream.agentControl": [
+    "Agent has control",
+    "Der Agent hat die Kontrolle",
+    "L’agent a le contrôle",
+  ],
+  "browser.stream.otherViewerControl": [
+    "Another viewer has control",
+    "Eine andere Person hat die Kontrolle",
+    "Un autre spectateur a le contrôle",
+  ],
+  "browser.stream.watching": ["Watching", "Zuschauen", "Visionnage"],
+  "browser.stream.takeControl": ["Take control", "Kontrolle übernehmen", "Prendre le contrôle"],
+  "browser.stream.releaseControl": ["Release control", "Kontrolle abgeben", "Libérer le contrôle"],
 
   "browser.mini.floating": [
     "Floating browser preview",

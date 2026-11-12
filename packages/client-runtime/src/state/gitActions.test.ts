@@ -1,4 +1,5 @@
 import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
 
 import { sourceControlClients } from "../sourceControlClients.ts";
@@ -56,6 +57,25 @@ describe("git action copy", () => {
         hasOriginRemote: true,
       }),
     ).toBe("No local commits to include in a PR.");
+    const translate = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
+    const dirty = status({ hasWorkingTreeChanges: true, hasUpstream: false });
+    const localizedItems = buildMenuItems(dirty, false, false, translate);
+    expect(localizedItems.map((item) => item.label)).toEqual(["Commit", "Push", "PR erstellen"]);
+    expect(
+      localizedItems.map((item) =>
+        getGitActionDisabledReason({
+          item,
+          gitStatus: dirty,
+          isBusy: false,
+          hasOriginRemote: false,
+          translate,
+        }),
+      ),
+    ).toEqual([
+      null,
+      "Lokale Änderungen vor dem Push committen oder staschen.",
+      'Vor dem Erstellen von PR ein "origin"-Remote hinzufügen.',
+    ]);
   });
 
   it("says MR for a GitLab ref", () => {
@@ -76,6 +96,18 @@ describe("git action copy", () => {
         hasOriginRemote: true,
       }),
     ).toBe("No local commits to include in an MR.");
+    const translate = createInterfaceTranslator({ language: "fr", locale: "fr-FR" }).message;
+    const [, , localizedItem] = buildMenuItems(status(gitLab), false, true, translate);
+    expect(localizedItem?.label).toBe("Créer une MR");
+    expect(
+      getGitActionDisabledReason({
+        item: localizedItem!,
+        gitStatus: status(gitLab),
+        isBusy: false,
+        hasOriginRemote: true,
+        translate,
+      }),
+    ).toBe("Aucun commit local à inclure dans MR.");
   });
 
   it("names the host's change request in the default-branch dialog", () => {

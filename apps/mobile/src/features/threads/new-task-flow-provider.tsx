@@ -118,6 +118,7 @@ import {
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { useLoadBalancedDraftProject } from "../connection/useLoadBalancedDraftProject";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -610,9 +611,35 @@ export function NewTaskFlowProvider(
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
       projectKey: scopedProjectKey(project.environmentId, project.id),
+      loadBalancingResolvedDraftKey: undefined,
     });
   };
 
+  useLoadBalancedDraftProject({
+    active:
+      props.active !== false &&
+      !submitting &&
+      attachments.length === 0 &&
+      !selectedProjectDraft.workspaceSelection &&
+      !selectedProjectDraft.context?.records.length &&
+      !selectedProjectDraft.voiceFileReferences?.length,
+    draftKey: selectedProjectDraftKey,
+    resolvedDraftKey: flowState.loadBalancingResolvedDraftKey ?? null,
+    selectedProject,
+    model: selectedModel,
+    projects,
+    configs: serverConfigs,
+    connections: connectedEnvironments,
+    onSelect: (project) =>
+      updateFlow({
+        draftKey: carryDraftContentTo(project),
+        environmentId: project.environmentId,
+        projectKey: scopedProjectKey(project.environmentId, project.id),
+        ...(selectedProjectDraftKey === null
+          ? {}
+          : { loadBalancingResolvedDraftKey: selectedProjectDraftKey }),
+      }),
+  });
   const selectEnvironment = (environmentId: EnvironmentId) => {
     const match = resolveEnvironmentProjectMatch(
       projects.filter((project) => project.environmentId === environmentId),
@@ -622,6 +649,9 @@ export function NewTaskFlowProvider(
       draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
       environmentId,
       projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
+      ...(selectedProjectDraftKey === null
+        ? {}
+        : { loadBalancingResolvedDraftKey: selectedProjectDraftKey }),
     });
   };
 

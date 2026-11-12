@@ -406,7 +406,14 @@ export interface ThreadListV2ProjectSettledListItem {
   readonly open: boolean;
 }
 
+export interface ThreadListV2ProjectHeaderListItem {
+  readonly type: "v2-project-header";
+  readonly key: string;
+  readonly scopeKey: string;
+}
+
 export type ThreadListV2ListItem =
+  | ThreadListV2ProjectHeaderListItem
   | ThreadListV2ProjectSettledListItem
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
@@ -425,7 +432,8 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf" ||
-    value.type === "v2-project-settled"
+    value.type === "v2-project-settled" ||
+    value.type === "v2-project-header"
   );
 }
 
@@ -481,6 +489,8 @@ export function threadListV2ListItemsAreEqual(
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
       );
+    case "v2-project-header":
+      return previous.type === "v2-project-header" && previous.key === item.key;
     case "v2-project-settled":
       return (
         previous.type === "v2-project-settled" &&

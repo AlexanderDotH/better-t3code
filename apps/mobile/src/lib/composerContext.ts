@@ -167,7 +167,9 @@ export function composerContextEditorTokens(
   text: string,
   tokens: readonly ComposerInlineToken[],
   knownSkills: { has(name: string): boolean },
+  richTextEnabled = true,
 ) {
+  if (!richTextEnabled) return [];
   const references = collectComposerContextReferences(text);
   return [
     ...tokens.filter(

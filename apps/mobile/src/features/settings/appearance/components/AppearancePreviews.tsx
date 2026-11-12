@@ -1,6 +1,10 @@
-import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../../../state/preferences";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../../../persistence/mobile-preferences";
+import { ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
-import { AppText as Text } from "../../../../components/ui/AppText";
+import { AppText as Text, AppTextInput } from "../../../../components/ui/AppText";
 import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
@@ -9,12 +13,6 @@ import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
-const CODE_FONT_FAMILY = Platform.select({
-  ios: "ui-monospace",
-  android: "monospace",
-  default: "monospace",
-});
-
 export function AppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
 }
@@ -22,12 +20,17 @@ export function AppearancePreviewSeparator() {
 export function TextAppearancePreview(props: { readonly fontSize: number }) {
   const translator = useMobileInterfaceTranslator();
   const sizes = resolveMarkdownFontSizes(props.fontSize);
+  const { fontFamilies } = useAppearancePreferences();
 
   return (
     <View className="gap-1 p-4">
       <Text
         className="text-foreground"
-        style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
+        style={{
+          fontFamily: fontFamilies.sans,
+          fontSize: sizes.m,
+          lineHeight: sizes.bodyLineHeight,
+        }}
       >
         {translator.message("mobile.ui.theQuickBrownFoxJumpsOverThe")}
       </Text>
@@ -37,17 +40,28 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
       >
         {translator.message("mobile.ui.messagesLabelsAndHeadingsScaleWithThis")}
       </Text>
+      <AppTextInput
+        multiline
+        accessibilityLabel={translator.message("mobile.prefs.fontFamilyComposer")}
+        placeholder={translator.message("mobile.prefs.composerSample")}
+        defaultValue={translator.message("mobile.prefs.samplePrompt")}
+        style={{
+          fontFamily: fontFamilies.composer,
+          fontSize: sizes.m,
+          lineHeight: sizes.bodyLineHeight,
+        }}
+      />
     </View>
   );
 }
 
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
   const translator = useMobileInterfaceTranslator();
-  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
+  const { themeAppearance: scheme, themeId, fontFamilies } = useAppearancePreferences();
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
-    fontFamily: Platform.OS === "android" ? "monospace" : "Menlo",
+    fontFamily: fontFamilies.terminal,
     fontSize: props.fontSize,
     lineHeight,
   } as const;
@@ -103,6 +117,7 @@ interface CodePreviewToken {
 interface CodePreviewLine {
   readonly id: string;
   readonly tokens: ReadonlyArray<CodePreviewToken>;
+  readonly change?: "add" | "remove";
 }
 
 const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
@@ -110,14 +125,8 @@ const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
     id: "signature",
     tokens: [{ text: "function", keyword: true }, { text: " formatUser(user) {" }],
   },
-  {
-    id: "body",
-    tokens: [
-      { text: "  " },
-      { text: "return", keyword: true },
-      { text: " `${user.name} <${user.email}>` // demonstrates how long lines behave" },
-    ],
-  },
+  { id: "before", change: "remove", tokens: [{ text: "  return user.name;" }] },
+  { id: "after", change: "add", tokens: [{ text: "  return `${user.name} <${user.email}>`;" }] },
   { id: "close", tokens: [{ text: "}" }] },
 ];
 
@@ -126,19 +135,34 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
+  const { fontFamilies, themeAppearance } = useAppearancePreferences();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const scheme = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.diffColorScheme ?? MOBILE_CLIENT_PREFERENCE_DEFAULTS.diffColorScheme)
+    : MOBILE_CLIENT_PREFERENCE_DEFAULTS.diffColorScheme;
+  const colors =
+    scheme === "blue-orange"
+      ? {
+          add: themeAppearance === "dark" ? "#93c5fd" : "#1d4ed8",
+          remove: themeAppearance === "dark" ? "#fdba74" : "#9a3412",
+        }
+      : {
+          add: themeAppearance === "dark" ? "#86efac" : "#166534",
+          remove: themeAppearance === "dark" ? "#fca5a5" : "#991b1b",
+        };
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text
       className="text-right text-icon-subtle"
       key={line.id}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: fontFamilies.code,
         fontSize: surface.lineNumberFontSize,
         lineHeight: surface.rowHeight,
         width: 22,
       }}
     >
-      {index + 1}
+      {line.change === "add" ? "+" : line.change === "remove" ? "−" : index + 1}
     </Text>
   );
 
@@ -148,19 +172,23 @@ export function CodeAppearancePreview(props: {
       key={line.id}
       numberOfLines={wrap ? undefined : 1}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: fontFamilies.code,
         fontSize: surface.fontSize,
         lineHeight: surface.rowHeight,
+        ...(line.change
+          ? { color: colors[line.change], backgroundColor: `${colors[line.change]}18` }
+          : {}),
       }}
     >
       {line.tokens.map((token) => (
         <Text
           key={token.text}
-          className={token.keyword ? "text-md-link" : undefined}
+          className={token.keyword && !line.change ? "text-md-link" : undefined}
           style={{
-            fontFamily: CODE_FONT_FAMILY,
+            fontFamily: fontFamilies.code,
             fontSize: surface.fontSize,
             lineHeight: surface.rowHeight,
+            ...(line.change ? { color: colors[line.change] } : {}),
           }}
         >
           {token.text}

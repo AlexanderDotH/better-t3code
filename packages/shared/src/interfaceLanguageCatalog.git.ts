@@ -1902,6 +1902,23 @@ export const gitInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "git.quick.pull": ["Pull", "Pull", "Pull"],
   "git.quick.push": ["Push", "Push", "Push"],
   "git.overview.pullRequestNumber": ["PR #{{number}}", "PR #{{number}}", "PR n° {{number}}"],
+  "git.overview.filesChanged": [
+    { one: "{{count}} file changed", other: "{{count}} files changed" },
+    { one: "{{count}} Datei geändert", other: "{{count}} Dateien geändert" },
+    { one: "{{count}} fichier modifié", other: "{{count}} fichiers modifiés" },
+  ],
+  "git.overview.commitsAhead": [
+    { one: "{{count}} commit ahead", other: "{{count}} commits ahead" },
+    { one: "{{count}} Commit voraus", other: "{{count}} Commits voraus" },
+    { one: "{{count}} commit en avance", other: "{{count}} commits en avance" },
+  ],
+  "git.overview.linkRequest": ["Link {{kind}}", "{{kind}} verknüpfen", "Lier {{kind}}"],
+  "git.overview.attachRequest": [
+    "Attach {{kind}} by URL or number",
+    "{{kind}} per URL oder Nummer verknüpfen",
+    "Joindre {{kind}} par URL ou numéro",
+  ],
+  "git.overview.linkedRequests": ["Linked {{kind}}s", "Verknüpfte {{kind}}s", "{{kind}} liées"],
   "git.confirmation.typePhrase": [
     "Type {{phrase}} to confirm",
     "Zum Bestätigen {{phrase}} eingeben",

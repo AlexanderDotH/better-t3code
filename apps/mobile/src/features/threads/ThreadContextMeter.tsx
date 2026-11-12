@@ -6,6 +6,7 @@ import { useMobileInterfaceTranslator } from "../../localization/useMobileInterf
 import { contextMeterPresentation } from "./context-meter-presentation";
 import { ThreadDetailSheet } from "./ThreadDetailSheet";
 import { ThreadContextMeterRing } from "./ThreadContextMeterRing";
+import { Button } from "../../components/ui/Button";
 
 function DetailRow(props: { readonly label: string; readonly value: string }) {
   return (
@@ -21,6 +22,9 @@ function DetailRow(props: { readonly label: string; readonly value: string }) {
 function ContextDetailSheet(props: {
   readonly presentation: ReturnType<typeof contextMeterPresentation>;
   readonly onClose: () => void;
+  readonly snapshot: ContextWindowSnapshot;
+  readonly onCompact?: () => void;
+  readonly compactDisabledReason?: string | null;
 }) {
   const translator = useMobileInterfaceTranslator();
   return (
@@ -40,12 +44,48 @@ function ContextDetailSheet(props: {
         label={translator.message("chat.contextMeter.percentage")}
         value={props.presentation.percentage}
       />
+      {props.snapshot.totalProcessedTokens != null ? (
+        <DetailRow
+          label={translator.message("chat.contextMeter.processed")}
+          value={translator.number(props.snapshot.totalProcessedTokens)}
+        />
+      ) : null}
+      {props.snapshot.cost ? (
+        <DetailRow
+          label={translator.message("mobile.composer.cost")}
+          value={`${props.snapshot.cost.currency} ${translator.number(props.snapshot.cost.amount, { minimumFractionDigits: Math.abs(props.snapshot.cost.amount) > 0 && Math.abs(props.snapshot.cost.amount) < 0.01 ? 4 : 2, maximumFractionDigits: 4 })}`}
+        />
+      ) : null}
+      {props.snapshot.compactsAutomatically ? (
+        <Text className="py-2 text-sm text-foreground-muted">
+          {props.snapshot.autoCompactThreshold
+            ? translator.message("mobile.composer.autoCompactThreshold", {
+                tokens: translator.number(props.snapshot.autoCompactThreshold),
+              })
+            : translator.message("chat.contextMeter.autoCompact")}
+        </Text>
+      ) : null}
+      {props.onCompact ? (
+        <Button
+          label={translator.message("chat.contextMeter.compact")}
+          disabled={Boolean(props.compactDisabledReason)}
+          onPress={() => {
+            props.onClose();
+            props.onCompact?.();
+          }}
+        />
+      ) : null}
+      {props.compactDisabledReason ? (
+        <Text className="py-2 text-xs text-foreground-muted">{props.compactDisabledReason}</Text>
+      ) : null}
     </ThreadDetailSheet>
   );
 }
 
 export const ThreadContextMeter = memo(function ThreadContextMeter(props: {
   readonly snapshot: ContextWindowSnapshot;
+  readonly onCompact?: () => void;
+  readonly compactDisabledReason?: string | null;
 }) {
   const translator = useMobileInterfaceTranslator();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -67,7 +107,13 @@ export const ThreadContextMeter = memo(function ThreadContextMeter(props: {
         />
       </Pressable>
       {detailsOpen ? (
-        <ContextDetailSheet presentation={presentation} onClose={() => setDetailsOpen(false)} />
+        <ContextDetailSheet
+          presentation={presentation}
+          snapshot={props.snapshot}
+          onCompact={props.onCompact}
+          compactDisabledReason={props.compactDisabledReason}
+          onClose={() => setDetailsOpen(false)}
+        />
       ) : null}
     </>
   );

@@ -1,7 +1,8 @@
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
+import type { PullRequestAction, PullRequestDetail, PullRequestCheck } from "@t3tools/contracts";
+import { PullRequestJobLogSheet } from "./PullRequestJobLogSheet";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -110,11 +111,15 @@ export function PullRequestStatusMenu(props: RowProps) {
 export function PullRequestChecksRow(props: RowProps) {
   const translator = useMobileInterfaceTranslator();
   const [expanded, setExpanded] = useState(false);
+  const [log, setLog] = useState<PullRequestCheck | null>(null);
   const checks = pullRequestChecksSummary(props.pr);
   const action = usePullRequestAction(props.params, props.pr);
   const definition = sourceControlClients.get(props.pr.provider);
   return (
     <Animated.View layout={PR_ROW_LAYOUT}>
+      {log ? (
+        <PullRequestJobLogSheet params={props.params} check={log} onClose={() => setLog(null)} />
+      ) : null}
       <PullRequestCardRow
         title={checks.title}
         icon={checks.icon}
@@ -161,13 +166,19 @@ export function PullRequestChecksRow(props: RowProps) {
               const url = check.url;
               return (
                 <PullRequestCardRow
-                  key={`${check.name}:${url}`}
+                  key={`${check.name}:${check.logId ?? url}`}
                   title={check.name}
                   icon={status.icon}
                   tint={status.tint}
                   value={status.label}
                   detail={check.description ?? undefined}
-                  onPress={url ? () => void Linking.openURL(url) : undefined}
+                  onPress={
+                    check.logId !== undefined
+                      ? () => setLog(check)
+                      : url
+                        ? () => void Linking.openURL(url)
+                        : undefined
+                  }
                 />
               );
             })}

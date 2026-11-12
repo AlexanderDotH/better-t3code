@@ -202,11 +202,14 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
-import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } from "./ThreadFeed";
+import { ThreadFeed, type ThreadFeedHandle } from "./ThreadFeed";
+import type { ThreadFeedHistoryControls } from "./threadFeedHistory";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
+import { ThreadMcpStrip } from "./ThreadMcpStrip";
+import { ThreadTaskStrip } from "./ThreadTaskRow";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
@@ -809,7 +812,7 @@ function ThreadDetailBody(
     if (
       props.activeWorkStartedAt !== null &&
       contentPresentationKind === "ready" &&
-      (!workingStatusInHeader || tokenUsage !== null)
+      !workingStatusInHeader
     ) {
       return {
         kind: "working",
@@ -1627,6 +1630,23 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
                     />
+                    {props.draftMode ? null : (
+                      <ThreadTaskStrip
+                        detailRef={props.selectedThreadDetailRef}
+                        threadId={props.selectedThread.id}
+                      />
+                    )}
+                    {!props.draftMode &&
+                    (props.serverConfig?.environment.capabilities.mcpWorkspaceVersion ?? 0) >= 1 ? (
+                      <ThreadMcpStrip
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
+                        providerInstanceId={
+                          props.selectedThread.runtime?.providerInstanceId ??
+                          props.selectedThread.modelSelection.instanceId
+                        }
+                      />
+                    ) : null}
                     {props.draftMode ? null : (
                       <ThreadSideChatsRow
                         environmentId={props.environmentId}

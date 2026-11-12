@@ -35,6 +35,9 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
   PreviewClearProfileError,
+  PreviewPickElementError,
+  type PreviewPickElementInput,
+  type PreviewPickElementResult,
   type PreviewEvent,
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
@@ -215,6 +218,9 @@ export type ProfileReporter = (input: PreviewReportProfilesInput) => Effect.Effe
 export class ServerBrowser extends Context.Service<
   ServerBrowser,
   {
+    readonly pickElementAt: (
+      input: PreviewPickElementInput,
+    ) => Effect.Effect<PreviewPickElementResult, PreviewPickElementError>;
     readonly attachViewer: (input: {
       readonly threadId: string;
       readonly tabId: string;
@@ -2745,7 +2751,28 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  const pickElementAt: ServerBrowser["Service"]["pickElementAt"] = Effect.fn(
+    "ServerBrowser.pickElementAt",
+  )(function* (input) {
+    const tab = tabs.get(tabKey(input.threadId, input.tabId));
+    if (!tab)
+      return yield* new PreviewPickElementError({
+        ...input,
+        cause: new ServerBrowserTabNotFoundError(input),
+      });
+    return yield* Effect.tryPromise({
+      try: () => tab.control.observe(() => ServerBrowserPage.pickElementAt(tab.page, input)),
+      catch: (cause) => new PreviewPickElementError({ ...input, cause }),
+    }).pipe(
+      Effect.timeout("5 seconds"),
+      Effect.catchTags({
+        TimeoutError: (cause) => new PreviewPickElementError({ ...input, cause }),
+      }),
+    );
+  });
+
   return ServerBrowser.of({
+    pickElementAt,
     attachViewer,
     clearProfile,
     profileReporter,

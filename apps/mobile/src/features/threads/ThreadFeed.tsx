@@ -4,6 +4,15 @@ import {
   CHAT_STATUS_COMPACT_VERTICAL_SPACE,
 } from "./ChatBubble";
 import { ThreadThinkingIndicator } from "./ThreadThinkingIndicator";
+import { ThreadReasoningDialog } from "./ThreadReasoningDialog";
+import type { ReasoningDisplayMode } from "@t3tools/client-runtime/chat-presentation";
+import {
+  createThreadReasoningCache,
+  presentThreadReasoning,
+  resolveMobileReasoningDisplayMode,
+  workingReasoningGroups,
+  workingReasoningForGroup,
+} from "../../lib/threadReasoning";
 import { ChatPresentationMotion, ChatPresentationMotionContext } from "./ChatPresentationMotion";
 import { useNativeChatPresentationMotion } from "./use-chat-presentation-motion";
 import { ChangedFilesSummary } from "./ChangedFilesSummary";
@@ -89,7 +98,13 @@ import {
   type ScheduledTaskId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import {
+  assistantCitationLabel,
+  parseAssistantCitationHref,
+  serializeAssistantCitation,
+  withAssistantCitationComment,
+} from "@t3tools/shared/assistantCitations";
+import type { AssistantCitation } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -126,7 +141,7 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
@@ -236,6 +251,7 @@ import {
   isLinkRequestActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
+  type ThreadFeedActivity,
   type ThreadFeedLatestRun,
   messageFoldRunId,
 } from "../../lib/threadActivity";
@@ -316,6 +332,42 @@ import {
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { InlineMessageEditor } from "./InlineMessageEditor";
+import { TimelineMessageMenu } from "./TimelineMessageMenu";
+import {
+  useTimelineMessageActions,
+  type TimelineMessageActions,
+} from "./use-timeline-message-actions";
+import { extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
+import { ThreadFindBar, ThreadFindText } from "./ThreadFindBar";
+import {
+  createThreadFindIndex,
+  nextFindMatchIndex,
+  reconcileFindMatchIndex,
+  type ThreadFindMatch,
+} from "../../lib/threadFind";
+import { timelineControlAtom } from "./timeline-controls";
+import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { buildAssistantQuote } from "../../lib/assistantQuote";
+import { AssistantQuoteComment } from "./AssistantQuoteComment";
+import { requestThreadMessageJump } from "./threadMessageJump";
+import { stagePendingTerminalLaunch } from "../terminal/terminalLaunchContext";
+import { terminalEnvironment } from "../../state/terminal";
+import { MessageReplyTopicStatus, useTimelineReplyTopics } from "./ThreadReplyTopicStatus";
+import type { ReplyTopicSummary } from "../../lib/replyTopicStatus";
+import { TimelinePullRequestCards, useTimelinePullRequestLinks } from "./TimelinePullRequestCards";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-preferences";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { formatTimelineTimestamp } from "../../lib/timelineTimestamp";
+import { TimelineJumpList } from "./TimelineJumpList";
+import type { ThreadFeedHistoryControls } from "./threadFeedHistory";
+import type { TimestampFormat } from "@t3tools/contracts";
+import type { TimelineToolDiffTarget } from "./use-timeline-review-sections";
+import {
+  captureComposerDraftInsertion,
+  insertComposerDraftText,
+} from "../../state/use-composer-drafts";
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -323,20 +375,9 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-function formatMessageTime(input: string): string {
-  const timestamp = Date.parse(input);
-  if (Number.isNaN(timestamp)) {
-    return "";
-  }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
-}
-
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
+const THREAD_FIND_MATCH_TOP_GAP = 96;
 // Rows re-measure within a commit or two of a width change. LegendList also defers imperative
 // scrolls for 100ms after it compensates a size change, and a deferred restore could land
 // under a drag that starts meanwhile.
@@ -355,15 +396,6 @@ const FRESH_ENTRY_WINDOW_MS = 3_000;
 function isFreshTimestamp(input: string): boolean {
   const timestamp = Date.parse(input);
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ENTRY_WINDOW_MS;
-}
-
-export interface ThreadFeedHistoryControls {
-  readonly hasMoreHistory: boolean;
-  readonly loading: boolean;
-  readonly error: string | null;
-  readonly onLoadEarlier: () => void;
-  /** Loads earlier history down to the entry, in one request. */
-  readonly onLoadThrough: (entryId: string) => void;
 }
 
 export interface ThreadFeedHandle {
@@ -1239,6 +1271,8 @@ function ForkSourceHeader(props: {
 }
 
 interface MarkdownLinkHandlers {
+  readonly onRunCommand?: (command: string) => void;
+  readonly onAction?: (prompt: string) => void;
   readonly onLinkPress: (href: string) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction: (href: string, actionId: string) => void;
@@ -1317,6 +1351,7 @@ function ArtifactTemplateCard(props: {
 }
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
+  readonly onSelectionAction?: SelectableMarkdownTextProps["onSelectionAction"];
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
   readonly markdownStyles: MarkdownStyleSet;
@@ -1335,6 +1370,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 
   return (
     <AssistantMarkdownBlocks
+      onSelectionAction={props.onSelectionAction}
       environmentId={props.environmentId}
       markdown={liveMarkdown}
       markdownStyles={props.markdownStyles}
@@ -1348,6 +1384,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
+  readonly onSelectionAction?: SelectableMarkdownTextProps["onSelectionAction"];
   readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly markdownStyles: MarkdownStyleSet;
@@ -1391,6 +1428,8 @@ function AssistantMarkdownBlocks(props: {
       if (segment.markdown.trim().length === 0) return null;
       return (
         <VisualizationMarkdownText
+          onSelectionAction={props.onSelectionAction}
+          onAction={props.linkHandlers.onAction}
           environmentId={props.environmentId}
           key={`markdown:${offset}`}
           markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
@@ -1663,7 +1702,7 @@ function ThreadAutomationMessageRow(props: {
           <View className="px-3.5 pb-2.5">
             <MarkdownImageAvailableWidthContext value={props.contentMaxWidth}>
               <UserMessageContent
-                text={renderAssistantCitationsAsText(props.text)}
+                text={props.text}
                 environmentId={props.environmentId}
                 context={props.context}
                 markdownStyles={props.markdownStyles}
@@ -1829,7 +1868,12 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onOpenTurnDiff: ((checkpoint: ThreadCheckpointSummary) => void) | null;
+    readonly onOpenTurnDiff:
+      | ((checkpoint: ThreadCheckpointSummary, filePath?: string) => void)
+      | null;
+    readonly onOpenToolDiff:
+      | ((target: TimelineToolDiffTarget & { readonly filePath: string }) => void)
+      | undefined;
     /** Better T3 chat lists a turn's changed files in its last answer instead of the work row. */
     readonly changedFilesByMessage: ReadonlyMap<string, ThreadCheckpointSummary>;
     readonly changedFilesRunIds: ReadonlySet<RunId>;
@@ -1843,6 +1887,7 @@ function renderFeedEntry(
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
+    readonly reasoningGroups: ReadonlyMap<string, ReadonlyArray<ThreadFeedActivity>>;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly replyActionSize: { readonly button: number; readonly icon: number };
     readonly responseMetrics: ReadonlyMap<RunId, ResponseMetrics>;
@@ -1861,10 +1906,67 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
+    readonly messageActions: TimelineMessageActions;
+    readonly timestampFormat: TimestampFormat;
+    readonly findQuery: string;
+    readonly findText: (entry: ThreadFeedEntry) => string;
+    readonly onFindMatchLayout: (entryId: string, start: number, offset: number) => void;
+    readonly activeFindMatch: ThreadFindMatch | null;
+    readonly replyTopics: ReadonlyMap<MessageId, ReplyTopicSummary>;
+    readonly pullRequestLinks: ReturnType<typeof useTimelinePullRequestLinks>;
+    readonly onOpenPullRequest: (url: string) => Promise<boolean>;
+    readonly onQuoteSelection: (
+      message: import("../../lib/threadActivity").ThreadFeedMessage,
+      selection: Parameters<NonNullable<SelectableMarkdownTextProps["onSelectionAction"]>>[0],
+      action: "quote" | "comment",
+    ) => void;
   },
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+  const renderFindText = (target: ThreadFeedEntry) => {
+    const start =
+      props.activeFindMatch?.entryId === target.id ? props.activeFindMatch.start : undefined;
+    return (
+      <ThreadFindText
+        key={`${target.id}:${start ?? "inactive"}`}
+        text={props.findText(target)}
+        query={props.findQuery}
+        activeStart={start}
+        onActiveLine={
+          start === undefined
+            ? undefined
+            : (offset) => props.onFindMatchLayout(target.id, start, offset)
+        }
+      />
+    );
+  };
+  const renderWorkLog = (
+    activities: ReadonlyArray<ThreadFeedActivity>,
+    continuesWorkLog?: boolean,
+  ) => (
+    <ThreadWorkLog
+      key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
+      activities={activities}
+      continuesWorkLog={continuesWorkLog}
+      environmentId={props.environmentId}
+      workspaceRoot={props.workspaceRoot}
+      anchorKey={entry.id}
+      copiedRowId={props.copiedRowId}
+      expandedRows={props.expandedWorkRows}
+      rowSizing={props.workRowSizing}
+      scrollPositions={props.workGroupScrollPositions}
+      iconSubtleColor={iconSubtleColor}
+      edgeFadeColor={props.screenColor}
+      themeAppearance={props.themeAppearance}
+      onCopyRow={props.onCopyWorkRow}
+      onToggleRow={props.onToggleWorkRow}
+      renderImage={props.renderViewedImage}
+      renderReasoning={props.renderReasoning}
+      onPressPreview={props.onPressPreview}
+      onOpenToolDiff={props.onOpenToolDiff}
+    />
+  );
 
   if (entry.type === "guest-pending") {
     return (
@@ -1951,6 +2053,7 @@ function renderFeedEntry(
   }
 
   if (entry.type === "work-toggle") {
+    const inWorkingDialog = props.reasoningGroups.has(entry.groupId);
     return (
       <ChatStatusBubble
         compact
@@ -1962,7 +2065,13 @@ function renderFeedEntry(
           expanded={entry.expanded}
           hiddenCount={entry.hiddenCount}
           iconSubtleColor={iconSubtleColor}
-          summary={entry.summary}
+          summary={
+            inWorkingDialog
+              ? currentInterfaceTranslator().message(
+                  entry.live ? "chat.timeline.thinking" : "chat.timeline.thought",
+                )
+              : entry.summary
+          }
           summaryKind={entry.summaryKind}
           themeAppearance={props.themeAppearance}
           toolSurface={entry.toolSurface}
@@ -1970,7 +2079,7 @@ function renderFeedEntry(
           summaryToolIcon={entry.summaryToolIcon}
           hasFailure={entry.hasFailure}
           shimmer={entry.shimmer && !props.betterChat}
-          thought={entry.thought}
+          thought={inWorkingDialog ? undefined : entry.thought}
           trailing={
             entry.checkpointSummary &&
             props.onOpenTurnDiff &&
@@ -1996,6 +2105,10 @@ function renderFeedEntry(
         surfaceColor={props.screenColor}
       />
     );
+  }
+
+  if (props.findQuery && entry.type === "activity-group") {
+    return <View className="my-2 rounded-xl bg-subtle p-3">{renderFindText(entry)}</View>;
   }
 
   if (entry.type === "activity-group" && isSecretRequestActivityGroup(entry)) {
@@ -2053,9 +2166,12 @@ function renderFeedEntry(
     const presentation = resolveUserMessagePresentation(message, {
       deepPlanContinuation: currentInterfaceTranslator().message("chat.deepPlan.continuing"),
     });
-    const renderedText = renderAssistantCitationsAsText(presentation.text);
+    const renderedText = presentation.text;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
-    const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
+    const timestampLabel = formatTimelineTimestamp(
+      isUser ? message.createdAt : message.updatedAt,
+      props.timestampFormat,
+    );
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = presentation.text.includes("<review_comment");
     // Android does not reposition children after maxWidth clamps bubbles; definite width prevents wide-block overlap.
@@ -2349,16 +2465,28 @@ function renderFeedEntry(
                       <MarkdownImageAvailableWidthContext
                         value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                       >
-                        <UserMessageContent
-                          text={renderedText}
-                          environmentId={props.environmentId}
-                          context={message.context}
-                          markdownStyles={styles}
-                          reviewCommentColors={props.reviewCommentColors}
-                          skills={props.skills}
-                          linkHandlers={props.markdownLinkHandlers}
-                          renderImage={props.renderMarkdownImage}
-                        />
+                        {props.messageActions.editing?.id === message.id ? (
+                          <InlineMessageEditor
+                            key={message.id}
+                            initialText={extractVoiceFileContext(message.text).text}
+                            available={props.messageActions.available}
+                            onSave={props.messageActions.onSave}
+                            onClose={props.messageActions.onCloseEditor}
+                          />
+                        ) : props.findQuery ? (
+                          renderFindText(entry)
+                        ) : (
+                          <UserMessageContent
+                            text={renderedText}
+                            environmentId={props.environmentId}
+                            context={message.context}
+                            markdownStyles={styles}
+                            reviewCommentColors={props.reviewCommentColors}
+                            skills={props.skills}
+                            linkHandlers={props.markdownLinkHandlers}
+                            renderImage={props.renderMarkdownImage}
+                          />
+                        )}
                       </MarkdownImageAvailableWidthContext>
                     ) : null}
                   </View>
@@ -2422,6 +2550,9 @@ function renderFeedEntry(
                   </Pressable>
                 ) : null}
                 {!entry.pendingMessage ? (
+                  <TimelineMessageMenu message={message} actions={props.messageActions} />
+                ) : null}
+                {!entry.pendingMessage ? (
                   <ThreadMessageReplyAction
                     environmentId={props.environmentId}
                     threadId={props.threadId}
@@ -2458,6 +2589,16 @@ function renderFeedEntry(
                 ) : null}
               </View>
             ) : null}
+            <TimelinePullRequestCards
+              markdown={renderedText}
+              environmentId={props.environmentId}
+              actions={props.pullRequestLinks}
+              onOpen={props.onOpenPullRequest}
+            />
+            <MessageReplyTopicStatus
+              environmentId={props.environmentId}
+              topic={props.replyTopics.get(message.id)}
+            />
           </Animated.View>
         </ThreadMessageReplyGesture>
       );
@@ -2467,7 +2608,6 @@ function renderFeedEntry(
       return null;
     }
 
-    const enterAnimated = isFreshTimestamp(message.createdAt);
     const changedFiles = props.changedFilesByMessage.get(entry.id);
     return (
       <ThreadMessageReplyGesture
@@ -2491,7 +2631,6 @@ function renderFeedEntry(
                 }
               : undefined
           }
-          {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
         >
           {props.betterChat ? (
             // The surface alone paints the bubble so its entrance can fade separately from the text.
@@ -2507,17 +2646,35 @@ function renderFeedEntry(
             </ChatPresentationMotion>
           ) : null}
           {message.replyTo ? <MessageReplyPreview reference={message.replyTo} /> : null}
+          {message.reasoning?.length ? (
+            <View className="mb-3">{renderWorkLog(message.reasoning, false)}</View>
+          ) : null}
           {renderedText.trim().length > 0 ? (
             <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-              <AssistantMarkdownContent
-                markdown={renderedText}
-                environmentId={props.environmentId}
-                markdownStyles={styles}
-                linkHandlers={props.markdownLinkHandlers}
-                onUseArtifactTemplate={props.onUseArtifactTemplate}
-                renderImage={props.renderMarkdownImage}
-                skills={props.skills}
-              />
+              {props.messageActions.editing?.id === message.id ? (
+                <InlineMessageEditor
+                  key={message.id}
+                  initialText={extractVoiceFileContext(message.text).text}
+                  available={props.messageActions.available}
+                  onSave={props.messageActions.onSave}
+                  onClose={props.messageActions.onCloseEditor}
+                />
+              ) : props.findQuery ? (
+                renderFindText(entry)
+              ) : (
+                <AssistantMarkdownContent
+                  onSelectionAction={(selection, action) =>
+                    props.onQuoteSelection(message, selection, action)
+                  }
+                  markdown={renderedText}
+                  environmentId={props.environmentId}
+                  markdownStyles={styles}
+                  linkHandlers={props.markdownLinkHandlers}
+                  onUseArtifactTemplate={props.onUseArtifactTemplate}
+                  renderImage={props.renderMarkdownImage}
+                  skills={props.skills}
+                />
+              )}
             </MarkdownImageAvailableWidthContext>
           ) : null}
           <MessageAttachmentList
@@ -2531,7 +2688,7 @@ function renderFeedEntry(
               checkpoint={changedFiles}
               expanded={props.expandedCheckpointRefs.has(changedFiles.checkpointRef)}
               onToggle={() => props.onToggleCheckpoint(entry.id, changedFiles)}
-              onOpenReview={() => props.onOpenTurnDiff?.(changedFiles)}
+              onOpenReview={(path) => props.onOpenTurnDiff?.(changedFiles, path)}
             />
           ) : showAssistantMeta && message.checkpointSummary && props.onOpenTurnDiff ? (
             <TurnDiffStat
@@ -2539,10 +2696,16 @@ function renderFeedEntry(
               onOpenTurnDiff={props.onOpenTurnDiff}
             />
           ) : null}
-          {showAssistantMeta || showResponseMetrics ? (
+          {showAssistantMeta ||
+          showResponseMetrics ||
+          (props.messageActions.canEdit(message) && !message.streaming) ? (
             <View className="mt-1 flex-row flex-wrap items-center gap-1">
+              {!showAssistantMeta ? (
+                <TimelineMessageMenu message={message} actions={props.messageActions} />
+              ) : null}
               {showAssistantMeta ? (
                 <>
+                  <TimelineMessageMenu message={message} actions={props.messageActions} />
                   <ThreadMessageReplyAction
                     environmentId={props.environmentId}
                     threadId={props.threadId}
@@ -2588,33 +2751,22 @@ function renderFeedEntry(
               ) : null}
             </View>
           ) : null}
+          <TimelinePullRequestCards
+            markdown={renderedText}
+            environmentId={props.environmentId}
+            actions={props.pullRequestLinks}
+            onOpen={props.onOpenPullRequest}
+          />
+          <MessageReplyTopicStatus
+            environmentId={props.environmentId}
+            topic={props.replyTopics.get(message.id)}
+          />
         </Animated.View>
       </ThreadMessageReplyGesture>
     );
   }
 
-  return (
-    <ThreadWorkLog
-      key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
-      activities={entry.activities}
-      continuesWorkLog={entry.continuesWorkLog}
-      environmentId={props.environmentId}
-      workspaceRoot={props.workspaceRoot}
-      anchorKey={entry.id}
-      copiedRowId={props.copiedRowId}
-      expandedRows={props.expandedWorkRows}
-      rowSizing={props.workRowSizing}
-      scrollPositions={props.workGroupScrollPositions}
-      iconSubtleColor={iconSubtleColor}
-      edgeFadeColor={props.screenColor}
-      themeAppearance={props.themeAppearance}
-      onCopyRow={props.onCopyWorkRow}
-      onToggleRow={props.onToggleWorkRow}
-      renderImage={props.renderViewedImage}
-      renderReasoning={props.renderReasoning}
-      onPressPreview={props.onPressPreview}
-    />
-  );
+  return renderWorkLog(entry.activities, entry.continuesWorkLog);
 }
 
 function TurnDiffStat(props: {
@@ -2870,16 +3022,29 @@ function useThreadFeedPresentation(
   props: ThreadFeedProps,
   expandedTurnIds: ReadonlySet<RunId>,
   expandedWorkGroups: Record<string, boolean>,
+  reasoningDisplayMode: ReasoningDisplayMode,
 ) {
   const [feedCache] = useState(createThreadFeedCache);
-  return appendPendingThreadMessages(
+  const [reasoningCache] = useState(createThreadReasoningCache);
+  const feed = useMemo(
+    () => presentThreadReasoning(props.feed, reasoningDisplayMode, reasoningCache),
+    [props.feed, reasoningDisplayMode, reasoningCache],
+  );
+  const reasoningGroups = useMemo(
+    () =>
+      reasoningDisplayMode === "working"
+        ? workingReasoningGroups(feed)
+        : new Map<string, ReadonlyArray<ThreadFeedActivity>>(),
+    [feed, reasoningDisplayMode],
+  );
+  const presented = appendPendingThreadMessages(
     deriveThreadFeedPresentation(
-      props.feed,
+      feed,
       props.latestRun,
       expandedTurnIds,
       new Set(
         Object.entries(expandedWorkGroups)
-          .filter(([, expanded]) => expanded)
+          .filter(([groupId, expanded]) => expanded && !reasoningGroups.has(groupId))
           .map(([groupId]) => groupId),
       ),
       props.activeWorkStartedAt,
@@ -2889,6 +3054,7 @@ function useThreadFeedPresentation(
     props.feed,
     props.queuedMessages,
   );
+  return { feed: presented, reasoningGroups };
 }
 
 export const ThreadFeed = memo(function ThreadFeed({
@@ -2901,7 +3067,17 @@ export const ThreadFeed = memo(function ThreadFeed({
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
-  const openPullRequest = useOpenPullRequest();
+  const openPullRequestInApp = useOpenPullRequest();
+  const pullRequestLinks = useTimelinePullRequestLinks(props.environmentId, props.threadId);
+  const openPullRequest = (url: string) => {
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const inApp =
+      (AsyncResult.isSuccess(preferences)
+        ? preferences.value.pullRequestLinksOpenInApp
+        : undefined) ?? MOBILE_CLIENT_PREFERENCE_DEFAULTS.pullRequestLinksOpenInApp;
+    return inApp ? openPullRequestInApp(url) : tryOpenExternalUrl(url, "pull-request");
+  };
+  const canRunTerminal = useAtomValue(terminalEnvironment.open.permissionAtom(props.environmentId));
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
   const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(
@@ -2911,7 +3087,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     }),
   );
   const onOpenTurnDiff = useCallback(
-    (checkpoint: ThreadCheckpointSummary) => {
+    (checkpoint: ThreadCheckpointSummary, filePath?: string) => {
       if (!gitWorkbenchEnabled) return;
       setReviewSelectedSectionId(
         scopedThreadKey(props.environmentId, props.threadId),
@@ -2920,13 +3096,138 @@ export const ThreadFeed = memo(function ThreadFeed({
       navigation.navigate("ThreadReview", {
         environmentId: props.environmentId,
         threadId: props.threadId,
+        filePath,
+        revision: checkpoint.checkpointTurnCount,
+        toolItemId: undefined,
+        toolSourceThreadId: undefined,
+        toolRevision: undefined,
       });
     },
     [navigation, props.environmentId, props.threadId, gitWorkbenchEnabled],
   );
+  const onOpenToolDiff = gitWorkbenchEnabled
+    ? (target: TimelineToolDiffTarget & { readonly filePath: string }) =>
+        navigation.navigate("ThreadReview", {
+          environmentId: props.environmentId,
+          threadId: props.threadId,
+          filePath: target.filePath,
+          toolSourceThreadId: target.threadId,
+          toolItemId: target.itemId,
+          toolRevision: target.revision,
+        })
+    : undefined;
   const { themeAppearance, chatPresentation } = useAppearancePreferences();
   const selectedProjection = useSelectedThreadProjection();
+  const replyTopics = useTimelineReplyTopics(props.environmentId, props.threadId);
+  const messageActions = useTimelineMessageActions({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    projection: selectedProjection?.projection ?? null,
+    busy:
+      threadFeedRunIsUnsettled(props.latestRun) ||
+      props.runlessWorkActive === true ||
+      props.queuedMessages.length > 0,
+  });
+  const threadControl = useAtomValue(
+    timelineControlAtom(scopedThreadKey(props.environmentId, props.threadId)),
+  );
+  const [lastControl, setLastControl] = useState(threadControl);
+  const [findOpen, setFindOpen] = useState(false);
+  const [jumpListOpen, setJumpListOpen] = useState(false);
+  if (lastControl !== threadControl) {
+    setLastControl(threadControl);
+    if (threadControl?.action === "find") setFindOpen(true);
+    if (threadControl?.action === "jump-list") setJumpListOpen(true);
+  }
+  const isFocused = useIsFocused();
+  useHardwareKeyboardCommand(
+    "focusSearch",
+    useCallback(() => {
+      if (!isFocused) return false;
+      setFindOpen(true);
+      return true;
+    }, [isFocused]),
+  );
+  const [findQuery, setFindQuery] = useState("");
+  const [selectedFindMatch, setSelectedFindMatch] = useState<ThreadFindMatch | null>(null);
+  const [findIndex] = useState(createThreadFindIndex);
+  const findMatches = useMemo(
+    () => findIndex(props.feed, findOpen ? findQuery : ""),
+    [props.feed, findOpen, findQuery, findIndex],
+  );
+  const activeFindIndex = reconcileFindMatchIndex(findMatches, selectedFindMatch);
+  const activeFindMatch = findMatches[activeFindIndex] ?? null;
+  const findJumpKey =
+    findOpen && activeFindMatch
+      ? JSON.stringify([findQuery, activeFindMatch.entryId, activeFindMatch.start])
+      : null;
+  const [landedFindKey, setLandedFindKey] = useState<string | null>(null);
+  const findLineOffsets = useRef(new Map<string, number>());
+  const preciseFindKey = useRef<string | null>(null);
+  const [localJumpId, setLocalJumpId] = useState<MessageId | null>(null);
+  const [commentCitation, setCommentCitation] = useState<AssistantCitation | null>(null);
+  const insertQuote = (citation: AssistantCitation) => {
+    const key = scopedThreadKey(props.environmentId, props.threadId);
+    insertComposerDraftText(
+      key,
+      `${serializeAssistantCitation(citation)} `,
+      captureComposerDraftInsertion(key),
+    );
+  };
+  const onQuoteSelection: Parameters<typeof renderFeedEntry>[1]["onQuoteSelection"] = (
+    message,
+    selected,
+    action,
+  ) => {
+    const citation = buildAssistantQuote({
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+      messageId: message.id,
+      markdown: message.text,
+      text: selected.text,
+      start: selected.selection.start,
+      selectionMarkdown: selected.markdown,
+    });
+    if (!citation) {
+      Dialog.alert(translator.message("mobile.timeline.quoteUnavailable"));
+      return;
+    }
+    if (action === "comment") setCommentCitation(citation);
+    else insertQuote(citation);
+  };
+  const requestedFindHistory = useRef<string | null>(null);
+  const historyGrowthKey = `${findQuery}:${props.feed[0]?.id}:${props.feed.length}`;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pages the server history while searching so matches include rows outside the mounted window
+  useEffect(() => {
+    if (
+      !findOpen ||
+      !findQuery ||
+      !props.historyControls?.hasMoreHistory ||
+      props.historyControls.loading ||
+      props.historyControls.error ||
+      requestedFindHistory.current === historyGrowthKey
+    )
+      return;
+    requestedFindHistory.current = historyGrowthKey;
+    props.historyControls.onLoadEarlier();
+  }, [findOpen, findQuery, props.historyControls, historyGrowthKey]);
   const preferences = useAtomValue(mobilePreferencesAtom);
+  const timestampFormat =
+    (AsyncResult.isSuccess(preferences) ? preferences.value.timestampFormat : undefined) ??
+    MOBILE_CLIENT_PREFERENCE_DEFAULTS.timestampFormat;
+  const reasoningDisplayMode = resolveMobileReasoningDisplayMode(
+    AsyncResult.isSuccess(preferences) ? preferences.value.betterT3Device : undefined,
+  );
+  const reasoningDialogScope = JSON.stringify([
+    props.environmentId,
+    props.threadId,
+    reasoningDisplayMode,
+  ]);
+  const [reasoningDialog, setReasoningDialog] = useState<{ scope: string; groupId: string } | null>(
+    null,
+  );
+  if (reasoningDialog !== null && reasoningDialog.scope !== reasoningDialogScope)
+    setReasoningDialog(null);
   const projectedRuns = selectedProjection?.projection.runs;
   const projectedProviderTurns = selectedProjection?.projection.providerTurns;
   const projectedTurnItems = selectedProjection?.projection.turnItems;
@@ -3123,6 +3424,16 @@ export const ThreadFeed = memo(function ThreadFeed({
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
+    const citation = parseAssistantCitationHref(href);
+    if (citation) {
+      requestThreadMessageJump(
+        scopedThreadKey(citation.environmentId, citation.threadId),
+        citation.messageId,
+      );
+      if (citation.environmentId !== props.environmentId || citation.threadId !== props.threadId)
+        openLinkedThread({ environmentId: citation.environmentId, threadId: citation.threadId });
+      return;
+    }
     const skill = enrichedSkillReference(href, props.skills);
     if (skill) {
       const instructionsPath = enrichedSkillInstructionsPath(skill);
@@ -3267,6 +3578,34 @@ export const ThreadFeed = memo(function ThreadFeed({
     workspaceRoot: props.workspaceRoot ?? null,
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
+    onRunCommand:
+      canRunTerminal && props.workspaceRoot
+        ? (command) => {
+            const terminalId = `timeline-${uuidv4()}`;
+            const thread = appAtomRegistry.get(
+              environmentThreadShells.threadShellAtom(
+                scopeThreadRef(props.environmentId, props.threadId),
+              ),
+            );
+            stagePendingTerminalLaunch({
+              target: { environmentId: props.environmentId, threadId: props.threadId, terminalId },
+              launch: {
+                cwd: props.workspaceRoot!,
+                worktreePath: thread?.worktreePath ?? null,
+                initialInput: `${command}\r`,
+              },
+            });
+            navigation.navigate("ThreadTerminal", {
+              environmentId: props.environmentId,
+              threadId: props.threadId,
+              terminalId,
+            });
+          }
+        : undefined,
+    onAction: (prompt) => {
+      const key = scopedThreadKey(props.environmentId, props.threadId);
+      insertComposerDraftText(key, `\n\n${prompt}\n`, captureComposerDraftInsertion(key));
+    },
     fileEmbedLabel: (href, standalone) =>
       markdownFileEmbedLabel(
         href,
@@ -3278,10 +3617,24 @@ export const ThreadFeed = memo(function ThreadFeed({
         standalone,
       ),
     onLinkPress: onMarkdownLinkPress,
-    linkCustomization: enrichedThreadLinkCustomization,
+    linkCustomization: (href) => {
+      const citation = parseAssistantCitationHref(href);
+      return citation
+        ? { label: `❝ ${assistantCitationLabel(citation)}`, chip: { tintsIcon: true } }
+        : enrichedThreadLinkCustomization(href);
+    },
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
     fileContextMenu: (href) => {
+      const prActions = pullRequestLinks.actions(href);
+      if (prActions.length)
+        return {
+          title: href,
+          actions: [
+            { id: "open-pr", title: translator.message("mobile.ui.openLink") },
+            ...prActions,
+          ],
+        };
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         return {
@@ -3312,6 +3665,14 @@ export const ThreadFeed = memo(function ThreadFeed({
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId) => {
+      if (actionId === "timeline-toggle-pr") {
+        pullRequestLinks.perform(href, actionId);
+        return;
+      }
+      if (actionId === "open-pr") {
+        void openPullRequest(href);
+        return;
+      }
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         const instructionsPath = enrichedSkillInstructionsPath(skill);
@@ -3541,10 +3902,22 @@ export const ThreadFeed = memo(function ThreadFeed({
   // the jump unfolds a run hiding the message and stops following the end, so
   // the committed list holds the target row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
-  const { jumpToMessageId } = props;
+  const jumpToMessageId =
+    findJumpKey !== null && findJumpKey !== landedFindKey
+      ? activeFindMatch?.entryId
+      : (localJumpId ?? props.jumpToMessageId);
   const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
-  const ownPresentedFeed = useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups);
-  const presentedFeed = appendGuestPendingMessages(ownPresentedFeed, guestShare);
+  const { feed: ownPresentedFeed, reasoningGroups } = useThreadFeedPresentation(
+    props,
+    expandedTurnIds,
+    expandedWorkGroups,
+    reasoningDisplayMode,
+  );
+  const searchActive = findOpen && findQuery.length > 0;
+  const searchedFeed = searchActive
+    ? appendPendingThreadMessages(props.feed, props.feed, props.queuedMessages)
+    : ownPresentedFeed;
+  const presentedFeed = appendGuestPendingMessages(searchedFeed, guestShare);
   const changedFilesByMessage = new Map<string, ThreadCheckpointSummary>();
   if (betterChat) {
     for (const entry of props.feed) {
@@ -3575,11 +3948,11 @@ export const ThreadFeed = memo(function ThreadFeed({
     threadKey: feedThreadKey,
     environmentId: props.environmentId,
     connected: environmentConnected,
-    ready: props.contentPresentation.kind === "ready",
+    ready: props.contentPresentation.kind === "ready" && !searchActive,
     feed: betterChat
       ? appendPendingThreadMessages(props.feed, props.feed, props.queuedMessages)
       : props.feed,
-    presentedFeed: ownPresentedFeed,
+    presentedFeed: searchedFeed,
     checkpointsByMessage: changedFilesByMessage,
   });
   const handleScrollBeginDrag = () => {
@@ -3632,24 +4005,56 @@ export const ThreadFeed = memo(function ThreadFeed({
     if (list && bottom > 0) list.reportContentInset({ bottom });
   };
   const jumpIndex = jumpReady
-    ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
+    ? presentedFeed.findIndex((entry) => entry.id === jumpToMessageId)
     : null;
   const followsEnd = endFollowEnabled && !jumpReady;
   const landJump = useEffectEvent((index: number) => {
     if (index !== -1) {
       setEndFollow(false);
-      void listRef.current?.scrollToIndex({ index, viewPosition: 0.2, animated: false });
+      const lineOffset =
+        findJumpKey === null ? undefined : findLineOffsets.current.get(findJumpKey);
+      void listRef.current?.scrollToIndex(
+        lineOffset === undefined
+          ? { index, viewPosition: 0.2, animated: false }
+          : {
+              index,
+              viewPosition: 0,
+              viewOffset: anchorTopInset + THREAD_FIND_MATCH_TOP_GAP - lineOffset,
+              animated: false,
+            },
+      );
     }
-    props.onJumpedToMessage?.();
+    if (findJumpKey !== null) {
+      setLandedFindKey(findJumpKey);
+      setSelectedFindMatch(activeFindMatch);
+    }
+    if (localJumpId !== null) setLocalJumpId(null);
+    else if (jumpToMessageId === props.jumpToMessageId) props.onJumpedToMessage?.();
   });
   // Z: a native list scroll after the commit that rendered its target row. The
   // row is often already measured, so no LegendList callback fires for that
   // commit, and setEndFollow notifies the parent, so it can't run during render.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native list to the jump target after the commit that rendered its row
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Clears the one-shot jump after the native list scrolls to its committed row.
     if (jumpIndex !== null) landJump(jumpIndex);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
-  }, [jumpToMessageId, jumpIndex]);
+  }, [jumpToMessageId, jumpIndex, findJumpKey]);
+  const onFindMatchLayout = (entryId: string, start: number, offset: number) => {
+    const key = JSON.stringify([findQuery, entryId, start]);
+    findLineOffsets.current.set(key, offset);
+    if (key !== findJumpKey || preciseFindKey.current === key || loadedListKey !== listMountKey)
+      return;
+    const index = presentedFeed.findIndex((entry) => entry.id === entryId);
+    if (index < 0) return;
+    preciseFindKey.current = key;
+    void listRef.current?.scrollToIndex({
+      index,
+      viewPosition: 0,
+      viewOffset: anchorTopInset + THREAD_FIND_MATCH_TOP_GAP - offset,
+      animated: false,
+    });
+  };
 
   const reflowLayout = () => ({
     rowsTop: FEED_PADDING_TOP + listHeaderSizeRef.current,
@@ -3837,6 +4242,10 @@ export const ThreadFeed = memo(function ThreadFeed({
   };
 
   const onToggleWorkGroup = (groupId: string, anchorKey?: string) => {
+    if (reasoningGroups.has(groupId)) {
+      setReasoningDialog({ scope: reasoningDialogScope, groupId });
+      return;
+    }
     suspendEndScrollMaintenanceForDisclosure(anchorKey ?? `work-toggle:${groupId}`);
     setInteractionState((current) => ({
       ...current,
@@ -3901,6 +4310,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   // estimatedItemSize tall, and scrolling up through unmeasured content
   // corrects each row's height as it mounts — the feed visibly jumps.
   const getFixedItemSize = (entry: ThreadFeedRow) => {
+    if (searchActive && entry.type === "activity-group") return undefined;
     if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
@@ -3945,23 +4355,34 @@ export const ThreadFeed = memo(function ThreadFeed({
   // re-caches old sizes.
   const { textSizeKey } = workRowSizing;
   const hasHtmlRenders = presentedFeed.some((entry) => entry.type === "html-render");
-  const previousRowGeometry = useRef({ textSizeKey, contentWidth });
+  const previousRowGeometry = useRef({ textSizeKey, contentWidth, searchActive });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears LegendList size caches and starts a reflow after the commit that brings new row geometry
   useLayoutEffect(() => {
     const previous = previousRowGeometry.current;
-    if (previous.textSizeKey === textSizeKey && previous.contentWidth === contentWidth) return;
-    previousRowGeometry.current = { textSizeKey, contentWidth };
+    if (
+      previous.textSizeKey === textSizeKey &&
+      previous.contentWidth === contentWidth &&
+      previous.searchActive === searchActive
+    )
+      return;
+    previousRowGeometry.current = { textSizeKey, contentWidth, searchActive };
     // Rows re-rendered at this width are measured in the next commit, after this effect.
     if (previous.contentWidth !== contentWidth) beginReflow();
-    if (previous.textSizeKey !== textSizeKey || hasHtmlRenders) {
+    if (
+      previous.textSizeKey !== textSizeKey ||
+      previous.searchActive !== searchActive ||
+      hasHtmlRenders
+    ) {
       listRef.current?.clearCaches({ mode: "sizes" });
     }
-  }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
+  }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef, searchActive]);
 
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    reasoningGroups,
+    reasoningDisplayMode,
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
     dispatchingMessageId: props.dispatchingMessageId,
@@ -3985,6 +4406,15 @@ export const ThreadFeed = memo(function ThreadFeed({
     expandedCheckpointRefs,
     forkAction,
     retryAction,
+    messageActions,
+    timestampFormat,
+    findQuery: findOpen ? findQuery : "",
+    findText: findIndex.text,
+    onFindMatchLayout,
+    activeFindMatch,
+    replyTopics,
+    pullRequestLinks,
+    onQuoteSelection,
   };
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <Animated.View
@@ -4009,6 +4439,16 @@ export const ThreadFeed = memo(function ThreadFeed({
             />
           ) : null}
           {renderFeedEntry(info, {
+            messageActions,
+            timestampFormat,
+            findQuery: findOpen ? findQuery : "",
+            findText: findIndex.text,
+            onFindMatchLayout,
+            activeFindMatch,
+            replyTopics,
+            pullRequestLinks,
+            onOpenPullRequest: openPullRequest,
+            onQuoteSelection,
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
@@ -4028,6 +4468,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onToggleWorkRow,
             onToggleTurnFold,
             onOpenTurnDiff: gitWorkbenchEnabled ? onOpenTurnDiff : null,
+            onOpenToolDiff,
             changedFilesByMessage,
             changedFilesRunIds,
             expandedCheckpointRefs,
@@ -4040,6 +4481,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             renderMarkdownImage,
             renderViewedImage,
             renderReasoning,
+            reasoningGroups,
             iconSubtleColor,
             replyActionSize,
             screenColor,
@@ -4086,6 +4528,36 @@ export const ThreadFeed = memo(function ThreadFeed({
     <ChatPresentationMotionContext value={motion}>
       <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
         <View className="flex-1" onLayout={handleViewportLayout}>
+          {findOpen ? (
+            <View
+              style={{ position: "absolute", zIndex: 10, left: 0, right: 0, top: anchorTopInset }}
+            >
+              <ThreadFindBar
+                query={findQuery}
+                count={findMatches.length}
+                index={activeFindIndex}
+                loading={props.historyControls?.loading === true}
+                error={props.historyControls?.error}
+                onChange={(query) => {
+                  findLineOffsets.current.clear();
+                  preciseFindKey.current = null;
+                  setFindQuery(query);
+                  setSelectedFindMatch(null);
+                  setLandedFindKey(null);
+                }}
+                onNavigate={(direction) => {
+                  preciseFindKey.current = null;
+                  setSelectedFindMatch(
+                    findMatches[
+                      nextFindMatchIndex(activeFindIndex, direction, findMatches.length)
+                    ] ?? null,
+                  );
+                  setLandedFindKey(null);
+                }}
+                onClose={() => setFindOpen(false)}
+              />
+            </View>
+          ) : null}
           <View className="flex-1">
             {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
             <KeyboardAwareLegendList
@@ -4241,7 +4713,41 @@ export const ThreadFeed = memo(function ThreadFeed({
             </View>
           ) : null}
           <VideoPreviewModal source={expandedVideo} onRequestClose={closeVideoPreview} />
+          {jumpListOpen ? (
+            <TimelineJumpList
+              feed={props.feed}
+              timestampFormat={timestampFormat}
+              history={props.historyControls}
+              onClose={() => setJumpListOpen(false)}
+              onJump={(id) => {
+                setLocalJumpId(id);
+                setJumpListOpen(false);
+              }}
+            />
+          ) : null}
+          {commentCitation ? (
+            <AssistantQuoteComment
+              key={commentCitation.messageId + ":" + commentCitation.start}
+              citation={commentCitation}
+              onClose={() => setCommentCitation(null)}
+              onInsert={(comment) => {
+                insertQuote(withAssistantCitationComment(commentCitation, comment));
+                setCommentCitation(null);
+              }}
+            />
+          ) : null}
           <FilePreviewModal source={expandedFile} onRequestClose={closeFilePreview} />
+          <ThreadReasoningDialog
+            activities={
+              reasoningDialog?.scope === reasoningDialogScope
+                ? workingReasoningForGroup(reasoningGroups, reasoningDialog.groupId)
+                : undefined
+            }
+            edgeFadeColor={screenColor}
+            liveRunId={unsettledTurnId}
+            renderReasoning={renderReasoning}
+            onClose={() => setReasoningDialog(null)}
+          />
         </View>
       </PresentationSource>
     </ChatPresentationMotionContext>

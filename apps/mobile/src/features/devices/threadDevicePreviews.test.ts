@@ -1,7 +1,11 @@
 import { ThreadId, type DeviceServiceState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { selectedThreadDevicePreview, threadDevicePreviews } from "./threadDevicePreviews";
+import {
+  selectedThreadDevicePreview,
+  threadDevicePreviews,
+  threadDeviceChoices,
+} from "./threadDevicePreviews";
 
 const threadId = ThreadId.make("thread");
 const state: DeviceServiceState = {
@@ -90,5 +94,25 @@ describe("thread device previews", () => {
     const afterClose = threadDevicePreviews({ ...state, sessions: [state.sessions[0]!] }, threadId);
     expect(selectedThreadDevicePreview(afterClose, selectedKey)?.name).toBe("Pixel 9");
     expect(selectedThreadDevicePreview([], selectedKey)).toBeNull();
+  });
+
+  it("discovers devices without sessions and tracks boot state across duplicate host serials", () => {
+    const [local, remote] = threadDeviceChoices(
+      {
+        ...state,
+        sessions: [state.sessions[0]!],
+        bootingDevices: [{ ...state.devices[1]!, threadId }],
+      },
+      threadId,
+    );
+    expect(local?.open).toBe(true);
+    expect(local?.booting).toBe(false);
+    expect(remote?.open).toBe(false);
+    expect(remote?.booting).toBe(true);
+    expect(local?.key).not.toBe(remote?.key);
+    expect(
+      threadDeviceChoices({ ...state, sessions: [] }, threadId).map((entry) => entry.open),
+    ).toEqual([false, false]);
+    expect(threadDeviceChoices(null, threadId)).toEqual([]);
   });
 });

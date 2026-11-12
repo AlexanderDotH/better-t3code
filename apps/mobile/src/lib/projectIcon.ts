@@ -64,9 +64,27 @@ export function resolveProjectIconGlyph(
   }
 }
 
-const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = {
+const PROJECT_ICON_SYMBOLS = {
   "message-square-dashed": "text.bubble",
-};
+  "folder-code": "folder",
+  "code-2": "chevron.left.forwardslash.chevron.right",
+  terminal: "terminal",
+  "globe-2": "globe",
+  server: "server.rack",
+  database: "internaldrive",
+  bot: "sparkles",
+  smartphone: "iphone",
+  monitor: "desktopcomputer",
+  "shield-check": "checkmark.shield",
+  image: "photo",
+  "git-branch": "arrow.triangle.branch",
+} satisfies Record<string, AppSymbolName>;
+
+const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = PROJECT_ICON_SYMBOLS;
+
+export const MOBILE_PROJECT_ICON_NAMES = Object.keys(
+  PROJECT_ICON_SYMBOLS,
+) as (keyof typeof PROJECT_ICON_SYMBOLS)[];
 
 export function resolveProjectIconSymbol(
   projectIcon: ProjectIconOverride | null | undefined,

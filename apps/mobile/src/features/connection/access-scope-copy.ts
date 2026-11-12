@@ -1,0 +1,21 @@
+export const accessScopeCopy = {
+  "orchestration:read": ["mobile.access.scope.view", "mobile.access.scope.viewHint"],
+  "orchestration:operate": ["mobile.access.scope.operate", "mobile.access.scope.operateHint"],
+  "settings:write": ["mobile.access.scope.settings", "mobile.access.scope.settingsHint"],
+  "providers:manage": ["mobile.access.scope.providers", "mobile.access.scope.providersHint"],
+  "environment:maintain": ["mobile.access.scope.maintain", "mobile.access.scope.maintainHint"],
+  "preview:operate": ["mobile.access.scope.previews", "mobile.access.scope.previewsHint"],
+  "diagnostics:read": ["mobile.access.scope.diagnostics", "mobile.access.scope.diagnosticsHint"],
+  "terminal:read": ["mobile.access.scope.terminalsRead", "mobile.access.scope.terminalsReadHint"],
+  "terminal:operate": ["mobile.access.scope.terminals", "mobile.access.scope.terminalsHint"],
+  "source-control:write": [
+    "mobile.access.scope.sourceControl",
+    "mobile.access.scope.sourceControlHint",
+  ],
+  "filesystem:read": ["mobile.access.scope.filesRead", "mobile.access.scope.filesReadHint"],
+  "filesystem:write": ["mobile.access.scope.filesWrite", "mobile.access.scope.filesWriteHint"],
+  "access:read": ["mobile.access.scope.accessRead", "mobile.access.scope.accessReadHint"],
+  "access:write": ["mobile.access.scope.accessWrite", "mobile.access.scope.accessWriteHint"],
+  "relay:read": ["mobile.access.scope.relayRead", "mobile.access.scope.relayReadHint"],
+  "relay:write": ["mobile.access.scope.relayWrite", "mobile.access.scope.relayWriteHint"],
+} as const;

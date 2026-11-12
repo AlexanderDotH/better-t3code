@@ -111,23 +111,29 @@ export function ThreadPullRequestsSheet(
   return (
     <View collapsable={false} className="flex-1 bg-header">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader
-        title={title}
-        hideBottomBorder
-        onBack={() => navigation.goBack()}
-        actions={
-          actions.canLink
-            ? [
-                {
-                  accessibilityLabel: `Link ${singular}`,
-                  icon: "plus",
-                  onPress: actions.promptLink,
-                },
-              ]
-            : undefined
+      <ScreenContent
+        insetHorizontal={layout.usesSplitView}
+        header={
+          <AndroidSheetHeader
+            title={title}
+            hideBottomBorder
+            onBack={() => navigation.goBack()}
+            actions={
+              actions.canLink
+                ? [
+                    {
+                      accessibilityLabel: `Link ${singular}`,
+                      icon: "plus",
+                      onPress: actions.promptLink,
+                    },
+                  ]
+                : undefined
+            }
+          />
         }
-      />
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      >
+        {content}
+      </ScreenContent>
     </View>
   );
 }

@@ -32,13 +32,15 @@ import {
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
 import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
+import { resolveMobileFontFamilies } from "../features/settings/appearance/mobileFontPreferences";
 
 function enrichedStyle(
   style: SelectableMarkdownTextProps["textStyle"],
   dark: boolean,
   fontScale: number,
+  fonts: ReturnType<typeof resolveMobileFontFamilies>,
 ): MarkdownStyle {
-  const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
+  const monospace = fonts.code;
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
   const block = {
     marginTop: 4,
@@ -49,7 +51,7 @@ function enrichedStyle(
   };
   const body = {
     color: style.color,
-    fontFamily: style.fontFamily,
+    fontFamily: fonts.sans,
     fontSize: style.fontSize,
     lineHeight: style.lineHeight,
     marginTop: 0,
@@ -60,7 +62,8 @@ function enrichedStyle(
     return {
       ...body,
       color: style.strongColor,
-      fontFamily: style.headingFontFamily,
+      fontFamily: fonts.bold,
+      fontWeight: "bold" as const,
       fontSize,
       lineHeight: fontSize * 1.35,
       marginTop: 8,
@@ -83,7 +86,7 @@ function enrichedStyle(
     h4: heading(4),
     h5: heading(5),
     h6: heading(6),
-    strong: { color: style.strongColor, fontFamily: style.boldFontFamily, fontWeight: "normal" },
+    strong: { color: style.strongColor, fontFamily: fonts.bold, fontWeight: "bold" },
     link: { color: style.linkColor, underline: false },
     code: {
       fontFamily: monospace,
@@ -165,7 +168,7 @@ function enrichedStyle(
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const translator = useMobileInterfaceTranslator();
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
-  const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
+  const { themeAppearance, mathRenderingEnabled, fontFamilies } = useAppearancePreferences();
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
       return {
@@ -267,7 +270,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   }, [props.contextClipboardFragment, props.markdown]);
   const { fontScale } = useWindowDimensions();
   const markdownStyle = useMemo(() => {
-    const style = enrichedStyle(props.textStyle, themeAppearance === "dark", fontScale);
+    const style = enrichedStyle(
+      props.textStyle,
+      themeAppearance === "dark",
+      fontScale,
+      fontFamilies ?? resolveMobileFontFamilies(null, Platform.OS),
+    );
     return {
       ...style,
       paragraph: props.textAlign
@@ -275,7 +283,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : style.paragraph,
       linkVariants,
     };
-  }, [props.textStyle, props.textAlign, themeAppearance, fontScale, linkVariants]);
+  }, [props.textStyle, props.textAlign, themeAppearance, fontScale, linkVariants, fontFamilies]);
   const renderers = renderImage
     ? {
         image: (block: MarkdownImageBlock) => {
@@ -330,6 +338,28 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           containerStyle={{ flexShrink: 1, minWidth: 0 }}
           flavor="github"
           selectable
+          contextMenuItems={
+            props.onSelectionAction
+              ? [
+                  {
+                    text: translator.message("mobile.timeline.quote"),
+                    onPress: (selection) =>
+                      props.onSelectionAction?.(
+                        { ...selection, markdown: props.markdown },
+                        "quote",
+                      ),
+                  },
+                  {
+                    text: translator.message("mobile.timeline.comment"),
+                    onPress: (selection) =>
+                      props.onSelectionAction?.(
+                        { ...selection, markdown: props.markdown },
+                        "comment",
+                      ),
+                  },
+                ]
+              : undefined
+          }
           selectionClipboard={selectionClipboard}
           selectionColor={props.textStyle.selectionColor}
           selectionHandleColor={props.textStyle.selectionHandleColor}

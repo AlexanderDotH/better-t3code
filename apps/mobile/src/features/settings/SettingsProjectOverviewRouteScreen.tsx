@@ -48,6 +48,10 @@ import { workspaceHasColumns } from "../workspace/workspace-selection-store";
 import { DEFAULT_SETTINGS_PAGE } from "../workspace/workspace-tab-navigation";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { ProjectGitWorkbenchEntry } from "../threads/git/ProjectGitWorkbenchScreen";
+
+import { ProjectIdentitySettingsCard } from "./ProjectIdentitySettingsCard";
+import { SettingsRow } from "./components/SettingsRow";
 
 export function SettingsProjectOverviewRouteScreen() {
   const translator = useMobileInterfaceTranslator();
@@ -369,6 +373,17 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
+      <ProjectIdentitySettingsCard members={props.members} />
+      {props.members.map((member) => (
+        <ProjectGitWorkbenchEntry key={`${member.environmentId}:${member.id}`} project={member} />
+      ))}
+      <SettingsSection title={translator.message("mobile.projects.scripts.title")}>
+        <SettingsRow
+          icon="terminal"
+          label={translator.message("mobile.projects.scripts.title")}
+          target="SettingsProjectScripts"
+        />
+      </SettingsSection>
       {canOrganize ? (
         <SettingsSection title={translator.message("mobile.ui.organize")}>
           <SettingsSwitchRow
@@ -438,6 +453,13 @@ function ProjectOverviewContent(props: {
             </View>
           );
         })}
+      </SettingsSection>
+      <SettingsSection title={translator.message("settings.application.section.importChats")}>
+        <SettingsRow
+          icon="text.bubble"
+          label={translator.message("settings.application.title.importChats")}
+          target="SettingsProjects"
+        />
       </SettingsSection>
       <SettingsSection title={translator.message("settings.projects.detail.section.danger")}>
         <SettingsActionRow

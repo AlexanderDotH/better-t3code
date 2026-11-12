@@ -12,6 +12,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { MobileClientPreferenceRows } from "./MobileClientPreferenceRows";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   readonly behavior: FollowUpBehavior;
@@ -72,6 +73,7 @@ export function SettingsFollowUpRouteScreen() {
       <Text className="px-2 text-sm text-foreground-muted">
         {translator.message("mobile.ui.longPressTheSendButtonToUse")}
       </Text>
+      <MobileClientPreferenceRows group="chat" />
     </ScrollView>
   );
 

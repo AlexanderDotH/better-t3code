@@ -45,12 +45,11 @@ import {
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
-import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { WorkspaceTextFileContent } from "./WorkspaceTextFileContent";
 import { ThreadInspectorContentStack } from "../threads/thread-inspector-content-stack";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
-import { SourceFileSurface } from "./SourceFileSurface";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { AppBar } from "../../components/ui/AppBar";
@@ -236,6 +235,8 @@ function FileContent(props: {
   readonly mediaSource?: MediaActionsSource;
   readonly resolveVideoUri: () => Promise<string | null>;
   readonly fileContents: string | null;
+  readonly fileRevision?: string;
+  readonly fileExists?: boolean;
   readonly fileError: string | null;
   readonly relativePath: string;
   readonly threadId: ThreadId | null;
@@ -332,19 +333,22 @@ function FileContent(props: {
       ) : null}
       {props.activeMode === "preview" && delimiter ? (
         <DelimitedFilePreview table={parseDelimitedPreview(props.fileContents, delimiter)} />
-      ) : props.activeMode === "preview" && isMarkdown ? (
-        <FileMarkdownPreview
+      ) : (
+        <WorkspaceTextFileContent
           cwd={props.cwd}
           environmentId={props.environmentId}
-          markdown={props.fileContents}
           relativePath={props.relativePath}
           threadId={props.threadId}
-          onRefresh={props.onRefresh}
-        />
-      ) : (
-        <SourceFileSurface
-          contents={props.fileContents}
-          path={props.relativePath}
+          file={{
+            relativePath: props.relativePath,
+            contents: props.fileContents,
+            byteLength: props.fileContents.length,
+            truncated: props.truncated,
+            ...(props.fileExists === undefined ? {} : { exists: props.fileExists }),
+            ...(props.fileRevision ? { revision: props.fileRevision } : {}),
+          }}
+          isMarkdown={isMarkdown}
+          markdownPreview={props.activeMode === "preview" && isMarkdown}
           initialLine={props.initialLine}
           headerInsetTop={props.truncated ? 0 : undefined}
           onRefresh={props.onRefresh}
@@ -752,7 +756,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       needsFileContents
       ? projectEnvironment.readFile({
           environmentId,
-          input: { cwd, relativePath },
+          input: { cwd, relativePath, allowMissing: true },
         })
       : null,
   );
@@ -1057,6 +1061,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           mediaSource={mediaSource}
           resolveVideoUri={assetPreview.refresh}
           fileContents={fileData?.contents ?? null}
+          fileRevision={fileData?.revision}
+          fileExists={fileData?.exists}
           fileError={fileQuery.error}
           initialLine={targetLine}
           relativePath={relativePath}

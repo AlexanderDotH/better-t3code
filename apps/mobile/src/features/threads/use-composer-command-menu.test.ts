@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
@@ -21,6 +22,10 @@ vi.mock("../../state/server", () => ({
     providersValueAtom: vi.fn(),
     refreshProviders: Symbol("refreshProviders"),
   },
+}));
+vi.mock("../../state/preferences", () => ({ mobilePreferencesAtom: {} }));
+vi.mock("../../persistence/mobile-preferences", () => ({
+  MOBILE_CLIENT_PREFERENCE_DEFAULTS: { showSkillsInSlashMenu: true },
 }));
 
 import {
@@ -65,6 +70,39 @@ describe("resolveComposerMenuSelection", () => {
 });
 
 describe("mobile slash commands", () => {
+  it.each(["side", "btw"])("resolves app-owned /%s before a provider command", (command) => {
+    const items = buildComposerSlashCommandItems({
+      query: command,
+      atMessageStart: true,
+      hasThread: true,
+      allowInteractionMode: true,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("codex"),
+        slashCommands: [{ name: command }],
+      },
+    });
+    expect(items.map((item) => item.type)).toEqual(["slash-command"]);
+    const chosen = resolveComposerCommandSelection({
+      draftMessage: `/${command.slice(0, 2)}`,
+      trigger: { rangeStart: 0, rangeEnd: 3 },
+      item: items[0]!,
+      allowInteractionMode: true,
+    });
+    expect(chosen.text).toBe(`/${command} `);
+    expect(parseSideChatCommand(` /${command.toUpperCase()} question\nsecond line `)).toEqual({
+      prompt: "question\nsecond line",
+    });
+    expect(parseSideChatCommand(`/${command}bar`)).toBeNull();
+    expect(
+      buildComposerSlashCommandItems({
+        query: command,
+        atMessageStart: true,
+        hasThread: false,
+        allowInteractionMode: true,
+        selectedProviderStatus: null,
+      }),
+    ).toEqual([]);
+  });
   it.each([false, true])(
     "selects Chat locally with planning enabled=%s",
     (allowInteractionMode) => {

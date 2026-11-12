@@ -42,6 +42,9 @@ export function deviceStreamMessage(data: string) {
   try {
     const message: unknown = JSON.parse(data);
     if (typeof message !== "object" || message === null || !("type" in message)) return null;
+    if (message.type === "captureError") return { type: "captureError" } as const;
+    if (message.type === "capture" && "dataUrl" in message && typeof message.dataUrl === "string")
+      return { type: "capture", dataUrl: message.dataUrl } as const;
     if (message.type === "unauthorized" || message.type === "retry") {
       return { type: message.type } as const;
     }

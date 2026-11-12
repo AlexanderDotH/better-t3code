@@ -3,14 +3,18 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
 import previewStreamScript from "@t3tools/mobile-preview-stream";
 import {
-  previewStreamControlLabel,
+  previewStreamControlLabelKey,
   previewStreamHostSetupMessage,
   type PreviewStreamControl,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   type PreviewStreamInput,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
-import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PreviewStreamHostSetup,
+  PreviewAnnotationRect,
+} from "@t3tools/contracts";
 import {
   useEffectEvent,
   useImperativeHandle,
@@ -34,6 +38,7 @@ import {
   previewStreamDocument,
   previewStreamMessage,
   type PreviewStreamConfiguration,
+  type PreviewStreamMessage,
 } from "./preview-stream-document";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
@@ -42,6 +47,12 @@ export interface PreviewStreamRef {
   readonly command: (input: PreviewStreamInput) => void;
   readonly paste: () => void;
   readonly togglePictureInPicture: () => void;
+  readonly capture: () => void;
+  readonly annotate: () => void;
+  readonly pickElement: () => void;
+  readonly resolveElementPick: (id: number, rect: PreviewAnnotationRect | null) => void;
+  readonly confirmElementPick: () => void;
+  readonly toggleRecording: () => void;
 }
 
 export interface PreviewPictureInPictureState {
@@ -60,6 +71,14 @@ type NativeStreamBridge = {
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
   /** True while frames show, so commands reach the page. */
   readonly onStreamingChange?: (streaming: boolean) => void;
+  readonly onCapture?: (dataUrl: string, annotation: boolean) => void;
+  readonly onRecordingChange?: (active: boolean) => void;
+  readonly onAnnotationChange?: (active: boolean) => void;
+  readonly onElementPickingChange?: (active: boolean) => void;
+  readonly onElementPick?: (pick: Extract<PreviewStreamMessage, { type: "elementPick" }>) => void;
+  readonly onElementCapture?: (
+    capture: Extract<PreviewStreamMessage, { type: "elementCapture" }>,
+  ) => void;
   readonly compact?: boolean;
   readonly pdfUri?: string | null;
 };
@@ -229,6 +248,12 @@ function PreviewStreamDocumentView({
   onControl,
   onPictureInPicture,
   onStreamingChange,
+  onCapture,
+  onRecordingChange,
+  onAnnotationChange,
+  onElementPickingChange,
+  onElementPick,
+  onElementCapture,
   onRetry,
   onStreaming,
   onRecoverProcess,
@@ -288,6 +313,7 @@ function PreviewStreamDocumentView({
     clearBootstrapTimer();
     webView.current?.injectJavaScript("window.T3PreviewStream?.stop(); true;");
     onStreamingChange?.(false);
+    onElementPickingChange?.(false);
     setControl(null);
     setFileChooser(null);
     onControl?.(null);
@@ -300,6 +326,7 @@ function PreviewStreamDocumentView({
   const streamEnded = useEffectEvent(() => {
     onStreamingChange?.(false);
     onControl?.(null);
+    onElementPickingChange?.(false);
   });
   // The stream lives exactly as long as this view.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the bootstrap timeout and stops the WebView stream when this view unmounts
@@ -324,6 +351,18 @@ function PreviewStreamDocumentView({
     paste,
     togglePictureInPicture: () =>
       webView.current?.injectJavaScript("window.T3PreviewStream?.pictureInPicture(); true;"),
+    capture: () => webView.current?.injectJavaScript("window.T3PreviewStream?.capture(); true;"),
+    annotate: () => webView.current?.injectJavaScript("window.T3PreviewStream?.annotate(); true;"),
+    pickElement: () =>
+      webView.current?.injectJavaScript("window.T3PreviewStream?.pickElement(); true;"),
+    resolveElementPick: (id, rect) =>
+      webView.current?.injectJavaScript(
+        `window.T3PreviewStream?.resolveElementPick(${JSON.stringify(id)},${JSON.stringify(rect)}); true;`,
+      ),
+    confirmElementPick: () =>
+      webView.current?.injectJavaScript("window.T3PreviewStream?.confirmElementPick(); true;"),
+    toggleRecording: () =>
+      webView.current?.injectJavaScript("window.T3PreviewStream?.toggleRecording(); true;"),
   }));
   const processTerminated = () => {
     if (!active.current || failed.current) return;
@@ -334,7 +373,7 @@ function PreviewStreamDocumentView({
       {!compact ? (
         <View className="flex-row items-center justify-between gap-2 border-b border-secondary-border px-3 py-2">
           <AppText className="text-xs text-foreground-muted">
-            {previewStreamControlLabel(control)}
+            {translator.message(previewStreamControlLabelKey(control))}
           </AppText>
           {control?.canOperate ? (
             <Button
@@ -379,6 +418,33 @@ function PreviewStreamDocumentView({
             const message = previewStreamMessage(event.nativeEvent.data);
             if (message === null) return;
             switch (message.type) {
+              case "elementPicking":
+                onElementPickingChange?.(message.active);
+                return;
+              case "elementPick":
+                onElementPick?.(message);
+                return;
+              case "elementCapture":
+                onElementCapture?.(message);
+                return;
+              case "capture":
+                onCapture?.(message.dataUrl, message.annotation);
+                return;
+              case "recording":
+                onRecordingChange?.(message.active);
+                return;
+              case "annotation":
+                onAnnotationChange?.(message.active);
+                return;
+              case "captureError":
+                Dialog.alert(
+                  translator.message(
+                    message.unavailable
+                      ? "mobile.panels.recordingUnavailable"
+                      : "mobile.panels.failed",
+                  ),
+                );
+                return;
               case "control": {
                 setControl(message);
                 const previousDialog = dialogRef.current;
@@ -424,6 +490,7 @@ function PreviewStreamDocumentView({
                 }
                 setStatus(message.status);
                 if (message.status === "connecting") {
+                  onElementPickingChange?.(false);
                   // Dialogs may have closed and reopened while this viewer was disconnected.
                   dialogRef.current = null;
                   setControl(null);

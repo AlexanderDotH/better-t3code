@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   pullRequestLayerParams,
   pullRequestStackMerge,
+  pullRequestStackRebase,
   savedPullRequestStack,
   singlePullRequestMergeAllowed,
 } from "./pullRequestStack";
@@ -71,6 +72,14 @@ describe("mobile stack merge scope", () => {
     ]);
     expect(pullRequestStackMerge(updated, 2, GITHUB).reason).toBeNull();
     expect(pullRequestStackMerge(updated, 1, GITHUB).reason).toContain("no open layers");
+    expect(pullRequestStackRebase(updated)).toMatchObject({
+      ready: true,
+      top: stack.layers[2],
+      heads: [
+        { number: 2, headSha: "sha-2" },
+        { number: 3, headSha: "sha-3" },
+      ],
+    });
   });
   it("blocks closed and draft dependencies, but permits them above the target", () => {
     const closed = {
@@ -81,6 +90,7 @@ describe("mobile stack merge scope", () => {
     };
     expect(pullRequestStackMerge(closed, 3, GITHUB).reason).toContain("Reopen");
     expect(pullRequestStackMerge(closed, 1, GITHUB).reason).toBeNull();
+    expect(pullRequestStackRebase(closed).ready).toBe(false);
     const draft = {
       ...stack,
       layers: stack.layers.map((layer) =>
@@ -96,6 +106,8 @@ describe("mobile stack merge scope", () => {
       layers: stack.layers.map((layer) => ({ ...layer, headSha: undefined })),
     };
     expect(pullRequestStackMerge(unknown, 2, GITHUB).reason).toContain("latest revisions");
+    expect(pullRequestStackRebase(unknown).ready).toBe(false);
+    expect(pullRequestStackRebase({ ...stack, layers: [] }).ready).toBe(false);
     expect(pullRequestStackMerge(stack, 99, GITHUB).reason).toContain("no longer in the stack");
     expect(
       pullRequestStackMerge(stack, 99, sourceControlClients.get("gitlab").changeRequest).reason,

@@ -1,33 +1,37 @@
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
-import { LmStudioSettings, OpenAiCompatibleSettings, OpenRouterSettings } from "@t3tools/contracts";
+import { getProviderClient, providerClients } from "@t3tools/client-runtime/provider-clients";
+import { CursorSettings } from "@t3tools/contracts";
 import type {
   ProviderSettingsDefinition,
   ProviderSettingsModelOption,
 } from "@t3tools/client-runtime/providerSettingsForm";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-const OPENROUTER_SETTINGS_DEFINITION: ProviderSettingsDefinition = {
-  settingsSchema: OpenRouterSettings,
-};
-const OPENAI_COMPATIBLE_SETTINGS_DEFINITION: ProviderSettingsDefinition = {
-  settingsSchema: OpenAiCompatibleSettings,
-};
-const LM_STUDIO_SETTINGS_DEFINITION: ProviderSettingsDefinition = {
-  settingsSchema: LmStudioSettings,
-};
+const CURSOR_SETTINGS_DEFINITION: ProviderSettingsDefinition = { settingsSchema: CursorSettings };
 
 export function mobileProviderSettingsDefinition(
   driver: ProviderDriverKind,
 ): ProviderSettingsDefinition | null {
-  switch (driver) {
-    case "openrouter":
-      return OPENROUTER_SETTINGS_DEFINITION;
-    case "openaiCompatible":
-      return OPENAI_COMPATIBLE_SETTINGS_DEFINITION;
-    case "lmstudio":
-      return LM_STUDIO_SETTINGS_DEFINITION;
-    default:
-      return null;
-  }
+  if (driver === "cursor") return CURSOR_SETTINGS_DEFINITION;
+  return getProviderClient(driver) ?? null;
+}
+
+const providerConfigDecoders = new Map<
+  ProviderDriverKind,
+  (input: unknown) => Option.Option<unknown>
+>();
+for (const definition of providerClients.definitions) {
+  const schema = mobileProviderSettingsDefinition(definition.driverKind)!.settingsSchema;
+  providerConfigDecoders.set(
+    definition.driverKind,
+    Schema.decodeUnknownOption(schema as unknown as Schema.Decoder<unknown>),
+  );
+}
+
+export function isMobileProviderConfigValid(driver: ProviderDriverKind, config: unknown): boolean {
+  const decode = providerConfigDecoders.get(driver);
+  return decode === undefined || Option.isSome(decode(config));
 }
 
 export function mobileProviderCatalogModels(

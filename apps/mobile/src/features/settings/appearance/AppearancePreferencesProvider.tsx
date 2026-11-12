@@ -44,6 +44,8 @@ import {
 import { appAtomRegistry } from "../../../state/atom-registry";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
+import { applyMobileAppearanceContrast } from "./mobileAppearanceContrast";
+import { resolveMobileFontFamilies } from "./mobileFontPreferences";
 import {
   isSystemColorsAvailable,
   readSystemColorPalettes,
@@ -69,6 +71,7 @@ import {
 } from "../../../lib/mobileThemeRuntime";
 
 interface AppearancePreferencesContextValue {
+  readonly fontFamilies: ReturnType<typeof resolveMobileFontFamilies>;
   readonly appearance: ResolvedAppearance & {
     readonly projectThreadPreviewCount: ProjectThreadPreviewCount;
   };
@@ -154,12 +157,15 @@ const systemColorPalettesAtom = Atom.make((get): MaterialYouPalettes | null => {
 function resolveThemeVariablesByAppearance(
   themeIds: MobileThemeIds,
   palettes: MaterialYouPalettes | null,
+  contrast: number | undefined,
 ): Readonly<Record<MobileThemeAppearance, MobileThemeVariables>> {
   const resolve = (appearance: MobileThemeAppearance) => {
     const base = getMobileThemeRuntimeVariables(themeIds[appearance], appearance, Platform.OS);
-    return themeIds[appearance] === "material-you" && palettes
-      ? materialYouPaletteToMobileThemeVariables(palettes[appearance], appearance, base)
-      : base;
+    const variables =
+      themeIds[appearance] === "material-you" && palettes
+        ? materialYouPaletteToMobileThemeVariables(palettes[appearance], appearance, base)
+        : base;
+    return applyMobileAppearanceContrast(variables, contrast, appearance);
   };
   return { light: resolve("light"), dark: resolve("dark") };
 }
@@ -296,6 +302,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const themeVariablesByAppearance = resolveThemeVariablesByAppearance(
     themeIds,
     systemColorPalettes,
+    storedPreferences?.appearanceContrast,
+  );
+  const fontFamilies = useMemo(
+    () => resolveMobileFontFamilies(storedPreferences, Platform.OS),
+    [storedPreferences],
+  );
+  const fontVariables = useMemo(
+    () => ({
+      "--font-sans": fontFamilies.sans,
+      "--font-medium": fontFamilies.medium,
+      "--font-bold": fontFamilies.bold,
+      "--font-mono": fontFamilies.code,
+    }),
+    [fontFamilies],
   );
   const themeVariables = themeVariablesByAppearance[themeAppearance];
   const activeThemeName = getMobileUniwindThemeName(themeId, themeAppearance);
@@ -391,6 +411,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
+      fontFamilies,
       appearance: { ...appearance, projectThreadPreviewCount: projectThreadPreviewSync.count },
       themeId,
       themeIds,
@@ -435,6 +456,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setMathRenderingEnabled,
     }),
     [
+      fontFamilies,
       chatVisualModeSync,
       chatPresentation,
       presentationMotion,
@@ -468,7 +490,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   return (
     <AppearancePreferencesContext.Provider value={value}>
       <ScopedTheme theme={activeThemeName}>
-        <ScopedVariables variables={themeVariables}>{props.children}</ScopedVariables>
+        <ScopedVariables variables={{ ...themeVariables, ...fontVariables }}>
+          {props.children}
+        </ScopedVariables>
       </ScopedTheme>
     </AppearancePreferencesContext.Provider>
   );

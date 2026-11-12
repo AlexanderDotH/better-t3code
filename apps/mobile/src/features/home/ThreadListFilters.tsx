@@ -11,6 +11,7 @@ export function ThreadListFilters(
     | "projects"
     | "selectedEnvironmentId"
     | "selectedProjectKey"
+    | "selectedProjectKeys"
     | "onEnvironmentChange"
     | "onProjectChange"
   > & {
@@ -22,6 +23,8 @@ export function ThreadListFilters(
   const selectedEnvironment = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
+  const selectedProjectKeys =
+    props.selectedProjectKeys ?? (props.selectedProjectKey ? [props.selectedProjectKey] : []);
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
@@ -64,19 +67,25 @@ export function ThreadListFilters(
         }}
       />
       <ListFilterMenu
-        label={selectedProject?.label ?? translator.message("mobile.navigation.allProjects")}
+        label={
+          selectedProjectKeys.length > 1
+            ? translator.message("mobile.home.projectsSelected", {
+                count: selectedProjectKeys.length,
+              })
+            : (selectedProject?.label ?? translator.message("mobile.navigation.allProjects"))
+        }
         accessibilityLabel={translator.message("sidebar.project.filter")}
-        active={selectedProject !== undefined}
+        active={selectedProjectKeys.length > 0}
         actions={[
           {
             id: "all",
             title: translator.message("mobile.navigation.allProjects"),
-            state: props.selectedProjectKey === null ? "on" : "off",
+            state: selectedProjectKeys.length === 0 ? "on" : "off",
           },
           ...props.projects.map((project) => ({
             id: JSON.stringify(project.key),
             title: project.label,
-            state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
+            state: selectedProjectKeys.includes(project.key) ? ("on" as const) : ("off" as const),
           })),
         ]}
         onSelect={(id) => {
@@ -89,7 +98,7 @@ export function ThreadListFilters(
           }
         }}
       />
-      {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
+      {props.selectedEnvironmentId !== null || selectedProjectKeys.length > 0 ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={translator.message("mobile.ui.resetThreadFilters")}

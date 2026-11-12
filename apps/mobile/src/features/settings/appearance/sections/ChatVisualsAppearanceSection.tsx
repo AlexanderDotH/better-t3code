@@ -7,6 +7,7 @@ import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { chatVisualModeOptions, chatVisualModeSyncMessages } from "../chatVisualsAppearance";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
+import { ChatPresentationSettingsPreview } from "../components/SettingsPreviews";
 
 export function ChatVisualsAppearanceSection() {
   const translator = useMobileInterfaceTranslator();
@@ -65,6 +66,7 @@ export function ChatVisualsAppearanceSection() {
         onValueChange={setPresentationMotion}
         value={presentationMotion}
       />
+      <ChatPresentationSettingsPreview mode={chatVisualMode} motion={presentationMotion} />
       {messages.length > 0 ? (
         <View className="gap-1 border-t border-border-subtle p-4">
           {messages.map((message) => (

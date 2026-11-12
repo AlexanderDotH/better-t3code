@@ -29,6 +29,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ComponentRef,
   type ReactNode,
 } from "react";
 import {
@@ -105,6 +106,12 @@ import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { AsyncResult } from "effect/reactivity";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-preferences";
+import { formatTimelineTimestamp } from "../../lib/timelineTimestamp";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
+import type { TimelineToolDiffTarget } from "./use-timeline-review-sections";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
@@ -439,6 +446,7 @@ const WORK_ROW_GAP = 1;
 const WORK_LOG_BOTTOM_MARGIN = 3.5;
 const WORK_GROUP_MAX_HEIGHT = 256;
 const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
+const REASONING_FOLLOW_THRESHOLD = 48;
 
 export const WORK_GROUP_TOGGLE_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 
@@ -486,6 +494,9 @@ interface ThreadWorkLogProps {
   readonly renderImage: MarkdownImageRenderer;
   readonly renderReasoning: (text: string) => ReactNode;
   readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onOpenToolDiff?: (
+    target: TimelineToolDiffTarget & { readonly filePath: string },
+  ) => void;
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
@@ -503,6 +514,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       renderImage={props.renderImage}
       renderReasoning={props.renderReasoning}
       onPressPreview={props.onPressPreview}
+      onOpenToolDiff={props.onOpenToolDiff}
       themeAppearance={props.themeAppearance}
     />
   );
@@ -562,11 +574,15 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
   );
 }
 
-function ThreadReasoningGroup(props: {
+export function ThreadReasoningGroup(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly edgeFadeColor: string;
   readonly renderReasoning: (text: string) => ReactNode;
+  readonly fullHeight?: boolean;
+  readonly followLive?: boolean;
 }) {
+  const scrollView = useRef<ComponentRef<typeof Animated.ScrollView>>(null);
+  const followsEnd = useRef(true);
   const scrollOffset = useSharedValue(0);
   const contentHeight = useSharedValue(0);
   const viewportHeight = useSharedValue(0);
@@ -582,18 +598,32 @@ function ThreadReasoningGroup(props: {
   }));
 
   return (
-    <View className="ml-7">
+    <View className={props.fullHeight ? "flex-1" : "ml-7"}>
       <Animated.ScrollView
+        ref={scrollView}
         nestedScrollEnabled
-        className="max-h-96"
+        className={props.fullHeight ? "flex-1" : "max-h-96"}
         contentContainerClassName="py-1"
         scrollEventThrottle={16}
-        onScroll={onScroll}
+        onScroll={
+          props.fullHeight
+            ? (event) => {
+                const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+                scrollOffset.set(contentOffset.y);
+                followsEnd.current =
+                  contentSize.height - layoutMeasurement.height - contentOffset.y <=
+                  REASONING_FOLLOW_THRESHOLD;
+              }
+            : onScroll
+        }
         onLayout={(event) => {
           viewportHeight.set(event.nativeEvent.layout.height);
         }}
         onContentSizeChange={(_width, height) => {
           contentHeight.set(height);
+          if (props.fullHeight && props.followLive && followsEnd.current) {
+            scrollView.current?.scrollToEnd({ animated: false });
+          }
         }}
       >
         {props.activities.map((row) => (
@@ -927,6 +957,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 ) {
   const translator = useMobileInterfaceTranslator();
   const { row, expanded } = props;
+  const timestampFormat = useAtomValue(
+    mobilePreferencesAtom,
+    (preferences) =>
+      (AsyncResult.isSuccess(preferences) ? preferences.value.timestampFormat : undefined) ??
+      MOBILE_CLIENT_PREFERENCE_DEFAULTS.timestampFormat,
+  );
   const openLinkedThread = useOpenLinkedThread();
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
@@ -941,14 +977,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     const warning = failureItem.failure.class === "usage_limit";
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
-    const resetTime = resetAt
-      ? new Date(resetAt).toLocaleString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })
-      : null;
+    const resetTime = resetAt ? formatTimelineTimestamp(resetAt, timestampFormat, true) : null;
     const label = warning
       ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
@@ -982,15 +1011,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               </Text>
             ) : null}
             <Text
-              accessibilityLabel={timestamp.toLocaleString()}
+              accessibilityLabel={formatTimelineTimestamp(
+                timestamp.toISOString(),
+                timestampFormat,
+                true,
+              )}
               className="shrink-0 text-xs text-foreground-tertiary"
             >
-              {timestamp.toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              {formatTimelineTimestamp(timestamp.toISOString(), timestampFormat, true)}
             </Text>
           </View>
           {!warning ? (
@@ -1171,6 +1199,25 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         )}
 
         <View className="shrink-0 flex-row items-center gap-px">
+          {shownItem.type === "file_change" && props.onOpenToolDiff ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={translator.message("mobile.timeline.openDiff")}
+              hitSlop={8}
+              className="size-7 items-center justify-center"
+              onPress={(event) => {
+                event.stopPropagation();
+                props.onOpenToolDiff?.({
+                  threadId: row.projectedItem.sourceThreadId,
+                  itemId: row.projectedItem.sourceItemId,
+                  revision: turnItemDetailRevision(row.projectedItem.item),
+                  filePath: shownItem.fileName,
+                });
+              }}
+            >
+              <SymbolView name="doc.text" size={14} tintColor={props.iconSubtleColor} />
+            </Pressable>
+          ) : null}
           {props.copied ? (
             <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
               {translator.message("mobile.thread.copied")}

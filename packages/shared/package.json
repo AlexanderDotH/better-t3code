@@ -219,6 +219,10 @@
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"
     },
+    "./pickedElement": {
+      "types": "./src/pickedElement.ts",
+      "import": "./src/pickedElement.ts"
+    },
     "./previewViewport": {
       "types": "./src/previewViewport.ts",
       "import": "./src/previewViewport.ts"

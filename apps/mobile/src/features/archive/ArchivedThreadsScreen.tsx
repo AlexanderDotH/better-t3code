@@ -42,6 +42,9 @@ function ArchivedThreadsHeader(props: {
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly projects: ReadonlyArray<{ readonly key: string; readonly title: string }>;
+  readonly selectedProjectKey: string | null;
+  readonly onProjectChange: (key: string | null) => void;
   readonly sortOrder: ArchivedThreadSortOrder;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onRefresh: () => void;
@@ -51,7 +54,10 @@ function ArchivedThreadsHeader(props: {
   const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
-  const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  const hasCustomFilter =
+    props.selectedEnvironmentId !== null ||
+    props.selectedProjectKey !== null ||
+    props.sortOrder !== "newest";
   return (
     <AppBar
       title={translator.message("mobile.settings.archivedThreads")}
@@ -87,6 +93,24 @@ function ArchivedThreadsHeader(props: {
                   title: environment.label,
                   selected: props.selectedEnvironmentId === environment.environmentId,
                   onPress: () => props.onEnvironmentChange(environment.environmentId),
+                })),
+              ],
+            },
+            {
+              id: "project",
+              title: translator.message("mobile.navigation.project"),
+              items: [
+                {
+                  id: "project:all",
+                  title: translator.message("mobile.navigation.allProjects"),
+                  selected: props.selectedProjectKey === null,
+                  onPress: () => props.onProjectChange(null),
+                },
+                ...props.projects.map((project) => ({
+                  id: `project:${project.key}`,
+                  title: project.title,
+                  selected: props.selectedProjectKey === project.key,
+                  onPress: () => props.onProjectChange(project.key),
                 })),
               ],
             },
@@ -302,6 +326,9 @@ export function ArchivedThreadsScreen(props: {
   readonly isLoading: boolean;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly projects: ReadonlyArray<{ readonly key: string; readonly title: string }>;
+  readonly selectedProjectKey: string | null;
+  readonly onProjectChange: (key: string | null) => void;
   readonly sortOrder: ArchivedThreadSortOrder;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
@@ -325,7 +352,15 @@ export function ArchivedThreadsScreen(props: {
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
     const items: ArchivedThreadListItem[] = [];
     for (const group of props.groups) {
-      const environmentLabel = environmentLabelsById.get(group.project.environmentId) ?? null;
+      const environmentLabel =
+        [
+          ...new Set(
+            group.projects.map(
+              (project) =>
+                environmentLabelsById.get(project.environmentId) ?? project.environmentId,
+            ),
+          ),
+        ].join(" · ") || null;
       items.push({
         kind: "project",
         key: `${group.key}:project`,
@@ -340,7 +375,7 @@ export function ArchivedThreadsScreen(props: {
         items.push({
           kind: "thread",
           key: `${thread.environmentId}:${thread.id}`,
-          environmentLabel,
+          environmentLabel: environmentLabelsById.get(thread.environmentId) ?? null,
           isFirst: index === 0,
           isLast: index === group.threads.length - 1,
           thread,
@@ -361,7 +396,10 @@ export function ArchivedThreadsScreen(props: {
     }
   };
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
-  const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
+  const isFiltered =
+    props.searchQuery.trim().length > 0 ||
+    props.selectedEnvironmentId !== null ||
+    props.selectedProjectKey !== null;
   const renderListItem = ({ item }: { item: ArchivedThreadListItem }) => {
     if (item.kind === "project") {
       return (
@@ -422,6 +460,9 @@ export function ArchivedThreadsScreen(props: {
     <View collapsable={false} className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
         environments={props.environments}
+        projects={props.projects}
+        selectedProjectKey={props.selectedProjectKey}
+        onProjectChange={props.onProjectChange}
         searchQuery={props.searchQuery}
         onEnvironmentChange={props.onEnvironmentChange}
         onRefresh={props.onRefresh}

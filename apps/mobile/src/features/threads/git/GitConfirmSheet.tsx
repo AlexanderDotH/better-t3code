@@ -131,17 +131,20 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           }}
         />
       ) : null}
-      {Platform.OS === "android" ? (
-        <AndroidSheetHeader
-          title={translator.message("mobile.git.confirmAction")}
-          onBack={() => navigation.goBack()}
-          hideBottomBorder
-        />
-      ) : (
-        <View className="min-h-4 pt-2" />
-      )}
-
-      <ScreenContent fitToContents>
+      <ScreenContent
+        fitToContents
+        header={
+          Platform.OS === "android" ? (
+            <AndroidSheetHeader
+              title={translator.message("mobile.git.confirmAction")}
+              onBack={() => navigation.goBack()}
+              hideBottomBorder
+            />
+          ) : (
+            <View className="min-h-4 pt-2" />
+          )
+        }
+      >
         <ScrollView
           nestedScrollEnabled
           className="android:shrink android:grow-0 ios:flex-1"

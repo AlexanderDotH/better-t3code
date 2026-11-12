@@ -7,6 +7,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+  type ServerSettingsPatch,
   isManagedDriverAllowed,
   type ProviderAuthResponse,
   type ServerProvider,
@@ -37,6 +39,10 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { MobileProviderSettings } from "./SettingsAgentEnvironmentsRouteScreen";
+import { MobileAgentModelSettings } from "./MobileAgentModelSettings";
+import { MobileProviderAdvancedSettings } from "./MobileProviderAdvancedSettings";
+import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 
 export function SettingsProviderAccountsRouteScreen() {
   const translator = useMobileInterfaceTranslator();
@@ -63,42 +69,97 @@ export function SettingsProviderAccountsRouteScreen() {
             </Text>
           ) : (
             selectedTargets.map((environment) => (
-              <SettingsSection key={environment.environmentId} title={environment.label}>
-                {!permittedEnvironments.has(environment.environmentId) ? (
-                  <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">
-                      {translator.message("settings.providers.panel.limited")}
-                    </Text>
-                    <Text className="text-sm text-foreground-muted">
-                      {`This session can view ${environment.label}'s providers but can't change their settings.`}
-                    </Text>
-                  </View>
-                ) : (
-                  <>
-                    {managedProviders(environment, providersByEnvironment)
-                      .filter(canManageProvider)
-                      .map((provider, index) => (
-                        <ProviderAccount
-                          key={provider.instanceId}
-                          environment={environment}
-                          provider={provider}
-                          divider={index > 0}
-                        />
-                      ))}
-                    {!managedProviders(environment, providersByEnvironment).some(
-                      canManageProvider,
-                    ) ? (
-                      <Text className="p-4 text-foreground-muted">
-                        {translator.message("mobile.ui.configureAProviderWithInAppSign")}
+              <View key={environment.environmentId} className="gap-6">
+                <SettingsSection title={environment.label}>
+                  {!permittedEnvironments.has(environment.environmentId) ? (
+                    <View className="gap-1 p-4">
+                      <Text className="text-base text-foreground">
+                        {translator.message("settings.providers.panel.limited")}
                       </Text>
-                    ) : null}
-                  </>
-                )}
-              </SettingsSection>
+                      <Text className="text-sm text-foreground-muted">
+                        {`This session can view ${environment.label}'s providers but can't change their settings.`}
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      {managedProviders(environment, providersByEnvironment)
+                        .filter(canManageProvider)
+                        .map((provider, index) => (
+                          <ProviderAccount
+                            key={provider.instanceId}
+                            environment={environment}
+                            provider={provider}
+                            divider={index > 0}
+                          />
+                        ))}
+                      {!managedProviders(environment, providersByEnvironment).some(
+                        canManageProvider,
+                      ) ? (
+                        <Text className="p-4 text-foreground-muted">
+                          {translator.message("mobile.ui.configureAProviderWithInAppSign")}
+                        </Text>
+                      ) : null}
+                    </>
+                  )}
+                </SettingsSection>
+                <ProviderEnvironmentSettings
+                  environment={environment}
+                  canManage={permittedEnvironments.has(environment.environmentId)}
+                />
+              </View>
             ))
           )}
         </ScreenScrollView>
       </SettingsScreen>
+    </>
+  );
+}
+
+function ProviderEnvironmentSettings(props: {
+  readonly environment: SettingsTarget;
+  readonly canManage: boolean;
+}) {
+  const translator = useMobileInterfaceTranslator();
+  const projects = useProjects();
+  const config = useEnvironmentServerConfig(props.environment.environmentId);
+  const write = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: true,
+    label: translator.message("mobile.agents.editProvider"),
+  });
+  const canWrite = useEnvironmentsWithScope([props.environment], AuthSettingsWriteScope).has(
+    props.environment.environmentId,
+  );
+  const updateSettings = async (patch: ServerSettingsPatch) => {
+    const result = await write({
+      environmentId: props.environment.environmentId,
+      input: { patch },
+    });
+    return result._tag === "Success";
+  };
+  if (config === null) return null;
+  return (
+    <>
+      <MobileProviderSettings
+        environmentId={props.environment.environmentId}
+        config={config}
+        readOnly={!props.canManage}
+        hideAuthentication
+      />
+      <MobileProviderAdvancedSettings
+        config={config}
+        disabled={!canWrite}
+        updateSettings={updateSettings}
+      />
+      <SettingsSection title={translator.message("mobile.settings.agents.models")}>
+        <MobileAgentModelSettings
+          config={config}
+          projects={projects.filter(
+            (project) => project.environmentId === props.environment.environmentId,
+          )}
+          disabled={!canWrite}
+          updateSettings={updateSettings}
+        />
+      </SettingsSection>
     </>
   );
 }

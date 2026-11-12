@@ -125,6 +125,39 @@ export function estimatePlanImplementationWorkUnits(planMarkdown: string): numbe
   return Math.max(1, eligibleHeadingCount, topLevelListItemCount);
 }
 
+const REASONING_TIME_FACTORS: Readonly<Record<string, number>> = {
+  none: 0.75,
+  minimal: 0.75,
+  low: 0.85,
+  medium: 1,
+  high: 1.25,
+  xhigh: 1.5,
+  max: 1.5,
+  ultra: 1.75,
+  ultrathink: 1.75,
+};
+const PLAN_MINUTES_PER_WORK_UNIT = 3;
+
+export function estimatePlanExecutionTime(input: {
+  readonly planMarkdown: string;
+  readonly effort: unknown;
+  readonly speed: unknown;
+}) {
+  const workUnits = estimatePlanImplementationWorkUnits(input.planMarkdown);
+  const fast = input.speed === true || input.speed === "priority" || input.speed === "fast";
+  const factor =
+    (typeof input.effort === "string" ? (REASONING_TIME_FACTORS[input.effort] ?? 1) : 1) *
+    (fast ? 0.85 : input.speed === "flex" ? 1.25 : 1);
+  // Uncalibrated estimate; tool and test time still apply in fast mode.
+  const baseline = workUnits * PLAN_MINUTES_PER_WORK_UNIT * factor;
+  return {
+    workUnits,
+    fast,
+    minMinutes: Math.max(2, Math.round(baseline * 0.6)),
+    maxMinutes: Math.max(5, Math.round(baseline * 1.8)),
+  };
+}
+
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
 

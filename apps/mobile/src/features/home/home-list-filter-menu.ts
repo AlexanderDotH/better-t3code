@@ -68,6 +68,7 @@ export function buildHomeListFilterMenu(props: {
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly selectedProjectKeys?: ReadonlyArray<string>;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly projectSortOrder?: HomeProjectSortOrder;
@@ -80,6 +81,8 @@ export function buildHomeListFilterMenu(props: {
   readonly listOrganization?: boolean;
   readonly copy?: HomeListFilterMenuCopy;
 }): HomeListFilterMenu {
+  const selectedKeys =
+    props.selectedProjectKeys ?? (props.selectedProjectKey ? [props.selectedProjectKey] : []);
   const copy = props.copy ?? DEFAULT_HOME_LIST_FILTER_MENU_COPY;
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
 
@@ -115,13 +118,13 @@ export function buildHomeListFilterMenu(props: {
           type: "action",
           title: copy.allProjects,
           subtitle: copy.allProjectsDescription,
-          state: props.selectedProjectKey === null ? "on" : "off",
+          state: selectedKeys.length === 0 ? "on" : "off",
           onPress: () => props.onProjectChange(null),
         },
         ...props.projects.map((project) => ({
           type: "action" as const,
           title: project.label,
-          state: props.selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
+          state: selectedKeys.includes(project.key) ? ("on" as const) : ("off" as const),
           onPress: () => props.onProjectChange(project.key),
         })),
       ],
@@ -135,7 +138,12 @@ export function buildHomeListFilterMenu(props: {
         title: copy.sortProjects,
         items: PROJECT_SORT_OPTIONS.map((option) => ({
           type: "action",
-          title: option.value === "updated_at" ? copy.lastUserMessage : copy.createdAt,
+          title:
+            option.value === "manual"
+              ? currentInterfaceTranslator().message("sidebar.sort.manual")
+              : option.value === "updated_at"
+                ? copy.lastUserMessage
+                : copy.createdAt,
           state: props.projectSortOrder === option.value ? "on" : "off",
           onPress: () => props.onProjectSortOrderChange?.(option.value),
         })),

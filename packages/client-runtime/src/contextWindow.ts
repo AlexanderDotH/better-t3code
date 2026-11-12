@@ -9,6 +9,7 @@ import {
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import { Option, Schema } from "effect";
+import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 
 export interface UsageActivity {
   readonly id: string;
@@ -24,6 +25,7 @@ export interface UsageActivity {
 const decodeCumulativeUsage = Schema.decodeUnknownOption(
   ThreadTokenUsageSnapshot.fields.cumulativeUsage,
 );
+const decodeCost = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot.fields.cost);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -206,8 +208,40 @@ function contextWindowSnapshot(value: unknown, updatedAt: string): ContextWindow
     durationMs: asFiniteNumber(payload?.durationMs),
     compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
     autoCompactThreshold: asFiniteNumber(payload?.autoCompactThreshold),
+    cost: Option.getOrNull(decodeCost(payload?.cost)) ?? null,
     updatedAt,
   };
+}
+
+const RESUME_COMPACTION_FALLBACK_TTL_MS = 70 * 60_000;
+
+export function shouldOfferResumeCompaction(input: {
+  readonly provider: string | null | undefined;
+  readonly usedTokens: number | null | undefined;
+  readonly updatedAt: string | null | undefined;
+  readonly promptCacheTtlMs?: number | undefined;
+  readonly now: string;
+}): boolean {
+  if (
+    input.provider !== "claudeAgent" ||
+    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
+  )
+    return false;
+  const updatedAt = Date.parse(input.updatedAt ?? "");
+  const now = Date.parse(input.now);
+  return (
+    Number.isFinite(updatedAt) &&
+    Number.isFinite(now) &&
+    now - updatedAt >= (input.promptCacheTtlMs ?? RESUME_COMPACTION_FALLBACK_TTL_MS)
+  );
+}
+
+export function shouldCompactBeforeSend(input: {
+  readonly offered: boolean;
+  readonly keepFullHistory: boolean;
+  readonly text: string;
+}) {
+  return input.offered && !input.keepFullHistory && !/^\s*\/compact(?:\s|$)/i.test(input.text);
 }
 
 export function formatContextWindowTokens(value: number | null): string {

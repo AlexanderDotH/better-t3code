@@ -46,7 +46,7 @@ describe("mobile Git workbench availability", () => {
     );
   });
 
-  it("requires an explicit thread and becomes reversible without changing the target", () => {
+  it("requires a thread or project root and becomes reversible without changing the target", () => {
     const missingThread = resolveMobileGitWorkbenchAvailability({
       featureEnabled: true,
       gitWorkbenchVersion: 1,
@@ -61,6 +61,15 @@ describe("mobile Git workbench availability", () => {
     });
 
     expect(missingThread).toEqual({ state: "context-required" });
+    expect(
+      resolveMobileGitWorkbenchAvailability({
+        featureEnabled: true,
+        gitWorkbenchVersion: 1,
+        environmentId,
+        threadId: null,
+        cwd: "/repo",
+      }),
+    ).toEqual({ state: "available" });
     expect(mobileGitWorkbenchStatusMessageKey(missingThread)).toBe(
       "settings.betterT3.status.projectRequired",
     );

@@ -66,6 +66,10 @@ import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-preferences";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
 
 const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
   providers: serverEnvironment.providersValueAtom,
@@ -106,6 +110,7 @@ export function buildComposerSlashCommandItems(input: {
   readonly atMessageStart: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
+  readonly sideChatAvailable?: boolean;
   /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly allowInteractionMode: boolean;
@@ -157,6 +162,18 @@ export function buildComposerSlashCommandItems(input: {
         item.command === "default" ||
         allowInteractionMode),
   );
+  if (input.hasThread && input.sideChatAvailable !== false) {
+    for (const command of ["side", "btw"] as const) {
+      if (!command.includes(query)) continue;
+      items.push({
+        id: `cmd:${command}`,
+        type: "slash-command",
+        command,
+        label: `/${command}`,
+        description: currentInterfaceTranslator().message("mobile.composer.sideDescription"),
+      });
+    }
+  }
   if (input.allowDeepPlan && "deep-plan".includes(query)) {
     items.push({
       id: "cmd:deep-plan",
@@ -171,6 +188,7 @@ export function buildComposerSlashCommandItems(input: {
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+    if (input.hasThread && ["side", "btw"].includes(command.name.toLowerCase())) continue;
     if (input.allowDeepPlan && command.name.toLowerCase() === "deep-plan") continue;
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
@@ -266,6 +284,7 @@ export function useComposerCommandMenu({
   onUpdateInteractionMode,
   onUpdateComposerMode,
   onUsageLimits,
+  sideChatAvailable,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -288,8 +307,14 @@ export function useComposerCommandMenu({
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUpdateComposerMode?: (mode: ComposerMode) => void;
   readonly onUsageLimits?: () => void;
+  readonly sideChatAvailable?: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const showSkills = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.showSkillsInSlashMenu ??
+      MOBILE_CLIENT_PREFERENCE_DEFAULTS.showSkillsInSlashMenu)
+    : MOBILE_CLIENT_PREFERENCE_DEFAULTS.showSkillsInSlashMenu;
   const [localSelection, setLocalSelection] = useState(() => ({
     ownerKey,
     ...composerSelectionAtEnd(draftMessage),
@@ -385,12 +410,13 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "slash-command") {
       const q = trigger.query.toLowerCase();
-      const visibleSkills = getProviderSkillsForSlashMenu(skills, true);
+      const visibleSkills = getProviderSkillsForSlashMenu(skills, showSkills);
       const commandItems = buildComposerSlashCommandItems({
         allowDeepPlan: onUpdateComposerMode !== undefined,
         query: q,
         atMessageStart: trigger.rangeStart === 0,
         hasThread,
+        sideChatAvailable,
         hasCompactableConversation,
         offersUsageLimits,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
@@ -661,6 +687,7 @@ export function useComposerCommandMenu({
     if (result.interactionMode !== null) {
       onUpdateInteractionMode?.(result.interactionMode);
     }
+    if (result.composerMode !== undefined) onUpdateComposerMode?.(result.composerMode);
   };
 
   return {

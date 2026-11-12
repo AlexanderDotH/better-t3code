@@ -263,12 +263,13 @@ describe("mobile task permissions", () => {
     expect(state.clearDraft).not.toHaveBeenCalled();
     expect(state.enqueue).not.toHaveBeenCalled();
     state.grantedEnvironments.add("secondary");
-    expect(await composer.onSendMessage()).toBe("message");
+    expect(await composer.onSendMessage("queue")).toBe("message");
     expect(state.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         environmentId: "secondary",
         threadId: "thread",
         text: "Keep my draft",
+        dispatchMode: "queue",
       }),
     );
   });
