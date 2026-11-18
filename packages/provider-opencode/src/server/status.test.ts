@@ -3,6 +3,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { supportsDailyUsagePace } from "@t3tools/shared/usageLimits";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -76,6 +77,10 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
       Effect.provide(NodeServices.layer),
     );
     NodeAssert.equal(limits.unavailable, undefined);
+    NodeAssert.deepEqual(
+      limits.windows.filter(supportsDailyUsagePace).map((window) => window.id),
+      ["go_weekly"],
+    );
     NodeAssert.equal(
       limits.credentialFingerprint,
       "aba48e85c981a8edc1c9fb4575121accc7235fa55d0f8689f66f153de5566a37",

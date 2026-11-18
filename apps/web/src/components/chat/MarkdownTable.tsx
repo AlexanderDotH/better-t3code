@@ -18,7 +18,6 @@ import { useMarkdownTableMotion } from "./useMarkdownTableMotion";
 import {
   MARKDOWN_TABLE_DEFAULT_EXPANSION_RATIO,
   MARKDOWN_TABLE_RESIZE_EDGE_STEP_PX,
-  MARKDOWN_TABLE_VIEWPORT_GUTTER_PX,
   type MarkdownTableResizeEdge,
   type MarkdownTableWidthBounds,
   resolveDefaultExpandedMarkdownTableWidth,
@@ -58,15 +57,25 @@ function measureMarkdownTable(
 ): MarkdownTableSizing | null {
   const content = container?.closest<HTMLElement>(".chat-markdown");
   const column = container?.closest<HTMLElement>("[data-chat-column]");
-  if (!content || !column) return null;
+  if (!container || !content || !column) return null;
   const bubble = bubbleLayout
     ? container?.closest<HTMLElement>(".better-chat-bubble[data-presentation-bubble]")
     : null;
-  const contentWidth = content.getBoundingClientRect().width;
+  const contentBounds = content.getBoundingClientRect();
+  const tableBounds = container.getBoundingClientRect();
+  const columnBounds = column.getBoundingClientRect();
+  const style = getComputedStyle(content);
+  const insetStart = Number.parseFloat(style.getPropertyValue("--chat-lane-inset-start")) || 0;
+  const insetEnd = Number.parseFloat(style.getPropertyValue("--chat-lane-inset-end")) || 0;
+  const columnWidth = columnBounds.width - insetStart - insetEnd;
+  const columnCenter = columnBounds.left + insetStart + columnWidth / 2;
+  const tableCenter = tableBounds.left + tableBounds.width / 2;
+  const contentWidth = contentBounds.width;
   const bounds = resolveMarkdownTableWidthBounds(
     contentWidth,
-    column.getBoundingClientRect().width,
+    columnWidth,
     bubble ? markdownTableBubblePadding(bubble) : 0,
+    tableCenter - columnCenter,
   );
   const width =
     preferredWidth === null
@@ -149,7 +158,10 @@ export function MarkdownTable({
 
     measure();
     if (typeof ResizeObserver === "undefined") return;
-    return observeResize([content, chatColumn], measure);
+    const observed = [content, chatColumn];
+    const rowFrame = tableContainer?.closest<HTMLElement>(".messages-timeline-row-frame");
+    if (rowFrame) observed.push(rowFrame);
+    return observeResize(observed, measure);
   }, [expanded, updateSizing, chatVisualMode]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize table geometry, resize gestures and DOM animation cleanup.
@@ -328,7 +340,7 @@ export function MarkdownTable({
           "--chat-markdown-table-expanded-width": sizing
             ? `${sizing.width}px`
             : `${MARKDOWN_TABLE_DEFAULT_EXPANSION_RATIO * 100}%`,
-          "--chat-markdown-table-viewport-gutter": `${MARKDOWN_TABLE_VIEWPORT_GUTTER_PX}px`,
+          "--chat-markdown-table-max-width": sizing ? `${sizing.maxWidth}px` : "100%",
         } as CSSProperties
       }
     >

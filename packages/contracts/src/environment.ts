@@ -171,6 +171,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Missing on older servers, so clients retain connection-only settings. */
   environmentSettingsVersion: Schema.optionalKey(PositiveInt),
   supportsSpeechDictationProcessing: Schema.optionalKey(Schema.Boolean),
+  supportsAdvancedVoiceDictation: Schema.optionalKey(Schema.Boolean),
   visualizationsVersion: Schema.optionalKey(PositiveInt),
   messageReplies: Schema.optionalKey(Schema.Boolean),
   /** Versioned project metadata and agent-coordination administration surface.

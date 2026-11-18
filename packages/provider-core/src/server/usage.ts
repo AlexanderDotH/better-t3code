@@ -7,11 +7,12 @@ import type {
   UsageTokenTotals,
   UsageCallKind,
   UsageContextDiagnostics,
+  UsageSpeed,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 
-export type UsageSpeed = "standard" | "fast" | "ultrafast";
+export type { UsageSpeed } from "@t3tools/contracts";
 
 export interface UsageRecord {
   readonly provider: UsageProviderKind;

@@ -592,6 +592,7 @@ describe("makeManagedServerProvider", () => {
                   label: "Weekly",
                   usedPercent: 20,
                   resetsAt: "2026-04-17T00:00:00.000Z",
+                  windowDurationMins: 10_080,
                 },
               ],
             },
@@ -623,6 +624,8 @@ describe("makeManagedServerProvider", () => {
               label: "Weekly",
               usedPercent: 25,
               resetsAt: "2026-04-17T00:00:00.000Z",
+              windowDurationMins: 10_080,
+              usageHistorySource: "observed",
               usageHistory: [
                 { at: "2026-04-10T00:00:01.000Z", usedPercent: 20 },
                 { at: "2026-04-10T00:05:00.000Z", usedPercent: 25 },
@@ -752,9 +755,7 @@ describe("makeManagedServerProvider", () => {
         const partial = yield* provider.getSnapshot;
         assert.deepStrictEqual(partial.usageLimits, {
           checkedAt: "2026-04-10T00:00:02.000Z",
-          windows: [
-            { ...weekly, usageHistory: [{ at: "2026-04-10T00:00:02.000Z", usedPercent: 20 }] },
-          ],
+          windows: [weekly],
           unavailable: failedLimits.unavailable,
         });
         yield* provider.applyUsageLimits({
@@ -778,7 +779,6 @@ describe("makeManagedServerProvider", () => {
             completeLimits.windows[0],
             {
               ...completeLimits.windows[1],
-              usageHistory: [{ at: "2026-04-10T00:00:04.000Z", usedPercent: 25 }],
             },
           ],
         });

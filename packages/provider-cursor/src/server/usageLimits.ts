@@ -22,6 +22,7 @@ const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.St
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
+  billingCycleStart: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   planUsage: Schema.optional(
     Schema.Struct({
@@ -42,6 +43,10 @@ export function cursorUsageResponseToLimits(
     Number(response.billingCycleEnd) > 0 && Option.isSome(reset)
       ? DateTime.formatIso(reset.value)
       : undefined;
+  const start = Number(response.billingCycleStart);
+  const duration = Math.round((Number(response.billingCycleEnd) - start) / 60_000);
+  const windowDurationMins =
+    resetsAt && start > 0 && Number.isSafeInteger(duration) && duration > 0 ? duration : undefined;
   const windows: ServerProviderUsageWindow[] = [];
   if (response.planUsage) {
     for (const { id, label } of CURSOR_USAGE_WINDOWS) {
@@ -53,6 +58,7 @@ export function cursorUsageResponseToLimits(
         label,
         usedPercent: clampPercent(usedPercent),
         ...(resetsAt ? { resetsAt } : {}),
+        ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
       });
     }
   }

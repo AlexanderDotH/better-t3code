@@ -4,6 +4,7 @@ import {
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { supportsDailyUsagePace } from "@t3tools/shared/usageLimits";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
@@ -84,6 +85,9 @@ export function applyUsageLimitsUpdate(input: {
     previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    ...(previous?.credentialFingerprint !== undefined
+      ? { credentialFingerprint: previous.credentialFingerprint }
+      : {}),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
@@ -100,14 +104,13 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
-// Weekly pace needs a day-start baseline, so each weekly window keeps its observed percentages.
 function withUsageHistory(
   window: ServerProviderUsageWindow,
   checkedAt: string,
   previous?: ServerProviderUsageWindow,
   previousCheckedAt?: string,
 ): ServerProviderUsageWindow {
-  if (window.kind !== "weekly") return window;
+  if (!supportsDailyUsagePace(window)) return window;
   if (window.usageHistorySource === "codex" && window.usageHistory?.length) return window;
   // Codex history comes from its transcripts; live ticks only keep it while the epoch holds.
   if (window.usageHistorySource === "codex" || previous?.usageHistorySource === "codex") {
@@ -126,30 +129,86 @@ function withUsageHistory(
   const sameWindow =
     previous?.kind === window.kind &&
     previous.resetsAt === window.resetsAt &&
+    previous.windowDurationMins === window.windowDurationMins &&
     previous.usedPercent <= window.usedPercent;
-  const history = sameWindow
+  const previousHistory = sameWindow
     ? (previous.usageHistory ??
       (previousCheckedAt ? [{ at: previousCheckedAt, usedPercent: previous.usedPercent }] : []))
     : [];
+  const history = [
+    ...new Map(
+      [...previousHistory, ...(window.usageHistory ?? [])].map((sample) => [
+        `${sample.at}:${sample.usedPercent}`,
+        sample,
+      ]),
+    ).values(),
+  ].toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const last = history.at(-1);
   // A late probe must not invent a usage increase at an earlier time.
   if (last && Date.parse(checkedAt) < Date.parse(last.at)) {
-    return { ...window, usageHistory: [] };
+    return { ...window, usageHistorySource: "observed", usageHistory: [] };
   }
+  const windowStart = Date.parse(window.resetsAt!) - window.windowDurationMins! * 60_000;
   const usageHistory =
     last?.usedPercent === window.usedPercent
       ? history
-      : [...history, { at: checkedAt, usedPercent: window.usedPercent }].slice(
-          -MAX_USAGE_PACE_SAMPLES,
-        );
-  return { ...window, usageHistory };
+      : [...history, { at: checkedAt, usedPercent: window.usedPercent }];
+  const resetIndex = usageHistory.findLastIndex(
+    (sample, index) => index > 0 && sample.usedPercent < usageHistory[index - 1]!.usedPercent,
+  );
+  return {
+    ...window,
+    usageHistorySource: "observed",
+    usageHistory: compactUsageHistory(
+      usageHistory
+        .slice(Math.max(0, resetIndex))
+        .filter((sample) => Date.parse(sample.at) >= windowStart),
+      checkedAt,
+    ),
+  };
+}
+
+const HISTORY_LOOKBACK_MS = 48 * 60 * 60_000;
+const HISTORY_BUCKET_MS = 15 * 60_000;
+
+function compactUsageHistory(
+  samples: NonNullable<ServerProviderUsageWindow["usageHistory"]>,
+  checkedAt: string,
+) {
+  if (samples.length <= MAX_USAGE_PACE_SAMPLES) return samples;
+  const since = Date.parse(checkedAt) - HISTORY_LOOKBACK_MS;
+  let baseline: (typeof samples)[number] | undefined;
+  const buckets = new Map<
+    number,
+    { first: (typeof samples)[number]; last: (typeof samples)[number] }
+  >();
+  for (const sample of samples) {
+    const at = Date.parse(sample.at);
+    if (at < since) {
+      baseline = sample;
+      continue;
+    }
+    const bucket = Math.floor(at / HISTORY_BUCKET_MS);
+    buckets.set(bucket, { first: buckets.get(bucket)?.first ?? sample, last: sample });
+  }
+  return [
+    ...new Set([
+      ...(baseline ? [baseline] : []),
+      ...[...buckets.values()].flatMap(({ first, last }) => [first, last]),
+    ]),
+  ].slice(-MAX_USAGE_PACE_SAMPLES);
 }
 
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
-  const { published, probed } = input;
+  const { probed } = input;
+  const changedAccount =
+    input.published?.credentialFingerprint !== undefined &&
+    probed?.credentialFingerprint !== undefined &&
+    input.published.credentialFingerprint !== probed.credentialFingerprint;
+  const published = changedAccount ? undefined : input.published;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
   }

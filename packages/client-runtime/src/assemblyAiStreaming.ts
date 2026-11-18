@@ -1,5 +1,20 @@
 export { buildAssemblyAiStreamingUrl } from "@t3tools/shared/assemblyAiStreamingUrl";
 
+export type AssemblyAiDictationState =
+  | "idle"
+  | "starting"
+  | "recording"
+  | "stopping"
+  | "interpreting";
+
+export function assemblyAiDictationBlocksSubmission(state: AssemblyAiDictationState): boolean {
+  return state !== "idle";
+}
+
+export function isAssemblyAiDictationProcessing(state: AssemblyAiDictationState): boolean {
+  return state === "stopping" || state === "interpreting";
+}
+
 export interface AssemblyAiTranscriptTurn {
   readonly transcript: string;
   readonly endOfTurn: boolean;

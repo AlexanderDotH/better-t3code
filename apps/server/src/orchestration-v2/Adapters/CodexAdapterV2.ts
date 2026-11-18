@@ -63,6 +63,7 @@ import {
   dynamicToolTitle,
 } from "@t3tools/shared/toolActivity";
 import {
+  getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   modelSelectionsEqual,
   resolveCodexContextWindowTokens,
@@ -121,7 +122,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
-import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import {
+  getCodexServiceTierOptionValue,
+  resolveCodexCyberAccessProgram,
+} from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
@@ -763,6 +767,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
+    readonly availableAccessPrograms?: CodexSchema.V2ModelListResponse__ModelAccessPrograms | null;
     readonly hasT3Mcp?: boolean;
     readonly deepPlan?: import("../../provider/DeepPlanInstructions.ts").DeepPlanInstructionContext;
     readonly browserToolsAvailable?: boolean;
@@ -793,6 +798,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.omitServiceTier === true
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
+    const cyberAccessProgram = yield* resolveCodexCyberAccessProgram(
+      input.modelSelection,
+      input.availableAccessPrograms,
+    );
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
       (input.appContext ?? []).map((entry) => [
@@ -830,6 +839,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
+      ...(cyberAccessProgram === undefined ? {} : { cyberAccessProgram }),
       // Codex supplies its own mode instructions; send both modes to clear Plan on exit.
       collaborationMode: {
         mode:
@@ -7057,6 +7067,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        const accessProgramsForTurn = Effect.fn("CodexAdapterV2.accessProgramsForTurn")(function* (
+          selection: ModelSelection,
+        ) {
+          if (getModelSelectionBooleanOptionValue(selection, "daybreak") === undefined) {
+            return undefined;
+          }
+          let cursor: string | null | undefined;
+          do {
+            const response: CodexSchema.V2ModelListResponse = yield* client.request("model/list", {
+              includeHidden: true,
+              ...(cursor ? { cursor } : {}),
+            });
+            const model = response.data.find((candidate) => candidate.model === selection.model);
+            if (model) return model.availableAccessPrograms;
+            cursor = response.nextCursor;
+          } while (cursor);
+          return undefined;
+        });
+
         const startNativeTurn = Effect.fn("CodexAdapterV2.startNativeTurn")(
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -7077,11 +7106,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               turnInput.runtimePolicy,
               turnInput.modelSelection,
             );
+            const availableAccessPrograms = yield* accessProgramsForTurn(turnInput.modelSelection);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
+              ...(availableAccessPrograms === undefined ? {} : { availableAccessPrograms }),
               hasT3Mcp: mcpSession !== undefined,
               ...(mcpSession?.deepPlan === undefined ? {} : { deepPlan: mcpSession.deepPlan }),
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,

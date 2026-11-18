@@ -3,7 +3,12 @@ import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { EnvironmentId, USAGE_CONTRACT_VERSION, type UsageProviderKind } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  USAGE_CONTRACT_VERSION,
+  UsageSpeed,
+  type UsageProviderKind,
+} from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useRoute } from "@react-navigation/native";
 import { cursorKeychainAccessEnvironments } from "@t3tools/client-runtime/state/usage";
 import {
@@ -142,11 +147,13 @@ function UsageScreen(props: {
   }));
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
+  const [speed, setSpeed] = useState<UsageSpeed | "all">("all");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
+    speed === "all" ? undefined : speed,
   );
   const [priceEditor, setPriceEditor] = useState<{ readonly model?: string } | null>(null);
   const answeredEnvironments = useMemo(
@@ -416,6 +423,31 @@ function UsageScreen(props: {
                     size="compact"
                   />
                 )}
+                <View className="gap-2">
+                  <Text className="text-xs text-foreground-muted">
+                    {translator.message("mobile.insights.inferenceSpeed")}
+                  </Text>
+                  <SegmentedControl
+                    options={[
+                      {
+                        value: "all",
+                        label: translator.message("mobile.insights.speedFilter.all"),
+                      },
+                      ...UsageSpeed.literals.map((value) => ({
+                        value,
+                        label: translator.message(`mobile.insights.speedFilter.${value}`),
+                      })),
+                    ]}
+                    selected={speed}
+                    onSelect={setSpeed}
+                    size="compact"
+                  />
+                  {speed !== "all" && merged.hasUnknownSpeed ? (
+                    <Text className="text-xs text-foreground-muted">
+                      {translator.message("mobile.insights.speedFilter.unknown")}
+                    </Text>
+                  ) : null}
+                </View>
                 <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
                 {!suppressed && merged.duplicateSources.length > 0 ? (
                   <Text className="text-sm text-foreground-muted">
@@ -496,6 +528,7 @@ function UsageScreen(props: {
                         merged={merged}
                         environments={answeredEnvironments}
                         metric={metric}
+                        speed={speed === "all" ? undefined : speed}
                         hourly={isPast24Hours}
                         days={chartDays}
                         onSetPrice={(model) => setPriceEditor(model === undefined ? {} : { model })}

@@ -1,10 +1,17 @@
-import { observeResize } from "~/lib/observeResize";
-import type { ScopedThreadRef, SubagentId } from "@t3tools/contracts";
-import type { OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
+import {
+  ThreadId,
+  type EnvironmentId,
+  type OrchestrationV2Subagent,
+  type ScopedThreadRef,
+  type ServerProvider,
+  type SubagentId,
+} from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
-import { ThreadId } from "@t3tools/contracts";
-import { useLayoutEffect, useRef, useState } from "react";
+import {
+  isActiveSubagentStatus,
+  projectedSubagentsToRuntime,
+} from "@t3tools/client-runtime/state/subagentRuntime";
+import { useState } from "react";
 import {
   runtimeSubagentSummary,
   runtimeSubagentTranscript,
@@ -12,94 +19,63 @@ import {
 import { ChatAgentStack } from "./ChatAgentStack";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 
-const MIN_AGENT_CHAT_GAP_PX = 12;
-
 export function ThreadSubagents({
   threadRef,
   subagents,
+  providersByEnvironment,
   markdownCwd,
   timestampFormat,
   streamingMotionEnabled = true,
   onOpenThread,
 }: {
   readonly threadRef: ScopedThreadRef;
-  readonly subagents: ReadonlyArray<OrchestrationSubagentSummary | RuntimeSubagent>;
+  readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
+  readonly providersByEnvironment: ReadonlyMap<EnvironmentId, ReadonlyArray<ServerProvider>>;
   readonly onOpenThread?: (threadId: ThreadId) => void;
   readonly markdownCwd?: string | undefined;
   readonly timestampFormat: TimestampFormat;
   readonly streamingMotionEnabled?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<SubagentId | null>(null);
-  const stackRef = useRef<HTMLDivElement>(null);
-  const chatWidthProbeRef = useRef<HTMLDivElement>(null);
-  const agents = subagents.map((agent) =>
-    "providerThreadId" in agent ? agent : runtimeSubagentSummary(agent),
+  const runtimeAgents = projectedSubagentsToRuntime(subagents);
+  const sourcesById = new Map<string, OrchestrationV2Subagent>(
+    subagents.map((agent) => [agent.id, agent]),
   );
-  const selected = subagents.find((agent) => agent.id === selectedId);
-  const detail = selected
-    ? "providerThreadId" in selected
-      ? { ...selected, messages: [], proposedPlans: [], activities: [] }
-      : runtimeSubagentTranscript(selected)
-    : null;
-  const error = null;
+  const providersBySubagent = new Map<SubagentId, ServerProvider>();
+  const agents = runtimeAgents.map((agent) => {
+    const summary = runtimeSubagentSummary(agent);
+    const sourceId = agent.kind === "workflow_agent" ? (agent.parentAgentId ?? agent.id) : agent.id;
+    const source = sourcesById.get(sourceId);
+    if (!source) return summary;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the floating agent stack clear of the measured chat lane.
-  useLayoutEffect(() => {
-    const stack = stackRef.current;
-    const chatWidthProbe = chatWidthProbeRef.current;
-    const chatColumn = stack?.closest<HTMLElement>("[data-chat-column]");
-    if (!stack || !chatWidthProbe || !chatColumn) return;
-
-    let frame: number | null = null;
-    const updateLayout = () => {
-      frame = null;
-      const renderedChatRect = chatColumn
-        .querySelector<HTMLElement>("[data-timeline-root]")
-        ?.getBoundingClientRect();
-      const chatLeft =
-        renderedChatRect && renderedChatRect.width > 0
-          ? renderedChatRect.left
-          : chatWidthProbe.getBoundingClientRect().left;
-      const availableGap = chatLeft - stack.getBoundingClientRect().right;
-      const layout = availableGap >= MIN_AGENT_CHAT_GAP_PX ? "expanded" : "compact";
-      if (stack.dataset.agentLayout !== layout) stack.dataset.agentLayout = layout;
+    const providerEnvironment = source.remoteChild?.environmentId ?? threadRef.environmentId;
+    const provider = providersByEnvironment
+      .get(providerEnvironment)
+      ?.find((entry) => entry.instanceId === source.providerInstanceId);
+    const driver = source.remoteChild === undefined ? source.driver : (provider?.driver ?? null);
+    if (provider && provider.driver === driver) providersBySubagent.set(summary.id, provider);
+    return {
+      ...summary,
+      providerInstanceId: source.providerInstanceId,
+      providerDriver: driver,
     };
-    const scheduleUpdate = () => {
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(updateLayout);
-    };
-
-    updateLayout();
-    const stopObserving = observeResize([chatColumn, chatWidthProbe], scheduleUpdate);
-    window.addEventListener("resize", scheduleUpdate);
-    return () => {
-      stopObserving();
-      window.removeEventListener("resize", scheduleUpdate);
-      if (frame !== null) window.cancelAnimationFrame(frame);
-    };
-  }, []);
+  });
+  const selected = runtimeAgents.find((agent) => agent.id === selectedId);
+  const detail = selected ? runtimeSubagentTranscript(selected) : null;
 
   return (
     <>
-      {/* Timeline rows are virtualized, so this keeps their width measurable while no row is mounted. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-0 sm:inset-x-5">
-        <div
-          ref={chatWidthProbeRef}
-          data-chat-width-probe=""
-          className="mx-auto h-0 w-full max-w-full sm:max-w-(--chat-content-max-width)"
-        />
-      </div>
       <ChatAgentStack
         subagents={agents}
+        providersBySubagent={providersBySubagent}
+        hasActiveAgents={runtimeAgents.some((agent) => isActiveSubagentStatus(agent.status))}
         selectedSubagentId={selectedId}
         onSelectSubagent={(id) => {
-          const agent = subagents.find((candidate) => candidate.id === id);
-          if (agent && "childThreadId" in agent && agent.childThreadId && onOpenThread)
+          const agent = runtimeAgents.find((candidate) => candidate.id === id);
+          if (agent?.childThreadId && onOpenThread)
             onOpenThread(ThreadId.make(agent.childThreadId));
           else setSelectedId(id);
         }}
-        className="chat-agent-floating-layer"
-        stackRef={stackRef}
       />
       <SubagentTranscriptDialog
         open={selectedId !== null}
@@ -107,8 +83,8 @@ export function ThreadSubagents({
           if (!open) setSelectedId(null);
         }}
         subagent={detail}
-        isLoading={selectedId !== null && detail === null && error === null}
-        errorMessage={error}
+        isLoading={selectedId !== null && detail === null}
+        errorMessage={null}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
         streamingMotionEnabled={streamingMotionEnabled}

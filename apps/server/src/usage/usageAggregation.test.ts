@@ -68,21 +68,29 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
-  it("splits a bucket's cost by category and speed", () => {
-    const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
+  it("keeps token totals and costs per speed even for the same model and day", () => {
+    const buckets = aggregate([record(), record({ speed: "fast" })]).buckets;
 
-    expect(bucket).toMatchObject({
-      costUsd: expect.closeTo(0.016875),
+    expect(buckets).toHaveLength(2);
+    expect(buckets.find((bucket) => bucket.speed === "standard")).toMatchObject({
+      records: 1,
+      costUsd: expect.closeTo(0.005625),
+    });
+    const fast = buckets.find((bucket) => bucket.speed === "fast");
+    expect(fast).toMatchObject({
+      records: 1,
+      totals: record().totals,
+      costUsd: expect.closeTo(0.01125),
       categoryCostUsd: {
-        input: expect.closeTo(0.003),
-        cacheRead: expect.closeTo(0.003),
-        cacheWrite: expect.closeTo(0.000375),
-        output: expect.closeTo(0.0075),
+        input: expect.closeTo(0.002),
+        cacheRead: expect.closeTo(0.002),
+        cacheWrite: expect.closeTo(0.00025),
+        output: expect.closeTo(0.005),
       },
       fastCostUsd: expect.closeTo(0.01125),
       speedPremiumUsd: expect.closeTo(0.005625),
     });
-    expect(bucket).not.toHaveProperty("ultrafastCostUsd");
+    expect(fast).not.toHaveProperty("ultrafastCostUsd");
   });
 
   it("keeps only the first record for a repeated dedupe key", () => {

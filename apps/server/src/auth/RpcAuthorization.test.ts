@@ -8,6 +8,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   SecretProviderId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -368,43 +369,60 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   }).pipe(Effect.scoped),
 );
 
-it.effect("denies manual cleanup before the handler without settings permission", () =>
-  Effect.gen(function* () {
-    const group = WsRpcGroup.omit(
-      ...[...WsRpcGroup.requests.keys()].filter(
-        (
-          tag,
-        ): tag is Exclude<
-          keyof typeof RPC_REQUIRED_SCOPES,
-          typeof WS_METHODS.serverRunStorageCleanup
-        > => tag !== WS_METHODS.serverRunStorageCleanup,
-      ),
-    );
-    let handled = false;
-    const client = yield* RpcTest.makeClient(group).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
-            Effect.sync(() => {
-              handled = true;
-              return {
-                trigger: "manual" as const,
-                startedAt: "2026-10-09T12:00:00.000Z",
-                finishedAt: "2026-10-09T12:00:00.000Z",
-                entries: [],
-                counts: { removed: 0, kept: 0, failed: 0 },
-                omittedCount: 0,
-                bytesFreed: 0,
-              };
-            }),
-          ),
-          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+it.effect(
+  "denies storage and speech vocabulary cleanup before the handler without settings permission",
+  () =>
+    Effect.gen(function* () {
+      const tested = [
+        WS_METHODS.serverRunStorageCleanup,
+        WS_METHODS.speechClearLearnedVocabulary,
+      ] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+            !(tested as readonly string[]).includes(tag),
         ),
-      ),
-    );
-    expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
-      requiredPermission: AuthSettingsWriteScope,
-    });
-    expect(handled).toBe(false);
-  }).pipe(Effect.scoped),
+      );
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.speechClearLearnedVocabulary, () =>
+              Effect.sync(() => {
+                handled = true;
+              }),
+            ),
+            group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
+              Effect.sync(() => {
+                handled = true;
+                return {
+                  trigger: "manual" as const,
+                  startedAt: "2026-10-09T12:00:00.000Z",
+                  finishedAt: "2026-10-09T12:00:00.000Z",
+                  entries: [],
+                  counts: { removed: 0, kept: 0, failed: 0 },
+                  omittedCount: 0,
+                  bytesFreed: 0,
+                };
+              }),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+          ),
+        ),
+      );
+      expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject(
+        {
+          requiredPermission: AuthSettingsWriteScope,
+        },
+      );
+      expect(handled).toBe(false);
+      expect(
+        yield* client[WS_METHODS.speechClearLearnedVocabulary]({
+          projectId: ProjectId.make("speech-project"),
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        requiredPermission: AuthSettingsWriteScope,
+      });
+      expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
 );

@@ -10,6 +10,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 /**
  * Where a notice sits in the stack. The machine comes first, then what needs you; the
@@ -25,6 +26,7 @@ export interface ComposerBannerStackItem {
   readonly title: ReactNode;
   readonly description?: ReactNode;
   readonly children?: ReactNode;
+  readonly compactContent?: ReactNode;
   readonly actions?: ReactNode;
   readonly dismissLabel?: string;
   readonly onDismiss?: () => void;
@@ -45,9 +47,13 @@ const FADE_IN =
 export function ComposerBannerStack({
   items,
   detached = false,
+  compact = false,
+  onRestore,
 }: {
   readonly items: ReadonlyArray<ComposerBannerStackItem>;
   readonly detached?: boolean;
+  readonly compact?: boolean;
+  readonly onRestore?: (() => void) | undefined;
 }) {
   const suppress = useNotificationSuppression();
   const visibleItems = items.filter((item) => !shouldSuppressNotification(item.variant, suppress));
@@ -57,13 +63,13 @@ export function ComposerBannerStack({
   if (detached) {
     return ordered.map((item) => (
       <div key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
-        <NoticeCard item={item} detached />
+        <NoticeCard item={item} detached compact={compact} onRestore={onRestore} />
       </div>
     ));
   }
   return ordered.map((item) => (
     <ComposerBanner.Attachment key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
-      <NoticeCard item={item} />
+      <NoticeCard item={item} compact={compact} onRestore={onRestore} />
     </ComposerBanner.Attachment>
   ));
 }
@@ -175,10 +181,72 @@ export function NoticeText({
 function NoticeCard({
   item,
   detached = false,
+  compact = false,
+  onRestore,
 }: {
   readonly item: ComposerBannerStackItem;
   readonly detached?: boolean;
+  readonly compact?: boolean;
+  readonly onRestore?: (() => void) | undefined;
 }) {
+  const { message } = useInterfaceTranslator();
+  if (compact) {
+    return (
+      <ComposerBanner.Root
+        role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
+        variant={item.variant}
+        detached={detached}
+        density="compact"
+        data-chat-composer-collapsed-controls="true"
+        data-composer-banner-compact="true"
+        {...(item.className ? { className: item.className } : {})}
+      >
+        <div className="flex min-w-0 items-center gap-1">
+          <ComposerBanner.Row
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label={
+                  typeof item.title === "string"
+                    ? `${message("chat.composer.expand")}: ${item.title}`
+                    : message("chat.composer.expand")
+                }
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={onRestore}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  onRestore?.();
+                }}
+              />
+            }
+          >
+            <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
+            <ComposerBanner.Content className="whitespace-nowrap">
+              {item.compactContent ?? (
+                <span inert className="pointer-events-none flex min-w-0 flex-1 items-center gap-2">
+                  <span className="min-w-0 truncate font-medium">{item.title}</span>
+                  {item.description ? (
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground @max-[400px]:hidden">
+                      {item.description}
+                    </span>
+                  ) : null}
+                </span>
+              )}
+            </ComposerBanner.Content>
+          </ComposerBanner.Row>
+          {item.onDismiss ? (
+            <ComposerBanner.Dismiss
+              aria-label={item.dismissLabel ?? "Dismiss warning"}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={item.onDismiss}
+            />
+          ) : null}
+        </div>
+      </ComposerBanner.Root>
+    );
+  }
   return (
     <ComposerBanner.Root
       role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}

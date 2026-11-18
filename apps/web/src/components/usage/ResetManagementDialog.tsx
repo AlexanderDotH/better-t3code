@@ -15,7 +15,7 @@ import {
   RESET_GAUGE_STAGES,
   type ResetRecommendation,
 } from "@t3tools/shared/resetCredits";
-import { formatResetsIn, usageWindowLabel } from "@t3tools/shared/usageLimits";
+import { usageWindowLabel } from "@t3tools/shared/usageLimits";
 import { MoreHorizontalIcon, TicketIcon } from "lucide-react";
 import { useState } from "react";
 import { environmentPresentations } from "../../state/presentation";
@@ -31,6 +31,7 @@ import {
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Separator } from "../ui/separator";
 import { ResetCreditDialog, useResetCredit } from "./UsageLimits";
+import { UsageWindowDetails } from "./UsagePaceDetails";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 
 const STAGE_COLOR = {
@@ -279,7 +280,10 @@ function AccountDetails({
               <li key={window.id} className="space-y-1.5">
                 <div className="flex justify-between gap-3 text-xs">
                   <span>{usageWindowLabel(window)}</span>
-                  <span className="tabular-nums">{Math.round(window.usedPercent)}% used</span>
+                  <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                    <span className="tabular-nums">{Math.round(window.usedPercent)}% used</span>
+                    <UsageWindowDetails window={window} now={now} />
+                  </span>
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                   <div
@@ -287,9 +291,6 @@ function AccountDetails({
                     style={{ width: `${window.usedPercent}%` }}
                   />
                 </div>
-                <p className="text-2xs text-muted-foreground">
-                  {formatResetsIn(window, now) ?? "Reset time not reported"}
-                </p>
               </li>
             ))}
           </ul>

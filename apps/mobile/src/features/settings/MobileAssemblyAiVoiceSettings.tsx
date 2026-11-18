@@ -1,15 +1,14 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   resolveAssemblyAiVoiceSettings,
-  AssemblyAiVoiceSettings,
+  type AssemblyAiVoiceSettings,
   type EnvironmentId,
   type ProjectId,
   type ServerConfig,
-  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
-import * as Schema from "effect/Schema";
-import { useEffect, useState } from "react";
+import { createVoiceSettingsAutosave } from "@t3tools/client-runtime/voice-settings";
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -23,7 +22,6 @@ import { ModelSelectionModal, modelSelectionLabel } from "./ModelSelectionModal"
 
 type ModelOption = { readonly id: string; readonly name: string };
 type Choice<T extends string = string> = { readonly value: T; readonly label: string };
-const isValidVoiceSettings = Schema.is(AssemblyAiVoiceSettings);
 
 function VoiceSelect<T extends string>({
   label,
@@ -106,6 +104,7 @@ function VoiceTextField({
   hint,
   value,
   onChange,
+  onBlur,
   disabled,
   multiline = false,
   numeric = false,
@@ -115,6 +114,7 @@ function VoiceTextField({
   readonly hint?: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
+  readonly onBlur: () => void;
   readonly disabled: boolean;
   readonly multiline?: boolean;
   readonly numeric?: boolean;
@@ -134,6 +134,8 @@ function VoiceTextField({
         value={value}
         maxLength={maxLength}
         onChangeText={onChange}
+        onBlur={onBlur}
+        onEndEditing={onBlur}
         className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
       />
     </View>
@@ -155,34 +157,32 @@ function MobileVoiceSettingsForm({
 }) {
   const translator = useMobileInterfaceTranslator();
   const translate = useMobileInterfaceTranslator().message;
-  const [draft, setDraft] = useState(value);
-  const [languages, setLanguages] = useState(value.languageCodes.join(", "));
-  const [terms, setTerms] = useState(value.customKeyterms.join("\n"));
-  const [numbers, setNumbers] = useState({
-    minTurnSilence: String(value.minTurnSilence),
-    maxTurnSilence: String(value.maxTurnSilence),
-    vadThreshold: String(value.vadThreshold),
-    interruptionDelay: String(value.interruptionDelay),
-  });
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<"saved" | "saveFailed" | "validation" | null>(null);
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const controlsDisabled = disabled || busy;
+  const [autosave] = useState(() => createVoiceSettingsAutosave(value, onSave));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep queued settings writes bound to the current environment save callback.
+  useLayoutEffect(() => {
+    autosave.setOnSave(onSave);
+  }, [autosave, onSave]);
+  const { draft, languages, terms, numbers, message } = useSyncExternalStore(
+    autosave.subscribe,
+    autosave.getSnapshot,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Flush pending settings to the environment when the modal closes.
+  useEffect(() => () => autosave.flush(), [autosave]);
+  const [modelPickerOpen, setModelPickerOpen] = useState<"cleanup" | "interpretation" | null>(null);
+  const controlsDisabled = disabled;
   const pro = draft.speechModel === "universal-3-5-pro";
-  const modelOptions = models.some((model) => model.id === draft.cleanupModel)
-    ? models
-    : [{ id: draft.cleanupModel, name: draft.cleanupModel }, ...models];
+  const advancedSupported = config.environment.capabilities.supportsAdvancedVoiceDictation === true;
 
   function update<K extends keyof AssemblyAiVoiceSettings>(
     key: K,
     next: AssemblyAiVoiceSettings[K],
   ) {
-    setMessage(null);
-    setDraft((current) => ({ ...current, [key]: next }));
+    autosave.update({ [key]: next });
   }
 
   function toggle(
     key:
+      | "advancedMode"
       | "includePartialTurns"
       | "continuousPartials"
       | "projectVocabulary"
@@ -216,62 +216,56 @@ function MobileVoiceSettingsForm({
         value={numbers[key]}
         numeric
         disabled={controlsDisabled || unavailable}
-        onChange={(next) => {
-          setNumbers((current) => ({ ...current, [key]: next }));
-          setMessage(null);
-        }}
+        onChange={(next) => autosave.edit(key, next)}
+        onBlur={autosave.flush}
       />
     );
   }
 
-  async function save() {
-    const languageCodes = [
-      ...new Set(
-        languages
-          .split(",")
-          .map((language) => language.trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    ];
-    const customKeyterms = [
-      ...new Set(
-        terms
-          .split("\n")
-          .map((term) => term.trim())
-          .filter(Boolean),
-      ),
-    ];
-    const minTurnSilence = Number(numbers.minTurnSilence);
-    const maxTurnSilence = Number(numbers.maxTurnSilence);
-    const vadThreshold = Number(numbers.vadThreshold.replace(",", "."));
-    const interruptionDelay = Number(numbers.interruptionDelay);
-    const next = {
-      ...draft,
-      languageCodes,
-      customKeyterms,
-      minTurnSilence,
-      maxTurnSilence,
-      vadThreshold,
-      interruptionDelay,
-    };
-    if (
-      Object.values(numbers).some((value) => value.trim().length === 0) ||
-      !isValidVoiceSettings(next) ||
-      languageCodes.some((language) => !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/u.test(language))
-    ) {
-      setMessage("validation");
-      return;
-    }
-    setBusy(true);
-    return (async () => {
-      setMessage((await onSave(next)) ? "saved" : "saveFailed");
-    })()
-      .catch(() => {
-        setMessage("saveFailed");
-      })
-      .finally(() => {
-        setBusy(false);
-      });
+  function modelPicker(purpose: "cleanup" | "interpretation", enabled: boolean) {
+    const selectionKey = `${purpose}ModelSelection` as const;
+    const modelKey = `${purpose}Model` as const;
+    const selection = draft[selectionKey];
+    const modelId = draft[modelKey];
+    const modelOptions = models.some((model) => model.id === modelId)
+      ? models
+      : [{ id: modelId, name: modelId }, ...models];
+    return (
+      <View className="gap-2 p-4">
+        <Text className="text-base font-t3-medium text-foreground">
+          {translate(`settings.voice.options.${modelKey}`)}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={translate(`settings.voice.options.${modelKey}`)}
+          disabled={controlsDisabled || !enabled}
+          onPress={() => setModelPickerOpen(purpose)}
+          className="rounded-2xl bg-subtle px-4 py-3 disabled:opacity-40"
+        >
+          <Text className="text-base text-foreground">
+            {selection
+              ? modelSelectionLabel(config, selection)
+              : (modelOptions.find((model) => model.id === modelId)?.name ?? modelId)}
+          </Text>
+        </Pressable>
+        <ModelSelectionModal
+          config={config}
+          current={selection}
+          allowDefault={false}
+          purpose="text-generation"
+          auxiliaryModels={modelOptions}
+          selectedAuxiliaryModel={selection ? null : modelId}
+          onSelectAuxiliaryModel={(model) => {
+            autosave.update({ [modelKey]: model, [selectionKey]: null });
+          }}
+          onSelect={(selection) => {
+            if (selection) update(selectionKey, selection);
+          }}
+          visible={modelPickerOpen === purpose}
+          onClose={() => setModelPickerOpen(null)}
+        />
+      </View>
+    );
   }
 
   return (
@@ -300,10 +294,8 @@ function MobileVoiceSettingsForm({
             hint={translate("settings.voice.options.languagesHint")}
             value={languages}
             disabled={controlsDisabled}
-            onChange={(next) => {
-              setLanguages(next);
-              setMessage(null);
-            }}
+            onChange={(next) => autosave.edit("languages", next)}
+            onBlur={autosave.flush}
           />
           <VoiceSelect
             label={translate("settings.voice.options.mode")}
@@ -367,10 +359,8 @@ function MobileVoiceSettingsForm({
         value={terms}
         multiline
         disabled={controlsDisabled}
-        onChange={(next) => {
-          setTerms(next);
-          setMessage(null);
-        }}
+        onChange={(next) => autosave.edit("terms", next)}
+        onBlur={autosave.flush}
       />
       {pro ? (
         <VoiceTextField
@@ -380,9 +370,19 @@ function MobileVoiceSettingsForm({
           multiline
           maxLength={1750}
           disabled={controlsDisabled}
-          onChange={(next) => update("contextPrompt", next)}
+          onChange={(next) => autosave.edit("contextPrompt", next)}
+          onBlur={autosave.flush}
         />
       ) : null}
+      {toggle(
+        "advancedMode",
+        "settings.voice.options.advancedMode",
+        advancedSupported
+          ? "settings.voice.options.advancedModeHint"
+          : "settings.voice.options.advancedUnsupported",
+        !advancedSupported,
+      )}
+      {draft.advancedMode ? modelPicker("interpretation", advancedSupported) : null}
       <VoiceSelect
         label={translate("settings.voice.options.cleanup")}
         value={draft.cleanupMode}
@@ -398,46 +398,7 @@ function MobileVoiceSettingsForm({
       <Text className="px-4 text-sm text-foreground-muted">
         {translate("settings.voice.options.cleanupHint")}
       </Text>
-      <View className="gap-2 p-4">
-        <Text className="text-base font-t3-medium text-foreground">
-          {translate("settings.voice.options.cleanupModel")}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={translate("settings.voice.options.cleanupModel")}
-          disabled={controlsDisabled || draft.cleanupMode === "off"}
-          onPress={() => setModelPickerOpen(true)}
-          className="rounded-2xl bg-subtle px-4 py-3 disabled:opacity-40"
-        >
-          <Text className="text-base text-foreground">
-            {draft.cleanupModelSelection
-              ? modelSelectionLabel(config, draft.cleanupModelSelection)
-              : (modelOptions.find((model) => model.id === draft.cleanupModel)?.name ??
-                draft.cleanupModel)}
-          </Text>
-        </Pressable>
-        <ModelSelectionModal
-          config={config}
-          current={draft.cleanupModelSelection}
-          allowDefault={false}
-          purpose="text-generation"
-          auxiliaryModels={modelOptions}
-          selectedAuxiliaryModel={draft.cleanupModelSelection ? null : draft.cleanupModel}
-          onSelectAuxiliaryModel={(model) => {
-            setMessage(null);
-            setDraft((current) => ({
-              ...current,
-              cleanupModel: model,
-              cleanupModelSelection: null,
-            }));
-          }}
-          onSelect={(selection) => {
-            if (selection) update("cleanupModelSelection", selection);
-          }}
-          visible={modelPickerOpen}
-          onClose={() => setModelPickerOpen(false)}
-        />
-      </View>
+      {modelPicker("cleanup", draft.cleanupMode !== "off")}
       {draft.cleanupMode === "custom" ? (
         <VoiceTextField
           label={translate("settings.voice.options.instructions")}
@@ -445,7 +406,8 @@ function MobileVoiceSettingsForm({
           multiline
           maxLength={4000}
           disabled={controlsDisabled}
-          onChange={(next) => update("cleanupInstructions", next)}
+          onChange={(next) => autosave.edit("cleanupInstructions", next)}
+          onBlur={autosave.flush}
         />
       ) : null}
       {toggle(
@@ -453,29 +415,11 @@ function MobileVoiceSettingsForm({
         "settings.voice.options.files",
         "settings.voice.options.filesHint",
       )}
-      <View className="gap-3 p-4">
-        <Text className="text-sm text-foreground-muted">
-          {translate("settings.voice.options.cloudHint")}
+      {message ? (
+        <Text accessibilityRole="alert" className="p-4 text-sm text-danger">
+          {translate(`settings.voice.options.${message}`)}
         </Text>
-        {message ? (
-          <Text
-            accessibilityRole={message === "saved" ? "text" : "alert"}
-            className="text-sm text-foreground"
-          >
-            {translate(`settings.voice.options.${message}`)}
-          </Text>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          disabled={controlsDisabled}
-          onPress={() => void save()}
-          className="rounded-xl bg-foreground px-4 py-3 disabled:opacity-40"
-        >
-          <Text className="text-center font-t3-medium text-screen">
-            {translate(busy ? "settings.voice.options.saving" : "settings.voice.options.save")}
-          </Text>
-        </Pressable>
-      </View>
+      ) : null}
     </View>
   );
 }
@@ -530,7 +474,6 @@ function VoiceSettingsEditor({
           >
             {open ? (
               <MobileVoiceSettingsForm
-                key={JSON.stringify(value)}
                 value={value}
                 models={models}
                 config={config}
@@ -550,15 +493,16 @@ export function MobileAssemblyAiVoiceSettings({
   config,
   projects,
   disabled,
-  updateSettings,
 }: {
   readonly environmentId: EnvironmentId;
   readonly config: ServerConfig;
   readonly projects: readonly EnvironmentProject[];
   readonly disabled: boolean;
-  readonly updateSettings: (patch: ServerSettingsPatch, label: string) => Promise<boolean>;
 }) {
   const translate = useMobileInterfaceTranslator().message;
+  const saveSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const listModels = useAtomCommand(serverEnvironment.listAssemblyAiModels, {
     reportFailure: false,
   });
@@ -603,17 +547,22 @@ export function MobileAssemblyAiVoiceSettings({
     };
   }, [environmentId, listModels, refresh, supported]);
 
-  const save = (voice: AssemblyAiVoiceSettings | null, projectId?: ProjectId) =>
-    updateSettings(
-      {
-        speechTranscription: {
-          assemblyAi: projectId
-            ? { projectOverrides: { [projectId]: voice } }
-            : { voice: voice ?? assemblyAi.voice },
+  const save = async (voice: AssemblyAiVoiceSettings | null, projectId?: ProjectId) => {
+    if (disabled || !supported) return false;
+    const result = await saveSettings({
+      environmentId,
+      input: {
+        patch: {
+          speechTranscription: {
+            assemblyAi: projectId
+              ? { projectOverrides: { [projectId]: voice } }
+              : { voice: voice ?? assemblyAi.voice },
+          },
         },
       },
-      translate("settings.voice.options.title"),
-    );
+    });
+    return result._tag === "Success";
+  };
   const changeOverride = async (projectId: ProjectId, voice: AssemblyAiVoiceSettings | null) => {
     setProjectBusy(projectId);
     setProjectError(null);
@@ -637,6 +586,7 @@ export function MobileAssemblyAiVoiceSettings({
       ) : (
         <>
           <VoiceSettingsEditor
+            key={environmentId}
             title={translate("settings.voice.options.defaults")}
             value={assemblyAi.voice}
             models={models}
@@ -670,6 +620,7 @@ export function MobileAssemblyAiVoiceSettings({
               {assemblyAi.projectOverrides[project.id] ? (
                 <>
                   <VoiceSettingsEditor
+                    key={`${environmentId}:${project.id}`}
                     title={project.title}
                     value={resolveAssemblyAiVoiceSettings(assemblyAi, project.id)}
                     models={models}

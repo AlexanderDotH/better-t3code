@@ -4,6 +4,7 @@ import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageBucket,
+  type UsageSpeed,
   type UsageSummary,
   type UsageProviderKind,
   type UsageSummaryInput,
@@ -92,14 +93,19 @@ export interface UsageView {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly isPending: boolean;
-  readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
+  readonly shown: {
+    readonly window: UsageSummaryInput;
+    readonly merged: MergedUsage;
+    readonly environments: readonly EnvironmentUsageStatus[];
+  } | null;
   readonly isPartial: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
 export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
-  keepBucket?: (bucket: UsageBucket) => boolean,
+  keepBucket?: (bucket: UsageBucket, environmentId: EnvironmentId) => boolean,
+  speed?: UsageSpeed,
 ): MergedUsage {
   const answered: EnvironmentUsage[] = environments.flatMap(({ environmentId, label, summary }) =>
     summary === null
@@ -108,14 +114,14 @@ export function mergeAnsweredUsage(
           {
             environmentId,
             label,
-            summary:
-              keepBucket === undefined
-                ? summary
-                : { ...summary, buckets: summary.buckets.filter(keepBucket) },
+            summary,
           },
         ],
   );
-  return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+  return mergeUsage(answered, USAGE_CONTRACT_VERSION, {
+    speed,
+    ...(keepBucket === undefined ? {} : { keepBucket }),
+  });
 }
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
@@ -147,17 +153,21 @@ function deriveSelection(
   environments: readonly EnvironmentUsageStatus[],
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null,
   hiddenProviders: ReadonlySet<UsageProviderKind>,
+  speed: UsageSpeed | undefined,
 ) {
   const selectedEnvironments =
     selectedEnvironmentIds === null
       ? environments
       : environments.filter((environment) => selectedEnvironmentIds.has(environment.environmentId));
+  const visibleEnvironments = withoutProviders(selectedEnvironments, hiddenProviders);
   return {
     environments,
     selectedEnvironmentIds,
     hiddenProviders,
+    speed,
     selectedEnvironments,
-    merged: mergeAnsweredUsage(withoutProviders(selectedEnvironments, hiddenProviders)),
+    visibleEnvironments,
+    merged: mergeAnsweredUsage(visibleEnvironments, undefined, speed),
   };
 }
 
@@ -165,6 +175,7 @@ export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
+  speed?: UsageSpeed,
 ): UsageView {
   const windowKey = JSON.stringify({
     sinceDay: input.sinceDay,
@@ -178,18 +189,19 @@ export function useUsage(
   const environments = useAtomValue(atom);
   // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>
-    deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
+    deriveSelection(environments, selectedEnvironmentIds, hiddenProviders, speed),
   );
   let current = derived;
   if (
     derived.environments !== environments ||
     derived.selectedEnvironmentIds !== selectedEnvironmentIds ||
-    derived.hiddenProviders !== hiddenProviders
+    derived.hiddenProviders !== hiddenProviders ||
+    derived.speed !== speed
   ) {
-    current = deriveSelection(environments, selectedEnvironmentIds, hiddenProviders);
+    current = deriveSelection(environments, selectedEnvironmentIds, hiddenProviders, speed);
     setDerived(current);
   }
-  const { selectedEnvironments, merged } = current;
+  const { selectedEnvironments, visibleEnvironments, merged } = current;
 
   const refresh = (nextInput?: UsageSummaryInput) =>
     refreshUsage({
@@ -218,6 +230,7 @@ export function useUsage(
     | (NonNullable<UsageView["shown"]> & {
         readonly selection: typeof selectedEnvironmentIds;
         readonly hidden: typeof hiddenProviders;
+        readonly speed: typeof speed;
       })
     | null
   >(null);
@@ -226,23 +239,26 @@ export function useUsage(
     (lastAnswered?.merged !== merged ||
       lastAnswered.window !== input ||
       lastAnswered.selection !== selectedEnvironmentIds ||
-      lastAnswered.hidden !== hiddenProviders)
+      lastAnswered.hidden !== hiddenProviders ||
+      lastAnswered.speed !== speed)
   ) {
     setLastAnswered({
       window: input,
       merged,
+      environments: visibleEnvironments,
       selection: selectedEnvironmentIds,
       hidden: hiddenProviders,
+      speed,
     });
   }
   const kept =
-    lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
+    lastAnswered?.selection === selectedEnvironmentIds &&
+    lastAnswered.hidden === hiddenProviders &&
+    lastAnswered.speed === speed
       ? lastAnswered
       : null;
-  const shown =
-    answeredCount > 0
-      ? { window: input, merged }
-      : (kept ?? (isPending ? null : { window: input, merged }));
+  const latest = { window: input, merged, environments: visibleEnvironments };
+  const shown = answeredCount > 0 ? latest : (kept ?? (isPending ? null : latest));
 
   return {
     merged,

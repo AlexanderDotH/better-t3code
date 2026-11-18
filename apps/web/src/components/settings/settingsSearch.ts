@@ -19,34 +19,12 @@ import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import type { ResolvedSettingsScope } from "./settingsScope";
+import {
+  getSettingsNavGroups,
+  type SettingsPath,
+} from "@t3tools/client-runtime/settings-navigation";
 
-export type SettingsPath =
-  | "/settings/better-t3"
-  | "/settings/mcp"
-  | "/settings/skills"
-  | "/settings/import-chats"
-  | "/settings/projects"
-  | "/settings/general"
-  | "/settings/diagnostics"
-  | "/settings/appearance"
-  | "/settings/chat"
-  | "/settings/diffs"
-  | "/settings/keybindings"
-  | "/settings/snap-shot"
-  | "/settings/providers"
-  | "/settings/threads"
-  | "/settings/browser"
-  | "/settings/devices"
-  | "/settings/scheduled-tasks"
-  | "/settings/source-control"
-  | "/settings/worktrees"
-  | "/settings/connections"
-  | "/settings/access"
-  | "/settings/secrets"
-  | "/settings/maintenance"
-  | "/settings/labs"
-  | "/settings/about"
-  | "/settings/archived";
+export type { SettingsPath } from "@t3tools/client-runtime/settings-navigation";
 
 export type SettingsSearchScope =
   | "environment"
@@ -126,53 +104,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
 };
 
-/** Sidebar order. Better T3 expands into its categories in the sidebar itself. */
-export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
-  readonly heading: string;
-  readonly paths: ReadonlyArray<SettingsPath>;
-}> = [
-  {
-    heading: "Better T3",
-    paths: ["/settings/better-t3", "/settings/mcp", "/settings/skills", "/settings/import-chats"],
-  },
-  {
-    heading: "T3 Code",
-    paths: [
-      "/settings/general",
-      "/settings/appearance",
-      "/settings/chat",
-      "/settings/diffs",
-      "/settings/keybindings",
-      "/settings/snap-shot",
-    ],
-  },
-  {
-    heading: "Agents",
-    paths: [
-      "/settings/providers",
-      "/settings/threads",
-      "/settings/browser",
-      "/settings/devices",
-      "/settings/scheduled-tasks",
-    ],
-  },
-  {
-    heading: "Code",
-    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
-  },
-  {
-    heading: "Connections",
-    paths: [
-      "/settings/connections",
-      "/settings/access",
-      ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
-    ],
-  },
-  {
-    heading: "System",
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
-  },
-];
+export const SETTINGS_NAV_GROUPS = getSettingsNavGroups({
+  secretsFeatureEnabled: isSecretsFeatureEnabled,
+});
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
   return `keybinding-${command}` as const;
@@ -380,7 +314,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Voice recording and cleanup",
     to: "/settings/better-t3",
     searchTerms: [
-      "AssemblyAI speech model latency VAD vocabulary file references Nachbearbeitung Bereinigung Spracherkennung",
+      "AssemblyAI speech model latency VAD vocabulary file references advanced interpretation three transcripts erweiterter Modus Interpretationsmodell mode avancé interprétation Nachbearbeitung Bereinigung Spracherkennung",
     ],
   },
   {

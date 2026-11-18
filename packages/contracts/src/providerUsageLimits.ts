@@ -19,7 +19,7 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
-  usageHistorySource: Schema.optional(Schema.Literal("codex")),
+  usageHistorySource: Schema.optional(Schema.Literals(["codex", "observed"])),
   usageHistory: Schema.optional(
     Schema.Array(
       Schema.Struct({

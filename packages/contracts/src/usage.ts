@@ -35,6 +35,15 @@ export type UsageDay = typeof UsageDay.Type;
 export const UsageResolution = Schema.Literals(["day", "hour"]);
 export type UsageResolution = typeof UsageResolution.Type;
 
+export const UsageSpeed = Schema.Literals(["standard", "fast", "ultrafast"]);
+export type UsageSpeed = typeof UsageSpeed.Type;
+
+const UsageProject = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+});
+export type UsageProject = typeof UsageProject.Type;
+
 export const UsageCostSource = Schema.Literals(["providerReported", "modelPriced", "unpriced"]);
 export type UsageCostSource = typeof UsageCostSource.Type;
 
@@ -94,6 +103,8 @@ export const UsageBucket = Schema.Struct({
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   sourcePath: Schema.optional(TrimmedNonEmptyString),
+  speed: Schema.optional(UsageSpeed),
+  project: Schema.optional(UsageProject),
   totals: UsageTokenTotals,
   /** Missing on older servers and mapped to `unknown` by current clients. */
   callKind: Schema.optional(UsageCallKind),
@@ -132,6 +143,7 @@ export const UsageSource = Schema.Struct({
   malformedRecords: NonNegativeInt,
   /** Total this count; bucket counts double-count sessions spanning days or models. */
   distinctSessions: NonNegativeInt,
+  distinctSessionsBySpeed: Schema.optional(Schema.Record(UsageSpeed, NonNegativeInt)),
   message: Schema.NullOr(TrimmedNonEmptyString),
   action: Schema.optionalKey(Schema.Literal("enableCursorKeychain")),
   /** Cached response during refresh; repeat with awaitRefresh for fresh data. */

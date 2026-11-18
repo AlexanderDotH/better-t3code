@@ -18,7 +18,7 @@ export function SettingsWorkspaceLayout(props: { readonly children: ReactNode })
   const split = root?.settingsOpen === true && layout.usesSplitView;
   const [visited, setVisited] = useState(split);
   if (split && !visited) setVisited(true);
-  const emptyDetail = split && root.settingsPage === null;
+  const emptyDetail = split && root.settingsSelection === null;
   const route = root?.settingsRoute ?? SETTINGS_LIST_ROUTE;
 
   return (
@@ -27,7 +27,7 @@ export function SettingsWorkspaceLayout(props: { readonly children: ReactNode })
         <Activity mode={split ? "visible" : "hidden"}>
           <View style={{ width: layout.listPaneWidth ?? 0, marginRight: layout.listPaneGap ?? 0 }}>
             <NavigationRouteContext value={route}>
-              <SettingsListScreen sidebar selected={root?.settingsPage ?? null} />
+              <SettingsListScreen sidebar selected={root?.settingsSelection ?? null} />
             </NavigationRouteContext>
           </View>
         </Activity>

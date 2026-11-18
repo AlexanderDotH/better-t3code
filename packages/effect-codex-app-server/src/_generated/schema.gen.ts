@@ -904,6 +904,17 @@ export const ClientRequest__ReasoningSummary = Schema.Union(
   identifier: "ClientRequest__ReasoningSummary",
 });
 
+export type ClientRequest__CyberAccessProgram = "standard" | "daybreakBlue" | "daybreakRed";
+export const ClientRequest__CyberAccessProgram = Schema.Literals([
+  "standard",
+  "daybreakBlue",
+  "daybreakRed",
+]).annotate({
+  description:
+    "Requested cyber treatment for a ChatGPT-authenticated Codex turn. Authorization and model-tier restrictions remain server-owned.",
+  identifier: "ClientRequest__CyberAccessProgram",
+});
+
 export type ClientRequest__TurnInterruptParams = {
   readonly threadId: string;
   readonly turnId: string;
@@ -15732,6 +15743,17 @@ export const V2TurnStartParams__ReasoningSummary = Schema.Union(
   description:
     "A summary of the reasoning performed by the model. This can be useful for debugging and understanding the model's reasoning process. See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries",
   identifier: "V2TurnStartParams__ReasoningSummary",
+});
+
+export type V2TurnStartParams__CyberAccessProgram = "standard" | "daybreakBlue" | "daybreakRed";
+export const V2TurnStartParams__CyberAccessProgram = Schema.Literals([
+  "standard",
+  "daybreakBlue",
+  "daybreakRed",
+]).annotate({
+  description:
+    "Requested cyber treatment for a ChatGPT-authenticated Codex turn. Authorization and model-tier restrictions remain server-owned.",
+  identifier: "V2TurnStartParams__CyberAccessProgram",
 });
 
 export type V2TurnStartParams__AdditionalContextKind = "untrusted" | "application";
@@ -42674,6 +42696,7 @@ export type ClientRequest__TurnStartParams = {
   readonly threadId: string;
   readonly toolOutput?: ClientRequest__TurnToolOutput | null;
   readonly turnTrigger?: string | null;
+  readonly cyberAccessProgram?: ClientRequest__CyberAccessProgram | null;
 };
 export const ClientRequest__TurnStartParams = Schema.Struct({
   approvalPolicy: Schema.optionalKey(
@@ -42769,6 +42792,9 @@ export const ClientRequest__TurnStartParams = Schema.Struct({
       }),
       Schema.Null,
     ]),
+  ),
+  cyberAccessProgram: Schema.optionalKey(
+    Schema.Union([ClientRequest__CyberAccessProgram, Schema.Null]),
   ),
 }).annotate({ identifier: "ClientRequest__TurnStartParams" });
 
@@ -48403,16 +48429,6 @@ export const ClientRequest__CollaborationMode = Schema.Struct({
   mode: ClientRequest__ModeKind,
   settings: ClientRequest__Settings,
 }).annotate({ description: "Collaboration mode for a Codex session." });
-
-export type ClientRequest__CyberAccessProgram = "standard" | "daybreakBlue" | "daybreakRed";
-export const ClientRequest__CyberAccessProgram = Schema.Literals([
-  "standard",
-  "daybreakBlue",
-  "daybreakRed",
-]).annotate({
-  description:
-    "Requested cyber treatment for a ChatGPT-authenticated Codex turn. Authorization and model-tier restrictions remain server-owned.",
-});
 
 export type ClientRequest__DynamicToolSpec =
   | {
@@ -56875,6 +56891,7 @@ export type V2TurnStartParams = {
   readonly threadId: string;
   readonly toolOutput?: V2TurnStartParams__TurnToolOutput | null;
   readonly turnTrigger?: string | null;
+  readonly cyberAccessProgram?: V2TurnStartParams__CyberAccessProgram | null;
 };
 export const V2TurnStartParams = Schema.Struct({
   approvalPolicy: Schema.optionalKey(
@@ -56971,6 +56988,9 @@ export const V2TurnStartParams = Schema.Struct({
       Schema.Null,
     ]),
   ),
+  cyberAccessProgram: Schema.optionalKey(
+    Schema.Union([V2TurnStartParams__CyberAccessProgram, Schema.Null]),
+  ),
 }).annotate({ title: "TurnStartParams" });
 
 export type V2TurnStartParams__AdditionalContextEntry = {
@@ -56990,16 +57010,6 @@ export const V2TurnStartParams__CollaborationMode = Schema.Struct({
   mode: V2TurnStartParams__ModeKind,
   settings: V2TurnStartParams__Settings,
 }).annotate({ description: "Collaboration mode for a Codex session." });
-
-export type V2TurnStartParams__CyberAccessProgram = "standard" | "daybreakBlue" | "daybreakRed";
-export const V2TurnStartParams__CyberAccessProgram = Schema.Literals([
-  "standard",
-  "daybreakBlue",
-  "daybreakRed",
-]).annotate({
-  description:
-    "Requested cyber treatment for a ChatGPT-authenticated Codex turn. Authorization and model-tier restrictions remain server-owned.",
-});
 
 export type V2TurnStartParams__MultiAgentMode =
   | "explicitRequestOnly"

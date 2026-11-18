@@ -287,6 +287,7 @@ export const make = Effect.gen(function* () {
       deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
       environmentSettingsVersion: 6,
       supportsSpeechDictationProcessing: true,
+      supportsAdvancedVoiceDictation: true,
       aiEndpointDiscovery: true,
       visualizationsVersion: 1,
       projectSettingsVersion: 1,

@@ -4,6 +4,8 @@ import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
+  "src/features/settings/BetterT3FeaturePreview.test.tsx",
+  "src/features/settings/ContextWindowMeterSettingsPreview.test.tsx",
   "src/state/use-thread-message-replies.test.tsx",
   "src/features/threads/use-thread-fork-action.test.tsx",
   "src/features/threads/use-thread-retry-action.test.tsx",

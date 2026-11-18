@@ -261,6 +261,18 @@ export function mapCodexModelCapabilities(
       currentValue: defaultServiceTier,
     });
   }
+  if (
+    model.availableAccessPrograms?.cyber.some(
+      (program) => program === "daybreakBlue" || program === "daybreakRed",
+    )
+  ) {
+    optionDescriptors.push({
+      id: "daybreak",
+      label: "Daybreak",
+      description: "Broader access for cybersecurity work. Applies to new turns.",
+      type: "boolean",
+    });
+  }
 
   if (contextWindow) optionDescriptors.push(createCodexContextWindowDescriptor(contextWindow));
   return createModelCapabilities({
@@ -333,17 +345,25 @@ function applyConfiguredCodexServiceTier(
   });
 }
 
-/**
- * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
- */
+/** Access programs require the selected model's catalog, never another model's defaults. */
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
   const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
-  return providerModelsFromSettings(models, customModels, fallbackCapabilities);
+  return providerModelsFromSettings(models, customModels, fallbackCapabilities).map((model) =>
+    model.isCustom && model.capabilities?.optionDescriptors
+      ? {
+          ...model,
+          capabilities: {
+            ...model.capabilities,
+            optionDescriptors: model.capabilities.optionDescriptors.filter(
+              (descriptor) => descriptor.id !== "daybreak",
+            ),
+          },
+        }
+      : model,
+  );
 }
 
 function parseCodexSkillsListResponse(

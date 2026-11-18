@@ -21,6 +21,8 @@ it("keeps keyboard focus on a sidebar row on window return, but not a clicked ro
   await userEvent.click(clicked);
   expect(document.activeElement).toBe(clicked);
   expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(true);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, true)).toBe(false);
+  expect(shouldRefocusComposerOnWindowFocus(document.body, true)).toBe(false);
 
   await userEvent.tab();
   expect(document.activeElement).toBe(tabbed);

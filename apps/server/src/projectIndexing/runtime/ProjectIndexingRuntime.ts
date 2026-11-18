@@ -1005,7 +1005,9 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
     .withPermits(1)(
       Effect.gen(function* () {
         const defaults = yield* getDefaults;
-        for (const resolved of yield* bridge.listScopes()) {
+        const recoverWorkspace = Effect.fn("ProjectIndexRuntime.recoverWorkspace")(function* (
+          resolved: ResolvedProjectIndexScope,
+        ) {
           const saved = yield* Effect.scoped(
             Effect.gen(function* () {
               const reader = yield* openExisting(resolved);
@@ -1019,7 +1021,7 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
               }).pipe(Effect.as(null)),
             ),
           );
-          if (saved === null || !saved.settings.enabled) continue;
+          if (saved === null || !saved.settings.enabled || saved.status === "paused") return;
           const entry = yield* workspace(resolved);
           if (saved.status === "running" && saved.activeRevision !== null) {
             if (!resolveProjectIndexSettings(saved.settings, defaults).enabled)
@@ -1034,7 +1036,6 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
                 ),
               );
           } else if (
-            saved.status !== "paused" &&
             resolveProjectIndexSettings(saved.settings, defaults).enabled &&
             saved.publishedRevision !== null &&
             !(yield* hasStaticGeneration(entry.store, saved.publishedRevision))
@@ -1048,7 +1049,6 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
               ),
             );
           } else if (
-            saved.status !== "paused" &&
             saved.status !== "cancelled" &&
             saved.publishedRevision !== null &&
             resolveProjectIndexSettings(saved.settings, defaults).enabled &&
@@ -1058,6 +1058,16 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
             // Watchers cannot report edits made while the environment was offline.
             yield* scheduleRefresh(entry, false);
           }
+        });
+        for (const resolved of yield* bridge.listScopes()) {
+          yield* recoverWorkspace(resolved).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Project indexing workspace could not recover", {
+                scopeId: resolved.scope.scopeId,
+                category: operationError(cause).code,
+              }),
+            ),
+          );
         }
         yield* reconcileWatchers();
       }),

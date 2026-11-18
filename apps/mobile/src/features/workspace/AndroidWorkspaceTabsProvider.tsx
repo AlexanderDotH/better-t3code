@@ -3,6 +3,7 @@ import { createContext, use, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { androidWorkspaceSettingsOpen } from "./android-workspace-tabs";
 import { WorkspaceTabsProvider } from "./WorkspaceTabsContext";
+import { settingsIndexRowId } from "../settings/components/settings-page-targets";
 
 interface AndroidWorkspaceRoot {
   /**
@@ -13,7 +14,7 @@ interface AndroidWorkspaceRoot {
   /** Settings is derived from navigation rather than kept in the tab reducer. */
   readonly settingsOpen: boolean;
   readonly settingsRoute: NavigationState["routes"][number] | undefined;
-  readonly settingsPage: string | null;
+  readonly settingsSelection: string | null;
 }
 
 const AndroidWorkspaceRootContext = createContext<AndroidWorkspaceRoot | null>(null);
@@ -31,9 +32,9 @@ export function AndroidWorkspaceTabsProvider(props: {
   const settingsOpen = Platform.OS === "android" && androidWorkspaceSettingsOpen(props.state);
   const settingsIndex = props.state.routes.findIndex((route) => route.name === "Settings");
   const settingsRoute = settingsIndex < 0 ? undefined : props.state.routes[settingsIndex];
-  const settingsPage =
-    settingsIndex < 0 ? null : (props.state.routes[settingsIndex + 1]?.name ?? null);
-  const root = { key, settingsOpen, settingsRoute, settingsPage };
+  const settingsSelection =
+    settingsIndex < 0 ? null : settingsIndexRowId(props.state.routes[settingsIndex + 1]);
+  const root = { key, settingsOpen, settingsRoute, settingsSelection };
   return Platform.OS === "android" ? (
     <WorkspaceTabsProvider>
       <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>

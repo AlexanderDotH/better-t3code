@@ -54,4 +54,10 @@ it("protects a locked draft but keeps cancellation available during voice proces
     .toBeDisabled();
   await userEvent.click(screen.getByRole("button", { name: "Cancel voice input", exact: true }));
   await expect.element(screen.getByLabelText("Draft")).toHaveTextContent("Draft before recording");
+  await screen.rerender(<DictationControls disabled state="interpreting" />);
+  await expect
+    .element(screen.getByRole("button", { name: "Reconciling 3 transcripts…" }))
+    .toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel voice input", exact: true }));
+  await expect.element(screen.getByLabelText("Draft")).toHaveTextContent("Draft before recording");
 });

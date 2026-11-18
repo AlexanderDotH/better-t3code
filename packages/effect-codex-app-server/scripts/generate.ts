@@ -170,6 +170,30 @@ const DefinitionOverrides: Record<string, Schema.Json> = {
   },
 };
 
+// The stable schema omits this experimental field even though initialize opts into it.
+function withExperimentalTurnProperties(schema: Schema.Json, definitionName?: string): Schema.Json {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return schema;
+  if (
+    definitionName !== "TurnStartParams" &&
+    (!("title" in schema) || schema.title !== "TurnStartParams")
+  )
+    return schema;
+  if (!("properties" in schema)) return schema;
+  const properties = schema.properties;
+  if (properties === null || typeof properties !== "object" || Array.isArray(properties)) {
+    return schema;
+  }
+  return {
+    ...schema,
+    properties: {
+      ...properties,
+      cyberAccessProgram: {
+        anyOf: [{ $ref: "#/definitions/CyberAccessProgram" }, { type: "null" }],
+      },
+    },
+  };
+}
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -678,7 +702,10 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = pipe(
         rewriteExternalRefs(
-          DefinitionOverrides[definitionName] ?? definitionSchema,
+          withExperimentalTurnProperties(
+            DefinitionOverrides[definitionName] ?? definitionSchema,
+            definitionName,
+          ),
           localDefinitionNames,
           file.namespace,
           exportNameByQualifiedName,
@@ -697,7 +724,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
 
     aggregateSchemas[file.exportName] = pipe(
       rewriteExternalRefs(
-        topLevelSchema,
+        withExperimentalTurnProperties(topLevelSchema),
         localDefinitionNames,
         file.namespace,
         exportNameByQualifiedName,

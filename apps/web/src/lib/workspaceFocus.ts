@@ -3,6 +3,18 @@ import { dismissContextMenu } from "../contextMenuFallback";
 import { useRightPanelStore } from "../rightPanelStore";
 
 const AREA_SELECTOR = "[data-workspace-area]";
+const AREA_NAVIGATION_KEYS = new Set([
+  "Tab",
+  "F6",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+]);
 const FOCUS_BOUNDARY_SELECTOR =
   '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open], [data-slot$="-popup"]:not([data-slot="tooltip-popup"]):not([role="tooltip"])';
 const FOCUSABLE_SELECTOR =
@@ -90,6 +102,18 @@ function revealInScrollers(target: HTMLElement) {
 export function createWorkspaceFocusController(doc: Document) {
   const lastFocused = new Map<string, HTMLElement>();
   let lastArea: string | undefined;
+  let keyboardFocusedArea: Element | undefined;
+  const clearKeyboardFocus = () => {
+    keyboardFocusedArea?.removeAttribute("data-workspace-keyboard-focus");
+    keyboardFocusedArea = undefined;
+  };
+  const showKeyboardFocus = () => {
+    clearKeyboardFocus();
+    if (doc.activeElement?.matches(AREA_SELECTOR)) {
+      keyboardFocusedArea = doc.activeElement;
+      keyboardFocusedArea.setAttribute("data-workspace-keyboard-focus", "");
+    }
+  };
   const remember = (event: FocusEvent) => {
     if (!(event.target instanceof HTMLElement)) return;
     const area = workspaceArea(event.target);
@@ -106,6 +130,7 @@ export function createWorkspaceFocusController(doc: Document) {
   doc.addEventListener("focusin", remember);
 
   const focusArea = (area: HTMLElement, restore = true) => {
+    clearKeyboardFocus();
     const key = area.dataset.workspaceFocusKey ?? area.dataset.workspaceArea!;
     const previous = restore ? lastFocused.get(key) : undefined;
     const belongs = (element: HTMLElement) =>
@@ -244,6 +269,7 @@ export function createWorkspaceFocusController(doc: Document) {
   // returns to the same control when React remounted it, else to its area, else the content.
   const recover = (event: FocusEvent) => {
     const lost = event.target;
+    if (lost === keyboardFocusedArea) clearKeyboardFocus();
     if (!(lost instanceof HTMLElement) || event.relatedTarget) return;
     const areaName = workspaceArea(lost)?.dataset.workspaceArea;
     const label = lost.getAttribute("aria-label");
@@ -299,25 +325,42 @@ export function createWorkspaceFocusController(doc: Document) {
     deadline = window.setTimeout(cancelRequest, 2000);
     schedule();
   };
-  const onUserInput = () => {
+  const onUserInput = (event: Event) => {
+    if (event instanceof KeyboardEvent) {
+      if (
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        AREA_NAVIGATION_KEYS.has(event.key)
+      ) {
+        showKeyboardFocus();
+      }
+    } else clearKeyboardFocus();
     if (cancelOnInput) cancelRequest();
   };
   doc.addEventListener("pointerdown", onUserInput, true);
   doc.addEventListener("keydown", onUserInput, true);
+  doc.addEventListener("wheel", clearKeyboardFocus, { capture: true, passive: true });
+  doc.defaultView?.addEventListener("blur", clearKeyboardFocus);
 
   return {
     move: (direction: 1 | -1, fromArea?: string, closingPalette = false) => {
       cancelRequest();
-      return move(direction, fromArea, closingPalette);
+      const moved = move(direction, fromArea, closingPalette);
+      if (moved) showKeyboardFocus();
+      return moved;
     },
     focus,
     request,
     dispose: () => {
       cancelRequest();
+      clearKeyboardFocus();
       doc.removeEventListener("focusin", remember);
       doc.removeEventListener("focusout", recover);
       doc.removeEventListener("pointerdown", onUserInput, true);
       doc.removeEventListener("keydown", onUserInput, true);
+      doc.removeEventListener("wheel", clearKeyboardFocus, true);
+      doc.defaultView?.removeEventListener("blur", clearKeyboardFocus);
     },
   };
 }

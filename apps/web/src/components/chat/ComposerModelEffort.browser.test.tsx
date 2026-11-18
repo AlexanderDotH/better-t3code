@@ -11,10 +11,15 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
 
 import { render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { ComposerEffortColumn, describeComposerEffort } from "./ComposerModelEffort";
+import {
+  ComposerEffortColumn,
+  ComposerPickerFooter,
+  describeComposerEffort,
+} from "./ComposerModelEffort";
 import type { TraitsSelectionInput } from "./TraitsPicker";
 
 // Shaped like Devin over ACP: its session mode comes first, and its reasoning id is its own.
@@ -228,4 +233,74 @@ it("retains the complete selection when remembering manual traits for a project"
       instanceId
     ],
   ).toEqual(remembered);
+});
+
+it("toggles Daybreak while preserving other options and disables it on unsupported models", async () => {
+  const selectedOptions: ReadonlyArray<ProviderOptionSelection> = [
+    { id: "reasoningEffort", value: "high" },
+    { id: "serviceTier", value: "priority" },
+  ];
+  let savedOptions = selectedOptions;
+  const supported: ServerProviderModel = {
+    slug: "supported",
+    name: "Supported model",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        { id: "daybreak", label: "Daybreak", type: "boolean" },
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [{ id: "high", label: "High" }],
+        },
+        {
+          id: "serviceTier",
+          label: "Speed",
+          type: "select",
+          options: [{ id: "priority", label: "Fast" }],
+        },
+      ],
+    }),
+  };
+  function Picker({ model }: { model: string }) {
+    const [options, setOptions] = useState(selectedOptions);
+    return (
+      <ComposerPickerFooter
+        traits={{
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("codex"),
+          models: [
+            supported,
+            { slug: "unsupported", name: "Other model", isCustom: false, capabilities: null },
+          ],
+          model,
+          modelOptions: options,
+          planModeEnabled: false,
+          onModelOptionsChange: (next) => {
+            savedOptions = next ?? [];
+            setOptions(savedOptions);
+          },
+        }}
+        runtimeMode="full-access"
+        runtimeModeOptions={[]}
+        onRuntimeModeChange={() => {}}
+      />
+    );
+  }
+  // The footer only edits the supplied selection.
+  await using screen = await render(<Picker model="supported" />, { router: false });
+  const toggle = screen.getByRole("switch", { name: "Daybreak" });
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-checked", "true");
+  expect(savedOptions).toEqual(
+    expect.arrayContaining([...selectedOptions, { id: "daybreak", value: true }]),
+  );
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-checked", "false");
+  expect(savedOptions).toEqual(
+    expect.arrayContaining([...selectedOptions, { id: "daybreak", value: false }]),
+  );
+  await screen.rerender(<Picker model="unsupported" />);
+  await expect.element(screen.getByRole("switch", { name: "Daybreak" })).toBeDisabled();
 });

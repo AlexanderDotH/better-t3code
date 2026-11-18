@@ -33,6 +33,17 @@ const input = {
 describe("automatic reasoning trait display", () => {
   it("shows only the current resolved effort while preserving manual selections and speed", () => {
     expect(buildTraitsTriggerDisplay(input)).toEqual({ label: "Low", speedLabel: null });
+    for (const currentValue of [true, false, undefined]) {
+      expect(
+        buildTraitsTriggerDisplay({
+          ...input,
+          descriptors: [
+            reasoning,
+            { id: "daybreak", label: "Daybreak", type: "boolean", currentValue },
+          ],
+        }),
+      ).toEqual({ label: currentValue ? "Low · Daybreak" : "Low", speedLabel: null });
+    }
     const automatic = { ...input, modelSelection: enableAutoReasoning(selected) };
     expect(buildTraitsTriggerDisplay(automatic)).toEqual({ label: "Auto", speedLabel: null });
     expect(buildTraitsTriggerDisplay({ ...automatic, autoReasoningEffort: "high" })).toEqual({

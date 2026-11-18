@@ -1678,6 +1678,15 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.speechListProjectProfiles,
       staleTimeMs: 0,
     }),
+    learnedSpeechVocabularyQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:speech:learned-vocabulary-query",
+      tag: WS_METHODS.speechGetLearnedVocabulary,
+      staleTimeMs: 0,
+    }),
+    clearLearnedSpeechVocabulary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:clear-learned-vocabulary",
+      tag: WS_METHODS.speechClearLearnedVocabulary,
+    }),
     indexProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:speech:index-project",
       tag: WS_METHODS.speechIndexProject,

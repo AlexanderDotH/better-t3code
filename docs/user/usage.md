@@ -14,6 +14,12 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
+Use **Inference speed** to show costs and tokens for **Normal**, **Fast**, or **Ultrafast**.
+Choose **All speeds** to include usage with no recorded speed.
+
+Open **Breakdown → Project** (**Projects** on mobile) to rank projects by tokens. Select a
+project to see its models and token usage over time. Sessions without a known project appear
+under **Unassigned tokens**.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
@@ -58,8 +64,9 @@ environments are selected by default. The dropdown shows which environments are 
 results appear as each one responds, and figures still updating are dimmed. Cursor shows its last
 saved totals first, then updates them when Cursor's API responds.
 
-If recent work is missing or a new model shows no cost, refresh to rescan session history and
-update model pricing.
+T3 checks for new prices when it finds an unfamiliar model. A model stays unpriced until the
+price catalog lists it or you set a custom price. Refresh Usage to rescan recent work and
+check prices again.
 
 ## Set custom model prices
 

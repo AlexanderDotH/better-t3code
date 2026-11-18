@@ -1,6 +1,5 @@
 import {
   CHAT_VISUAL_MODES,
-  type BetterT3FeatureId,
   type ChatVisualMode,
   type ContextWindowSelector,
   type SidebarPosition,
@@ -31,30 +30,15 @@ import type {
 } from "./BetterT3SettingsPreview.logic";
 
 import type { ReasoningDisplayMode } from "./BetterT3SettingsPanel.logic";
-import { BETTER_T3_EXAMPLE_FEATURE_IDS, BetterT3FeatureExample } from "./BetterT3SettingsExamples";
+import { BetterT3FeatureExample } from "./BetterT3SettingsExamples";
+import {
+  keyedPreviewCharacters,
+  type BetterT3VisualFeatureId,
+} from "@t3tools/client-runtime/better-t3-settings-preview";
+
+export { BETTER_T3_VISUAL_FEATURE_IDS } from "@t3tools/client-runtime/better-t3-settings-preview";
 
 type Translate = InterfaceTranslator["message"];
-
-export const BETTER_T3_VISUAL_FEATURE_IDS = [
-  "agent.planMode",
-  "agent.promptImprovement",
-  "agent.generalSubagents",
-  "agent.reasoningVisibility",
-  "agent.expandedComposerControls",
-  "chat.sidebarPosition",
-  "chat.classicSidebar",
-  "chat.presentation",
-  "chat.contextWindowSelector",
-  "chat.workspaceCardDeck",
-  "chat.classicBubbleOnly",
-  "chat.characterStreamingMotion",
-  "chat.presentationMotion",
-  "chat.cardMorphing",
-  "chat.draftIndicators",
-  ...BETTER_T3_EXAMPLE_FEATURE_IDS,
-] as const satisfies ReadonlyArray<BetterT3FeatureId>;
-
-export type BetterT3VisualFeatureId = (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number];
 
 function FeatureVisualFrame(props: {
   readonly animationKey: string;
@@ -84,15 +68,6 @@ const agentRows = [
   "settings.betterT3.preview.agent.implementer",
   "settings.betterT3.preview.agent.reviewer",
 ] as const;
-
-function keyedCharacters(text: string) {
-  const occurrences = new Map<string, number>();
-  return Array.from(text, (character) => {
-    const occurrence = (occurrences.get(character) ?? 0) + 1;
-    occurrences.set(character, occurrence);
-    return { character, key: `${character}:${occurrence}` };
-  });
-}
 
 function PromptImprovementPreview(props: {
   readonly enabled: boolean;
@@ -976,17 +951,17 @@ function BetterT3FeatureVisual(props: {
             <div className="text-2xs leading-5 text-foreground/90">
               {chat.characterStreamingMotion ? (
                 <>
-                  {keyedCharacters(props.translate("settings.betterT3.preview.chat.response")).map(
-                    ({ character, key }, index) => (
-                      <span
-                        className="better-t3-preview-stream-character inline-block whitespace-pre"
-                        key={key}
-                        style={{ animationDelay: `${index * 28}ms` }}
-                      >
-                        {character}
-                      </span>
-                    ),
-                  )}
+                  {keyedPreviewCharacters(
+                    props.translate("settings.betterT3.preview.chat.response"),
+                  ).map(({ character, key }, index) => (
+                    <span
+                      className="better-t3-preview-stream-character inline-block whitespace-pre"
+                      key={key}
+                      style={{ animationDelay: `${index * 28}ms` }}
+                    >
+                      {character}
+                    </span>
+                  ))}
                   <span className="better-t3-preview-caret ml-0.5 inline-block h-3 w-px translate-y-0.5 rounded-full bg-primary" />
                 </>
               ) : (

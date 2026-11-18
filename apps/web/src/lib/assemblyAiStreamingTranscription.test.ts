@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
+import { SpeechStreamingSessionId, type AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
 
 import {
   AssemblyAiTranscriptAccumulator,
@@ -108,6 +108,38 @@ describe("describeAssemblyAiMicrophoneError", () => {
       /already in use/i,
     );
   });
+});
+
+it("routes advanced PCM through the environment and returns its processed result", async () => {
+  const resources = makeBrowserDependencies();
+  const processed = { text: "Keep mountApp.", references: [] };
+  const pushAudio = vi.fn(async () => ({ transcript: "Keep mount app." }));
+  const createToken = vi.fn(async () => tokenConfig);
+  const session = await startAssemblyAiStreamingTranscription(
+    {
+      onTranscript: vi.fn(),
+      onError: vi.fn(),
+      createToken,
+      serverTransport: {
+        startSession: async () => ({
+          sessionId: SpeechStreamingSessionId.make("advanced-session"),
+        }),
+        pushAudio,
+        finishSession: async () => ({ transcript: "Keep mount app.", processed }),
+        cancelSession: async () => undefined,
+      },
+    },
+    resources.dependencies,
+  );
+  resources.emitWorkletMessage(new Uint8Array([1, 2, 3, 4]).buffer);
+  await expect(session.stop()).resolves.toMatchObject({ processed });
+  expect(pushAudio).toHaveBeenCalledWith({
+    sessionId: "advanced-session",
+    audio: new Uint8Array([1, 2, 3, 4]),
+  });
+  expect(resources.socket.send).not.toHaveBeenCalled();
+  expect(createToken).not.toHaveBeenCalled();
+  expect(resources.track.stop).toHaveBeenCalledOnce();
 });
 
 describe("startAssemblyAiStreamingTranscription", () => {

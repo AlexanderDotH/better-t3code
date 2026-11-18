@@ -7,6 +7,7 @@ import {
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import {
   type LimitAccount,
   collectProviderUsageLimits,
@@ -26,6 +27,9 @@ import {
 import {
   isUsageLimitsCommand,
   displayLimitWindows,
+  compactUsageWindow,
+  formatResetCountdown,
+  formatUsageResetAt,
   formatResetsIn,
   limitsNotice,
   remainingPercent,
@@ -166,6 +170,11 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+    const weekly = { ...window, kind: "weekly" as const, windowDurationMins: 7 * 24 * 60 };
+    const halfWeek = Date.parse(weekly.resetsAt) - 3.5 * 24 * 60 * 60_000;
+    expect(paceOf(weekly, halfWeek)).toBe("under");
+    expect(paceOf({ ...weekly, usedPercent: 50 }, halfWeek)).toBe("on");
+    expect(paceOf({ ...weekly, usedPercent: 60 }, halfWeek)).toBe("ahead");
   });
 
   it("has no pace without a reset or a duration", () => {
@@ -181,6 +190,38 @@ describe("pace", () => {
     expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
       "resets now",
     );
+  });
+});
+
+describe("reset display", () => {
+  it("formats a bare countdown, including expired and sub-minute windows", () => {
+    for (const [resetsAt, expected] of [
+      ["2026-09-03T14:00:00.000Z", "2h 0m"],
+      ["2026-09-06T15:30:00.000Z", "3d 3h"],
+      ["2026-09-03T12:00:30.000Z", "0m"],
+      ["2026-09-03T11:00:00.000Z", "0m"],
+      ["invalid", null],
+      [undefined, null],
+    ] as const) {
+      expect(formatResetCountdown({ ...window, resetsAt }, now)).toBe(expected);
+    }
+  });
+
+  it("localizes the weekday, date, and time in the client's timezone", () => {
+    const localized = {
+      ...window,
+      resetsAt: DateTime.formatIso(
+        DateTime.makeZonedUnsafe("2026-11-16T19:41:00Z", {
+          timeZone: DateTime.zoneMakeLocal(),
+          adjustForTimeZone: true,
+        }),
+      ),
+    };
+    expect(formatUsageResetAt(localized, "de-DE")).toBe("Montag, 16. November, 19:41");
+    expect(formatUsageResetAt(localized, "en-US")).toBe("Monday, November 16, 7:41 PM");
+    expect(formatUsageResetAt(localized, "fr-FR")).toBe("lundi 16 novembre, 19:41");
+    expect(formatUsageResetAt({ ...window, resetsAt: "invalid" }, "de-DE")).toBeNull();
+    expect(formatUsageResetAt({ ...window, resetsAt: undefined }, "en-US")).toBeNull();
   });
 });
 
@@ -858,60 +899,63 @@ describe("pools", () => {
     expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
   });
 
-  it("retains Codex native history when a hub supplies fresher quota, without crossing a reset", () => {
-    const codex = ProviderDriverKind.make("codex");
-    const usageHistory = [{ at: checkedAt, usedPercent: 4, hasUsage: true }];
-    const weekly = {
-      ...window,
-      kind: "weekly" as const,
-      windowDurationMins: 10_080,
-      usageHistorySource: "codex" as const,
-      usedPercent: 4,
-    };
-    const native = provider({
-      driver: codex,
-      auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt, windows: [{ ...weekly, usageHistory }] },
-    });
-    const accounts = (resetsAt: string, usedPercent: number) =>
-      collectLimitAccounts(
-        new Map([
-          [
-            EnvironmentId.make("env-a"),
-            {
-              ...laptop,
-              serverConfig: {
-                providers: [native],
-                usageLimitSources: [
-                  {
-                    ...source,
-                    accounts: [
-                      {
-                        id: "same",
-                        driver: codex,
-                        email: "same@example.com",
-                        usageLimits: {
-                          checkedAt: "2026-09-03T11:30:00.000Z",
-                          windows: [{ ...weekly, resetsAt, usedPercent }],
+  it.each(["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"])(
+    "retains %s history when a hub supplies fresher quota, without crossing a reset",
+    (driver) => {
+      const codex = ProviderDriverKind.make(driver);
+      const usageHistory = [{ at: checkedAt, usedPercent: 4, hasUsage: true }];
+      const weekly = {
+        ...window,
+        kind: "weekly" as const,
+        windowDurationMins: 10_080,
+        usageHistorySource: driver === "codex" ? ("codex" as const) : ("observed" as const),
+        usedPercent: 4,
+      };
+      const native = provider({
+        driver: codex,
+        auth: { status: "authenticated", email: "same@example.com" },
+        usageLimits: { checkedAt, windows: [{ ...weekly, usageHistory }] },
+      });
+      const accounts = (resetsAt: string, usedPercent: number) =>
+        collectLimitAccounts(
+          new Map([
+            [
+              EnvironmentId.make("env-a"),
+              {
+                ...laptop,
+                serverConfig: {
+                  providers: [native],
+                  usageLimitSources: [
+                    {
+                      ...source,
+                      accounts: [
+                        {
+                          id: "same",
+                          driver: codex,
+                          email: "same@example.com",
+                          usageLimits: {
+                            checkedAt: "2026-09-03T11:30:00.000Z",
+                            windows: [{ ...weekly, resetsAt, usedPercent }],
+                          },
                         },
-                      },
-                    ],
-                  },
-                ],
+                      ],
+                    },
+                  ],
+                },
               },
-            },
-          ],
-        ]),
-      );
-    expect(accounts(window.resetsAt, 5)[0]?.limits.windows[0]).toMatchObject({
-      usedPercent: 5,
-      usageHistory,
-    });
-    expect(accounts(window.resetsAt, 0)[0]?.limits.windows[0]?.usageHistory).toBeUndefined();
-    expect(
-      accounts("2026-09-10T14:00:00.000Z", 5)[0]?.limits.windows[0]?.usageHistory,
-    ).toBeUndefined();
-  });
+            ],
+          ]),
+        );
+      expect(accounts(window.resetsAt, 5)[0]?.limits.windows[0]).toMatchObject({
+        usedPercent: 5,
+        usageHistory,
+      });
+      expect(accounts(window.resetsAt, 0)[0]?.limits.windows[0]?.usageHistory).toBeUndefined();
+      expect(
+        accounts("2026-09-10T14:00:00.000Z", 5)[0]?.limits.windows[0]?.usageHistory,
+      ).toBeUndefined();
+    },
+  );
   it("uses the freshest hub credit and its environment even when the account is also native", () => {
     const native = provider({
       auth: { status: "authenticated", email: "same@example.com" },
@@ -1661,6 +1705,51 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
+  });
+});
+
+describe("compact usage window", () => {
+  const weekly = {
+    ...window,
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    windowDurationMins: 10_080,
+  } as const;
+  const monthly = { ...window, id: "monthly", kind: "monthly", label: "Monthly" } as const;
+  const cursor = [
+    { ...monthly, id: "apiPercentUsed", label: "Other Models" },
+    { ...monthly, id: "totalPercentUsed", label: "Overall", usedPercent: 100 },
+    { ...monthly, id: "autoPercentUsed", label: "Cursor Models" },
+  ];
+  it.each([
+    ["Claude Max", "claudeAgent", [weekly, window], "five_hour"],
+    ["Codex paid", "codex", [monthly, weekly, window], "five_hour"],
+    ["Codex Free", "codex", [monthly], "monthly"],
+    ["Cursor pools", "cursor", cursor, "autoPercentUsed"],
+    ["weekly-only plan", "claudeAgent", [monthly, weekly], "seven_day"],
+    ["Grok weekly", "grok", [weekly], "seven_day"],
+    ["OpenCode session", "opencode", [monthly, weekly, window], "five_hour"],
+    ["Antigravity quota", "antigravity", [{ ...monthly, kind: "other" }], "monthly"],
+    ["exhausted weekly", "claudeAgent", [window, { ...weekly, usedPercent: 100 }], "seven_day"],
+    ["exhausted monthly", "codex", [window, { ...monthly, usedPercent: 100 }], "monthly"],
+    [
+      "expired exhausted weekly",
+      "codex",
+      [window, { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T11:00:00.000Z" }],
+      "five_hour",
+    ],
+    [
+      "exhausted weekly without reset",
+      "codex",
+      [window, { ...weekly, usedPercent: 100, resetsAt: undefined }],
+      "seven_day",
+    ],
+    ["no reported windows", "codex", [], undefined],
+  ] as const)("selects the limiting window for %s", (_name, driver, windows, expected) => {
+    expect(compactUsageWindow({ driver: ProviderDriverKind.make(driver), windows }, now)?.id).toBe(
+      expected,
+    );
   });
 });
 

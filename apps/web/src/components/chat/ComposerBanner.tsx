@@ -150,7 +150,7 @@ function Root({
   width = "fill",
   ...props
 }: ComponentProps<typeof Surface> & {
-  density?: "default" | "comfortable" | "spacious";
+  density?: "compact" | "default" | "comfortable" | "spacious";
   width?: "fill" | "content";
 }) {
   const placement = useContext(ComposerBannerPlacementContext);
@@ -160,6 +160,7 @@ function Root({
         "min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
         placement === "grouped" && "px-2.5 py-2",
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
+        density === "compact" && "px-2 py-0.5",
         density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         // A corner button nests inside the banner's radius only when the padding
@@ -191,7 +192,7 @@ function Row({
     className: cn(
       "group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
-      "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-xl [&:is(button)]:hover:bg-foreground/5 [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
+      "[&:is(button,[role=button])]:cursor-pointer [&:is(button,[role=button])]:rounded-xl [&:is(button,[role=button])]:hover:bg-foreground/5 [&:is(button,[role=button])]:focus-visible:outline-2 [&:is(button,[role=button])]:focus-visible:-outline-offset-2 [&:is(button,[role=button])]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
         "flex flex-wrap *:data-[slot=composer-banner-content]:max-w-[calc(100%-var(--composer-banner-icon-column)-var(--spacing))] *:data-[slot=composer-banner-content]:grow",
       layout === "approval" && "items-start gap-x-2 gap-y-3",

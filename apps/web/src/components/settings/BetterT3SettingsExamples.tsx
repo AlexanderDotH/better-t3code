@@ -1,4 +1,4 @@
-import type { BetterT3FeatureId } from "@t3tools/contracts";
+import { BETTER_T3_EXAMPLE_FEATURE_IDS } from "@t3tools/client-runtime/better-t3-settings-preview";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
@@ -19,17 +19,6 @@ import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 type Translate = InterfaceTranslator["message"];
-
-export const BETTER_T3_EXAMPLE_FEATURE_IDS = [
-  "agent.contextCompaction",
-  "agent.nativeSubagentDisplay",
-  "chat.hideComposerDivider",
-  "chat.messageEditing",
-  "chat.messageReplies",
-  "chat.visualizations",
-  "workspace.gitWorkbench",
-  "voice.outputLanguage",
-] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
 function PreviewWindow(props: { title: string; translate: Translate; children: ReactNode }) {
   return (
@@ -79,14 +68,34 @@ function AgentDisplayExample({ native, translate }: { native: boolean; translate
           </div>
         </div>
       ) : (
-        <>
-          <MessageLines />
-          <div className="mt-1 flex w-fit items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-3xs text-primary">
-            <BotIcon className="size-3" />
-            {translate("settings.betterT3.preview.examples.agents.floating")}
-            <span className="size-1 rounded-full bg-success" />
+        <div className="grid min-h-20 items-center">
+          <div className="col-start-1 row-start-1 space-y-2">
+            <MessageLines />
+            <MessageLines />
           </div>
-        </>
+          <div className="col-start-1 row-start-1 grid w-fit max-w-3/5 gap-1 rounded-md border border-border/65 bg-popover/90 p-1.5 text-3xs shadow-xs backdrop-blur-xs">
+            <div className="flex items-center gap-1.5">
+              <BotIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+              <span className="truncate">{translate("chat.agent.heading")}</span>
+            </div>
+            <div className="flex items-center gap-1.5 ps-2 text-muted-foreground">
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-info" />
+              <span className="truncate">
+                {translate("settings.betterT3.preview.agent.planner")}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 border-t border-border/65 pt-1">
+              <ArchiveIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+              <span className="truncate">{translate("chat.agent.history")}</span>
+            </div>
+            <div className="flex items-center gap-1.5 ps-2 text-muted-foreground">
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
+              <span className="truncate">
+                {translate("settings.betterT3.preview.agent.reviewer")}
+              </span>
+            </div>
+          </div>
+        </div>
       )}
     </PreviewWindow>
   );

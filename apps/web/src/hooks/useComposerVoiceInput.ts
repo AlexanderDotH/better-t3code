@@ -1,11 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isAssemblyAiDictationProcessing } from "@t3tools/client-runtime/assembly-ai";
 import {
   resolveBetterT3FeatureFlag,
+  resolveAssemblyAiVoiceSettings,
   type EnvironmentId,
   type ProjectId,
   type SpeechProcessDictationResult,
   type ThreadId,
   type UnifiedSettings,
+  type SpeechStreamingAudioInput,
+  type SpeechStreamingSessionInput,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { translateVoiceDictationResult } from "@t3tools/shared/voiceFileContext";
@@ -35,18 +39,34 @@ export function useComposerVoiceInput(input: {
 }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(input.environmentId));
   const apiKey = input.settings.speechTranscription.assemblyAi.apiKey;
-  const configured = resolveAssemblyAiVoiceInputAvailability({
-    featureEnabled: resolveBetterT3FeatureFlag(
-      input.settings.betterT3Environment,
-      "voice.assemblyAi",
-    ),
-    environmentSettingsVersion: config?.environment.capabilities.environmentSettingsVersion,
-    apiKeyConfigured: apiKey.value.trim().length > 0 || apiKey.valueRedacted === true,
-  }).configured;
+  const canStartVoice = useAtomValue(
+    serverEnvironment.createAssemblyAiStreamingToken.permissionAtom(input.environmentId),
+  );
+  const configured =
+    resolveAssemblyAiVoiceInputAvailability({
+      featureEnabled: resolveBetterT3FeatureFlag(
+        input.settings.betterT3Environment,
+        "voice.assemblyAi",
+      ),
+      environmentSettingsVersion: config?.environment.capabilities.environmentSettingsVersion,
+      apiKeyConfigured: apiKey.value.trim().length > 0 || apiKey.valueRedacted === true,
+    }).configured && canStartVoice;
   const createToken = useAtomCommand(serverEnvironment.createAssemblyAiStreamingToken, {
     reportFailure: false,
   });
   const processDictation = useAtomCommand(serverEnvironment.processSpeechDictation, {
+    reportFailure: false,
+  });
+  const startSession = useAtomCommand(serverEnvironment.startSpeechStreamingSession, {
+    reportFailure: false,
+  });
+  const pushAudio = useAtomCommand(serverEnvironment.pushSpeechStreamingAudio, {
+    reportFailure: false,
+  });
+  const finishSession = useAtomCommand(serverEnvironment.finishSpeechStreamingSession, {
+    reportFailure: false,
+  });
+  const cancelSession = useAtomCommand(serverEnvironment.cancelSpeechStreamingSession, {
     reportFailure: false,
   });
   const translateTranscript = useAtomCommand(serverEnvironment.translateSpeechTranscript, {
@@ -54,6 +74,11 @@ export function useComposerVoiceInput(input: {
   });
   const supportsProcessing =
     config?.environment.capabilities.supportsSpeechDictationProcessing === true;
+  const advancedMode =
+    config?.environment.capabilities.supportsAdvancedVoiceDictation === true &&
+    input.projectId !== null &&
+    resolveAssemblyAiVoiceSettings(input.settings.speechTranscription.assemblyAi, input.projectId)
+      .advancedMode;
   const context = () => {
     if (input.projectId === null)
       throw new Error("Project context is unavailable for voice input.");
@@ -99,10 +124,51 @@ export function useComposerVoiceInput(input: {
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       return result.value;
     },
-    transformTranscript: async (transcript) => {
+    ...(advancedMode
+      ? {
+          serverTransport: {
+            startSession: async () => {
+              const result = await startSession({
+                environmentId: input.environmentId,
+                input: { ...context(), supportsAdvancedMode: true },
+              });
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              return result.value;
+            },
+            pushAudio: async (audioInput: SpeechStreamingAudioInput) => {
+              const result = await pushAudio({
+                environmentId: input.environmentId,
+                input: audioInput,
+              });
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              return result.value;
+            },
+            finishSession: async (sessionInput: SpeechStreamingSessionInput) => {
+              const result = await finishSession({
+                environmentId: input.environmentId,
+                input: sessionInput,
+              });
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              return result.value;
+            },
+            cancelSession: async (sessionInput: SpeechStreamingSessionInput) => {
+              const result = await cancelSession({
+                environmentId: input.environmentId,
+                input: sessionInput,
+              });
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            },
+          },
+        }
+      : {}),
+    transformTranscript: async (transcript, completed) => {
       const target = context();
-      let processed: SpeechProcessDictationResult = { text: transcript, references: [] };
-      if (supportsProcessing) {
+      let processed: SpeechProcessDictationResult = {
+        text: completed?.text ?? transcript,
+        references: completed?.references ?? [],
+        ...(completed?.warning ? { warning: completed.warning } : {}),
+      };
+      if (supportsProcessing && !completed) {
         const result = await processDictation({
           environmentId: input.environmentId,
           input: { ...target, transcript },
@@ -131,6 +197,7 @@ export function useComposerVoiceInput(input: {
   });
   return {
     ...dictation,
+    processing: isAssemblyAiDictationProcessing(dictation.state),
     configured,
     visible: configured || dictation.active || dictation.canRestoreOriginal,
   };

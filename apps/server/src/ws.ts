@@ -1,24 +1,11 @@
 import { compactThread } from "./orchestration-v2/BetterT3Runtime.ts";
-import {
-  McpConfigError,
-  type McpMutationResult,
-  SpeechDictationError,
-  type SpeechStreamingStartInput,
-  resolveAssemblyAiVoiceSettings,
-} from "@t3tools/contracts";
+import { McpConfigError, type McpMutationResult } from "@t3tools/contracts";
 import { McpConfigurationReconciler } from "./mcp/McpConfigurationReconciler.ts";
-import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
-import {
-  ProjectSpeechVocabulary,
-  speechVocabularyKeyterms,
-} from "./speech/ProjectSpeechVocabulary.ts";
 import { AiEndpointDiscovery } from "./provider/discovery/AiEndpointDiscovery.ts";
 import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import { ProviderAuthOperationError } from "@t3tools/contracts";
 import { makeForkRpcHandlers } from "./projectIndexing/integration/ForkRpcHandlers.ts";
 import { ProjectMemoryError, type ProjectMemoryOperation } from "@t3tools/contracts";
-import { SpeechStreamingProxyError } from "@t3tools/contracts";
-import { SpeechStreamingSessionId } from "@t3tools/contracts";
 import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
 import * as ProjectTextTransforms from "./speech/ProjectTextTransforms.ts";
 import { AssemblyAiDictation } from "./speech/AssemblyAiDictation.ts";
@@ -222,7 +209,7 @@ import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
-import { createAssemblyAiStreamingProxy } from "./speech/AssemblyAiStreamingProxy.ts";
+import * as AssemblyAiStreamingSessions from "./speech/AssemblyAiStreamingSessions.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "./serverSettings.ts";
@@ -2111,40 +2098,7 @@ export const layerWsRpc = (
       const mcpConfigEngine = yield* McpConfigEngine;
       const mcpRuntimeRegistry = yield* McpRuntimeRegistry;
       const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const assemblyAiStreamingToken = yield* AssemblyAiStreamingToken;
-      const assemblyAiStreamingProxy = createAssemblyAiStreamingProxy({});
-      const speechVocabulary = yield* ProjectSpeechVocabulary;
-      const createSpeechStreamingConfiguration = Effect.fn("ws.createSpeechStreamingConfiguration")(
-        function* (input: SpeechStreamingStartInput) {
-          const workspaceRoot = yield* assemblyAiDictation.resolveWorkspace(input);
-          const settings = yield* serverSettings.getSettings.pipe(
-            Effect.mapError(
-              () => new SpeechDictationError({ reason: "Voice settings could not be loaded." }),
-            ),
-          );
-          const options = resolveAssemblyAiVoiceSettings(
-            settings.speechTranscription.assemblyAi,
-            input.projectId,
-          );
-          if (options.projectVocabulary || options.automaticFileReferences) {
-            yield* speechVocabulary.refreshInBackground({ workspaceRoot });
-          }
-          const context = yield* projectSpeechProfiles.contextForProject(input.projectId);
-          const snapshot = yield* speechVocabulary.snapshot({ workspaceRoot });
-          return yield* assemblyAiStreamingToken.create(
-            {
-              ...context,
-              keyterms:
-                snapshot.entries.length > 0
-                  ? speechVocabularyKeyterms(snapshot.entries)
-                  : input.threadId
-                    ? []
-                    : context.keyterms,
-            },
-            options,
-          );
-        },
-      );
+      const assemblyAiStreamingSessions = yield* AssemblyAiStreamingSessions.make();
       const mcpConfigurationReconciler = yield* McpConfigurationReconciler;
       const reconcileMcpMutation = (mutation: Effect.Effect<McpMutationResult, McpConfigError>) =>
         mutation.pipe(
@@ -2269,7 +2223,7 @@ export const layerWsRpc = (
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.providerCompactThread]: ({ threadId }) => compactThread(threadId),
         [WS_METHODS.serverCreateAssemblyAiStreamingToken]: (input) =>
-          createSpeechStreamingConfiguration(input),
+          assemblyAiDictation.createStreamingConfiguration(input),
         [WS_METHODS.serverReportHostPowerState]: (input) => hostPowerMonitor.report(input),
         [WS_METHODS.serverGetBackgroundPolicy]: (_input) => backgroundPolicy.snapshot,
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
@@ -2645,45 +2599,20 @@ export const layerWsRpc = (
       });
       const orchestrationHandlers = OrchestrationRpcGroup.of({
         [WS_METHODS.speechStartStreamingSession]: (input) =>
-          createSpeechStreamingConfiguration(input).pipe(
-            Effect.flatMap((config) =>
-              Effect.tryPromise({
-                try: () => assemblyAiStreamingProxy.start(config),
-                catch: (cause) =>
-                  new SpeechStreamingProxyError({
-                    reason:
-                      cause instanceof Error ? cause.message : "Could not start voice streaming.",
-                  }),
-              }),
-            ),
-            Effect.map(({ sessionId }) => ({
-              sessionId: SpeechStreamingSessionId.make(sessionId),
-            })),
-          ),
-        [WS_METHODS.speechPushStreamingAudio]: (input) =>
-          Effect.tryPromise({
-            try: () => assemblyAiStreamingProxy.push(input),
-            catch: (cause) =>
-              new SpeechStreamingProxyError({
-                reason:
-                  cause instanceof Error ? cause.message : "Could not stream microphone audio.",
-              }),
-          }),
-        [WS_METHODS.speechFinishStreamingSession]: ({ sessionId }) =>
-          Effect.tryPromise({
-            try: () => assemblyAiStreamingProxy.finish(sessionId),
-            catch: (cause) =>
-              new SpeechStreamingProxyError({
-                reason:
-                  cause instanceof Error ? cause.message : "Could not finish voice streaming.",
-              }),
-          }),
-        [WS_METHODS.speechCancelStreamingSession]: ({ sessionId }) =>
-          Effect.sync(() => assemblyAiStreamingProxy.cancel(sessionId)),
+          assemblyAiStreamingSessions.start(input),
+        [WS_METHODS.speechPushStreamingAudio]: (input) => assemblyAiStreamingSessions.push(input),
+        [WS_METHODS.speechFinishStreamingSession]: (input) =>
+          assemblyAiStreamingSessions.finish(input),
+        [WS_METHODS.speechCancelStreamingSession]: (input) =>
+          assemblyAiStreamingSessions.cancel(input),
         [WS_METHODS.speechGetProjectProfile]: ({ projectId }) =>
           projectSpeechProfiles.get(projectId).pipe(Effect.map(Option.getOrNull)),
         [WS_METHODS.speechListProjectProfiles]: (_input) =>
           projectSpeechProfiles.list().pipe(Effect.map((profiles) => ({ profiles }))),
+        [WS_METHODS.speechGetLearnedVocabulary]: ({ projectId }) =>
+          projectSpeechProfiles.getLearnedVocabulary(projectId),
+        [WS_METHODS.speechClearLearnedVocabulary]: ({ projectId }) =>
+          projectSpeechProfiles.clearLearnedVocabulary(projectId),
         [WS_METHODS.speechIndexProject]: ({ projectId }) => projectSpeechProfiles.index(projectId),
         [WS_METHODS.speechCreateBasicProjectProfile]: ({ projectId }) =>
           projectSpeechProfiles.createBasic(projectId),

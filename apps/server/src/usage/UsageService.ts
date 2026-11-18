@@ -3,8 +3,10 @@ import {
   ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
+  type UsageProject,
   type UsageProviderKind,
   type UsageSource,
+  type UsageSpeed,
   type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
@@ -25,9 +27,11 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -40,7 +44,12 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  lookupRate,
+  parseRateTable,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -73,6 +82,8 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CACHE_RETENTION_DAYS = 92;
 
 const TRANSCRIPT_READ_CONCURRENCY = 4;
+
+const usageSessionKey = (provider: string, sessionId: string) => `${provider}\0${sessionId}`;
 
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
@@ -155,6 +166,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostname = yield* HostProcess.Hostname;
+  const sql = yield* SqlClient.SqlClient;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
@@ -213,6 +225,7 @@ export const make = Effect.gen(function* () {
   let ratesLastFailedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
   const ratesLock = yield* Semaphore.make(1);
+  const checkedMissingRates = new Set<string>();
 
   const pricing = (): UsagePricing => ({
     status: ratesStatus,
@@ -268,6 +281,7 @@ export const make = Effect.gen(function* () {
     }
 
     rates = fetched.parsed;
+    if (!force) checkedMissingRates.clear();
     ratesFetchedAtMs = now;
     ratesLastFailedAtMs = null;
     ratesStatus = "fresh";
@@ -657,6 +671,72 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
+  const readProjectsBySession = Effect.fn("UsageService.readProjectsBySession")(function* () {
+    const rows = yield* sql<{
+      readonly driver: string;
+      readonly sessionId: string;
+      readonly id: string;
+      readonly title: string;
+    }>`
+      SELECT provider_thread.driver, json_extract(provider_thread.payload_json, '$.nativeThreadRef.nativeId') AS sessionId,
+        project.project_id AS id, project.title
+      FROM orchestration_v2_projection_provider_threads AS provider_thread
+      JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = provider_thread.thread_id
+      JOIN projection_projects AS project ON project.project_id = thread.project_id
+      WHERE json_extract(provider_thread.payload_json, '$.nativeThreadRef.strength') = 'strong'
+        AND sessionId IS NOT NULL
+      GROUP BY provider_thread.driver, sessionId
+      HAVING COUNT(DISTINCT project.project_id) = 1
+    `.pipe(NodeSqliteClient.readOnly);
+    return new Map<string, UsageProject>(
+      rows.map(({ driver, sessionId, id, title }) => [
+        usageSessionKey(driver === "claudeAgent" ? "claude" : driver, sessionId),
+        { id, title: title.trim() || id },
+      ]),
+    );
+  });
+
+  const refreshRatesForNewModels = Effect.fn("UsageService.refreshRatesForNewModels")(function* (
+    filesByDir: readonly NonNullable<ScannedDir["files"]>[],
+    windowStartMs: number,
+    windowEndMs: number,
+    priceOverrides: RateTable,
+    modelAliases: ReadonlyMap<string, string>,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    if (
+      ratesFetchedAtMs === null ||
+      now - ratesFetchedAtMs < RATES_REFRESH_FLOOR_MS ||
+      (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS)
+    ) {
+      return;
+    }
+    const missingRates = new Set<string>();
+    for (const files of filesByDir) {
+      for (const { records } of files) {
+        for (const record of records) {
+          if (
+            record.reportedCostUsd !== null ||
+            record.timestampMs < windowStartMs ||
+            record.timestampMs >= windowEndMs
+          )
+            continue;
+          const alias = modelAliases.get(record.model);
+          if (priceOverrides.has((alias ?? record.model).trim())) continue;
+          const rateModel = alias ?? record.rateModel ?? record.model;
+          if (!checkedMissingRates.has(rateModel) && lookupRate(rates, rateModel) === null)
+            missingRates.add(rateModel);
+        }
+      }
+    }
+    if (missingRates.size === 0) return;
+    const previousFetch = ratesFetchedAtMs;
+    yield* loadRates(true);
+    if (ratesFetchedAtMs !== previousFetch) {
+      for (const model of missingRates) checkedMissingRates.add(model);
+    }
+  }, ratesLock.withPermit);
+
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
@@ -715,18 +795,6 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
-    const aggregator = new UsageAggregator({
-      timeZone: input.timeZone,
-      sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
-      resolution: input.resolution ?? "day",
-      ...hourlyWindow,
-      rates,
-      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
-      modelAliases: resolveModelAliases(settings.usageModelAliases),
-      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
-    });
-
     const sources: UsageSource[] = [];
 
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
@@ -753,6 +821,33 @@ export const make = Effect.gen(function* () {
     const windowEndMs =
       hourlyWindow?.untilTimeMs ??
       Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+    const priceOverrides = createOverrideRateTable(settings.usagePriceOverrides);
+    const modelAliases = resolveModelAliases(settings.usageModelAliases);
+    yield* refreshRatesForNewModels(
+      filesByDir,
+      windowStartMs,
+      windowEndMs,
+      priceOverrides,
+      modelAliases,
+    );
+    const projectsBySession = yield* readProjectsBySession().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not attribute usage to projects", cause).pipe(
+          Effect.as(new Map<string, UsageProject>()),
+        ),
+      ),
+    );
+    const aggregator = new UsageAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      resolution: input.resolution ?? "day",
+      ...hourlyWindow,
+      rates,
+      priceOverrides,
+      modelAliases,
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+    });
     let resolvedAny = false;
     for (const { reader } of transcriptReaders) {
       if (reader.resolveServiceTiers === undefined) continue;
@@ -805,6 +900,11 @@ export const make = Effect.gen(function* () {
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
+      const sessionsBySpeed: Record<UsageSpeed, Set<string>> = {
+        standard: new Set(),
+        fast: new Set(),
+        ultrafast: new Set(),
+      };
 
       for (const file of filesByDir[index] ?? []) {
         malformedRecords += file.malformedRecords;
@@ -833,8 +933,14 @@ export const make = Effect.gen(function* () {
             eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
-          if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
+          const project =
+            projectsBySession.size === 0
+              ? undefined
+              : projectsBySession.get(usageSessionKey(record.provider, record.sessionId));
+          if (aggregator.add(usageRecord, dir, project) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
+            if (record.unresolvedServiceTierTurnId === undefined)
+              sessionsBySpeed[record.speed].add(record.sessionId);
           }
         }
       }
@@ -855,6 +961,11 @@ export const make = Effect.gen(function* () {
         skippedFiles,
         malformedRecords,
         distinctSessions: sessionIds.size,
+        distinctSessionsBySpeed: {
+          standard: sessionsBySpeed.standard.size,
+          fast: sessionsBySpeed.fast.size,
+          ultrafast: sessionsBySpeed.ultrafast.size,
+        },
         message:
           malformedRecords > 0
             ? [sourceMessage, formatMalformedUsageWarning(malformedRecords)]

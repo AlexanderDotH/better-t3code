@@ -12,10 +12,11 @@ const speechData = Layer.mergeAll(
   ProjectSpeechProfileStore.layer,
   ProjectSpeechVocabulary.layer.pipe(Layer.provideMerge(ProjectSpeechWorkspaceScanner.layer)),
 );
-
-export const layer = Layer.mergeAll(
+const speechContext = Layer.mergeAll(
   ProjectSpeechProfiles.layer,
-  AssemblyAiDictation.layer,
   AssemblyAiStreamingTokenLive,
-  ProjectTextTransforms.layer,
 ).pipe(Layer.provideMerge(speechData));
+
+export const layer = Layer.mergeAll(AssemblyAiDictation.layer, ProjectTextTransforms.layer).pipe(
+  Layer.provideMerge(speechContext),
+);

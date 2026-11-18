@@ -1,33 +1,46 @@
-import type { SubagentId } from "@t3tools/contracts";
+import type { ServerProvider, SubagentId } from "@t3tools/contracts";
 import type { OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
-import { ArchiveIcon, BotIcon, ChevronRightIcon } from "lucide-react";
-import { memo, useId, useState, type AnimationEvent as ReactAnimationEvent, type Ref } from "react";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import { ArchiveIcon, PlusIcon } from "lucide-react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useState,
+  type AnimationEvent as ReactAnimationEvent,
+} from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
+import { useChatCanvas } from "./chat/ChatCanvasContext";
+import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import { ThreadLineageGroupToggle } from "./chat/ThreadLineageGroupToggle";
+import {
+  ThreadRelationshipIcon,
+  threadRelationshipStatusLabel,
+} from "./chat/ThreadRelationshipIcon";
+import { ThreadHoverCardPopup } from "./ThreadHoverCard";
 import {
   resolveSubagentDisplayName,
   resolveSubagentStatusPresentation,
 } from "./subagents/subagentPresentation";
-import { SubagentStatusDot, type SubagentIndicatorTone } from "./subagents/SubagentStatusDot";
+import { compareArchivedAgents } from "./subagents/subagentLifecycle";
 import {
   useSubagentLifecycleStack,
   type SubagentPresenceEntry,
 } from "./subagents/useSubagentLifecycleStack";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
-import { ScrollArea } from "./ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipTrigger } from "./ui/tooltip";
 
 export interface ChatAgentStackProps {
   readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
+  readonly providersBySubagent: ReadonlyMap<SubagentId, ServerProvider>;
+  readonly hasActiveAgents: boolean;
   readonly selectedSubagentId: SubagentId | null;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
-  readonly className?: string;
-  readonly stackRef?: Ref<HTMLDivElement>;
 }
 
-const ARCHIVED_AGENT_RENDER_PAGE_SIZE = 50;
+const ARCHIVED_AGENT_RENDER_PAGE_SIZE = 12;
 
 function selectArchivedAgentsForRender(
   agents: ReadonlyArray<OrchestrationSubagentSummary>,
@@ -42,113 +55,82 @@ function selectArchivedAgentsForRender(
   return selected ? [selected, ...limited] : limited;
 }
 
-function indicatorToneForPresence(entry: SubagentPresenceEntry): SubagentIndicatorTone {
-  if (entry.stage === "working") {
-    return "working";
-  }
-  if (entry.stage === "success") {
-    return "success";
-  }
-  if (entry.stage === "failure") {
-    return "failure";
-  }
-  return "stale";
-}
-
 export const ChatAgentStack = memo(function ChatAgentStack({
   subagents,
+  providersBySubagent,
+  hasActiveAgents,
   selectedSubagentId,
   onSelectSubagent,
-  className,
-  stackRef,
 }: ChatAgentStackProps) {
   const translate = useInterfaceTranslator().message;
   const lifecycle = useSubagentLifecycleStack(subagents);
-  const compactContentId = useId();
-  const [compactOpen, setCompactOpen] = useState(false);
-  const hasSubagents = subagents.length > 0;
-  const selectSubagent = (subagentId: SubagentId) => {
-    setCompactOpen(false);
-    onSelectSubagent(subagentId);
-  };
+  const contentId = useId();
+  const [agentsExpanded, setAgentsExpanded] = useState(true);
+  const expanded = !hasActiveAgents || agentsExpanded;
+  const heading = translate(hasActiveAgents ? "chat.agent.heading" : "chat.agent.history");
+  const archivedAgents = hasActiveAgents
+    ? lifecycle.archived
+    : subagents.toSorted(compareArchivedAgents);
+
+  if (subagents.length === 0) return null;
 
   return (
-    <div
-      ref={stackRef}
-      data-chat-agent-stack="true"
-      data-compact-open={compactOpen && hasSubagents ? "true" : "false"}
-      data-has-subagents={hasSubagents ? "true" : "false"}
-      className={cn("pointer-events-none w-56 max-w-[calc(100dvw-1.5rem)]", className)}
+    <section
+      aria-label={heading}
+      className={cn(
+        "absolute start-3 top-3 z-30 flex max-h-[min(16rem,40%)] max-w-[min(15rem,45%)] flex-col overflow-hidden rounded-xl border border-border/65 bg-popover p-1 shadow-md/10 supports-backdrop-filter:bg-popover/90 backdrop-blur-xs sm:start-5 sm:top-5",
+        expanded ? "w-[min(15rem,45%)]" : "w-fit",
+      )}
     >
-      <button
-        type="button"
-        data-subagent-compact-trigger
-        aria-label={translate("chat.agent.count", { count: subagents.length })}
-        aria-expanded={compactOpen}
-        aria-controls={compactContentId}
-        className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-2 rounded-md border border-border/60 bg-background px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        onClick={() => setCompactOpen((current) => !current)}
-      >
-        <BotIcon aria-hidden="true" className="size-3.5 shrink-0" />
-        <span>{translate("chat.agent.heading")}</span>
-        <span className="tabular-nums">{subagents.length}</span>
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn("size-3 transition-transform duration-200", compactOpen && "rotate-90")}
+      {hasActiveAgents ? (
+        <ThreadLineageGroupToggle
+          label={heading}
+          count={subagents.length}
+          controls={contentId}
+          expanded={agentsExpanded}
+          onToggle={() => setAgentsExpanded(!agentsExpanded)}
         />
-      </button>
+      ) : null}
       <div
-        id={compactContentId}
-        className="subagent-stack-content pointer-events-auto mt-1.5 overflow-hidden rounded-lg border border-border/60 bg-background [[data-agent-layout=expanded]_&]:mt-0"
+        id={contentId}
+        hidden={!expanded}
+        className="@container/agent-stack min-h-0 overflow-y-auto overscroll-contain"
       >
-        <ScrollArea
-          className="h-auto max-h-[min(20rem,calc(100dvh-6rem))] w-full"
-          hideScrollbars
-          scrollFade
-        >
-          <div className="flex w-full flex-col items-start">
-            {lifecycle.visible.length > 0 ? (
-              <div className="flex h-8 w-full items-center gap-2 px-2.5 text-xs text-muted-foreground">
-                <BotIcon aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="flex-1 font-medium">{translate("chat.agent.heading")}</span>
-                <span className="font-mono text-2xs tabular-nums">{lifecycle.visible.length}</span>
-              </div>
-            ) : null}
-            <ul
-              className="w-full px-1"
-              role="list"
-              aria-label={translate("chat.agent.activeRecentAria")}
-            >
-              {lifecycle.visible.map((entry) => (
-                <PresenceAgentItem
-                  key={entry.agent.id}
-                  entry={entry}
-                  selected={entry.agent.id === selectedSubagentId}
-                  onSelectSubagent={selectSubagent}
-                  onCompletePhase={lifecycle.completePhase}
-                />
-              ))}
-            </ul>
-            <ArchivedAgentSection
-              agents={lifecycle.archived}
-              separated={lifecycle.visible.length > 0}
-              selectedSubagentId={selectedSubagentId}
-              onSelectSubagent={selectSubagent}
-            />
-          </div>
-        </ScrollArea>
+        {hasActiveAgents ? (
+          <ul className="m-0 list-none p-0" aria-label={translate("chat.agent.activeRecentAria")}>
+            {lifecycle.visible.map((entry) => (
+              <PresenceAgentItem
+                key={entry.agent.id}
+                entry={entry}
+                provider={providersBySubagent.get(entry.agent.id)}
+                selected={entry.agent.id === selectedSubagentId}
+                onSelectSubagent={onSelectSubagent}
+                onCompletePhase={lifecycle.completePhase}
+              />
+            ))}
+          </ul>
+        ) : null}
+        <ArchivedAgentSection
+          agents={archivedAgents}
+          providersBySubagent={providersBySubagent}
+          separated={hasActiveAgents}
+          selectedSubagentId={selectedSubagentId}
+          onSelectSubagent={onSelectSubagent}
+        />
       </div>
-    </div>
+    </section>
   );
 });
 
 function PresenceAgentItem({
   entry,
+  provider,
   selected,
   onSelectSubagent,
   onCompletePhase,
 }: {
   readonly entry: SubagentPresenceEntry;
+  readonly provider: ServerProvider | undefined;
   readonly selected: boolean;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
   readonly onCompletePhase: (subagentId: SubagentId, phase: SubagentPresenceEntry["phase"]) => void;
@@ -160,7 +142,7 @@ function PresenceAgentItem({
     onCompletePhase(entry.agent.id, "collapsing");
   };
 
-  const completeRowPhase = (event: ReactAnimationEvent<HTMLButtonElement>) => {
+  const completeRowPhase = (event: ReactAnimationEvent<HTMLDivElement>) => {
     if (event.currentTarget !== event.target) {
       return;
     }
@@ -177,7 +159,7 @@ function PresenceAgentItem({
     >
       <ChatAgentRow
         agent={entry.agent}
-        tone={indicatorToneForPresence(entry)}
+        provider={provider}
         selected={selected}
         presence={entry.phase}
         onSelectSubagent={onSelectSubagent}
@@ -189,22 +171,24 @@ function PresenceAgentItem({
 
 function ChatAgentRow({
   agent,
-  tone,
+  provider,
   selected,
   presence,
   onSelectSubagent,
   onAnimationEnd,
 }: {
   readonly agent: OrchestrationSubagentSummary;
-  readonly tone: SubagentIndicatorTone;
+  readonly provider: ServerProvider | undefined;
   readonly selected: boolean;
   readonly presence?: SubagentPresenceEntry["phase"];
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
-  readonly onAnimationEnd?: (event: ReactAnimationEvent<HTMLButtonElement>) => void;
+  readonly onAnimationEnd?: (event: ReactAnimationEvent<HTMLDivElement>) => void;
 }) {
   const name = resolveSubagentDisplayName(agent);
-  const displayName = name.startsWith("/root/") ? name.slice("/root/".length) : name;
+  const displayName = formatSubagentDisplayTitle(name);
   const status = resolveSubagentStatusPresentation(agent);
+  const statusLabel =
+    agent.status === "unavailable" ? status.label : threadRelationshipStatusLabel(agent.status);
   const tooltip = [
     status.label,
     status.activity !== status.label ? status.activity : null,
@@ -214,61 +198,71 @@ function ChatAgentRow({
     .join(" · ");
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`${name}, ${status.label}: ${status.activity}`}
-            aria-pressed={selected}
-            data-subagent-id={agent.id}
-            data-subagent-tone={tone}
-            data-subagent-presence={presence}
-            className={cn(
-              "subagent-stack-row group flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs outline-none transition-colors",
-              "hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              tone === "archived" || tone === "stale" ? "text-muted-foreground" : "text-foreground",
-              selected && "bg-accent text-foreground",
-            )}
-            onAnimationEnd={onAnimationEnd}
-            onClick={() => onSelectSubagent(agent.id)}
+    <div
+      className="subagent-stack-row rounded-lg data-selected:bg-accent"
+      data-selected={selected ? "" : undefined}
+      data-subagent-presence={presence}
+      onAnimationEnd={onAnimationEnd}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          delay={200}
+          render={
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              aria-label={`${name}, ${status.label}: ${status.activity}`}
+              aria-pressed={selected}
+              data-subagent-id={agent.id}
+              onClick={() => onSelectSubagent(agent.id)}
+            />
+          }
+        >
+          <ThreadRelationshipIcon
+            driver={agent.providerDriver ?? undefined}
+            provider={provider}
+            status={agent.status === "starting" ? "pending" : agent.status}
           />
-        }
-      >
-        <SubagentStatusDot presentation={status} tone={tone} className="size-1.5 shadow-none" />
-        <span className="min-w-0 flex-1 truncate">{displayName}</span>
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
-            selected && "opacity-100",
-          )}
-        />
-      </TooltipTrigger>
-      <TooltipPopup side="right">
-        <div className="max-w-72">
-          <p className="break-words font-medium">{name}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{tooltip}</p>
-        </div>
-      </TooltipPopup>
-    </Tooltip>
+          <span className="min-w-0 flex-1 truncate text-sm leading-4 font-medium text-foreground/85">
+            {displayName}
+          </span>
+          <span
+            aria-hidden
+            className={cn(
+              "hidden shrink-0 text-2xs @min-[12rem]/agent-stack:inline",
+              status.tone === "danger" ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {statusLabel}
+          </span>
+        </TooltipTrigger>
+        <ThreadHoverCardPopup side="right">
+          <span className="block break-words font-medium">{name}</span>
+          <span className="block text-muted-foreground">{tooltip}</span>
+        </ThreadHoverCardPopup>
+      </Tooltip>
+    </div>
   );
 }
 
 function ArchivedAgentSection({
   agents,
+  providersBySubagent,
   separated,
   selectedSubagentId,
   onSelectSubagent,
 }: {
   readonly agents: ReadonlyArray<OrchestrationSubagentSummary>;
+  readonly providersBySubagent: ReadonlyMap<SubagentId, ServerProvider>;
   readonly separated: boolean;
   readonly selectedSubagentId: SubagentId | null;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
 }) {
   const translate = useInterfaceTranslator().message;
+  const historyId = useId();
+  const timelineElement = useChatCanvas()?.timelineElement;
   const selectedAgentIsArchived = agents.some((agent) => agent.id === selectedSubagentId);
-  const [open, setOpen] = useState(selectedAgentIsArchived);
+  const [open, setOpen] = useState(false);
   const [renderLimit, setRenderLimit] = useState(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
   const archiveBoundaryKey = `${agents.length}:${agents[0]?.id ?? ""}:${agents.at(-1)?.id ?? ""}`;
   const renderedAgents = selectArchivedAgentsForRender(agents, renderLimit, selectedSubagentId);
@@ -286,35 +280,37 @@ function ArchivedAgentSection({
     setRenderLimit(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for scrolling in the timeline while History is open
+  useEffect(() => {
+    if (!open || !timelineElement) return;
+    const collapseHistory = () => setOpen(false);
+    timelineElement.addEventListener("scroll", collapseHistory, { passive: true });
+    return () => timelineElement.removeEventListener("scroll", collapseHistory);
+  }, [open, timelineElement]);
+
   if (agents.length === 0) {
     return null;
   }
 
-  const archivedLabel = translate("chat.agent.archivedCount", { count: agents.length });
   return (
-    <div className={cn("w-full", separated && "border-t border-border/50")}>
-      <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-        <CollapsibleTrigger
-          type="button"
-          aria-label={archivedLabel}
-          className="group flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        >
-          <ArchiveIcon aria-hidden="true" className="size-3.5" />
-          <span className="min-w-0 flex-1 font-medium">{translate("chat.agent.history")}</span>
-          <span className="font-mono text-2xs tabular-nums">{agents.length}</span>
-          <ChevronRightIcon
-            aria-hidden="true"
-            className="size-3 transition-transform duration-200 group-data-panel-open:rotate-90"
-          />
-        </CollapsibleTrigger>
-        <CollapsiblePanel className="w-full">
-          <div className="px-1 pb-1">
-            <ul className="w-full" role="list" aria-label={translate("chat.agent.archivedAria")}>
+    <div className={separated ? "border-t border-border/65" : undefined}>
+      <ThreadLineageGroupToggle
+        label={translate("chat.agent.history")}
+        icon={ArchiveIcon}
+        count={agents.length}
+        controls={historyId}
+        expanded={open}
+        onToggle={() => setOpen(!open)}
+      />
+      <div id={historyId} hidden={!open}>
+        {open ? (
+          <>
+            <ul className="m-0 list-none p-0" aria-label={translate("chat.agent.archivedAria")}>
               {renderedAgents.map((agent) => (
-                <li key={agent.id} className="mb-1 h-7">
+                <li key={agent.id}>
                   <ChatAgentRow
                     agent={agent}
-                    tone="archived"
+                    provider={providersBySubagent.get(agent.id)}
                     selected={agent.id === selectedSubagentId}
                     onSelectSubagent={onSelectSubagent}
                   />
@@ -322,21 +318,21 @@ function ArchivedAgentSection({
               ))}
             </ul>
             {remainingAgentCount > 0 ? (
-              <button
-                type="button"
-                className="mt-1 h-7 w-full rounded-md px-2 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              <ThreadDetailsControl
+                tone="muted"
                 onClick={() =>
                   setRenderLimit((current) => current + ARCHIVED_AGENT_RENDER_PAGE_SIZE)
                 }
               >
+                <PlusIcon aria-hidden className="size-4" />
                 {translate("chat.agent.showMore", {
                   count: Math.min(ARCHIVED_AGENT_RENDER_PAGE_SIZE, remainingAgentCount),
                 })}
-              </button>
+              </ThreadDetailsControl>
             ) : null}
-          </div>
-        </CollapsiblePanel>
-      </Collapsible>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

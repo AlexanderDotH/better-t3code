@@ -2494,6 +2494,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     expandComposerForEditorChangeRef.current = expandForEditorChange;
   }, [expandForEditorChange]);
   const composerControlsCollapsed = isComposerResting || isComposerCollapsedMobile;
+  const compactBannerDock = composerControlsCollapsed && !showComposerTopDrawer;
+  const restoreComposerFromBanner = useStableCallback(() => {
+    scrollCollapse.expandForEditorChange();
+    if (isComposerCollapsedMobile) expandMobileComposer();
+    else scheduleComposerFocus();
+  });
   const showInlineRestingControls = composerControlsCollapsed;
   const externalRestingControlsHost = classicComposer ? props.restingControlsHost : null;
   // The current layout rests as one row; model and mode return with the full composer on focus.
@@ -3487,8 +3493,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerBannerDock = (
     <ComposerBanner.Dock>
       <ComposerBanner.Column>
-        <ComposerBannerStack items={shelfItems} />
-        {props.deepPlanningContent ? (
+        <ComposerBannerStack
+          items={shelfItems}
+          compact={compactBannerDock}
+          onRestore={restoreComposerFromBanner}
+        />
+        {!compactBannerDock && props.deepPlanningContent ? (
           <div
             data-chat-composer-deep-plan="true"
             className="max-h-[min(55dvh,32rem)] min-h-0 overflow-y-auto overscroll-contain"
@@ -3496,7 +3506,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {props.deepPlanningContent}
           </div>
         ) : null}
-        {props.activityContent}
+        {compactBannerDock ? null : props.activityContent}
         {showComposerTopDrawer ? (
           <ComposerBanner.Attachment>
             <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
@@ -3640,12 +3650,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         data-chat-composer-idle-divider="true"
         className="mx-auto mb-3 w-[calc(100%-2.75rem)] border-t border-border/60"
       />
-      {props.floatingBubbleHost
-        ? createPortal(
-            <ComposerBanner.FloatingGroup>{composerBannerDock}</ComposerBanner.FloatingGroup>,
-            props.floatingBubbleHost,
-          )
-        : composerBannerDock}
+      {!compactBannerDock
+        ? props.floatingBubbleHost
+          ? createPortal(
+              <ComposerBanner.FloatingGroup>{composerBannerDock}</ComposerBanner.FloatingGroup>,
+              props.floatingBubbleHost,
+            )
+          : composerBannerDock
+        : null}
       {showInlineRestingControls && externalRestingControlsHost
         ? createPortal(restingControls, externalRestingControlsHost)
         : null}
@@ -3669,6 +3681,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            {compactBannerDock ? (
+              <div
+                data-chat-composer-compact-dock="true"
+                className={cn(
+                  "overflow-hidden",
+                  classicComposer ? "rounded-t-3xl" : "rounded-t-2xl",
+                )}
+              >
+                <ComposerBanner.FloatingGroup>{composerBannerDock}</ComposerBanner.FloatingGroup>
+              </div>
+            ) : null}
             {props.replyError ? (
               <p role="alert" className="px-3 pt-2 text-sm text-destructive">
                 {props.replyError}
@@ -4069,9 +4092,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={
-                      isSendBusy || voiceInput.active || deepPlanImplementation?.pending === true
+                      isSendBusy ||
+                      (voiceInput.active && !voiceInput.processing) ||
+                      deepPlanImplementation?.pending === true
                     }
-                    sendDisabledReason={sendDisabledReason}
+                    sendDisabledReason={
+                      sendDisabledReason ??
+                      (voiceInput.processing
+                        ? translate(
+                            voiceInput.state === "interpreting"
+                              ? "chat.composer.voiceInterpreting"
+                              : "chat.composer.voiceProcessing",
+                          )
+                        : null)
+                    }
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
                       noProviderAvailable ||

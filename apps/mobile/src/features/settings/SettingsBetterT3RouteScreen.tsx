@@ -41,7 +41,7 @@ import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/projec
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AsyncResult } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   Alert,
   Modal,
@@ -78,6 +78,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnvironmentsRouteScreen";
 import { MobileProjectIndexDefaultModelSetting } from "./MobileProjectIndexDefaultModelSetting";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { BETTER_T3_CATEGORY_ICONS } from "./better-t3-category-icons";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AutoSettleSettingsRows } from "./AutoSettleSettingsRows";
 import { ContextWindowMeterSettingsPreview } from "./ContextWindowMeterSettingsPreview";
@@ -120,21 +121,6 @@ const SECTION_ICONS: Readonly<Record<BetterT3FeatureSection, AppSymbolName>> = {
   "knowledge-automation": "point.3.connected.trianglepath.dotted",
   "resource-protection": "memorychip",
   "integration-status": "checkmark.circle",
-};
-
-const CATEGORY_ICONS: Readonly<Record<BetterT3SettingsCategoryId, AppSymbolName>> = {
-  general: "gearshape",
-  appearance: "paintbrush",
-  chat: "bubble.left.and.bubble.right",
-  composer: "square.and.pencil",
-  sidebar: "sidebar.left",
-  usage: "chart.bar.xaxis",
-  agents: "person.2",
-  workspace: "arrow.triangle.branch",
-  voice: "waveform",
-  knowledge: "point.3.connected.trianglepath.dotted",
-  system: "memorychip",
-  integrations: "checkmark.circle",
 };
 
 const FALLBACK_CAPABILITIES: ExecutionEnvironmentCapabilities = {
@@ -453,6 +439,7 @@ function BetterT3SettingsPage(props: {
     contextWindowSelector:
       devicePreferences?.contextWindowMeterEnabled === false ? "native" : "better-t3",
     sidebarPosition: "left",
+    classicSidebar: threadListLayout === "classic",
     boringSidebar: threadListLayout === "boring",
     showReasoning: reasoningMode !== "none",
     reasoningWorkingOverlay: reasoningMode === "working",
@@ -951,7 +938,7 @@ function BetterT3SettingsPage(props: {
                     }
                   >
                     <ListRowLayout
-                      icon={CATEGORY_ICONS[id]}
+                      icon={BETTER_T3_CATEGORY_ICONS[id]}
                       label={label}
                       description={translator.message(
                         `settings.betterT3.category.${id}.description`,
@@ -1099,18 +1086,27 @@ function BetterT3SettingsPage(props: {
                   }
                 />
               ) : null}
-              {group.controls.map((control) => renderControl(control))}
+              {group.controls.map((control) => (
+                <Fragment key={control.id}>
+                  {renderControl(control)}
+                  <BetterT3FeaturePreview
+                    controls={[
+                      {
+                        id: control.id,
+                        value:
+                          control.id === "voice.outputLanguage"
+                            ? (devicePreferences?.voiceInputOutputLanguage ?? "native")
+                            : control.value,
+                      },
+                    ]}
+                    model={previewModel}
+                  />
+                </Fragment>
+              ))}
               <BetterT3FeaturePreview
                 group={group.definition.id}
                 model={previewModel}
-                enabled={(id) =>
-                  group.controls.some(
-                    (control) =>
-                      control.id === id &&
-                      control.value === true &&
-                      control.availability.state === "available",
-                  )
-                }
+                controls={[]}
               />
             </SettingsSection>
           );

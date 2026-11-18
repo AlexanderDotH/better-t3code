@@ -98,6 +98,28 @@ describe("usage pace bar segments", () => {
 });
 
 describe("daily usage pacing", () => {
+  it.each(["weekly", "monthly", "other"] as const)(
+    "allocates catch-up and today's segments for an observed %s quota",
+    (kind) => {
+      const window = {
+        ...weekly,
+        kind,
+        windowDurationMins: 30 * 24 * 60,
+        usedPercent: 2,
+        usageHistorySource: "observed" as const,
+        usageHistory: [sample(14, 22, 1), sample(15, 9, 2)],
+      };
+      const pace = dailyUsagePace(window, time(15, 13), 8);
+      expect(pace).toMatchObject({ status: "good", todayUsedPercent: 1, partial: false });
+      expect(pace?.catchUpPercent).toBeCloseTo((100 * 25) / 30 - 1);
+      expect(pace?.dailyBudgetPercent).toBeCloseTo((100 * 26) / 30 - 1);
+      const segments = usagePaceBarSegments(window, pace!);
+      expect(segments.catchUpPercent).toBeCloseTo((100 * 25) / 30 - 2);
+      expect(segments.regularPercent).toBeCloseTo(100 / 30);
+      expect(segments.widthPercent).toBe(98);
+    },
+  );
+
   it("measures consumption against today's allowance, including overdraw and catch-up", () => {
     expect(dailyUsagePace(weekly, time(13, 13), 8)?.todayBudgetUsedPercent).toBeCloseTo(42);
     expect(
@@ -325,12 +347,9 @@ describe("daily usage pacing", () => {
     )!;
     expect(reset).toMatchObject({ status: "estimating", catchUpPercent: 0, paceOverPercent: null });
     expect(reset.dailyBudgetPercent).toBeCloseTo(100 / 7);
-    expect(
-      dailyUsagePace({ ...weekly, windowDurationMins: undefined }, time(15, 13), 8),
-    ).toMatchObject({
-      catchUpPercent: 0,
-      dailyBudgetPercent: 94 / 5,
-    });
+    for (const windowDurationMins of [undefined, 0, 300, Number.NaN]) {
+      expect(dailyUsagePace({ ...weekly, windowDurationMins }, time(15, 13), 8)).toBeNull();
+    }
   });
 
   it("does not invent earlier usage or a missing reset time", () => {
@@ -354,11 +373,12 @@ describe("daily usage pacing", () => {
       partial: true,
     });
     expect(dailyUsagePace({ ...weekly, resetsAt: undefined }, time(13, 13), 8)).toBeNull();
+    expect(dailyUsagePace({ ...weekly, resetsAt: iso(time(27, 0)) }, time(13, 13), 8)).toBeNull();
     expect(dailyUsagePace(weekly, time(20, 1), 8)).toBeNull();
     expect(dailyUsagePace(weekly, Number.NaN, 8)).toBeNull();
   });
 
-  it.each([undefined, "codex"] as const)(
+  it.each([undefined, "codex", "observed"] as const)(
     "withholds daily usage and catch-up until %s history covers the start of today",
     (usageHistorySource) => {
       const partialHistory = [

@@ -8,6 +8,8 @@ import type {
   UsageModelFilter,
   UsageModelSelector,
   UsageResolution,
+  UsageProject,
+  UsageSpeed,
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
@@ -51,6 +53,8 @@ const QUARTER_HOUR_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
 interface MutableBucket {
+  readonly speed: UsageSpeed | undefined;
+  readonly project: UsageProject | undefined;
   callKind: UsageCallKind | undefined;
   diagnostics?: UsageContextDiagnostics;
   totals: { -readonly [K in keyof UsageTokenTotals]: number };
@@ -168,7 +172,7 @@ export class UsageAggregator {
     }
   }
 
-  add(input: UsageRecord, sourcePath?: string): boolean {
+  add(input: UsageRecord, sourcePath?: string, project?: UsageProject): boolean {
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
@@ -208,6 +212,8 @@ export class UsageAggregator {
       record.model,
       sourcePath ?? "",
       record.callKind,
+      record.unresolvedServiceTierTurnId === undefined ? record.speed : undefined,
+      project,
     );
 
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
@@ -288,6 +294,8 @@ export class UsageAggregator {
     model: string,
     source: string,
     callKind: UsageCallKind | undefined,
+    speed: UsageSpeed | undefined,
+    project: UsageProject | undefined,
   ): MutableBucket {
     const kind = callKind ?? "unknown";
     const last = this.#lastBucket;
@@ -298,7 +306,9 @@ export class UsageAggregator {
       last.provider === provider &&
       last.model === model &&
       last.source === source &&
-      last.callKind === kind
+      last.callKind === kind &&
+      last.bucket.speed === speed &&
+      last.bucket.project?.id === project?.id
     ) {
       if (callKind !== undefined) last.bucket.callKind = callKind;
       return last.bucket;
@@ -306,10 +316,12 @@ export class UsageAggregator {
     const window = this.#hourlyWindow;
     const hourStart =
       window === null ? "" : new Date(window.sinceTimeMs + hourIndex * HOUR_MS).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${model}\u0000${source}\u0000${kind}`;
+    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${model}\u0000${source}\u0000${kind}\u0000${speed ?? ""}\u0000${project?.id ?? ""}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
+        speed,
+        project,
         callKind,
         totals: { ...EMPTY_TOTALS },
         costUsd: 0,
@@ -345,6 +357,8 @@ export class UsageAggregator {
         provider: provider as UsageBucket["provider"],
         model,
         ...(sourcePath === "" ? {} : { sourcePath }),
+        ...(bucket.speed === undefined ? {} : { speed: bucket.speed }),
+        ...(bucket.project === undefined ? {} : { project: bucket.project }),
         totals: { ...bucket.totals },
         ...(bucket.callKind === undefined ? {} : { callKind: bucket.callKind }),
         ...(bucket.diagnostics === undefined ? {} : { diagnostics: bucket.diagnostics }),

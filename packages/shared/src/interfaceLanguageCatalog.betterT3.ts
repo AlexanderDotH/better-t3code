@@ -416,9 +416,9 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Panneau Agents natif",
   ],
   "settings.betterT3.preview.examples.agents.floating": [
-    "Floating agent pills",
-    "Schwebende Agenten-Anzeigen",
-    "Pastilles flottantes",
+    "Floating agents list",
+    "Schwebende Agentenliste",
+    "Liste flottante des agents",
   ],
   "settings.betterT3.preview.examples.context.title": [
     "Model context",
@@ -743,6 +743,7 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Comportement existant conservé",
   ],
   "settings.betterT3.value.automatic": ["Automatic", "Automatisch", "Automatique"],
+  "settings.betterT3.value.chooseModel": ["Choose model", "Modell auswählen", "Choisir un modèle"],
   "settings.betterT3.value.projectIndexDecisionOff": [
     "Off: always use found context",
     "Aus – gefundenen Kontext immer verwenden",
@@ -1251,9 +1252,9 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Permet à l’agent de déléguer des tâches ciblées à des sous-agents parallèles et d’afficher leur progression.",
   ],
   "agent.nativeSubagentDisplay": [
-    "On: native T3 Code Agents panel and chat summaries. Off: Better T3 floating agent pills and transcript dialogs. Changes the display only, not delegation.",
-    "An: natives T3-Code-Agents-Panel und Chat-Zusammenfassungen. Aus: schwebende Better-T3-Agent-Anzeigen und Transkript-Dialoge. Ändert nur die Anzeige, nicht die Delegation.",
-    "Activé : panneau Agents et résumés natifs de T3 Code. Désactivé : pastilles flottantes et dialogues de transcription Better T3. Seul l’affichage change, pas la délégation.",
+    "Use the native Agents panel and chat summaries. Turn this off to see agents and their history beside the chat.",
+    "Zeigt das native Agents-Panel und Zusammenfassungen im Chat. Schalte die Option aus, um die Agenten und ihren Verlauf neben dem Chat zu sehen.",
+    "Affiche le panneau Agents natif et les résumés dans la discussion. Désactivez cette option pour afficher les agents et leur historique à côté de la discussion.",
   ],
   "agent.reasoningVisibility": [
     "Hide thinking traces, show them in chat or at the top of the response, or follow live thoughts in the Working dialog.",

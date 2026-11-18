@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/model";
 import {
   getPromptControlledTraits,
+  getCodexDaybreakAvailability,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
 import { SheetHeader } from "../../components/ui/SheetHeader";
@@ -88,7 +89,6 @@ import {
   type ModelOption,
   type ProviderGroup,
 } from "../../lib/modelOptions";
-import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
@@ -130,6 +130,7 @@ import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
+  applyThreadOptionChoice,
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
   withManagedRuntimeModeLimits,
@@ -279,6 +280,8 @@ function SwitchRow(props: {
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
   readonly isLast?: boolean;
+  readonly disabled?: boolean;
+  readonly description?: string;
 }) {
   return (
     <View
@@ -287,9 +290,16 @@ function SwitchRow(props: {
         !props.isLast && "border-b border-border-subtle",
       )}
     >
-      <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
+      <View className="flex-1 py-1 pr-3">
+        <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
+        {props.description ? (
+          <Text className="pt-1 text-xs text-foreground-muted">{props.description}</Text>
+        ) : null}
+      </View>
       <ThemedSwitch
         accessibilityLabel={props.label}
+        accessibilityHint={props.description}
+        disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}
       />
@@ -631,7 +641,14 @@ function ThreadSettingsSessionProvider(
     }
     const options = change
       ? (change.modelOptions ?? [])
-      : applyProviderOptionSelection(displayedDescriptors, { id, value });
+      : currentSelection
+        ? (applyThreadOptionChoice({
+            selection: currentSelection,
+            descriptors: displayedDescriptors,
+            id,
+            value,
+          })?.options ?? null)
+        : null;
     const next =
       options && currentSelection && id === CODEX_REASONING_EFFORT_OPTION_ID
         ? (stripAutoReasoning({ ...currentSelection, options }).options ?? [])
@@ -991,8 +1008,17 @@ function ThreadSettingsOptionsItem(props: {
   const selectedProvider = session.environmentId
     ? (configs
         .get(session.environmentId)
-        ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
+        ?.providers.find(
+          (provider) => provider.instanceId === session.displayedModelSelection?.instanceId,
+        ) ?? null)
     : null;
+  const daybreak =
+    selectedProvider?.driver === "codex"
+      ? getCodexDaybreakAvailability(
+          selectedProvider.models,
+          session.displayedModelSelection?.model,
+        )
+      : null;
   // Both iOS search layouts float a bottom toolbar over the list's last rows.
   const bottomToolbarInset = Platform.OS === "ios" ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET : 0;
 
@@ -1053,11 +1079,27 @@ function ThreadSettingsOptionsItem(props: {
               <SwitchRow
                 label={descriptor.label}
                 value={descriptor.currentValue ?? false}
+                description={
+                  descriptor.id === "daybreak"
+                    ? translator.message("chat.traits.daybreakDescription")
+                    : undefined
+                }
                 onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
               />
             </Animated.View>
           );
         })}
+        {daybreak && !daybreak.supported && daybreak.supportedModels.length > 0 ? (
+          <SwitchRow
+            label={translator.message("chat.traits.daybreak")}
+            value={false}
+            disabled
+            description={translator.message("chat.traits.daybreakUnavailable", {
+              models: daybreak.supportedModels.map((model) => model.name).join(", "),
+            })}
+            onValueChange={(value) => session.applyOptionChange("daybreak", value)}
+          />
+        ) : null}
         <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
           <DisclosureRow
             isLast

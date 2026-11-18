@@ -15,6 +15,7 @@ export const ChatCanvasContext = createContext<{
   lane: { padding: number; minChatWidth: number };
   layout: ReturnType<typeof resolveChatCanvasLayout>;
   previewKey: string | null;
+  timelineElement: HTMLElement | null;
   registerTimeline: (element: HTMLElement | null) => void;
   measureDetailsCard: (measurement: DetailsCardMeasurement) => void;
   detailsCardTopInset: number;

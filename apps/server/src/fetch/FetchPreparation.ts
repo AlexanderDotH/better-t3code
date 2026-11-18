@@ -1,8 +1,21 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { CommandId, type RunId, type ThreadId } from "@t3tools/contracts";
-import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/shared/fetchMode";
+import {
+  CommandId,
+  type ModelSelection,
+  type RunId,
+  type ServerProvider,
+  type ThreadId,
+} from "@t3tools/contracts";
+import {
+  fetchUltrafastModelCandidates,
+  isFetchCapableProvider,
+  resolveFetchLunaFallback,
+  resolveFetchModelSelection,
+} from "@t3tools/shared/fetchMode";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
@@ -10,9 +23,23 @@ import * as Stream from "effect/Stream";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
+import { usageHardBudgetBlockReason } from "../provider/usageHardBudget.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { FetchWorkerCoordinator } from "./FetchWorkerCoordinator.ts";
+import type { FetchWorkerModel } from "./FetchWorkerState.ts";
 import { forkParked } from "../serverActivation.ts";
+
+function workerModel(candidate: {
+  readonly selection: ModelSelection;
+  readonly provider: ServerProvider;
+}): FetchWorkerModel {
+  return {
+    modelSelection: candidate.selection,
+    providerDriver: candidate.provider.driver,
+    maxRecommendedWorkers: candidate.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
+    commandExecutionPolicy: "deny",
+  };
+}
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -43,36 +70,50 @@ export const layer = Layer.effectDiscard(
       ).settings;
       let context = "";
       const available = yield* providers.getProviders;
+      const now = yield* Clock.currentTimeMillis;
+      const eligible = current.fetchModelSelection
+        ? available
+        : available
+            .filter(
+              (provider) =>
+                isFetchCapableProvider(provider) &&
+                provider.auth.status !== "unauthenticated" &&
+                (!current.usageHardBudgetEnabled ||
+                  usageHardBudgetBlockReason(provider.usageLimits, now) === null),
+            )
+            .map((provider) =>
+              exhaustedUsageWindow(provider, now)
+                ? {
+                    ...provider,
+                    models: provider.models.filter(
+                      (model) => !exhaustedUsageWindow(provider, now, model.slug),
+                    ),
+                  }
+                : provider,
+            );
       const selection = resolveFetchModelSelection({
-        providers: available,
+        providers: eligible,
         fetchModelSelection: current.fetchModelSelection,
         textGenerationModelSelection: current.textGenerationModelSelection,
       });
       if (selection.status === "resolved") {
         const luna =
-          selection.source === "auto-spark" ? resolveFetchLunaFallback(available) : undefined;
+          selection.source === "auto-spark" ? resolveFetchLunaFallback(eligible) : undefined;
         const project = yield* projects.get(projection.thread.projectId);
         const cwd = projection.thread.worktreePath ?? Option.getOrNull(project)?.workspaceRoot;
         if (cwd !== undefined) {
+          const ultrafastWorkers =
+            selection.source === "manual"
+              ? []
+              : fetchUltrafastModelCandidates(eligible, run.modelSelection).map(workerModel);
           const result = yield* workers
             .run({
               threadId,
               cwd,
               userRequest: message.text,
-              modelSelection: selection.selection,
-              providerDriver: selection.provider.driver,
-              maxRecommendedWorkers: selection.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
-              commandExecutionPolicy: "deny",
-              ...(luna?.status === "resolved"
-                ? {
-                    lunaFallback: {
-                      modelSelection: luna.selection,
-                      providerDriver: luna.provider.driver,
-                      maxRecommendedWorkers: luna.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
-                      commandExecutionPolicy: "deny" as const,
-                    },
-                  }
-                : {}),
+              ...workerModel(selection),
+              ...(luna?.status === "resolved" ? { lunaFallback: workerModel(luna) } : {}),
+              ...(ultrafastWorkers.length > 0 ? { ultrafastWorkers } : {}),
             })
             .pipe(
               Effect.catch((cause) =>
@@ -91,6 +132,8 @@ export const layer = Layer.effectDiscard(
                   .join("\n\n")
                   .slice(0, 64_000);
         }
+      } else if (selection.source === "manual") {
+        context = "The configured Fetch model is unavailable. Continue without preloaded findings.";
       }
       yield* orchestration.dispatch({
         type: "prepared-run.fetch.complete",

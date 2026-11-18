@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as Settings from "../serverSettings.ts";
+import * as UsagePaceHistory from "../provider/UsagePaceHistory.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
 export class UsageLimitSources extends Context.Service<
@@ -51,6 +52,7 @@ export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* Settings.ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const usagePaceHistory = yield* UsagePaceHistory.UsagePaceHistory;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
   const changes = yield* Effect.acquireRelease(
     PubSub.unbounded<ReadonlyArray<UsageLimitSourceSnapshot>>(),
@@ -71,7 +73,27 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    return {
+      ...base,
+      accounts: yield* Effect.forEach(accounts.success, (account) =>
+        account.driver === "codex"
+          ? Effect.succeed(account)
+          : usagePaceHistory
+              .record({
+                key: JSON.stringify([
+                  "source",
+                  id,
+                  config.url,
+                  account.driver,
+                  account.id,
+                  account.email?.trim().toLowerCase(),
+                  account.workspaceId,
+                ]),
+                limits: account.usageLimits,
+              })
+              .pipe(Effect.map((usageLimits) => ({ ...account, usageLimits }))),
+      ),
+    };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
@@ -167,4 +189,6 @@ export const make = Effect.gen(function* () {
   } satisfies UsageLimitSources["Service"];
 });
 
-export const layer = Layer.effect(UsageLimitSources, make);
+export const layer = Layer.effect(UsageLimitSources, make).pipe(
+  Layer.provide(UsagePaceHistory.layer),
+);

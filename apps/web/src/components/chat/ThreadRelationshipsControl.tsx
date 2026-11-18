@@ -47,7 +47,6 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
-  ChevronDownIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   MessagesSquareIcon,
@@ -80,17 +79,14 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
+import { ThreadLineageGroupToggle } from "./ThreadLineageGroupToggle";
 import { openSideChatTab } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
-import { cn } from "~/lib/utils";
 import {
-  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-  THREAD_DETAILS_PANEL_ICON_CLASS,
-  THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
@@ -151,26 +147,15 @@ function ThreadLineageGroup(props: {
   return (
     <div>
       {props.label ? (
-        <ThreadDetailsControl aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
-            {props.label}
-          </span>
-          {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
-          {expanded ? null : (
-            <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-              {props.rows.length}
-            </span>
-          )}
-          <ChevronDownIcon
-            aria-hidden
-            className={cn(
-              THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-              "transition-transform",
-              !expanded && "-rotate-90",
-            )}
-          />
-        </ThreadDetailsControl>
+        <ThreadLineageGroupToggle
+          label={props.label}
+          count={props.rows.length}
+          expanded={expanded}
+          onToggle={() => setExpanded(!expanded)}
+          status={
+            failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
+          }
+        />
       ) : null}
       {expanded ? (
         <ThreadLineageRowList

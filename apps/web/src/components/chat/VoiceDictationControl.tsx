@@ -1,5 +1,6 @@
 import { HourglassIcon, MicIcon, SquareIcon, Undo2Icon, XIcon } from "lucide-react";
 import { memo } from "react";
+import { isAssemblyAiDictationProcessing } from "@t3tools/client-runtime/assembly-ai";
 
 import type { AssemblyAiDictationState } from "../../hooks/useAssemblyAiDictation";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -95,17 +96,21 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   }
 
   const canSpeak = state === "recording";
+  const processing = isAssemblyAiDictationProcessing(state);
+  const processingLabel = translate(
+    state === "interpreting" ? "chat.composer.voiceInterpreting" : "chat.composer.voiceProcessing",
+  );
   const buttonLabel =
     state === "starting"
       ? translate("chat.composer.voiceCancelConnection")
-      : state === "stopping"
-        ? translate("chat.composer.voiceProcessing")
+      : processing
+        ? processingLabel
         : translate("chat.composer.voiceStop");
   const buttonTooltip =
     state === "starting"
       ? translate("chat.composer.voiceConnectingTooltip")
-      : state === "stopping"
-        ? translate("chat.composer.voiceProcessing")
+      : processing
+        ? processingLabel
         : translate("chat.composer.voiceStopTooltip");
   const peakLevel = audioWaveform.reduce(
     (peak, level) => (Number.isFinite(level) ? Math.max(peak, level) : peak),
@@ -121,34 +126,36 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
       <span className="sr-only" role="status">
         {state === "starting"
           ? translate("chat.composer.voiceConnectingTooltip")
-          : state === "stopping"
-            ? translate("chat.composer.voiceProcessing")
+          : processing
+            ? processingLabel
             : null}
       </span>
-      <div
-        role="meter"
-        aria-label={translate("chat.composer.voiceWaveform")}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(Math.max(0, Math.min(1, peakLevel)) * 100)}
-        className={cn(
-          "flex items-center justify-center gap-px overflow-hidden rounded-(--control-radius) px-1",
-          size === "xs" ? "h-6 w-14" : "h-7 w-16",
-          canSpeak ? "bg-voice-recording/8" : "bg-muted",
-        )}
-      >
-        {WAVEFORM_BAR_KEYS.map((key, index) => (
-          <span
-            key={key}
-            data-voice-wave-bar="true"
-            className={cn(
-              "w-0.5 shrink-0 rounded-full motion-safe:transition-[height] motion-safe:duration-75 motion-safe:ease-out",
-              canSpeak ? "bg-voice-recording" : "bg-muted-foreground/35",
-            )}
-            style={{ height: waveformBarHeight(audioWaveform[index] ?? 0) }}
-          />
-        ))}
-      </div>
+      {!processing ? (
+        <div
+          role="meter"
+          aria-label={translate("chat.composer.voiceWaveform")}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(Math.max(0, Math.min(1, peakLevel)) * 100)}
+          className={cn(
+            "flex items-center justify-center gap-px overflow-hidden rounded-(--control-radius) px-1",
+            size === "xs" ? "h-6 w-14" : "h-7 w-16",
+            canSpeak ? "bg-voice-recording/8" : "bg-muted",
+          )}
+        >
+          {WAVEFORM_BAR_KEYS.map((key, index) => (
+            <span
+              key={key}
+              data-voice-wave-bar="true"
+              className={cn(
+                "w-0.5 shrink-0 rounded-full motion-safe:transition-[height] motion-safe:duration-75 motion-safe:ease-out",
+                canSpeak ? "bg-voice-recording" : "bg-muted-foreground/35",
+              )}
+              style={{ height: waveformBarHeight(audioWaveform[index] ?? 0) }}
+            />
+          ))}
+        </div>
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -158,25 +165,25 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
                 canSpeak &&
                   "bg-voice-recording text-white shadow-voice-recording hover:bg-voice-recording-hover hover:text-white dark:text-white",
               )}
-              disabled={state === "stopping"}
+              disabled={processing}
               data-composer-shortcut="composer.voiceInput"
               onClick={() => (state === "starting" ? onCancel() : void onStop())}
-              aria-busy={state === "stopping" || undefined}
+              aria-busy={processing || undefined}
               aria-label={buttonLabel}
             />
           }
         >
           {state === "starting" ? (
             <XIcon className="size-3.5" />
-          ) : state === "stopping" ? (
-            <HourglassIcon className="size-3.5" />
+          ) : processing ? (
+            <HourglassIcon className="size-3.5 motion-safe:animate-voice-hourglass" />
           ) : (
             <SquareIcon className="size-2.5 fill-current text-current" />
           )}
         </TooltipTrigger>
         <TooltipPopup side="top">
           {buttonTooltip}
-          {shortcutLabel && state !== "stopping" ? ` (${shortcutLabel})` : null}
+          {shortcutLabel && !processing ? ` (${shortcutLabel})` : null}
         </TooltipPopup>
       </Tooltip>
       {state !== "starting" ? (

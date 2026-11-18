@@ -89,7 +89,7 @@ function compareVisibleEntries(
   );
 }
 
-function compareArchivedAgents(
+export function compareArchivedAgents(
   left: OrchestrationSubagentSummary,
   right: OrchestrationSubagentSummary,
 ): number {

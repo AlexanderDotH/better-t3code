@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { supportsDailyUsagePace } from "@t3tools/shared/usageLimits";
 
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
 
@@ -7,31 +8,30 @@ const noNames = { overageIncluded: undefined } as const;
 
 describe("claudeUsageResponseToLimits", () => {
   it("maps the session, weekly, and model-scoped weekly windows", () => {
-    expect(
-      claudeUsageResponseToLimits({
-        checkedAt,
-        response: {
-          rate_limits_available: true,
-          rate_limits: {
-            five_hour: { utilization: 54, resets_at: "2026-07-18T14:39:00Z" },
-            seven_day: { utilization: 18.4, resets_at: "2026-07-24T08:59:00+00:00" },
-            seven_day_opus: { utilization: 3, resets_at: null },
-            ...({
-              model_scoped: [
-                { display_name: "Fable", utilization: 73, resets_at: "2026-07-24T08:59:00Z" },
-                { display_name: "Ghost", utilization: null, resets_at: null },
-              ],
-            } as object),
-            extra_usage: {
-              is_enabled: false,
-              monthly_limit: null,
-              used_credits: null,
-              utilization: null,
-            },
+    const result = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 54, resets_at: "2026-07-18T14:39:00Z" },
+          seven_day: { utilization: 18.4, resets_at: "2026-07-24T08:59:00+00:00" },
+          seven_day_opus: { utilization: 3, resets_at: null },
+          ...({
+            model_scoped: [
+              { display_name: "Fable", utilization: 73, resets_at: "2026-07-24T08:59:00Z" },
+              { display_name: "Ghost", utilization: null, resets_at: null },
+            ],
+          } as object),
+          extra_usage: {
+            is_enabled: false,
+            monthly_limit: null,
+            used_credits: null,
+            utilization: null,
           },
         },
-      }),
-    ).toEqual({
+      },
+    });
+    expect(result).toEqual({
       names: { overageIncluded: "Fable" },
       limits: {
         checkedAt,
@@ -63,6 +63,9 @@ describe("claudeUsageResponseToLimits", () => {
         ],
       },
     });
+    expect(result.limits.windows.filter(supportsDailyUsagePace).map((window) => window.id)).toEqual(
+      ["seven_day", "seven_day_fable"],
+    );
   });
 
   it("names the overage-included bucket only from a scoped entry that drew a row", () => {

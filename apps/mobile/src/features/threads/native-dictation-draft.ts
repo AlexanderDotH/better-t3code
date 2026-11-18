@@ -97,6 +97,7 @@ export async function processNativeDictation(input: {
   readonly transcript: string;
   readonly signal: AbortSignal;
   readonly process?: (transcript: string) => Promise<SpeechProcessDictationResult>;
+  readonly processed?: SpeechProcessDictationResult;
   readonly translate?: (text: string) => Promise<string>;
 }): Promise<SpeechProcessDictationResult> {
   const original: SpeechProcessDictationResult = { text: input.transcript, references: [] };
@@ -105,9 +106,9 @@ export async function processNativeDictation(input: {
   input.signal.addEventListener("abort", cancel, { once: true });
   if (input.signal.aborted) lifetime.abort();
   const process = async (): Promise<SpeechProcessDictationResult> => {
-    let result = original;
+    let result = input.processed ?? original;
     if (lifetime.signal.aborted) return result;
-    if (input.process) result = await input.process(input.transcript);
+    if (input.process && !input.processed) result = await input.process(input.transcript);
     if (lifetime.signal.aborted || result.warning || !input.translate) return result;
     try {
       return await translateVoiceDictationResult(result, input.translate);

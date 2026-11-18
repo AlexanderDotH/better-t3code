@@ -20,6 +20,7 @@ import { encodeProjectIndexJson } from "./ProjectIndexingErrors.ts";
 import { liveProjectIndexExtraction } from "./ProjectIndexingExtraction.ts";
 import { initialProjectIndexGenerationMetadata } from "./ProjectIndexingMetadata.ts";
 import { makeProjectIndexingRuntime } from "./ProjectIndexingRuntime.ts";
+import { KnowledgeStoreError } from "../persistence/KnowledgeStoreSchema.ts";
 
 const projectId = ProjectId.make("static-runtime");
 const reviewModel = {
@@ -36,6 +37,66 @@ const temporaryWorkspace = Effect.acquireRelease(
     return root;
   }),
   (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
+);
+
+it.live("recovery skips paused indexes and isolates a workspace owned by another process", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const roots = [
+        yield* temporaryWorkspace,
+        yield* temporaryWorkspace,
+        yield* temporaryWorkspace,
+      ];
+      const scopes = roots.map((workspaceRoot, index) => ({
+        workspaceRoot,
+        scope: { scopeId: `scope:${index}`, projectId, workspaceFingerprint: workspaceRoot },
+      }));
+      for (const [index, root] of roots.entries()) {
+        const store = yield* openKnowledgeKvStore({ workspaceRoot: root });
+        yield* store.setSettings({ ...(yield* store.getSettings()), enabled: true });
+        if (index === 0) {
+          const lease = yield* store.acquireLease("fixture");
+          const generation = yield* store.beginGeneration({
+            lease,
+            expectedRevision: 0,
+            idempotencyKey: "paused",
+          });
+          yield* store.pauseGeneration(generation.revision);
+          yield* store.releaseLease(lease);
+        }
+      }
+      const opened: string[] = [];
+      const watched: string[] = [];
+      const runtime = yield* makeProjectIndexingRuntime({
+        bridge: {
+          listScopes: () => Effect.succeed(scopes),
+          resolveScope: () => Effect.succeed(scopes[2]!),
+          capabilities: () => Effect.die("no model work"),
+          generate: () => Effect.die("no model work"),
+          admit: () => Effect.die("no model work"),
+          readDiff: () => Effect.die("unused"),
+          reconcileWatchers: (active) =>
+            Effect.sync(() => {
+              watched.push(...active.map((scope) => scope.workspaceRoot));
+            }),
+        },
+        openStore: (resolved) => {
+          opened.push(resolved.workspaceRoot);
+          return resolved.workspaceRoot === roots[2]
+            ? openKnowledgeKvStore(resolved)
+            : Effect.fail(
+                new KnowledgeStoreError({
+                  code: "storage-failed",
+                  detail: "IO error: database LOCK is held by another process",
+                }),
+              );
+        },
+      });
+      yield* runtime.recover;
+      assert.deepStrictEqual(opened, [roots[1], roots[2]]);
+      assert.deepStrictEqual(watched, [roots[2]]);
+    }),
+  ),
 );
 
 const makeHarness = Effect.fn("StaticRuntimeTest.makeHarness")(function* (root: string) {

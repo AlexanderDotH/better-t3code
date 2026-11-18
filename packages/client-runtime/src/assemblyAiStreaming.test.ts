@@ -9,9 +9,22 @@ import {
   Pcm16ChunkEncoder,
   buildAssemblyAiStreamingUrl,
   parseAssemblyAiStreamingMessage,
+  assemblyAiDictationBlocksSubmission,
+  isAssemblyAiDictationProcessing,
 } from "./assemblyAiStreaming.ts";
 
 describe("streaming dictation", () => {
+  it.each([
+    ["idle", false, false],
+    ["starting", true, false],
+    ["recording", true, false],
+    ["stopping", true, true],
+    ["interpreting", true, true],
+  ] as const)("gates submission and processing in the %s phase", (state, blocked, processing) => {
+    expect(assemblyAiDictationBlocksSubmission(state)).toBe(blocked);
+    expect(isAssemblyAiDictationProcessing(state)).toBe(processing);
+  });
+
   it("replaces partial turns and deduplicates finalized transcripts", () => {
     const transcript = new AssemblyAiTranscriptAccumulator();
     transcript.update({ transcript: "Hello", endOfTurn: false, turnOrder: 0 });

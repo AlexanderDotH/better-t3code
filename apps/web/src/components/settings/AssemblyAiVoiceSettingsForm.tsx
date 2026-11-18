@@ -1,20 +1,20 @@
 import {
-  AssemblyAiVoiceSettings,
+  type AssemblyAiVoiceSettings,
   type ModelSelection,
   type EnvironmentId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { createModelSelection } from "@t3tools/shared/model";
-import * as Schema from "effect/Schema";
-import { useState, type ReactNode } from "react";
+import { createVoiceSettingsAutosave } from "@t3tools/client-runtime/voice-settings";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { BetterT3SettingsSubgroupId } from "@t3tools/client-runtime/better-t3-settings-layout";
 
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import type { ModelEsque } from "../chat/providerIconUtils";
-import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -23,7 +23,6 @@ import { SettingsRow } from "./settingsLayout";
 import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
 
 type ModelOption = { readonly id: string; readonly name: string };
-const isValidVoiceSettings = Schema.is(AssemblyAiVoiceSettings);
 
 export function AssemblyAiVoiceSettingsForm({
   environmentId = null,
@@ -34,6 +33,7 @@ export function AssemblyAiVoiceSettingsForm({
   onSave,
   grouped = true,
   modelsState = "ready",
+  advancedSupported = true,
 }: {
   readonly environmentId?: EnvironmentId | null;
   readonly value: AssemblyAiVoiceSettings;
@@ -46,34 +46,21 @@ export function AssemblyAiVoiceSettingsForm({
   readonly disabled: boolean;
   readonly grouped?: boolean;
   readonly modelsState?: "loading" | "ready" | "error";
+  readonly advancedSupported?: boolean;
   readonly onSave: (settings: AssemblyAiVoiceSettings) => Promise<boolean>;
 }) {
   const translate = useInterfaceTranslator().message;
-  const [draft, setDraft] = useState(value);
-  const [languages, setLanguages] = useState(value.languageCodes.join(", "));
-  const [terms, setTerms] = useState(value.customKeyterms.join("\n"));
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<"saved" | "saveFailed" | "validation" | null>(null);
+  const save = useStableCallback(onSave);
+  const [autosave] = useState(() => createVoiceSettingsAutosave(value, save));
+  const { draft, languages, terms, numbers, message } = useSyncExternalStore(
+    autosave.subscribe,
+    autosave.getSnapshot,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Flush pending settings to the environment when this editor unmounts.
+  useEffect(() => () => autosave.flush(), [autosave]);
   const pro = draft.speechModel === "universal-3-5-pro";
   const cleanupEnabled = draft.cleanupMode !== "off";
-  const controlsDisabled = disabled || busy;
-  const modelOptions = models.some((model) => model.id === draft.cleanupModel)
-    ? models
-    : [{ id: draft.cleanupModel, name: draft.cleanupModel }, ...models];
-  const selectedCleanupModel = draft.cleanupModelSelection
-    ? t3Models.optionsByInstance
-        .get(draft.cleanupModelSelection.instanceId)
-        ?.find((model) => model.slug === draft.cleanupModelSelection?.model)
-    : undefined;
-  const selectedCleanupProvider = t3Models.instanceEntries.find(
-    (entry) => entry.instanceId === draft.cleanupModelSelection?.instanceId,
-  );
-  const cleanupModelUnavailable = draft.cleanupModelSelection
-    ? !selectedCleanupModel ||
-      selectedCleanupModel.isUnavailable ||
-      !selectedCleanupProvider ||
-      !isProviderInstancePickerReady(selectedCleanupProvider)
-    : modelsState !== "loading" && !models.some((model) => model.id === draft.cleanupModel);
+  const controlsDisabled = disabled;
 
   function group(groupId: BetterT3SettingsSubgroupId, children: ReactNode) {
     return grouped ? (
@@ -87,8 +74,7 @@ export function AssemblyAiVoiceSettingsForm({
     key: K,
     next: AssemblyAiVoiceSettings[K],
   ) {
-    setMessage(null);
-    setDraft((current) => ({ ...current, [key]: next }));
+    autosave.update({ [key]: next });
   }
 
   function select<K extends "speechModel" | "streamingMode" | "voiceFocus" | "cleanupMode">(
@@ -132,6 +118,7 @@ export function AssemblyAiVoiceSettingsForm({
 
   function toggle(
     key:
+      | "advancedMode"
       | "includePartialTurns"
       | "continuousPartials"
       | "projectVocabulary"
@@ -150,6 +137,63 @@ export function AssemblyAiVoiceSettingsForm({
             disabled={controlsDisabled || unavailable}
             aria-label={translate(label)}
             onCheckedChange={(next) => update(key, next)}
+          />
+        }
+      />
+    );
+  }
+
+  function modelPicker(purpose: "cleanup" | "interpretation", enabled: boolean) {
+    const selectionKey = `${purpose}ModelSelection` as const;
+    const modelKey = `${purpose}Model` as const;
+    const selection = draft[selectionKey];
+    const modelId = draft[modelKey];
+    const modelOptions = models.some((model) => model.id === modelId)
+      ? models
+      : [{ id: modelId, name: modelId }, ...models];
+    const selectedModel = selection
+      ? t3Models.optionsByInstance
+          .get(selection.instanceId)
+          ?.find((model) => model.slug === selection.model)
+      : undefined;
+    const selectedProvider = t3Models.instanceEntries.find(
+      (entry) => entry.instanceId === selection?.instanceId,
+    );
+    const unavailable = selection
+      ? !selectedModel ||
+        selectedModel.isUnavailable ||
+        !selectedProvider ||
+        !isProviderInstancePickerReady(selectedProvider)
+      : modelsState !== "loading" && !models.some((model) => model.id === modelId);
+    return (
+      <SettingsRow
+        id={grouped && purpose === "cleanup" ? "voice-cleanup-model" : undefined}
+        title={translate(`settings.voice.options.${modelKey}`)}
+        status={
+          enabled && unavailable ? translate("settings.betterT3.value.unavailable") : undefined
+        }
+        control={
+          <ProviderModelPicker
+            environmentId={environmentId}
+            activeInstanceId={selection?.instanceId ?? t3Models.fallbackSelection.instanceId}
+            model={selection?.model ?? t3Models.fallbackSelection.model}
+            lockedProvider={null}
+            instanceEntries={t3Models.instanceEntries}
+            modelOptionsByInstance={t3Models.optionsByInstance}
+            modelSelectionPurpose="text-generation"
+            auxiliaryModels={modelOptions}
+            selectedAuxiliaryModel={selection ? null : modelId}
+            fallbackToFirstModel={false}
+            disabled={controlsDisabled || !enabled}
+            triggerVariant="outline"
+            triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+            triggerAriaLabel={translate(`settings.voice.options.${modelKey}`)}
+            onInstanceModelChange={(instanceId, model) =>
+              update(selectionKey, createModelSelection(instanceId, model))
+            }
+            onAuxiliaryModelChange={(model) => {
+              autosave.update({ [modelKey]: model, [selectionKey]: null });
+            }}
           />
         }
       />
@@ -182,45 +226,13 @@ export function AssemblyAiVoiceSettingsForm({
             required
             aria-label={translate(label)}
             disabled={controlsDisabled || unavailable}
-            value={draft[key]}
-            onChange={(event) => update(key, Number(event.target.value))}
+            value={numbers[key]}
+            onChange={(event) => autosave.edit(key, event.target.value)}
+            onBlur={autosave.flush}
           />
         }
       />
     );
-  }
-
-  async function save() {
-    const languageCodes = [
-      ...new Set(
-        languages
-          .split(",")
-          .map((language) => language.trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    ];
-    const customKeyterms = [
-      ...new Set(
-        terms
-          .split("\n")
-          .map((term) => term.trim())
-          .filter(Boolean),
-      ),
-    ];
-    const next = { ...draft, languageCodes, customKeyterms };
-    if (
-      !isValidVoiceSettings(next) ||
-      languageCodes.some((language) => !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/u.test(language))
-    ) {
-      setMessage("validation");
-      return;
-    }
-    setBusy(true);
-    await Promise.resolve()
-      .then(() => onSave(next))
-      .then((saved) => setMessage(saved ? "saved" : "saveFailed"))
-      .catch(() => setMessage("saveFailed"))
-      .finally(() => setBusy(false));
   }
 
   return (
@@ -228,7 +240,7 @@ export function AssemblyAiVoiceSettingsForm({
       className={grouped ? "space-y-6" : undefined}
       onSubmit={(event) => {
         event.preventDefault();
-        void save();
+        autosave.flush();
       }}
     >
       {group(
@@ -260,10 +272,8 @@ export function AssemblyAiVoiceSettingsForm({
                 disabled={controlsDisabled || !pro}
                 aria-label={translate("settings.voice.options.languages")}
                 placeholder="de, en"
-                onChange={(event) => {
-                  setLanguages(event.target.value);
-                  setMessage(null);
-                }}
+                onChange={(event) => autosave.edit("languages", event.target.value)}
+                onBlur={autosave.flush}
               />
             }
           />
@@ -318,10 +328,8 @@ export function AssemblyAiVoiceSettingsForm({
               disabled={controlsDisabled}
               rows={3}
               aria-label={translate("settings.voice.options.terms")}
-              onChange={(event) => {
-                setTerms(event.target.value);
-                setMessage(null);
-              }}
+              onChange={(event) => autosave.edit("terms", event.target.value)}
+              onBlur={autosave.flush}
             />
           </SettingsRow>
           {pro ? (
@@ -335,7 +343,8 @@ export function AssemblyAiVoiceSettingsForm({
                 disabled={controlsDisabled}
                 rows={3}
                 aria-label={translate("settings.voice.options.context")}
-                onChange={(event) => update("contextPrompt", event.target.value)}
+                onChange={(event) => autosave.edit("contextPrompt", event.target.value)}
+                onBlur={autosave.flush}
               />
             </SettingsRow>
           ) : null}
@@ -349,6 +358,15 @@ export function AssemblyAiVoiceSettingsForm({
       {group(
         "voice-cleanup",
         <>
+          {toggle(
+            "advancedMode",
+            "settings.voice.options.advancedMode",
+            advancedSupported
+              ? "settings.voice.options.advancedModeHint"
+              : "settings.voice.options.advancedUnsupported",
+            !advancedSupported,
+          )}
+          {draft.advancedMode ? modelPicker("interpretation", advancedSupported) : null}
           {select(
             "cleanupMode",
             "settings.voice.options.cleanup",
@@ -361,46 +379,7 @@ export function AssemblyAiVoiceSettingsForm({
             false,
             "settings.voice.options.cleanupHint",
           )}
-          <SettingsRow
-            id={grouped ? "voice-cleanup-model" : undefined}
-            title={translate("settings.voice.options.cleanupModel")}
-            status={
-              cleanupEnabled && cleanupModelUnavailable
-                ? translate("settings.betterT3.value.unavailable")
-                : undefined
-            }
-            control={
-              <ProviderModelPicker
-                environmentId={environmentId}
-                activeInstanceId={
-                  draft.cleanupModelSelection?.instanceId ?? t3Models.fallbackSelection.instanceId
-                }
-                model={draft.cleanupModelSelection?.model ?? t3Models.fallbackSelection.model}
-                lockedProvider={null}
-                instanceEntries={t3Models.instanceEntries}
-                modelOptionsByInstance={t3Models.optionsByInstance}
-                modelSelectionPurpose="text-generation"
-                auxiliaryModels={modelOptions}
-                selectedAuxiliaryModel={draft.cleanupModelSelection ? null : draft.cleanupModel}
-                fallbackToFirstModel={false}
-                disabled={controlsDisabled || !cleanupEnabled}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                triggerAriaLabel={translate("settings.voice.options.cleanupModel")}
-                onInstanceModelChange={(instanceId, model) => {
-                  update("cleanupModelSelection", createModelSelection(instanceId, model));
-                }}
-                onAuxiliaryModelChange={(model) => {
-                  setMessage(null);
-                  setDraft((current) => ({
-                    ...current,
-                    cleanupModel: model,
-                    cleanupModelSelection: null,
-                  }));
-                }}
-              />
-            }
-          />
+          {modelPicker("cleanup", cleanupEnabled)}
           {draft.cleanupMode === "custom" ? (
             <SettingsRow
               id={grouped ? "voice-cleanup-instructions" : undefined}
@@ -412,46 +391,18 @@ export function AssemblyAiVoiceSettingsForm({
                 disabled={controlsDisabled}
                 rows={3}
                 aria-label={translate("settings.voice.options.instructions")}
-                onChange={(event) => update("cleanupInstructions", event.target.value)}
+                onChange={(event) => autosave.edit("cleanupInstructions", event.target.value)}
+                onBlur={autosave.flush}
               />
             </SettingsRow>
           ) : null}
         </>,
       )}
-      <div className="space-y-3 px-3 py-4 sm:px-4">
-        <p className="text-xs text-muted-foreground">
-          {translate("settings.voice.options.cloudHint")}
+      {message ? (
+        <p role="alert" className="px-3 py-4 text-xs text-destructive sm:px-4">
+          {translate(`settings.voice.options.${message}`)}
         </p>
-        {message ? (
-          <p
-            role={message === "saved" ? "status" : "alert"}
-            className={
-              message === "saved" ? "text-xs text-muted-foreground" : "text-xs text-destructive"
-            }
-          >
-            {translate(`settings.voice.options.${message}`)}
-          </p>
-        ) : null}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" type="submit" disabled={controlsDisabled}>
-            {translate(busy ? "settings.voice.options.saving" : "settings.voice.options.save")}
-          </Button>
-          <Button
-            size="sm"
-            type="button"
-            variant="outline"
-            disabled={controlsDisabled}
-            onClick={() => {
-              setDraft(value);
-              setLanguages(value.languageCodes.join(", "));
-              setTerms(value.customKeyterms.join("\n"));
-              setMessage(null);
-            }}
-          >
-            {translate("settings.voice.options.cancel")}
-          </Button>
-        </div>
-      </div>
+      ) : null}
     </form>
   );
 }

@@ -4073,6 +4073,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const projectId = ProjectId.make("voice-project");
         const voice = {
           ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+          advancedMode: true,
+          interpretationModelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "gpt-6-luna",
+          ),
           cleanupModelSelection: createModelSelection(
             ProviderInstanceId.make("codex"),
             "gpt-6-luna",

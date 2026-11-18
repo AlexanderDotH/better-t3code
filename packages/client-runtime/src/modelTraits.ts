@@ -2,6 +2,7 @@ import type {
   ModelSelection,
   ProviderDriverKind,
   ProviderOptionDescriptor,
+  ServerProviderModel,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -17,6 +18,21 @@ const REASONING_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
   "thinking",
 ]);
 const MAX_EFFORT_BARS = 7;
+
+export function getCodexDaybreakAvailability(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+) {
+  const supportedModels = models.filter((candidate) =>
+    candidate.capabilities?.optionDescriptors?.some(
+      (descriptor) => descriptor.id === "daybreak" && descriptor.type === "boolean",
+    ),
+  );
+  return {
+    supported: supportedModels.some((candidate) => candidate.slug === model),
+    supportedModels,
+  };
+}
 
 /** The model's reasoning control: a known effort id, or a select its agent marked as reasoning. */
 export function isReasoningControl(descriptor: ProviderOptionDescriptor): boolean {
@@ -160,6 +176,14 @@ export function buildTraitsTriggerDisplay(input: {
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (
+      input.provider === "codex" &&
+      descriptor.id === "daybreak" &&
+      descriptor.type === "boolean"
+    ) {
+      if (descriptor.currentValue === true) labels.push(descriptor.label);
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";

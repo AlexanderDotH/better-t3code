@@ -473,6 +473,136 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live("refreshes a warm price catalog when usage includes a new model", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const prefix = "usage-new-model";
+      const window = { ...WINDOW, sinceDay: UsageDay.make("2026-08-01") };
+      const nativeDir = NodePath.join(home, "codex", "sessions");
+      const lines = [
+        { type: "session_meta", payload: { id: "astra-session", model_provider: "openai" } },
+        { type: "turn_context", payload: { model: "gpt-6.2-astra" } },
+        {
+          type: "event_msg",
+          payload: {
+            type: "thread_settings_applied",
+            thread_settings: { service_tier: "ultrafast" },
+          },
+        },
+        {
+          timestamp: "2026-08-01T10:00:00Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 10, output_tokens: 5 } },
+          },
+        },
+      ];
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(nativeDir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(nativeDir, "session.jsonl"),
+          lines.map((line) => encodeUnknownJsonString(line)).join("\n"),
+        );
+      });
+      const feed = {
+        "gpt-6.2-astra": {
+          input_cost_per_token: 8e-6,
+          output_cost_per_token: 4e-5,
+          input_cost_per_token_ultrafast: 24e-6,
+          output_cost_per_token_ultrafast: 12e-5,
+        },
+      };
+      let requests = 0;
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const now = yield* Clock.currentTimeMillis;
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-model-rates.json"),
+            encodeUnknownJsonString({
+              fetchedAtMs: now - Duration.toMillis(Duration.minutes(2)),
+              document: {
+                "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+              },
+            }),
+          );
+        });
+        const service = yield* UsageService.make;
+        const result = yield* service.readSummary(window);
+        const astra = result.buckets.find(({ model }) => model === "gpt-6.2-astra");
+        assert.strictEqual(astra?.speed, "ultrafast");
+        assert.closeTo(astra?.costUsd ?? -1, 0.00084, 1e-12);
+        assert.strictEqual(astra?.costSource, "modelPriced");
+        yield* service.readSummary(window);
+        assert.strictEqual(requests, 1);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix,
+            home,
+            settings,
+            ratesDocument: feed,
+            onRatesFetch: () => {
+              requests += 1;
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("attributes a native session to its project and keeps unmatched usage", () =>
+    Effect.gen(function* () {
+      const { transcript, home, settings } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5, "claude-fable-5", "linked") +
+            claudeLine(2, 6, "claude-fable-5", "external"),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const time = "2026-08-01T10:00:00Z";
+        yield* sql`
+          INSERT INTO projection_projects
+            (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+          VALUES ('project', 'Usage project', '/sample', '[]', ${time}, ${time})
+        `;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads
+            (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+          VALUES ('app-thread', 'project', 'Thread', 'claudeAgent', 'full-access', 'default', ${time}, ${time}, '{}')
+        `;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_provider_threads
+            (provider_thread_id, thread_id, provider, driver, provider_instance_id, status, updated_at, payload_json)
+          VALUES ('native-thread', 'app-thread', 'claudeAgent', 'claudeAgent', 'claudeAgent', 'idle', ${time},
+            ${encodeUnknownJsonString({ nativeThreadRef: { nativeId: "linked", strength: "strong" } })})
+        `;
+        const service = yield* UsageService.make;
+        const result = yield* service.readSummary(WINDOW);
+        const buckets = result.buckets.filter(({ provider }) => provider === "claude");
+        assert.lengthOf(buckets, 2);
+        assert.deepStrictEqual(buckets.find(({ project }) => project !== undefined)?.project, {
+          id: "project",
+          title: "Usage project",
+        });
+        assert.strictEqual(
+          buckets.find(({ project }) => project === undefined)?.totals.outputTokens,
+          6,
+        );
+        assert.deepStrictEqual(
+          result.sources.find(({ fingerprint }) => fingerprint.provider === "claude")
+            ?.distinctSessionsBySpeed,
+          { standard: 2, fast: 0, ultrafast: 0 },
+        );
+      }).pipe(Effect.provide(layerService({ prefix: "usage-projects", home, settings })));
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;

@@ -20,11 +20,18 @@ describe("markdown table width", () => {
     expect(resolveDefaultExpandedMarkdownTableWidth(768, bounds)).toBe(960);
   });
 
-  it("leaves room for the expanded bubble padding inside the viewport gutter", () => {
-    const bounds = resolveMarkdownTableWidthBounds(768, 1000, 40);
-    expect(bounds).toEqual({ minWidth: 768, maxWidth: 920 });
-    expect(resolveDefaultExpandedMarkdownTableWidth(768, bounds)).toBe(920);
-  });
+  it.each([
+    { centerOffset: 0, maxWidth: 920 },
+    { centerOffset: -80, maxWidth: 760 },
+    { centerOffset: 80, maxWidth: 760 },
+  ])(
+    "keeps the centered bubble inside the viewport gutter at offset $centerOffset",
+    ({ centerOffset, maxWidth }) => {
+      const bounds = resolveMarkdownTableWidthBounds(768, 1000, 40, centerOffset);
+      expect(bounds).toEqual({ minWidth: Math.min(768, maxWidth), maxWidth });
+      expect(resolveDefaultExpandedMarkdownTableWidth(768, bounds)).toBe(maxWidth);
+    },
+  );
 
   it("keeps either dragged edge under the pointer while resizing around the center", () => {
     const bounds = { minWidth: 768, maxWidth: 1560 };

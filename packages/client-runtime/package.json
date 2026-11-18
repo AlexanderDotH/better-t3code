@@ -27,6 +27,10 @@
       "types": "./src/betterT3SettingsLayout.ts",
       "default": "./src/betterT3SettingsLayout.ts"
     },
+    "./settings-navigation": {
+      "types": "./src/settingsNavigation.ts",
+      "default": "./src/settingsNavigation.ts"
+    },
     "./project-chat-settings": {
       "types": "./src/projectChatSettings.ts",
       "default": "./src/projectChatSettings.ts"
@@ -138,6 +142,10 @@
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
+    },
+    "./voice-settings": {
+      "types": "./src/voice-input/settingsAutosave.ts",
+      "default": "./src/voice-input/settingsAutosave.ts"
     },
     "./relay": {
       "types": "./src/relay/index.ts",
@@ -294,6 +302,10 @@
     "./assembly-ai": {
       "types": "./src/assemblyAiStreaming.ts",
       "default": "./src/assemblyAiStreaming.ts"
+    },
+    "./server-speech-session": {
+      "types": "./src/serverSpeechSession.ts",
+      "default": "./src/serverSpeechSession.ts"
     },
     "./project-thread-preview": {
       "types": "./src/projectThreadPreview.ts",
