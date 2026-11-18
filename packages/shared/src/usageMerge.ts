@@ -5,8 +5,10 @@ import {
   type UsageCallKind,
   type UsageContextDiagnostics,
   type UsageProviderKind,
+  type UsageProject,
   type UsageSource,
   type UsageSourceFingerprint,
+  type UsageSpeed,
   type UsageSummary,
   type UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -38,6 +40,13 @@ export interface ModelTotals {
   readonly unpricedTokens: number;
   readonly costShare: number;
   readonly tokenShare: number;
+}
+
+export interface ProjectTotals extends UsageProject {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly totalTokens: number;
 }
 
 /** When every record lacks rates, costUsd is unknown and must not be displayed as a dollar figure. */
@@ -112,6 +121,9 @@ export interface MergedUsage {
   readonly contextDiagnostics: UsageContextDiagnostics;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
+  readonly projects: readonly ProjectTotals[];
+  readonly unassignedProjectTokens: number;
+  readonly hasUnknownSpeed: boolean;
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
@@ -148,7 +160,10 @@ function bucketKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.hourStart ?? null, bucket.provider, bucket.model]);
 }
 
-function claimSources(environments: readonly EnvironmentUsage[]): {
+function claimSources(
+  environments: readonly EnvironmentUsage[],
+  speed: UsageSpeed | undefined,
+): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly supplementalBucketsByEnvironment: ReadonlyMap<EnvironmentId, ReadonlySet<UsageBucket>>;
   readonly sessionsByFingerprint: ReadonlyMap<string, number>;
@@ -163,6 +178,8 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const supplementalBucketsByEnvironment = new Map<EnvironmentId, Set<UsageBucket>>();
   const sessionsByFingerprint = new Map<string, number>();
   const duplicates: string[] = [];
+  const sessionCount = (source: UsageSource) =>
+    speed === undefined ? source.distinctSessions : (source.distinctSessionsBySpeed?.[speed] ?? 0);
 
   const ordered = [...environments].sort(
     (a, b) =>
@@ -181,7 +198,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
         }
         ownerByFingerprint.set(key, environment.environmentId);
         ownerScanByFingerprint.set(key, { environment, source });
-        sessionsByFingerprint.set(key, source.distinctSessions);
+        sessionsByFingerprint.set(key, sessionCount(source));
       }
     }
   }
@@ -208,19 +225,19 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       }
       const supplemental =
         supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set<UsageBucket>();
-      let added = false;
+      const addedCells = new Set<string>();
       for (const bucket of bucketsForSource(environment.summary, source)) {
         const cell = bucketKey(bucket);
         if (seen.has(cell)) continue;
-        seen.add(cell);
+        addedCells.add(cell);
         supplemental.add(bucket);
-        added = true;
       }
-      if (!added) continue;
+      if (addedCells.size === 0) continue;
+      for (const cell of addedCells) seen.add(cell);
       supplementalBucketsByEnvironment.set(environment.environmentId, supplemental);
       sessionsByFingerprint.set(
         key,
-        Math.max(sessionsByFingerprint.get(key) ?? 0, source.distinctSessions),
+        Math.max(sessionsByFingerprint.get(key) ?? 0, sessionCount(source)),
       );
     }
   }
@@ -306,6 +323,9 @@ const EMPTY_MERGED: MergedUsage = {
   },
   providers: [],
   models: [],
+  projects: [],
+  unassignedProjectTokens: 0,
+  hasUnknownSpeed: false,
   daily: [],
   hourly: [],
   costQuality: {
@@ -324,6 +344,10 @@ const EMPTY_MERGED: MergedUsage = {
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
+  options?: {
+    readonly speed?: UsageSpeed | undefined;
+    readonly keepBucket?: (bucket: UsageBucket, environmentId: EnvironmentId) => boolean;
+  },
 ): MergedUsage {
   if (environments.length === 0) return EMPTY_MERGED;
 
@@ -351,7 +375,7 @@ export function mergeUsage(
     supplementalBucketsByEnvironment,
     sessionsByFingerprint,
     duplicates,
-  } = claimSources(current);
+  } = claimSources(current, options?.speed);
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -363,6 +387,9 @@ export function mergeUsage(
   let sessions = 0;
   let cacheSavingsUsd = 0;
   let providerReportedRecords = 0;
+  let unassignedProjectTokens = 0;
+  let hasUnknownSpeed = false;
+  const projects: ProjectTotals[] = [];
   let unpricedRecords = 0;
   const contextDiagnostics: MutableUsageContextDiagnostics = {
     nativeForks: 0,
@@ -415,6 +442,7 @@ export function mergeUsage(
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
+    const environmentProjects = new Map<string, ProjectTotals & { totalTokens: number }>();
     const { buckets, sessionsByProvider } = ownedContribution(
       environment,
       ownerByFingerprint,
@@ -437,8 +465,28 @@ export function mergeUsage(
     }
 
     for (const bucket of buckets) {
+      if (bucket.speed === undefined) hasUnknownSpeed = true;
+      if (options?.speed !== undefined && bucket.speed !== options.speed) continue;
+      if (options?.keepBucket?.(bucket, environment.environmentId) === false) continue;
       const tokens = bucketTokens(bucket);
 
+      if (bucket.project === undefined) {
+        unassignedProjectTokens += tokens;
+      } else {
+        let project = environmentProjects.get(bucket.project.id);
+        if (project === undefined) {
+          project = {
+            ...bucket.project,
+            key: JSON.stringify([environment.environmentId, bucket.project.id]),
+            environmentId: environment.environmentId,
+            environmentLabel: environment.label,
+            totalTokens: 0,
+          };
+          environmentProjects.set(project.id, project);
+          projects.push(project);
+        }
+        project.totalTokens += tokens;
+      }
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
       uncachedInputTokens += bucket.totals.uncachedInputTokens;
@@ -455,8 +503,9 @@ export function mergeUsage(
         categoryCost.cacheWrite += bucket.categoryCostUsd.cacheWrite;
         categoryCost.output += bucket.categoryCostUsd.output;
       }
-      speedCost.fast += bucket.fastCostUsd ?? 0;
-      speedCost.ultrafast += bucket.ultrafastCostUsd ?? 0;
+      speedCost.fast += bucket.speed === "fast" ? bucket.costUsd : (bucket.fastCostUsd ?? 0);
+      speedCost.ultrafast +=
+        bucket.speed === "ultrafast" ? bucket.costUsd : (bucket.ultrafastCostUsd ?? 0);
       speedCost.premium += bucket.speedPremiumUsd ?? 0;
 
       const callKind = bucket.callKind ?? "unknown";
@@ -642,6 +691,11 @@ export function mergeUsage(
     contextDiagnostics,
     providers,
     models,
+    projects: projects.sort(
+      (a, b) => b.totalTokens - a.totalTokens || a.title.localeCompare(b.title),
+    ),
+    unassignedProjectTokens,
+    hasUnknownSpeed,
     daily,
     hourly,
     costQuality: {

@@ -213,16 +213,31 @@ Choose a configured T3 model for cleanup, or an AssemblyAI Gateway model if your
 account has Gateway access. Speech recognition still uses AssemblyAI. If cleanup is unavailable,
 turn it off to keep dictation without post-processing.
 
+Enable **Advanced mode** in the same settings when recognition is inaccurate. Speak once:
+the recording is transcribed three times, then the **Interpretation model** reconciles the results
+before cleanup. Choose a configured T3 model or an AssemblyAI Gateway model; the default is
+Haiku 4.5. Each recording costs three transcriptions plus one interpretation call, in addition to
+cleanup, and takes longer to finish. Recordings are limited to five minutes. T3 Code keeps audio only
+in memory until processing finishes or is canceled. If an extra pass or interpretation fails, the live transcript
+continues through normal cleanup.
+
 When automatic file references are enabled, recognized files become chips showing only the filename
 and extension. If several files share that name, the first match supplies the preview. The agent receives
 all matching candidates to choose the right one for your task. Removing a chip also removes its extra
 context. The project index stays local; selected names and relative paths accompany the transcript
-to the chosen cleanup model. The index updates in the background when recording starts, and you can
+to the chosen cleanup model. The index refreshes in the background during dictation. You can also
 re-index it manually in voice settings.
+
+**Use project vocabulary** also learns confirmed project terms from dictation. Frequently used and
+recent terms get priority. Learning keeps up to 256 terms per project, with counts and last-use times;
+it does not keep transcripts. View the terms under the project in voice settings and choose
+**Clear learned terms** to reset them. Learning starts again with your next dictation. Turn off
+**Use project vocabulary** to stop learning and using project terms.
 
 Choose **Spoken language** to preserve the transcript's language or **English** to translate the
 finished transcript with the configured translation model. Project speech profiles in the same
-settings section improve recognition of repository names and terminology. English translation runs
+settings section improve recognition of repository names and terminology and refresh automatically
+as you use voice input. English translation runs
 after cleanup with your separately selected translation model.
 
 **Prompt improvement** under **Settings → Better T3 → Composer** uses the selected text-generation model to refine a prompt.

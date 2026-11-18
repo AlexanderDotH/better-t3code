@@ -41,61 +41,23 @@
 @keyframes subagent-slot-enter {
   0% {
     height: 0;
-    margin-bottom: 0;
   }
   100% {
-    height: 1.75rem;
-    margin-bottom: 0.25rem;
+    height: 2rem;
   }
 }
 
 @keyframes subagent-slot-collapse {
   from {
-    height: 1.75rem;
-    margin-bottom: 0.25rem;
+    height: 2rem;
   }
   to {
     height: 0;
-    margin-bottom: 0;
   }
 }
 
 .subagent-stack-slot {
-  height: 1.75rem;
-  margin-bottom: 0.25rem;
-}
-
-@utility chat-agent-floating-layer {
-  pointer-events: none;
-  position: absolute;
-  top: 2rem;
-  left: 2rem;
-  z-index: 30;
-  display: block;
-}
-
-.subagent-stack-compact-trigger {
-  display: flex;
-}
-
-.subagent-stack-content {
-  display: none;
-}
-
-[data-chat-agent-stack][data-compact-open="true"] .subagent-stack-content {
-  display: block;
-}
-
-[data-chat-agent-stack][data-has-subagents="false"] .subagent-stack-compact-trigger {
-  display: none;
-}
-
-[data-chat-agent-stack][data-agent-layout="expanded"] .subagent-stack-compact-trigger {
-  display: none;
-}
-
-[data-chat-agent-stack][data-agent-layout="expanded"] .subagent-stack-content {
-  display: block;
+  height: 2rem;
 }
 
 .subagent-stack-slot[data-subagent-presence="entering"] {

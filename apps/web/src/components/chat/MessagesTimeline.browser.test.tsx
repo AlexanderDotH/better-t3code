@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -24,6 +24,7 @@ import {
   StrictMode,
   useState,
   type ComponentProps,
+  type CSSProperties,
   type ReactElement,
 } from "react";
 import * as DateTime from "effect/DateTime";
@@ -501,6 +502,121 @@ describe("MessagesTimeline messages", () => {
     await expect.element(table("first-table")).toHaveAttribute("data-expanded", "true");
     await expect.element(table("second-table")).toHaveAttribute("data-expanded", "false");
   });
+
+  it.each([
+    { mode: "current", nested: false },
+    { mode: "classic", nested: false },
+    { mode: "better-t3", nested: false },
+    { mode: "current", nested: true },
+  ] as const)(
+    "keeps widened tables inside the chat column and scrolls their content in $mode (nested: $nested)",
+    async ({ mode, nested }) => {
+      setup();
+      presentationMode.mode = mode;
+      const previousViewport = { width: window.innerWidth, height: window.innerHeight };
+      await page.viewport(1280, 800);
+      await using _viewport = {
+        [Symbol.asyncDispose]: () => page.viewport(previousViewport.width, previousViewport.height),
+      };
+      const props = baseProps();
+      const markdown = [
+        "| Datum | Projekt / Tätigkeit | Kurzbeschreibung / Ergebnis | Zeitaufwand | Links / Quelle |",
+        "| --- | --- | --- | --- | --- |",
+        `| 13.11.2026 | better-t3code | Scroll-Sprünge behoben und Regressionstests bestanden | nicht belegbar | ${"RepositoryLinkWithoutBreaks".repeat(8)} |`,
+      ]
+        .map((line) => (nested ? `> > > > ${line}` : line))
+        .join("\n");
+      const timeline = (width: number, panelWidth = 0) => (
+        <div
+          data-chat-column
+          className="@container/chat-column flex min-h-0 min-w-0 flex-col overflow-x-hidden"
+          style={{ width, height: 500 }}
+        >
+          <div
+            data-chat-canvas
+            className="flex min-h-0 flex-1 flex-col"
+            style={{ "--chat-lane-inset-end": `${panelWidth}px` } as CSSProperties}
+          >
+            <MessagesTimeline
+              {...props}
+              timelineEntries={[message(markdown, { role: "assistant" })]}
+            />
+          </div>
+        </div>
+      );
+      await using screen = await render(timeline(1100));
+      await expect.element(screen.getByRole("table")).toBeVisible();
+      const column = screen.container.querySelector<HTMLElement>("[data-chat-column]")!;
+      const table = screen.container.querySelector<HTMLElement>(".chat-markdown-table-container")!;
+      const viewport = table.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      const normalBounds = table.getBoundingClientRect();
+      const markdownBounds = table.closest(".chat-markdown")!.getBoundingClientRect();
+      const centerOffset =
+        normalBounds.left + normalBounds.width / 2 - markdownBounds.left - markdownBounds.width / 2;
+      const assertContained = async (panelWidth = 0) => {
+        await vi.waitFor(() => {
+          const bounds = table.getBoundingClientRect();
+          const columnBounds = column.getBoundingClientRect();
+          expect(bounds.left).toBeGreaterThanOrEqual(columnBounds.left);
+          expect(bounds.right).toBeLessThanOrEqual(columnBounds.right - panelWidth);
+          const contentBounds = table.closest(".chat-markdown")!.getBoundingClientRect();
+          expect(bounds.left + bounds.width / 2).toBeCloseTo(
+            contentBounds.left + contentBounds.width / 2 + centerOffset,
+          );
+          expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+          expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+            document.documentElement.clientWidth,
+          );
+          const surface = screen.container.querySelector<HTMLElement>(
+            "[data-presentation-surface]",
+          );
+          if (surface) {
+            expect(surface.getBoundingClientRect().left).toBeGreaterThanOrEqual(columnBounds.left);
+            expect(surface.getBoundingClientRect().right).toBeLessThanOrEqual(
+              columnBounds.right - panelWidth,
+            );
+          }
+        });
+      };
+      await assertContained();
+      const normalWidth = table.getBoundingClientRect().width;
+      await screen.getByRole("button", { name: "Expand table", exact: true }).click();
+      const resize = screen.getByRole("separator", { name: "Resize table from right edge" });
+      resize.element().focus();
+      await userEvent.keyboard("{End}");
+      await vi.waitFor(() =>
+        expect(table.getBoundingClientRect().width).toBeGreaterThan(normalWidth),
+      );
+      await assertContained();
+
+      for (const [width, panelWidth] of [
+        [720, 0],
+        [720, 160],
+        [480, 0],
+        [1100, 160],
+        [1100, 0],
+      ] as const) {
+        await screen.rerender(timeline(width, panelWidth));
+        await assertContained(panelWidth);
+        expect(viewport.scrollLeft).toBe(0);
+        viewport.scrollLeft = viewport.scrollWidth;
+        await expect.element(page.elementLocator(viewport)).not.toHaveProperty("scrollLeft", 0);
+        viewport.scrollLeft = 0;
+        await expect.element(page.elementLocator(viewport)).toHaveProperty("scrollLeft", 0);
+        expect(document.documentElement.scrollLeft).toBe(0);
+      }
+
+      viewport.focus();
+      await userEvent.keyboard("{ArrowRight}");
+      await expect.element(page.elementLocator(viewport)).not.toHaveProperty("scrollLeft", 0);
+      viewport.scrollLeft = 0;
+      const collapse = screen.getByRole("button", { name: "Collapse table", exact: true });
+      collapse.element().focus();
+      await userEvent.keyboard("{Enter}");
+      await vi.waitFor(() => expect(table.getBoundingClientRect().width).toBe(normalWidth));
+      await assertContained();
+    },
+  );
 
   it.each(["current", "classic", "better-t3"] as const)(
     "forks assistant messages at exact boundaries in %s",

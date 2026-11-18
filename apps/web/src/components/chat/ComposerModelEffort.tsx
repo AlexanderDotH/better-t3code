@@ -2,16 +2,18 @@ import { T3_AUTO_REASONING_OPTION_ID } from "@t3tools/contracts";
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
+  getCodexDaybreakAvailability,
   isReasoningControl,
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, ChevronUpIcon, SunriseIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   Menu,
   MenuPopup,
@@ -52,7 +54,10 @@ function splitSpeed(
     speedSelect,
     fastToggle,
     columnSelects: selects.filter((descriptor) => descriptor !== speedSelect),
-    columnToggles: toggles.filter((descriptor) => descriptor !== fastToggle),
+    columnToggles: toggles.filter(
+      (descriptor) =>
+        descriptor !== fastToggle && !(provider === "codex" && descriptor.id === "daybreak"),
+    ),
   };
 }
 
@@ -144,7 +149,8 @@ export function describeComposerEffort(
                 traits.reportedModelSelection,
               ));
   const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
-  // Agent options such as modes live in the picker; the trigger adds only the context window.
+  const daybreak = visibility.daybreakDescriptor?.currentValue === true;
+  // Agent modes stay in the picker.
   const contextWindow =
     visibility.contextWindowDescriptor &&
     getProviderOptionCurrentLabel(
@@ -152,7 +158,8 @@ export function describeComposerEffort(
       modelSelection,
       traits.reportedModelSelection,
     );
-  if (!word && !glyph && !fast && !contextWindow) return { suffix: null, detail: display.label };
+  if (!word && !glyph && !fast && !daybreak && !contextWindow)
+    return { suffix: null, detail: display.label };
   return {
     detail: display.label,
     suffix: (
@@ -171,6 +178,13 @@ export function describeComposerEffort(
           <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
         ) : null}
         {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
+        {daybreak ? (
+          <SunriseIcon
+            aria-hidden="true"
+            data-composer-control-icon
+            className={size === "xs" ? "size-3" : "size-3.5"}
+          />
+        ) : null}
         {contextWindow ? (
           <span
             // A label, so icon-only footers drop it; compacted rows drop it before the model.
@@ -489,21 +503,68 @@ function OptionSwitchRow(props: {
   descriptor: BooleanDescriptor;
   traits: TraitsSelection;
   tabStop: boolean;
+  disabled?: boolean;
+  variant?: "column" | "footer";
 }) {
   const { descriptor, traits } = props;
   const checked = descriptor.currentValue === true;
   return (
-    <label className={cn(OPTION_ROW, "has-focus-visible:bg-foreground/[0.09]")}>
-      <OptionRowText label={descriptor.label} value={checked ? "On" : "Off"} />
+    <label
+      className={
+        props.variant === "footer"
+          ? "flex h-7 items-center gap-2 text-muted-foreground text-xs"
+          : cn(OPTION_ROW, "has-focus-visible:bg-foreground/[0.09]")
+      }
+    >
+      {props.variant === "footer" ? (
+        descriptor.label
+      ) : (
+        <OptionRowText label={descriptor.label} value={checked ? "On" : "Off"} />
+      )}
       <Switch
         size="sm"
         checked={checked}
+        disabled={props.disabled}
         onCheckedChange={(next) => traits.changeBoolean(descriptor.id, next)}
         aria-label={descriptor.label}
         data-effort-row
         tabIndex={props.tabStop ? 0 : -1}
       />
     </label>
+  );
+}
+
+function DaybreakControl(props: { traits: TraitsSelectionInput }) {
+  const traits = useTraitsSelection(props.traits);
+  const translate = useInterfaceTranslator().message;
+  if (props.traits.provider !== "codex") return null;
+  const availability = getCodexDaybreakAvailability(props.traits.models, props.traits.model);
+  if (availability.supportedModels.length === 0) return null;
+  const disabled = !availability.supported;
+  const description = disabled
+    ? translate("chat.traits.daybreakUnavailable", {
+        models: availability.supportedModels.map((model) => model.name).join(", "),
+      })
+    : translate("chat.traits.daybreakDescription");
+  const descriptor: BooleanDescriptor = traits.daybreakDescriptor ?? {
+    id: "daybreak",
+    label: translate("chat.traits.daybreak"),
+    type: "boolean",
+    currentValue: false,
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<div tabIndex={disabled ? 0 : undefined} />}>
+        <OptionSwitchRow
+          descriptor={descriptor}
+          traits={traits}
+          tabStop
+          variant="footer"
+          disabled={disabled}
+        />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{description}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -674,6 +735,7 @@ export function ComposerPickerFooter(props: {
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
       {props.traits ? <SpeedControl traits={props.traits} /> : null}
+      {props.traits ? <DaybreakControl traits={props.traits} /> : null}
       <PermissionsMenu
         runtimeMode={props.runtimeMode}
         options={props.runtimeModeOptions}

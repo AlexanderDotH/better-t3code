@@ -42,6 +42,7 @@ import { Spinner } from "../ui/spinner";
 import { SettingResetButton, SettingsRow, SettingsSearchTarget } from "./settingsLayout";
 import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
 import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
+import { LearnedSpeechVocabulary } from "./LearnedSpeechVocabulary";
 
 const EMPTY_SECRET_VALUE = { value: "", valueRedacted: false };
 
@@ -288,6 +289,7 @@ function ProjectSpeechProfileRow({
               </Button>
             </div>
             {voiceSettings}
+            {open ? <LearnedSpeechVocabulary project={project} disabled={disabled} /> : null}
           </div>
         </CollapsiblePanel>
       </div>
@@ -631,7 +633,10 @@ export function VoiceInputSettings({
             <>
               <AssemblyAiVoiceSettingsForm
                 environmentId={environmentId}
-                key={`${environmentId}:${JSON.stringify(assemblyAi.voice)}`}
+                advancedSupported={
+                  config?.environment.capabilities.supportsAdvancedVoiceDictation === true
+                }
+                key={environmentId}
                 value={assemblyAi.voice}
                 models={models}
                 modelsState={modelsState}
@@ -744,9 +749,11 @@ export function VoiceInputSettings({
                                       </Button>
                                       <AssemblyAiVoiceSettingsForm
                                         environmentId={environmentId}
-                                        key={JSON.stringify(
-                                          assemblyAi.projectOverrides[project.id],
-                                        )}
+                                        advancedSupported={
+                                          config?.environment.capabilities
+                                            .supportsAdvancedVoiceDictation === true
+                                        }
+                                        key={key}
                                         value={resolveAssemblyAiVoiceSettings(
                                           assemblyAi,
                                           project.id,

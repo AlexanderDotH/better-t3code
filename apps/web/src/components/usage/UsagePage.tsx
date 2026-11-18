@@ -6,6 +6,7 @@ import { Atom } from "effect/reactivity";
 import {
   ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
+  UsageSpeed,
   type EnvironmentId,
   type UsageProviderKind,
   type UsageSummaryInput,
@@ -42,7 +43,7 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/ser
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { mergeAnsweredUsage, useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
@@ -85,6 +86,7 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
+import { UsageProjects } from "./UsageProjects";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
 import {
@@ -200,6 +202,7 @@ export function UsagePage() {
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
+  const [speed, setSpeed] = useState<UsageSpeed | undefined>();
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
@@ -212,8 +215,9 @@ export function UsagePage() {
     shown,
     isPartial,
     refresh,
-  } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
+  } = useUsage(window, selectedEnvironmentIds, hiddenProviders, speed);
   const merged = shown?.merged ?? answeredUsage;
+  const shownEnvironments = shown?.environments ?? selectedEnvironments;
   const shownWindow = shown?.window ?? window;
   const shownHourly = shownWindow.resolution === "hour";
   const refreshingUsage = isRefreshing && !showingLimits;
@@ -557,7 +561,10 @@ export function UsagePage() {
                 hours={hours}
                 showingKept={showingKept}
                 metric={metric === "tokens" ? "tokens" : "cost"}
+                speed={speed}
+                onSelectSpeed={setSpeed}
                 selectedEnvironments={selectedEnvironments}
+                shownEnvironments={shownEnvironments}
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
                 cursorAccessEnvironments={cursorAccessEnvironments}
@@ -575,8 +582,9 @@ export function UsagePage() {
       {showingLimits ? null : (
         <UsageModelDialogHost
           models={merged.models}
-          environments={selectedEnvironments}
+          environments={shownEnvironments}
           metric={metric === "tokens" ? "tokens" : "cost"}
+          speed={speed}
           chartWindow={{
             days,
             hours,
@@ -610,7 +618,10 @@ function UsageOverview({
   hours,
   showingKept,
   metric,
+  speed,
+  onSelectSpeed,
   selectedEnvironments,
+  shownEnvironments,
   hiddenProviders,
   refreshingUsage,
   cursorAccessEnvironments,
@@ -625,7 +636,10 @@ function UsageOverview({
   readonly hours: readonly string[];
   readonly showingKept: boolean;
   readonly metric: "tokens" | "cost";
+  readonly speed: UsageSpeed | undefined;
+  readonly onSelectSpeed: (speed: UsageSpeed | undefined) => void;
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
+  readonly shownEnvironments: readonly EnvironmentUsageStatus[];
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
   readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
@@ -633,7 +647,7 @@ function UsageOverview({
   readonly onCursorEnabled: () => void;
   readonly onSelectModel: (key: string) => void;
 }) {
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
@@ -687,6 +701,28 @@ function UsageOverview({
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="text-xs text-muted-foreground">Inference speed</span>
+        <Select
+          value={speed ?? "all"}
+          onValueChange={(value) =>
+            onSelectSpeed(UsageSpeed.literals.find((option) => option === value))
+          }
+        >
+          <SelectTrigger aria-label="Inference speed" size="compact" className="w-auto">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            <SelectItem value="all">All speeds</SelectItem>
+            <SelectItem value="standard">Normal</SelectItem>
+            <SelectItem value="fast">Fast</SelectItem>
+            <SelectItem value="ultrafast">Ultrafast</SelectItem>
+          </SelectPopup>
+        </Select>
+        {speed !== undefined && merged.hasUnknownSpeed ? (
+          <p className="text-xs text-muted-foreground">Some usage has no recorded speed.</p>
+        ) : null}
+      </div>
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}
@@ -900,12 +936,13 @@ function UsageOverview({
             value={[breakdown]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value === "model" || value === "time") setBreakdown(value);
+              if (value === "model" || value === "project" || value === "time") setBreakdown(value);
             }}
           >
             {(
               [
                 { value: "model", label: "Model" },
+                { value: "project", label: "Project" },
                 { value: "time", label: shownHourly ? "Hour" : "Day" },
               ] as const
             ).map((option) => (
@@ -990,6 +1027,26 @@ function UsageOverview({
               )}
             </tbody>
           </table>
+        ) : breakdown === "project" ? (
+          <UsageProjects
+            usage={merged}
+            chartWindow={{
+              days,
+              hours,
+              resolution: shownHourly ? "hour" : "day",
+              timeZone: shownWindow.timeZone,
+              referenceTime: shownWindow.untilTime,
+              hour12,
+            }}
+            readProject={(project) =>
+              mergeAnsweredUsage(
+                shownEnvironments,
+                (bucket, environmentId) =>
+                  environmentId === project.environmentId && bucket.project?.id === project.id,
+                speed,
+              )
+            }
+          />
         ) : (
           <div
             className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"

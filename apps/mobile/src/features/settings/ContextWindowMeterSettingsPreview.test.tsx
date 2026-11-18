@@ -3,7 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 
@@ -19,13 +20,48 @@ vi.mock("react-native", () => ({
       return fixture.platform;
     },
   },
-  Pressable: "pressable",
-  View: "view",
+  Pressable: (props: NativeProps) =>
+    createElement(
+      "button",
+      {
+        role: props.accessibilityRole,
+        "aria-label": props.accessibilityLabel,
+        "aria-description": props.accessibilityHint,
+        "aria-checked": props.accessibilityState?.checked,
+        disabled: props.accessibilityState?.disabled,
+        onClick: props.onPress,
+      },
+      props.children,
+    ),
+  View: (props: NativeProps) =>
+    createElement(
+      "div",
+      { role: props.accessibilityRole, "aria-label": props.accessibilityLabel },
+      props.children,
+    ),
 }));
-vi.mock("react-native-svg", () => ({ default: "svg", Circle: "circle", Text: "svg-text" }));
-vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
-vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
-vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "symbol" }));
+vi.mock("react-native-reanimated", () => {
+  const animation = {
+    duration: () => animation,
+    delay: () => animation,
+    reduceMotion: () => animation,
+  };
+  return {
+    default: {
+      View: (props: NativeProps) =>
+        createElement("div", { "data-animation": true }, props.children),
+    },
+    FadeInDown: animation,
+    ZoomIn: animation,
+    ReduceMotion: { System: "system" },
+    useReducedMotion: () => false,
+  };
+});
+vi.mock("../../components/ui/AppText", () => ({
+  AppText: (props: NativeProps) => createElement("span", {}, props.children),
+}));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../threads/ThreadContextMeterRing", () => ({ ThreadContextMeterRing: () => null }));
 vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>
     createInterfaceTranslator({ language: fixture.language, locale: fixture.locale }),
@@ -55,28 +91,7 @@ type NativeProps = {
   onPress?: () => void;
 };
 
-function expand(node: ReactNode): ReactNode {
-  if (Array.isArray(node)) return node.map(expand);
-  if (!isValidElement<NativeProps>(node)) return node;
-  if (typeof node.type === "function") {
-    return expand((node.type as (props: NativeProps) => ReactNode)(node.props));
-  }
-  return cloneElement(node, {}, expand(node.props.children));
-}
-
-function hosts(node: ReactNode, type: string): ReactElement<NativeProps>[] {
-  if (Array.isArray(node)) return node.flatMap((child) => hosts(child, type));
-  if (!isValidElement<NativeProps>(node)) return [];
-  return [...(node.type === type ? [node] : []), ...hosts(node.props.children, type)];
-}
-
-function textContent(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textContent).join(" ");
-  return isValidElement<NativeProps>(node) ? textContent(node.props.children) : "";
-}
-
-function radio(tree: ReactNode, enabled: boolean) {
+function radio(tree: HTMLElement, enabled: boolean) {
   const translator = createInterfaceTranslator({
     language: fixture.language,
     locale: fixture.locale,
@@ -84,11 +99,15 @@ function radio(tree: ReactNode, enabled: boolean) {
   const label = translator.message(
     enabled ? "settings.contextMeter.preview.on" : "settings.contextMeter.preview.off",
   );
-  const choice = hosts(tree, "pressable").find(
-    (node) => node.props.accessibilityRole === "radio" && node.props.accessibilityLabel === label,
+  const choice = Array.from(tree.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find(
+    (node) => node.getAttribute("aria-label") === label,
   );
-  if (!choice?.props.onPress) throw new Error("Expected a selectable context meter card");
+  if (!choice) throw new Error("Expected a selectable context meter card");
   return choice;
+}
+
+function press(choice: HTMLButtonElement) {
+  act(() => choice.click());
 }
 
 function memoryStorage() {
@@ -127,6 +146,7 @@ function memoryStorage() {
 }
 
 const registries: AtomRegistry.AtomRegistry[] = [];
+const roots: Root[] = [];
 
 const launch = Effect.fnUntraced(function* (storage: ReturnType<typeof memoryStorage>) {
   const store = yield* make().pipe(
@@ -141,18 +161,25 @@ const launch = Effect.fnUntraced(function* (storage: ReturnType<typeof memorySto
   registry.mount(state.preferencesAtom);
   registry.mount(state.updatePreferencesAtom);
   yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  roots.push(root);
   return {
     render(disabled = false) {
       const result = registry.get(state.preferencesAtom);
       if (!AsyncResult.isSuccess(result)) throw new Error("Expected loaded preferences");
-      return expand(
-        ContextWindowMeterSettingsPreview({
-          enabled: result.value.contextWindowMeterEnabled ?? true,
-          disabled,
-          onValueChange: (contextWindowMeterEnabled) =>
-            registry.set(state.updatePreferencesAtom, { contextWindowMeterEnabled }),
-        }),
+      act(() =>
+        root.render(
+          <ContextWindowMeterSettingsPreview
+            enabled={result.value.contextWindowMeterEnabled ?? true}
+            disabled={disabled}
+            onValueChange={(contextWindowMeterEnabled) =>
+              registry.set(state.updatePreferencesAtom, { contextWindowMeterEnabled })
+            }
+          />,
+        ),
       );
+      return container;
     },
     flush: AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
       suspendOnWaiting: true,
@@ -163,13 +190,16 @@ const launch = Effect.fnUntraced(function* (storage: ReturnType<typeof memorySto
 });
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.platform = "ios";
   fixture.language = "en";
   fixture.locale = "en-US";
 });
 
 afterEach(() => {
+  for (const root of roots.splice(0)) act(() => root.unmount());
   for (const registry of registries.splice(0)) registry.dispose();
+  vi.unstubAllGlobals();
 });
 
 describe("mobile context meter preview choices", () => {
@@ -180,39 +210,44 @@ describe("mobile context meter preview choices", () => {
         fixture.platform = platform;
         const storage = memoryStorage();
         const first = yield* launch(storage);
-        expect(radio(first.render(), true).props.accessibilityState?.checked).toBe(true);
+        expect(radio(first.render(), true).getAttribute("aria-checked")).toBe("true");
 
-        radio(first.render(), false).props.onPress!();
-        expect(radio(first.render(), false).props.accessibilityState?.checked).toBe(true);
+        press(radio(first.render(), false));
+        expect(radio(first.render(), false).getAttribute("aria-checked")).toBe("true");
         yield* first.flush;
         yield* first.store.savePatch({ baseFontSize: 20 });
         first.registry.dispose();
 
         const second = yield* launch(storage);
-        expect(radio(second.render(), false).props.accessibilityState?.checked).toBe(true);
+        expect(radio(second.render(), false).getAttribute("aria-checked")).toBe("true");
         expect((yield* second.store.load).baseFontSize).toBe(20);
-        radio(second.render(), true).props.onPress!();
-        expect(radio(second.render(), true).props.accessibilityState?.checked).toBe(true);
+        press(radio(second.render(), true));
+        expect(radio(second.render(), true).getAttribute("aria-checked")).toBe("true");
         yield* second.flush;
         second.registry.dispose();
 
         const third = yield* launch(storage);
-        expect(radio(third.render(), true).props.accessibilityState?.checked).toBe(true);
+        expect(radio(third.render(), true).getAttribute("aria-checked")).toBe("true");
         expect((yield* third.store.load).baseFontSize).toBe(20);
       }),
   );
 
-  it.effect("keeps the selected choice and unavailable cards from writing preferences", () =>
-    Effect.gen(function* () {
-      const storage = memoryStorage();
-      const session = yield* launch(storage);
-      const writesBefore = storage.writes.length;
-      radio(session.render(), true).props.onPress!();
-      radio(session.render(true), false).props.onPress!();
-      expect(radio(session.render(true), false).props.accessibilityState?.disabled).toBe(true);
-      expect(radio(session.render(), true).props.accessibilityState?.checked).toBe(true);
-      expect(storage.writes).toHaveLength(writesBefore);
-    }),
+  it.effect(
+    "replays the selected choice without writing preferences and ignores unavailable cards",
+    () =>
+      Effect.gen(function* () {
+        const storage = memoryStorage();
+        const session = yield* launch(storage);
+        const writesBefore = storage.writes.length;
+        const choice = radio(session.render(), true);
+        const before = choice.querySelector("[data-animation]");
+        press(choice);
+        expect(choice.querySelector("[data-animation]")).not.toBe(before);
+        press(radio(session.render(true), false));
+        expect(radio(session.render(true), false).disabled).toBe(true);
+        expect(radio(session.render(), true).getAttribute("aria-checked")).toBe("true");
+        expect(storage.writes).toHaveLength(writesBefore);
+      }),
   );
 
   it.effect.each([
@@ -233,20 +268,20 @@ describe("mobile context meter preview choices", () => {
           percentage: translator.number(0.5, { style: "percent", maximumFractionDigits: 0 }),
         });
 
-        radio(session.render(), false).props.onPress!();
+        press(radio(session.render(), false));
         yield* session.flush;
         const tree = session.render();
-        expect(radio(tree, false).props.accessibilityState?.checked).toBe(true);
+        expect(radio(tree, false).getAttribute("aria-checked")).toBe("true");
         for (const enabled of [false, true]) {
           const card = radio(tree, enabled);
-          expect(textContent(card)).toContain(example);
-          expect(textContent(card)).toContain(
+          expect(card.textContent).toContain(example);
+          expect(card.textContent).toContain(
             translator.message("settings.contextMeter.preview.singleLine"),
           );
-          expect(textContent(card)).toContain(
+          expect(card.textContent).toContain(
             translator.message("settings.contextMeter.preview.expanded"),
           );
-          expect(card.props.accessibilityHint).toContain(example);
+          expect(card.getAttribute("aria-description")).toContain(example);
         }
       }),
   );

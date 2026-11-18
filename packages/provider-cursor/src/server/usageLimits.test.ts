@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { supportsDailyUsagePace } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -26,6 +27,7 @@ describe("Cursor usage limits", () => {
   it("uses the advertised percentages and billing-cycle reset", () => {
     const limits = cursorUsageResponseToLimits(
       {
+        billingCycleStart: "1787197986000",
         billingCycleEnd: "1789876386000",
         planUsage: { totalPercentUsed: 72.4, autoPercentUsed: 69.5, apiPercentUsed: 100 },
       },
@@ -38,6 +40,7 @@ describe("Cursor usage limits", () => {
           kind: "monthly",
           label: "Overall",
           usedPercent: 72.4,
+          windowDurationMins: 31 * 24 * 60,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
         {
@@ -45,6 +48,7 @@ describe("Cursor usage limits", () => {
           kind: "monthly",
           label: "Cursor Models",
           usedPercent: 69.5,
+          windowDurationMins: 31 * 24 * 60,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
         {
@@ -52,10 +56,12 @@ describe("Cursor usage limits", () => {
           kind: "monthly",
           label: "Other Models",
           usedPercent: 100,
+          windowDurationMins: 31 * 24 * 60,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
       ]),
     );
+    expect(limits.windows.every(supportsDailyUsagePace)).toBe(true);
   });
 
   it("does not invent unused allowance for absent buckets", () => {
@@ -68,6 +74,19 @@ describe("Cursor usage limits", () => {
     expect(
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 150 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 100 }]);
+    for (const billingCycleStart of [undefined, "invalid", "1789876386000", "1790000000000"]) {
+      const limits = cursorUsageResponseToLimits(
+        {
+          billingCycleStart,
+          billingCycleEnd: "1789876386000",
+          planUsage: { totalPercentUsed: 42 },
+        },
+        checkedAt,
+      );
+      expect(limits.windows[0]?.resetsAt).toBe("2026-09-20T03:53:06.000Z");
+      expect(limits.windows[0]?.windowDurationMins).toBeUndefined();
+      expect(limits.windows.some(supportsDailyUsagePace)).toBe(false);
+    }
   });
 
   it.effect("reads the instance's credentials and endpoint even when usage enabled is false", () =>
@@ -91,7 +110,12 @@ describe("Cursor usage limits", () => {
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
+              Response.json({
+                enabled: false,
+                billingCycleStart: 1787197986000,
+                billingCycleEnd: 1789876386000,
+                planUsage: { totalPercentUsed: 42 },
+              }),
             ),
           );
         });
@@ -109,6 +133,7 @@ describe("Cursor usage limits", () => {
             Effect.provideService(HttpClient.HttpClient, client),
           );
           expect(limits.windows[0]?.usedPercent).toBe(42);
+          expect(limits.windows[0]?.windowDurationMins).toBe(31 * 24 * 60);
         }
       }).pipe(Effect.scoped),
     ),

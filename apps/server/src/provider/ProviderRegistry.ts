@@ -29,6 +29,7 @@ import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
+import * as UsagePaceHistory from "./UsagePaceHistory.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -366,6 +367,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const usagePaceHistory = yield* UsagePaceHistory.UsagePaceHistory;
 
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
@@ -499,7 +501,17 @@ export const layer = Layer.effect(
       const manifest = yield* manifestService.current;
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        (provider) =>
+          applyProviderUpdateState(provider).pipe(
+            Effect.flatMap((snapshot) => {
+              const key = UsagePaceHistory.providerUsagePaceHistoryKey(snapshot);
+              return key && snapshot.usageLimits
+                ? usagePaceHistory
+                    .record({ key, limits: snapshot.usageLimits })
+                    .pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits })))
+                : Effect.succeed(snapshot);
+            }),
+          ),
         {
           concurrency: "unbounded",
         },
@@ -1070,4 +1082,4 @@ export const layer = Layer.effect(
       },
     } satisfies ProviderRegistry["Service"];
   }),
-);
+).pipe(Layer.provide(UsagePaceHistory.layer));

@@ -1,4 +1,11 @@
-import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
+import type {
+  AssemblyAiStreamingTokenResult,
+  SpeechStreamingTranscriptResult,
+} from "@t3tools/contracts";
+import {
+  createServerSpeechSession,
+  type ServerSpeechTransport,
+} from "@t3tools/client-runtime/server-speech-session";
 import {
   AssemblyAiTranscriptAccumulator,
   buildAssemblyAiStreamingUrl,
@@ -25,7 +32,7 @@ export interface AssemblyAiTranscriptUpdate {
 }
 
 export interface AssemblyAiStreamingSession {
-  readonly stop: () => Promise<void>;
+  readonly stop: () => Promise<SpeechStreamingTranscriptResult | void>;
   readonly cancel: () => void;
 }
 
@@ -140,6 +147,8 @@ export interface StartAssemblyAiStreamingTranscriptionInput {
   readonly onAudioLevel?: (level: number) => void;
   readonly signal?: AbortSignal;
   readonly createToken?: () => Promise<AssemblyAiStreamingTokenResult>;
+  readonly serverTransport?: ServerSpeechTransport;
+  readonly onProcessing?: () => void;
 }
 
 interface TranscriptTurnUpdate {
@@ -304,7 +313,8 @@ export async function startAssemblyAiStreamingTranscription(
   let socketCleaned = false;
   let stopping = false;
   let cancelled = false;
-  let stopPromise: Promise<void> | null = null;
+  let stopPromise: Promise<SpeechStreamingTranscriptResult | void> | null = null;
+  let serverSession: ReturnType<typeof createServerSpeechSession> | null = null;
   let resolveTermination: (() => void) | null = null;
   let audioMessageListener: ((event: { readonly data: unknown }) => void) | null = null;
   let runtimeSocketListenerCleanups: ReadonlyArray<() => void> = [];
@@ -361,6 +371,7 @@ export async function startAssemblyAiStreamingTranscription(
     if (cancelled || socketCleaned) return;
     cancelled = true;
     stopping = true;
+    serverSession?.cancel();
     cleanupAudio();
     cleanupSocket(true);
   };
@@ -375,7 +386,9 @@ export async function startAssemblyAiStreamingTranscription(
     });
     if (input.signal?.aborted) throw cancelledError();
 
-    const config = await withAbort((input.createToken ?? dependencies.createToken)(), input.signal);
+    const config = input.serverTransport
+      ? null
+      : await withAbort((input.createToken ?? dependencies.createToken)(), input.signal);
     if (input.signal?.aborted) throw cancelledError();
 
     audioContext = dependencies.createAudioContext();
@@ -391,10 +404,53 @@ export async function startAssemblyAiStreamingTranscription(
     source = audioContext.createMediaStreamSource(mediaStream);
     worklet = dependencies.createAudioWorkletNode(audioContext, WORKLET_PROCESSOR_NAME, {
       processorOptions: {
-        outputSampleRate: config.sampleRate,
+        outputSampleRate: config?.sampleRate ?? 16_000,
         chunkMs: AUDIO_CHUNK_DURATION_MS,
       },
     });
+    if (input.serverTransport) {
+      const session = createServerSpeechSession({
+        ...input.serverTransport,
+        onProcessing: (advancedMode) => {
+          if (advancedMode && !cancelled) input.onProcessing?.();
+        },
+        onTranscript: (text) => {
+          if (!cancelled) input.onTranscript({ text });
+        },
+        onError: (error) => {
+          if (cancelled || stopping) return;
+          cleanupAudio();
+          cleanupSocket(false);
+          input.onError(error);
+        },
+      });
+      serverSession = session;
+      await withAbort(session.connect(input.signal), input.signal, () => session.cancel());
+      audioMessageListener = ({ data }) => {
+        const level = audioLevelFromWorkletMessage(data);
+        if (level !== null) input.onAudioLevel?.(level);
+        else if (data instanceof ArrayBuffer) session.pushAudio(new Uint8Array(data));
+      };
+      worklet.port.addEventListener("message", audioMessageListener);
+      worklet.port.start?.();
+      source.connect(worklet);
+      worklet.connect(audioContext.destination);
+      input.signal?.addEventListener("abort", abortListener, { once: true });
+      return {
+        stop: () => {
+          if (stopPromise) return stopPromise;
+          stopping = true;
+          cleanupAudio();
+          stopPromise = session.stop().finally(() => {
+            cleanupSocket(false);
+            input.signal?.removeEventListener("abort", abortListener);
+          });
+          return stopPromise;
+        },
+        cancel: cancelSession,
+      };
+    }
+    if (!config) throw new Error("Voice streaming configuration is unavailable.");
     socket = dependencies.createWebSocket(buildAssemblyAiStreamingUrl(config));
     socket.binaryType = "arraybuffer";
 
@@ -526,7 +582,7 @@ export async function startAssemblyAiStreamingTranscription(
     worklet.connect(audioContext.destination);
     input.signal?.addEventListener("abort", abortListener, { once: true });
 
-    const stop = (): Promise<void> => {
+    const stop = (): Promise<SpeechStreamingTranscriptResult | void> => {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
         if (cancelled || socketCleaned) return;
@@ -548,6 +604,7 @@ export async function startAssemblyAiStreamingTranscription(
 
     return { stop, cancel: cancelSession };
   } catch (error) {
+    serverSession?.cancel();
     cleanupAudio();
     cleanupSocket(true);
     input.signal?.removeEventListener("abort", abortListener);

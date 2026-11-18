@@ -1,6 +1,9 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const coreInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "usage.pace.under": ["Under pace", "Unter Plan", "Sous le rythme"],
+  "usage.pace.on": ["On pace", "Im Plan", "Au rythme"],
+  "usage.pace.ahead": ["Ahead of pace", "Über Plan", "Rythme élevé"],
   "resourceProtection.waiting.label": [
     "Subagent waiting for memory",
     "Subagent wartet auf freien Speicher",

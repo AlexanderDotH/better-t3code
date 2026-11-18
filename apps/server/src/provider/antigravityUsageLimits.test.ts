@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { supportsDailyUsagePace } from "@t3tools/shared/usageLimits";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -436,6 +437,12 @@ describe("Antigravity subscription limits", () => {
       });
       expect(byId.get("3p-5h")).toMatchObject({ kind: "session", windowDurationMins: 300 });
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(56);
+      expect(
+        limits.windows
+          .filter(supportsDailyUsagePace)
+          .map((window) => window.id)
+          .toSorted(),
+      ).toEqual(["3p-weekly", "gemini-weekly"]);
       yield* probe;
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
       expect(

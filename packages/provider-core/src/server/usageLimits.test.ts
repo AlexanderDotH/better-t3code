@@ -67,7 +67,7 @@ describe("applyUsageLimitsUpdate", () => {
       applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
     ).toEqual({
       checkedAt,
-      windows: [{ ...weekly, usageHistory: [{ at: checkedAt, usedPercent: 20 }] }],
+      windows: [weekly],
       unavailable: { reason: "probeFailed" },
     });
   });
@@ -75,7 +75,7 @@ describe("applyUsageLimitsUpdate", () => {
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
-      previous: { ...published, resetCredits },
+      previous: { ...published, resetCredits, credentialFingerprint: "account-a" },
       checkedAt: "2026-09-03T12:00:05.000Z",
       update: { windows: [{ ...session, usedPercent: 55 }] },
     });
@@ -84,11 +84,56 @@ describe("applyUsageLimitsUpdate", () => {
       checkedAt: "2026-09-03T12:00:05.000Z",
       windows: [{ ...session, usedPercent: 55 }, weekly],
       resetCredits,
+      credentialFingerprint: "account-a",
     });
   });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  it.each(["weekly", "monthly", "other"] as const)(
+    "retains the baseline of an observed %s quota when a fresh provider has partial history",
+    (kind) => {
+      const window = { ...weekly, kind, resetsAt: "2026-09-09T12:00:00.000Z" };
+      const baseline = { at: "2026-09-02T23:00:00.000Z", usedPercent: 18 };
+      const current = { at: checkedAt, usedPercent: 20 };
+      const published = {
+        checkedAt: baseline.at,
+        windows: [{ ...window, usedPercent: 18, usageHistory: [baseline] }],
+      };
+      const probed = { checkedAt, windows: [{ ...window, usageHistory: [current] }] };
+      const resolved = resolveUsageLimitsAfterProbe({ published, probed });
+      expect(resolved?.windows[0]).toMatchObject({
+        usageHistorySource: "observed",
+        usageHistory: [baseline, current],
+      });
+      const changedDuration = resolveUsageLimitsAfterProbe({
+        published: resolved,
+        probed: { checkedAt, windows: [{ ...window, windowDurationMins: 30 * 24 * 60 }] },
+      });
+      expect(changedDuration?.windows[0]?.usageHistory).toEqual([current]);
+      const reset = resolveUsageLimitsAfterProbe({
+        published: resolved,
+        probed: { checkedAt, windows: [{ ...resolved!.windows[0]!, usedPercent: 0 }] },
+      });
+      expect(reset?.windows[0]?.usageHistory).toEqual([{ at: checkedAt, usedPercent: 0 }]);
+    },
+  );
+
+  it("does not collect daily history for quotas without a reliable multi-day clock", () => {
+    for (const window of [
+      weekly,
+      { ...weekly, resetsAt: "2026-09-10T12:00:00.000Z", windowDurationMins: undefined },
+      session,
+    ]) {
+      expect(
+        resolveUsageLimitsAfterProbe({
+          published: undefined,
+          probed: { checkedAt, windows: [window] },
+        })?.windows[0]?.usageHistory,
+      ).toBeUndefined();
+    }
+  });
+
   it("retains observed weekly usage through probes and updates, resetting with the quota", () => {
     const initial = { ...weekly, resetsAt: "2026-09-10T12:00:00.000Z" };
     const first = resolveUsageLimitsAfterProbe({
@@ -119,14 +164,24 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(reset.windows[0]?.usageHistory).toEqual([{ at: resetAt, usedPercent: 0 }]);
 
     let bounded = first;
-    for (let index = 1; index <= MAX_USAGE_PACE_SAMPLES + 2; index += 1) {
+    for (let index = 1; index <= 2 * MAX_USAGE_PACE_SAMPLES + 2; index += 1) {
       bounded = applyUsageLimitsUpdate({
         previous: bounded,
         checkedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(checkedAt) + index * 60_000)),
         update: { windows: [{ ...initial, usedPercent: 20 + index / 100 }] },
       })!;
     }
-    expect(bounded.windows[0]?.usageHistory).toHaveLength(MAX_USAGE_PACE_SAMPLES);
+    expect(bounded.windows[0]!.usageHistory!.length).toBeLessThanOrEqual(MAX_USAGE_PACE_SAMPLES);
+    expect(bounded.windows[0]?.usageHistory?.[0]).toEqual({ at: checkedAt, usedPercent: 20 });
+    expect(bounded.windows[0]?.usageHistory?.at(-1)?.usedPercent).toBeCloseTo(30.26);
+    expect(
+      bounded.windows[0]?.usageHistory?.findLast(
+        (sample) => Date.parse(sample.at) < Date.parse("2026-09-04T00:00:00.000Z"),
+      ),
+    ).toEqual({
+      at: "2026-09-03T23:59:00.000Z",
+      usedPercent: 27.19,
+    });
   });
 
   it("keeps Codex transcript history for the same quota epoch only", () => {
@@ -194,5 +249,26 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+    const window = { ...weekly, resetsAt: "2026-09-10T12:00:00.000Z" };
+    const switched = resolveUsageLimitsAfterProbe({
+      published: {
+        checkedAt,
+        credentialFingerprint: "account-a",
+        windows: [
+          {
+            ...window,
+            usageHistory: [{ at: checkedAt, usedPercent: 20 }],
+          },
+        ],
+      },
+      probed: {
+        checkedAt: "2026-09-03T13:00:00.000Z",
+        credentialFingerprint: "account-b",
+        windows: [{ ...window, usedPercent: 22 }],
+      },
+    });
+    expect(switched?.windows[0]?.usageHistory).toEqual([
+      { at: "2026-09-03T13:00:00.000Z", usedPercent: 22 },
+    ]);
   });
 });

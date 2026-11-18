@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 import { createCodexContextWindowDescriptor } from "@t3tools/shared/model";
 
 import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
@@ -9,6 +10,39 @@ const TEST_CONTEXT_WINDOW = {
   effectivePercent: 95,
 } as const;
 const TEST_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor(TEST_CONTEXT_WINDOW);
+
+it.each<{
+  programs: CodexSchema.V2ModelListResponse__ModelAccessPrograms | null | undefined;
+  supported: boolean;
+}>([
+  { programs: { cyber: ["standard", "daybreakBlue"] }, supported: true },
+  { programs: { cyber: ["daybreakRed"] }, supported: true },
+  { programs: { cyber: ["daybreakRed", "daybreakBlue"] }, supported: true },
+  { programs: { cyber: ["standard"] }, supported: false },
+  { programs: { cyber: [] }, supported: false },
+  { programs: null, supported: false },
+  { programs: undefined, supported: false },
+])("offers a Daybreak option only for advertised programs: %j", ({ programs, supported }) => {
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    defaultReasoningEffort: "medium",
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: false,
+    model: "gpt-test",
+    supportedReasoningEfforts: [],
+    ...(programs === undefined ? {} : { availableAccessPrograms: programs }),
+  });
+  const descriptor = capabilities.optionDescriptors?.find((option) => option.id === "daybreak");
+  assert.equal(descriptor !== undefined, supported);
+  if (supported) {
+    assert.equal(descriptor?.type, "boolean");
+    assert.equal(descriptor?.label, "Daybreak");
+    assert.isUndefined(descriptor?.currentValue);
+  }
+});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities(

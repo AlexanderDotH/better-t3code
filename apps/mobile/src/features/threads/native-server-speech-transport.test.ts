@@ -7,10 +7,11 @@ describe("native server speech transport", () => {
   it("streams PCM through Better T3 Code and applies returned transcript updates", async () => {
     const onTranscript = vi.fn();
     const pushAudio = vi.fn(async () => ({ transcript: "hello from server" }));
+    const processed = { text: "Hello from the server.", references: [] };
     const session = createNativeServerSpeechSession({
       startSession: async () => ({ sessionId: SpeechStreamingSessionId.make("session-1") }),
       pushAudio,
-      finishSession: async () => ({ transcript: "hello from server" }),
+      finishSession: async () => ({ transcript: "hello from server", processed }),
       cancelSession: async () => undefined,
       onTranscript,
       onAudioLevel: vi.fn(),
@@ -24,13 +25,40 @@ describe("native server speech transport", () => {
       channels: 1,
       timestamp: 0,
     });
-    await session.stop();
+    await expect(session.stop()).resolves.toMatchObject({ processed });
 
     expect(pushAudio).toHaveBeenCalledWith({
       sessionId: "session-1",
       audio: expect.any(Uint8Array),
     });
     expect(onTranscript).toHaveBeenCalledWith("hello from server");
+  });
+
+  it("can cancel while the server is interpreting the finished recording", async () => {
+    const pending = Promise.withResolvers<{ transcript: string }>();
+    const finishing = Promise.withResolvers<void>();
+    const cancelSession = vi.fn(async () => undefined);
+    const onTranscript = vi.fn();
+    const session = createNativeServerSpeechSession({
+      startSession: async () => ({ sessionId: SpeechStreamingSessionId.make("session-1") }),
+      pushAudio: async () => ({ transcript: "" }),
+      finishSession: () => {
+        finishing.resolve();
+        return pending.promise;
+      },
+      cancelSession,
+      onTranscript,
+      onAudioLevel: vi.fn(),
+      onError: vi.fn(),
+    });
+    await session.connect();
+    const stopping = session.stop();
+    await finishing.promise;
+    session.cancel();
+    pending.resolve({ transcript: "must not be applied" });
+    await stopping;
+    expect(cancelSession).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(onTranscript).not.toHaveBeenCalled();
   });
 
   it("cancels the server session without finishing it", async () => {

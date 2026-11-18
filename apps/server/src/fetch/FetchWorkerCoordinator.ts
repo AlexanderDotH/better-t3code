@@ -8,7 +8,7 @@ import {
   ThreadManagementService,
   type ThreadManagementError,
 } from "../orchestration-v2/ThreadManagementService.ts";
-import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import { TextGeneration, type FetchExplorationPlan } from "../textGeneration/TextGeneration.ts";
 import { planFetchExploration } from "./FetchExplorationPlanner.ts";
 import { buildFetchContext } from "./FetchContext.ts";
 import { buildFetchWorkerPrompt } from "./FetchWorkerPolicy.ts";
@@ -31,6 +31,13 @@ export class FetchWorkerCoordinator extends Context.Service<
   FetchWorkerCoordinator,
   FetchWorkerCoordinatorShape
 >()("t3/fetch/FetchWorkerCoordinator") {}
+
+function isLargeExploration(plan: FetchExplorationPlan): boolean {
+  return (
+    plan.workers.length >= 3 ||
+    plan.workers.reduce((total, assignment) => total + assignment.questions.length, 0) >= 6
+  );
+}
 
 const make = Effect.gen(function* () {
   const orchestration = yield* OrchestratorV2;
@@ -91,6 +98,17 @@ const make = Effect.gen(function* () {
         };
       if (planning.plan.decision === "skip")
         return { ...base(), ...counts, status: "skipped", warnings };
+      if (input.ultrafastWorkers !== undefined && isLargeExploration(planning.plan)) {
+        const ultrafast = input.ultrafastWorkers.find(
+          (candidate) =>
+            candidate.commandExecutionPolicy === "deny" &&
+            candidate.maxRecommendedWorkers >= planning.plan.workers.length,
+        );
+        if (ultrafast) {
+          modelSelection = ultrafast.modelSelection;
+          providerDriver = ultrafast.providerDriver;
+        }
+      }
       const tasks = yield* Effect.forEach(planning.plan.workers, (assignment) =>
         Effect.gen(function* () {
           const result = yield* orchestration.dispatch({

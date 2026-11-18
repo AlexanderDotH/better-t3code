@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createWorkspaceFocusController } from "./workspaceFocus";
+import { userEvent } from "vite-plus/test/browser";
+import "../index.css";
 
 function setup() {
   const root = document.createElement("div");
@@ -217,6 +219,54 @@ describe("workspace area focus", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(panel.button));
   });
 
+  it("recovers conversation focus quietly until the user resumes keyboard navigation", async () => {
+    using fixture = setup();
+    const conversation = fixture.area("conversation", 1);
+    conversation.element.style.cssText = "width: 320px; height: 160px";
+    const composer = fixture.area("composer", 2);
+    await userEvent.tab();
+    conversation.button.focus();
+    conversation.button.remove();
+    await vi.waitFor(() => expect(document.activeElement).toBe(conversation.element));
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("none");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("solid");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(composer.button);
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(conversation.element);
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("solid");
+  });
+
+  it("shows an area outline only for explicit navigation, not browser focus restoration", async () => {
+    using fixture = setup();
+    const conversation = fixture.area("conversation", 1);
+    conversation.element.style.cssText = "width: 320px; height: 160px";
+    const composer = fixture.area("composer", 2);
+    await userEvent.tab();
+    conversation.element.focus();
+    expect(document.activeElement).toBe(conversation.element);
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("none");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(composer.button);
+    fixture.controller.move(-1);
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("solid");
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("none");
+    await userEvent.keyboard("{Shift}");
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("none");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("solid");
+    conversation.element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 50 }));
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("none");
+    fixture.controller.move(1);
+    fixture.controller.move(-1);
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("solid");
+    conversation.element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(getComputedStyle(conversation.element).outlineStyle).toBe("none");
+  });
+
   it("falls back to the main content when the whole area disappears", async () => {
     using fixture = setup();
     const composer = fixture.area("composer", 2);
@@ -263,6 +313,7 @@ describe("workspace area focus", () => {
     const header = fixture.append("<header></header>");
     const toggle = document.createElement("button");
     toggle.setAttribute("aria-label", "Toggle right panel");
+    toggle.style.cssText = "width: 28px; height: 28px";
     header.append(toggle);
     toggle.focus();
     const moved = toggle.cloneNode() as HTMLButtonElement;

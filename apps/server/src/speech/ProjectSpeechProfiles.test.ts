@@ -234,6 +234,9 @@ it.effect(
             Effect.succeed({ entries: [{ kind: "file", path: "package.json" }], truncated: false }),
           readFile: successfulReadFile({ "package.json": '{"name":"t3-speech"}' }),
           vocabulary: {
+            learnedTerms: () => Effect.succeed([]),
+            clearLearnedTerms: () => Effect.void,
+            learn: () => Effect.void,
             snapshot: () => Effect.die("manual indexing must refresh"),
             refreshInBackground: () => Effect.die("manual indexing must wait for its result"),
             refresh: ({ workspaceRoot }) => {
@@ -376,59 +379,56 @@ it.effect("falls back to basic context after five seconds without scanning twice
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect(
-  "reuses persisted context and creates a basic context without reading source files when absent",
-  () => {
-    let listCalls = 0;
-    const entries: ReadonlyArray<ProjectEntry> = [{ path: "package.json", kind: "file" }];
+it.effect("reuses fresh context and automatically indexes a project without a profile", () => {
+  let listCalls = 0;
+  const entries: ReadonlyArray<ProjectEntry> = [{ path: "package.json", kind: "file" }];
 
-    return Effect.gen(function* () {
-      const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
-      const store = yield* ProjectSpeechProfileStore.ProjectSpeechProfileStore;
+  return Effect.gen(function* () {
+    const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
+    const store = yield* ProjectSpeechProfileStore.ProjectSpeechProfileStore;
 
-      const indexed = yield* profiles.index(projectId);
-      const indexedContext = yield* profiles.contextForProject(projectId);
+    const indexed = yield* profiles.index(projectId);
+    const indexedContext = yield* profiles.contextForProject(projectId);
 
-      assert.deepStrictEqual(indexedContext, {
-        source: indexed.source,
-        prompt: indexed.contextPrompt,
-        keyterms: indexed.keyterms,
-      });
-      assert.strictEqual(listCalls, 1);
+    assert.deepStrictEqual(indexedContext, {
+      source: indexed.source,
+      prompt: indexed.contextPrompt,
+      keyterms: indexed.keyterms,
+    });
+    assert.strictEqual(listCalls, 1);
 
-      const otherProjectId = ProjectId.make("project-context-basic");
-      const basicContext = yield* profiles.contextForProject(otherProjectId);
-      assert.strictEqual(basicContext.source, "basic");
-      assert.strictEqual(listCalls, 1);
-      const persistedBasic = yield* store.get(otherProjectId);
-      assert.strictEqual(Option.getOrThrow(persistedBasic).source, "basic");
-    }).pipe(
-      Effect.provide(
-        serviceLayer({
-          resolveProject: (requestedProjectId) =>
-            Option.some(
-              requestedProjectId === projectId
-                ? project
-                : {
-                    ...project,
-                    id: requestedProjectId,
-                    title: "Context Basic",
-                    workspaceRoot: "/workspace/context-basic",
-                    repositoryIdentity: null,
-                  },
-            ),
-          list: () => {
-            listCalls += 1;
-            return Effect.succeed({ entries: [...entries], truncated: false });
-          },
-          readFile: successfulReadFile({
-            "package.json": '{"name":"t3-speech","dependencies":{"effect":"latest"}}',
-          }),
+    const otherProjectId = ProjectId.make("project-context-basic");
+    const basicContext = yield* profiles.contextForProject(otherProjectId);
+    assert.strictEqual(basicContext.source, "indexed");
+    assert.strictEqual(listCalls, 2);
+    const persistedBasic = yield* store.get(otherProjectId);
+    assert.strictEqual(Option.getOrThrow(persistedBasic).source, "indexed");
+  }).pipe(
+    Effect.provide(
+      serviceLayer({
+        resolveProject: (requestedProjectId) =>
+          Option.some(
+            requestedProjectId === projectId
+              ? project
+              : {
+                  ...project,
+                  id: requestedProjectId,
+                  title: "Context Basic",
+                  workspaceRoot: "/workspace/context-basic",
+                  repositoryIdentity: null,
+                },
+          ),
+        list: () => {
+          listCalls += 1;
+          return Effect.succeed({ entries: [...entries], truncated: false });
+        },
+        readFile: successfulReadFile({
+          "package.json": '{"name":"t3-speech","dependencies":{"effect":"latest"}}',
         }),
-      ),
-    );
-  },
-);
+      }),
+    ),
+  );
+});
 
 it.effect("reads a deterministic bounded set of manifests, README files, and source files", () => {
   const sourceEntries: ReadonlyArray<ProjectEntry> = Array.from(
@@ -474,3 +474,34 @@ it.effect("reads a deterministic bounded set of manifests, README files, and sou
     ),
   );
 });
+
+it.effect(
+  "refreshes stale indexed context while keeping an explicitly selected basic profile",
+  () => {
+    let contents = '{"name":"BeforeRename"}';
+    return Effect.gen(function* () {
+      const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
+      const original = yield* profiles.index(projectId);
+      contents = '{"name":"AfterRename"}';
+      yield* TestClock.adjust("6 minutes");
+      const refreshed = yield* profiles.contextForProject(projectId);
+      assert.include(refreshed.keyterms, "AfterRename");
+      assert.notInclude(refreshed.keyterms, "BeforeRename");
+      assert.notStrictEqual(
+        Option.getOrThrow(yield* profiles.get(projectId)).updatedAt,
+        original.updatedAt,
+      );
+      yield* profiles.createBasic(projectId);
+      yield* TestClock.adjust("6 minutes");
+      assert.strictEqual((yield* profiles.contextForProject(projectId)).source, "basic");
+    }).pipe(
+      Effect.provide(
+        serviceLayer({
+          list: () =>
+            Effect.succeed({ entries: [{ path: "package.json", kind: "file" }], truncated: false }),
+          readFile: (input) => successfulReadFile({ "package.json": contents })(input),
+        }),
+      ),
+    );
+  },
+);

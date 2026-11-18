@@ -72,6 +72,28 @@ describe("filterSettingsSections", () => {
   it("drops sections that start empty", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
   });
+
+  it("finds Better T3 controls inside category rows", () => {
+    const composer = {
+      id: "SettingsBetterT3Category:composer",
+      label: "Composer",
+      searchTerms: ["Context usage indicator", "Kontextnutzung", "Indicateur de contexte"],
+    };
+    const chat = {
+      id: "SettingsBetterT3Category:chat",
+      label: "Chat",
+      searchTerms: ["Thinking trace display"],
+    };
+    const sections = [{ title: "Better T3", rows: [composer, chat] }];
+    for (const query of ["context usage", "Kontextnutzung", "Indicateur de contexte"]) {
+      expect(filterSettingsSections(sections, query)).toEqual([
+        { title: "Better T3", rows: [composer] },
+      ]);
+    }
+    expect(filterSettingsSections(sections, "thinking trace")).toEqual([
+      { title: "Better T3", rows: [chat] },
+    ]);
+  });
 });
 
 it.each([

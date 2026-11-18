@@ -117,7 +117,7 @@ function ModelSelectionEditor(props: ModelSelectionModalProps) {
         )}
         onPress={() => {
           if (option?.isSelectable === false) return;
-          setSelection(option?.selection ?? null);
+          if (!selected) setSelection(option?.selection ?? null);
           setChoosingModel(false);
         }}
       >
@@ -183,6 +183,7 @@ function ModelSelectionEditor(props: ModelSelectionModalProps) {
         <View className="gap-3">
           <Text className="text-base font-t3-semibold text-foreground">
             {selectedOption?.label ??
+              (selection === null ? null : selection.model) ??
               props.defaultLabel ??
               translator.message("mobile.settings.agents.defaultTextModel")}
           </Text>

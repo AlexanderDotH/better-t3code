@@ -23,17 +23,18 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+function isUsageWindowExhausted(window: ServerProviderUsageWindow, now: number): boolean {
+  const resetsAt = Date.parse(window.resetsAt ?? "");
+  return window.usedPercent >= 100 && (!Number.isFinite(resetsAt) || resetsAt > now);
+}
+
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
   model?: string,
 ) {
-  const exhausted = (provider?.usageLimits?.windows ?? []).filter(
-    (window) =>
-      (window.usedPercent ?? 0) >= 100 &&
-      (!window.resetsAt ||
-        !Number.isFinite(Date.parse(window.resetsAt)) ||
-        Date.parse(window.resetsAt) > now),
+  const exhausted = (provider?.usageLimits?.windows ?? []).filter((window) =>
+    isUsageWindowExhausted(window, now),
   );
   if (model === undefined) return exhausted[0];
   switch (provider?.driver) {
@@ -323,7 +324,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         windows: winner.limits.windows.map((window) => {
           const other = (fresher ? previous : next).limits.windows.find(
             (candidate) =>
-              candidate.usageHistorySource === "codex" &&
+              candidate.kind === window.kind &&
+              (next.driver === "codex" || candidate.id === window.id) &&
               candidate.resetsAt === window.resetsAt &&
               candidate.windowDurationMins === window.windowDurationMins &&
               candidate.usedPercent <= window.usedPercent,
@@ -337,7 +339,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           );
           return {
             ...window,
-            usageHistorySource: "codex" as const,
+            usageHistorySource:
+              window.usageHistorySource === "codex" || other.usageHistorySource === "codex"
+                ? ("codex" as const)
+                : (window.usageHistorySource ?? other.usageHistorySource),
             usageHistory: [...samples.values()]
               .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
               .slice(-MAX_USAGE_PACE_SAMPLES),
@@ -495,6 +500,22 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   monthly: 2,
   other: 3,
 };
+
+export function compactUsageWindow(
+  account: {
+    readonly driver: ServerProvider["driver"];
+    readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
+  },
+  now: number,
+) {
+  const windows = displayLimitWindows(account);
+  return (
+    windows.find((window) => isUsageWindowExhausted(window, now)) ??
+    windows.find((window) => window.kind === "session") ??
+    windows.find((window) => window.kind === "weekly") ??
+    windows[0]
+  );
+}
 
 export function collectLimitPools(
   accounts: readonly LimitAccount[],
@@ -681,9 +702,18 @@ export const DAILY_USAGE_PACE_LABELS: Record<DailyUsagePaceStatus, string> = {
 };
 
 export const USAGE_PACE_BAR_DESCRIPTION =
-  "The filled bar shows the weekly quota left. Its colored end is available today; the lighter part is catch-up from earlier days. The rest is reserved for later days. A hatched red section beyond the quota boundary is already spent, not available. The boundary remains visible when today's allowance reaches zero.";
+  "The filled bar shows the quota left. Its colored end is available today; the lighter part is catch-up from earlier days. The rest is reserved for later days. A hatched red section beyond the quota boundary is already spent, not available. The boundary remains visible when today's allowance reaches zero.";
 
-/** A daily share of the weekly quota; native usage timestamps take precedence over quota ticks. */
+export function supportsDailyUsagePace(window: ServerProviderUsageWindow): boolean {
+  return (
+    window.kind !== "session" &&
+    Number.isFinite(window.windowDurationMins) &&
+    (window.windowDurationMins ?? 0) * MINUTE >= DAY &&
+    resetMillis(window) !== null
+  );
+}
+
+/** A daily share of the quota; native usage timestamps take precedence over quota ticks. */
 export function dailyUsagePace(
   window: ServerProviderUsageWindow,
   now: number,
@@ -694,9 +724,10 @@ export function dailyUsagePace(
   // Limits views freeze their opening clock; a newer observation advances it without a timer.
   const measuredAt = observedAt ? Math.max(now, Date.parse(observedAt)) : now;
   if (
-    window.kind !== "weekly" ||
+    !supportsDailyUsagePace(window) ||
     resetsAt === null ||
     resetsAt <= measuredAt ||
+    resetsAt - measuredAt > (window.windowDurationMins ?? 0) * MINUTE ||
     !Number.isFinite(measuredAt)
   ) {
     return null;
@@ -860,6 +891,31 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   if (resetsAt <= now) return "resets now";
   if (resetsAt - now < MINUTE) return "Resets momentarily";
   return `resets in ${formatDuration(resetsAt - now)}`;
+}
+
+export function formatResetCountdown(
+  window: ServerProviderUsageWindow,
+  now: number,
+): string | null {
+  const resetsAt = resetMillis(window);
+  return resetsAt === null ? null : formatDuration(resetsAt - now);
+}
+
+export function formatUsageResetAt(
+  window: ServerProviderUsageWindow,
+  locale: string,
+): string | null {
+  const resetsAt = resetMillis(window);
+  if (resetsAt === null) return null;
+  const date = new Intl.DateTimeFormat(locale, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(resetsAt);
+  const time = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(
+    resetsAt,
+  );
+  return `${date}, ${time}`;
 }
 
 export const USAGE_LIMITS_COMMAND = {

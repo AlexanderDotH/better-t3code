@@ -11,6 +11,27 @@ export const voiceInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Spracheingabe wird nachbearbeitet…",
     "Traitement de la saisie vocale…",
   ],
+  "chat.composer.voiceInterpreting": [
+    "Reconciling 3 transcripts…",
+    "3 Transkripte werden abgeglichen…",
+    "Comparaison de 3 transcriptions…",
+  ],
+  "settings.voice.options.advancedMode": ["Advanced mode", "Erweiterter Modus", "Mode avancé"],
+  "settings.voice.options.advancedModeHint": [
+    "Speak once. Compare three transcriptions with an AI model. Costs three transcriptions plus one model call, before cleanup.",
+    "Einmal sprechen. Drei Transkripte per KI abgleichen. Kostet drei Transkriptionen und einen Modellaufruf vor der Bereinigung.",
+    "Parlez une fois. Comparez trois transcriptions avec une IA. Coût : trois transcriptions et un appel au modèle, avant le nettoyage.",
+  ],
+  "settings.voice.options.interpretationModel": [
+    "Interpretation model",
+    "Interpretationsmodell",
+    "Modèle d’interprétation",
+  ],
+  "settings.voice.options.advancedUnsupported": [
+    "Update this environment to use advanced voice input.",
+    "Aktualisiere diese Umgebung für die erweiterte Spracheingabe.",
+    "Mettez cet environnement à jour pour utiliser la saisie vocale avancée.",
+  ],
   "chat.composer.voiceCancel": [
     "Cancel voice input",
     "Spracheingabe abbrechen",
@@ -50,17 +71,6 @@ export const voiceInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Update this environment to configure recording and cloud cleanup.",
     "Aktualisiere diese Umgebung, um Aufnahme und Cloud-Bereinigung einzustellen.",
     "Mettez cet environnement à jour pour configurer l’enregistrement et le nettoyage cloud.",
-  ],
-  "settings.voice.options.save": [
-    "Save voice settings",
-    "Spracheinstellungen speichern",
-    "Enregistrer les réglages vocaux",
-  ],
-  "settings.voice.options.saving": ["Saving…", "Wird gespeichert…", "Enregistrement…"],
-  "settings.voice.options.saved": [
-    "Voice settings saved.",
-    "Spracheinstellungen gespeichert.",
-    "Réglages vocaux enregistrés.",
   ],
   "settings.voice.options.saveFailed": [
     "Voice settings could not be saved. Your changes are still here.",
@@ -155,9 +165,34 @@ export const voiceInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Utiliser le vocabulaire du projet",
   ],
   "settings.voice.options.vocabularyHint": [
-    "Use locally indexed filenames, symbols, and libraries to improve recognition and cleanup.",
-    "Lokal indizierte Dateinamen, Symbole und Bibliotheken verbessern Erkennung und Bereinigung.",
-    "Les noms de fichiers, symboles et bibliothèques indexés localement améliorent la reconnaissance et le nettoyage.",
+    "Use project identifiers and learn confirmed terms to improve recognition and cleanup. Turn off to stop using and learning project terms.",
+    "Projektbegriffe verwenden und bestätigte Begriffe lernen, um Erkennung und Bereinigung zu verbessern. Ausschalten, um Projektbegriffe weder zu verwenden noch zu lernen.",
+    "Utiliser les identifiants du projet et apprendre les termes confirmés pour améliorer la reconnaissance et le nettoyage. Désactiver pour ne plus utiliser ni apprendre ces termes.",
+  ],
+  "settings.voice.learned.title": [
+    "Learned project terms",
+    "Gelernte Projektbegriffe",
+    "Termes appris pour le projet",
+  ],
+  "settings.voice.learned.description": [
+    "Keeps up to 256 confirmed terms, with frequency and last use. Full transcripts are not stored. Clearing starts learning again; turn off project vocabulary to stop it.",
+    "Speichert bis zu 256 bestätigte Begriffe mit Häufigkeit und letzter Verwendung. Vollständige Transkripte werden nicht gespeichert. Nach dem Leeren beginnt das Lernen erneut; zum Stoppen Projektvokabular ausschalten.",
+    "Conserve jusqu’à 256 termes confirmés, leur fréquence et leur dernière utilisation. Les transcriptions complètes ne sont pas stockées. Effacer relance l’apprentissage ; désactiver le vocabulaire du projet pour l’arrêter.",
+  ],
+  "settings.voice.learned.clear": [
+    "Clear learned terms",
+    "Gelernte Begriffe leeren",
+    "Effacer les termes appris",
+  ],
+  "settings.voice.learned.empty": [
+    "No learned terms yet.",
+    "Noch keine gelernten Begriffe.",
+    "Aucun terme appris pour le moment.",
+  ],
+  "settings.voice.learned.failed": [
+    "Learned terms are unavailable.",
+    "Gelernte Begriffe sind nicht verfügbar.",
+    "Les termes appris sont indisponibles.",
   ],
   "settings.voice.options.terms": [
     "Additional terms",
@@ -238,11 +273,6 @@ export const voiceInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Show the filename only. If several files match, preview the first and give all candidates to the agent.",
     "Nur den Dateinamen anzeigen. Bei mehreren Treffern den ersten vorschauen und alle Kandidaten an den Agenten geben.",
     "Afficher seulement le nom du fichier. En cas de correspondances multiples, prévisualiser la première et transmettre tous les candidats à l’agent.",
-  ],
-  "settings.voice.options.cloudHint": [
-    "After recording, the transcript and selected project names and paths go to the chosen cleanup model. AssemblyAI Gateway models require account access. The project index stays on the environment.",
-    "Nach der Aufnahme gehen Transkript sowie ausgewählte Projektnamen und Pfade an das gewählte Nachbearbeitungsmodell. AssemblyAI-Gateway-Modelle erfordern Kontozugriff. Der Projektindex bleibt in der Umgebung.",
-    "Après l’enregistrement, la transcription ainsi que les noms et chemins sélectionnés sont envoyés au modèle de nettoyage choisi. Les modèles AssemblyAI Gateway nécessitent un accès au compte. L’index du projet reste dans l’environnement.",
   ],
 });
 

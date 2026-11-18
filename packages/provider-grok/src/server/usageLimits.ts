@@ -81,12 +81,21 @@ export function grokUsageResponseToLimits(
     return makeUsageLimits({ checkedAt, windows: [] });
   }
   const reset = period?.end ? DateTime.make(period.end) : Option.none();
+  const start = typeof period?.start === "string" ? parsePeriodBoundary(period.start) : NaN;
+  const duration = Math.round((parsePeriodBoundary(period?.end) - start) / 60_000);
+  const windowDurationMins =
+    Number.isSafeInteger(duration) && duration > 0
+      ? duration
+      : kind === "weekly" && period?.start === undefined
+        ? 7 * 24 * 60
+        : undefined;
   const window: ServerProviderUsageWindow = {
     id: "subscription",
     kind,
     label: kind === "weekly" ? "Weekly" : kind === "monthly" ? "Monthly" : "Subscription",
     usedPercent: clampPercent(usedPercent),
     ...(Option.isSome(reset) ? { resetsAt: DateTime.formatIso(reset.value) } : {}),
+    ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
   };
   return makeUsageLimits({ checkedAt, windows: [window] });
 }

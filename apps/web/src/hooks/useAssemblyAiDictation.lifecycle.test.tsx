@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { SpeechStreamingTranscriptResult } from "@t3tools/contracts";
 
 import type { StartAssemblyAiStreamingTranscriptionInput } from "../lib/assemblyAiStreamingTranscription";
 import {
@@ -15,7 +16,9 @@ let draft: AssemblyAiDictationDraftSnapshot;
 let editDraft: (text: string) => void;
 let transportInput: StartAssemblyAiStreamingTranscriptionInput;
 const cancelTransport = vi.fn();
-const stopTransport = vi.fn(async () => {});
+const stopTransport = vi.fn<() => Promise<SpeechStreamingTranscriptResult | void>>(
+  async () => undefined,
+);
 const notice = vi.fn();
 const startTransport: NonNullable<HookInput["startTransport"]> = async (input) => {
   transportInput = input;
@@ -97,6 +100,41 @@ afterEach(async () => {
 });
 
 describe("voice dictation lifecycle", () => {
+  it.each(["complete", "cancel"] as const)(
+    "keeps advanced processing owned by the composer through %s",
+    async (action) => {
+      const finished = deferred<SpeechStreamingTranscriptResult>();
+      stopTransport.mockImplementationOnce(() => {
+        transportInput.onProcessing?.();
+        return finished.promise;
+      });
+      const transform = vi.fn<NonNullable<HookInput["transformTranscript"]>>(
+        async (_transcript, processed) => processed!,
+      );
+      await renderComposer({ transform });
+      await speak("Keep mount app.");
+      let stopping: Promise<void>;
+      await act(() => {
+        stopping = dictation.stop();
+      });
+      expect(dictation.state).toBe("interpreting");
+      if (action === "cancel") await act(() => dictation.cancel());
+      const processed = { text: "Keep mountApp.", references: [] };
+      await act(async () => {
+        finished.resolve({ transcript: "Keep mount app.", processed });
+        await stopping!;
+      });
+      expect(dictation.state).toBe("idle");
+      if (action === "complete") {
+        expect(transform).toHaveBeenCalledExactlyOnceWith("Keep mount app.", processed);
+        expect(draft.text).toBe("Existing requirement.\nKeep mountApp.");
+      } else {
+        expect(transform).not.toHaveBeenCalled();
+        expect(draft.text).toBe("Existing requirement.\n");
+        expect(cancelTransport).toHaveBeenCalled();
+      }
+    },
+  );
   it("processes all speech segments once, retains requirements, and restores only the dictation", async () => {
     const transform = vi.fn(async () => ({
       text: "Change [index.ts](apps/web/index.ts), but do not rename the API.",

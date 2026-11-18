@@ -31,7 +31,11 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
-import { AssemblyAiSpeechContext, AssemblyAiVoiceSettings } from "./speech.ts";
+import {
+  AssemblyAiSpeechContext,
+  AssemblyAiVoiceSettings,
+  SpeechProcessDictationResult,
+} from "./speech.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -1073,6 +1077,7 @@ export type SpeechStreamingSessionId = typeof SpeechStreamingSessionId.Type;
 
 export const SpeechStreamingSessionStartResult = Schema.Struct({
   sessionId: SpeechStreamingSessionId,
+  advancedMode: Schema.optionalKey(Schema.Boolean),
 });
 export type SpeechStreamingSessionStartResult = typeof SpeechStreamingSessionStartResult.Type;
 
@@ -1089,6 +1094,7 @@ export type SpeechStreamingSessionInput = typeof SpeechStreamingSessionInput.Typ
 
 export const SpeechStreamingTranscriptResult = Schema.Struct({
   transcript: Schema.String,
+  processed: Schema.optionalKey(SpeechProcessDictationResult),
 });
 export type SpeechStreamingTranscriptResult = typeof SpeechStreamingTranscriptResult.Type;
 

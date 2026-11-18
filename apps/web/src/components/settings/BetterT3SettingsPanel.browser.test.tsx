@@ -2,13 +2,24 @@ import { act, render as renderTest, type Screen } from "../../../test/render";
 import {
   BETTER_T3_FEATURE_REGISTRY,
   DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
-import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type ClientSettings,
+} from "@t3tools/contracts/settings";
 import { mergeClientSettingsPatch } from "@t3tools/client-runtime/client-settings";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { useState, type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 import { BetterT3SettingsContent } from "./BetterT3SettingsPanel";
+import { useBetterT3PreparedControls } from "./BetterT3SettingsPanel.controls";
 import { BetterT3FeatureChoice } from "./BetterT3SettingsPreview";
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
 import {
@@ -20,6 +31,66 @@ vi.mock("../../hooks/useSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   usePrimarySettingsAvailable: () => true,
 }));
+
+it("distinguishes automatic Fetch from an unavailable saved model", async () => {
+  const environmentId = EnvironmentId.make("environment");
+  const instanceId = ProviderInstanceId.make("codex");
+  const providers: readonly ServerProvider[] = [
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      displayName: "Codex",
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      fetchWorkers: { commandExecutionPolicy: "deny", maxRecommendedWorkers: 8 },
+      models: [
+        { slug: "available-model", name: "Available model", isCustom: false, capabilities: null },
+      ],
+      slashCommands: [],
+      skills: [],
+    },
+  ];
+  const translate = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
+  const features = buildBetterT3ControlStates({
+    registry: BETTER_T3_FEATURE_REGISTRY,
+    device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+    environment: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+    surface: "web",
+    capabilities: { agentWorkflowVersion: 1 },
+  });
+  const onChange = vi.fn();
+  function FetchModelControl({ selection }: { selection: ModelSelection | null }) {
+    const controls = useBetterT3PreparedControls({
+      environmentId,
+      settings: { ...DEFAULT_UNIFIED_SETTINGS, fetchModelSelection: selection },
+      providers,
+      features,
+      translate,
+      updateSettings: onChange,
+    });
+    return controls["agent.fetchModel"];
+  }
+  await using screen = await renderTest(<FetchModelControl selection={null} />);
+  const picker = screen.getByRole("button", { name: "Fetch-Modell" });
+  const automatic = screen.getByRole("button", { name: "Automatisch" });
+  await expect.element(picker).toHaveTextContent("Modell auswählen");
+  await expect.element(automatic).toHaveAttribute("aria-pressed", "true");
+  await picker.click();
+  await page.getByRole("option", { name: /Available model/ }).click();
+  expect(onChange).toHaveBeenLastCalledWith({
+    fetchModelSelection: { instanceId, model: "available-model" },
+  });
+  await screen.rerender(<FetchModelControl selection={{ instanceId, model: "retired-model" }} />);
+  await expect.element(picker).toHaveTextContent("retired-model · Nicht verfügbar");
+  await expect.element(automatic).toHaveAttribute("aria-pressed", "false");
+  await automatic.click();
+  expect(onChange).toHaveBeenLastCalledWith({ fetchModelSelection: null });
+});
+
 it("keeps all reasoning choices directly visible and updates their existing settings together", async () => {
   await using fixture = await setupFixture();
   const { render, ReasoningSettingsHarness, translate, click } = fixture;

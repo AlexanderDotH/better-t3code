@@ -3,35 +3,76 @@ import {
   DAILY_USAGE_PACE_LABELS,
   USAGE_PACE_BAR_DESCRIPTION,
   dailyUsagePace,
+  formatResetCountdown,
+  formatUsageResetAt,
+  paceOf,
   usagePaceBarSegments,
 } from "@t3tools/shared/usageLimits";
-import { type ReactNode, useEffect, useRef } from "react";
+import { Clock3Icon } from "lucide-react";
+import { useId } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { observeVisibleAnimation } from "../../lib/visibleAnimation";
-import { observeResize } from "../../lib/observeResize";
+import { useInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-type DailyPace = NonNullable<ReturnType<typeof dailyUsagePace>>;
-
-function paceLabel(pace: DailyPace, percent: (value: number) => string): string {
-  return (pace.status === "fast" || pace.status === "exceeded") && pace.paceOverPercent !== null
-    ? `${DAILY_USAGE_PACE_LABELS[pace.status]} (${percent(pace.paceOverPercent)} over pace)`
-    : DAILY_USAGE_PACE_LABELS[pace.status];
+export function UsageWindowDetails({
+  window,
+  now,
+  focusable = true,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+  readonly focusable?: boolean;
+}) {
+  const tooltipId = useId();
+  const pacingEnabled = useClientSettings((settings) => settings.usagePacingEnabled);
+  const { message } = useInterfaceTranslator();
+  const { locale } = useInterfaceLocaleRuntime();
+  const pace = pacingEnabled ? paceOf(window, now) : null;
+  const countdown = formatResetCountdown(window, now);
+  const resetsAt = formatUsageResetAt(window, locale);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-muted-foreground tabular-nums">
+      {pace ? (
+        <span
+          className={
+            pace === "under"
+              ? "text-success-foreground"
+              : pace === "ahead"
+                ? "text-warning-foreground"
+                : "text-muted-foreground"
+          }
+        >
+          {message(`usage.pace.${pace}`)}
+        </span>
+      ) : null}
+      {pace && countdown ? <span aria-hidden>{" · "}</span> : null}
+      {countdown && resetsAt ? (
+        <Tooltip>
+          <TooltipTrigger
+            aria-describedby={tooltipId}
+            render={
+              <time
+                dateTime={window.resetsAt}
+                tabIndex={focusable ? 0 : undefined}
+                className="inline-flex cursor-help items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              />
+            }
+          >
+            {countdown}
+            <Clock3Icon className="size-3" aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup id={tooltipId} role="tooltip" side="top">
+            {resetsAt}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </span>
+  );
 }
 
-function paceTone(status: DailyPace["status"]): string {
-  return status === "exceeded"
-    ? "text-destructive-foreground"
-    : status === "fast"
-      ? "text-warning-foreground"
-      : status === "good"
-        ? "text-success-foreground"
-        : "text-muted-foreground";
-}
-
-export function UsagePaceHeaderLabel({
+export function UsagePaceTooltip({
   window,
   now,
 }: {
@@ -40,51 +81,26 @@ export function UsagePaceHeaderLabel({
 }) {
   const settings = useClientSettings();
   const { number } = useInterfaceTranslator();
-  const pace = dailyUsagePace(window, now, settings.usagePacingWorkdayHours);
-  if (!settings.usagePacingEnabled || !pace) return null;
+  const pace = settings.usagePacingEnabled
+    ? dailyUsagePace(window, now, settings.usagePacingWorkdayHours)
+    : null;
+  if (pace?.todayUsedPercent == null) return null;
   const percent = (value: number) => `${number(value, { maximumFractionDigits: 1 })}%`;
   return (
-    <span
-      className={`shrink-0 text-2xs whitespace-nowrap @max-[650px]:hidden ${paceTone(pace.status)}`}
-    >
-      {paceLabel(pace, percent)}
-    </span>
-  );
-}
-
-function ScrollingPaceLabel({
-  label,
-  tone,
-  className = "",
-}: {
-  label: string;
-  tone: string;
-  className?: string;
-}) {
-  const ref = useRef<HTMLSpanElement>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the visible pace label and releases its resize and visibility observers on cleanup
-  useEffect(() => {
-    const element = ref.current;
-    const content = element?.firstElementChild;
-    if (!element || !content) return;
-    const measure = () => {
-      const overflow = Math.max(0, content.scrollWidth - element.clientWidth);
-      element.dataset.overflow = String(overflow > 0);
-      element.style.setProperty("--pace-scroll-distance", `${-overflow}px`);
-      element.style.setProperty("--pace-scroll-duration", `${Math.max(8, overflow / 20 + 4)}s`);
-    };
-    const stopResizing = observeResize([element, content], measure);
-    measure();
-    const stopObserving = observeVisibleAnimation(element);
-    return () => {
-      stopResizing();
-      stopObserving?.();
-    };
-  }, []);
-  return (
-    <span ref={ref} className={`usage-pace-label w-full min-w-0 ${tone} ${className}`}>
-      <span>{label}</span>
-    </span>
+    <div className="flex flex-col gap-1.5">
+      <span>{DAILY_USAGE_PACE_LABELS[pace.status]}</span>
+      <span>
+        {percent(pace.todayRemainingPercent)} left today · {percent(pace.dailyBudgetPercent)} budget
+        today
+      </span>
+      {pace.catchUpRemainingPercent > 0 ? (
+        <span>{percent(pace.catchUpRemainingPercent)} catch-up left</span>
+      ) : null}
+      {pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? (
+        <span>{percent(pace.todayOverdrawPercent)} overdrawn today</span>
+      ) : null}
+      <span>{USAGE_PACE_BAR_DESCRIPTION}</span>
+    </div>
   );
 }
 
@@ -131,7 +147,7 @@ export function UsagePaceBar({
       aria-valuemin={-100}
       aria-valuemax={100}
       aria-valuenow={pace.todayBalancePercent}
-      aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today; already spent from the weekly quota.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
+      aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today; already spent from the quota.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
       className={`usage-pace-bar ${shape === "segment" ? "rounded-md" : "rounded-full"}`}
       style={{
         right: `${100 - segments.widthPercent}%`,
@@ -181,91 +197,5 @@ export function UsagePaceBar({
         ) : null}
       </div>
     </div>
-  );
-}
-
-export function UsagePaceDetails({
-  window,
-  now,
-  className = "",
-  accountLabel,
-  statusInHeader = false,
-}: {
-  readonly window: ServerProviderUsageWindow;
-  readonly now: number;
-  readonly className?: string;
-  readonly accountLabel?: ReactNode;
-  readonly statusInHeader?: boolean;
-}) {
-  const settings = useClientSettings();
-  const { number } = useInterfaceTranslator();
-  const pace = dailyUsagePace(window, now, settings.usagePacingWorkdayHours);
-  if (!settings.usagePacingEnabled || !pace) return null;
-  const percent = (value: number) => `${number(value, { maximumFractionDigits: 1 })}%`;
-  const balance =
-    pace.todayUsedPercent === null
-      ? null
-      : pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0
-        ? `${percent(pace.todayOverdrawPercent)} overdrawn today`
-        : `${percent(pace.todayRemainingPercent)} left today`;
-  const label = paceLabel(pace, percent);
-  const tone = paceTone(pace.status);
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<span tabIndex={0} />}
-        className={`flex w-full min-w-0 cursor-help flex-col items-center gap-0.5 rounded-sm text-center text-2xs leading-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${className}`}
-      >
-        {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
-        {balance !== null ? (
-          <span className="min-w-0 text-center text-muted-foreground tabular-nums">
-            <span className={pace.status === "exceeded" ? tone : undefined}>{balance}</span>
-            {" · "}
-            {percent(pace.dailyBudgetPercent)} budget today
-            {pace.catchUpRemainingPercent > 0 ? (
-              <> · {percent(pace.catchUpRemainingPercent)} catch-up left</>
-            ) : null}
-          </span>
-        ) : null}
-        <ScrollingPaceLabel
-          key={label}
-          label={label}
-          tone={tone}
-          className={statusInHeader && balance !== null ? "@min-[651px]:hidden" : ""}
-        />
-      </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-80">
-        <div className="flex flex-col gap-1.5 p-1">
-          <span className="font-medium">{label}</span>
-          {balance !== null ? <span>{USAGE_PACE_BAR_DESCRIPTION}</span> : null}
-          {pace.todayBudgetUsedPercent !== null ? (
-            <span>{percent(pace.todayBudgetUsedPercent)} of today's allowance used</span>
-          ) : null}
-          {pace.todayUsedPercent !== null ? (
-            <>
-              <span>
-                Daily budget: {percent(pace.dailyBudgetPercent)} · {pace.workdayHours}-hour pace
-              </span>
-              <span>
-                {percent(pace.todayUsedPercent)} observed today ·{" "}
-                {percent(pace.hourlyBudgetPercent)} per hour
-              </span>
-            </>
-          ) : null}
-          {pace.catchUpRemainingPercent > 0 ? (
-            <span>{percent(pace.catchUpRemainingPercent)} catch-up left</span>
-          ) : null}
-          {pace.status === "estimating" ? (
-            <span className="text-muted-foreground">Measuring pace for the first 15 minutes.</span>
-          ) : null}
-          {balance === null ? (
-            <span className="text-muted-foreground">
-              Daily pace needs usage history covering the start of today. The bar shows the reported
-              weekly quota remaining.
-            </span>
-          ) : null}
-        </div>
-      </TooltipPopup>
-    </Tooltip>
   );
 }

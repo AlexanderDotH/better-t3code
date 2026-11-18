@@ -16,7 +16,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { use, type ComponentProps } from "react";
+import { use } from "react";
 import { Platform, View } from "react-native";
 import { useWorkspaceSurface } from "../workspace/useWorkspaceSurface";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -29,7 +29,8 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection, SettingsSidebarContext } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
-import type { SettingsPageTarget } from "./components/settings-page-targets";
+import { settingsIndexRowId } from "./components/settings-page-targets";
+import { buildSettingsIndexSections, type SettingsListRow } from "./SettingsRouteScreen.logic";
 import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
@@ -50,7 +51,7 @@ export function SettingsRouteScreen() {
     const list = state.routes.findIndex((route) => route.name === "Settings");
     return list < 0
       ? rememberedSettingsPage(currentWorkspaceSelections())
-      : (state.routes[list + 1]?.name ?? null);
+      : settingsIndexRowId(state.routes[list + 1]);
   });
   return <SettingsListScreen sidebar={inSidebar} selected={selected} />;
 }
@@ -101,13 +102,6 @@ export function SettingsListScreen(props: {
   );
 }
 
-type SettingsListRow = ComponentProps<typeof SettingsRow> & { readonly id: string };
-
-interface SettingsListSection {
-  readonly title?: string;
-  readonly rows: readonly SettingsListRow[];
-}
-
 function ConfiguredSettingsRouteScreen() {
   const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
@@ -135,12 +129,6 @@ function ConfiguredSettingsRouteScreen() {
           Object.keys(savedConnectionsById).length,
           translator.message("mobile.settings.environments"),
         ),
-        {
-          id: "SettingsNotifications",
-          icon: "bell.badge",
-          label: translator.message("mobile.ui.notifications"),
-          target: "SettingsNotifications",
-        },
       ]}
     />
   );
@@ -156,12 +144,6 @@ function LocalSettingsRouteScreen() {
           Object.keys(savedConnectionsById).length,
           translator.message("mobile.settings.environments"),
         ),
-        {
-          id: "SettingsNotifications",
-          icon: "bell.badge",
-          label: translator.message("mobile.ui.notifications"),
-          target: "SettingsNotifications",
-        },
       ]}
     />
   );
@@ -190,18 +172,8 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const workspace = useWorkspaceTabs();
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
-  const indexSections = useSettingsIndexSections();
-  const sections = filterSettingsSections(
-    [
-      { rows: overflowRows },
-      {
-        title: translator.message("settings.application.section.connections"),
-        rows: props.connections,
-      },
-      ...indexSections,
-    ],
-    query,
-  );
+  const indexSections = useSettingsIndexSections(props.connections, overflowRows);
+  const sections = filterSettingsSections(indexSections, query);
 
   return (
     <View collapsable={false} className="flex-1">
@@ -221,9 +193,9 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
         }}
       >
         {sections.length ? (
-          sections.map((section, index) => (
-            <SettingsSection key={section.title ?? `untitled-${index}`} title={section.title}>
-              {section.rows.map(({ id, ...row }) => (
+          sections.map((section) => (
+            <SettingsSection key={section.title} title={section.title}>
+              {section.rows.map(({ id, searchTerms: _searchTerms, ...row }) => (
                 <SettingsRow key={id} {...row} />
               ))}
             </SettingsSection>
@@ -240,10 +212,12 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   );
 }
 
-function useSettingsIndexSections(): SettingsListSection[] {
+function useSettingsIndexSections(
+  connections: readonly SettingsListRow[],
+  overflowRows: readonly SettingsListRow[],
+) {
   const translator = useMobileInterfaceTranslator();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
-  const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
     selectedProject?.members
@@ -258,137 +232,18 @@ function useSettingsIndexSections(): SettingsListSection[] {
           members: scopedProjectMembers,
         })
       : (selectedProject?.label ?? "Unavailable project");
-  const page = (
-    target: SettingsPageTarget,
-    icon: SettingsListRow["icon"],
-    label: string,
-    extra?: Pick<SettingsListRow, "disabled" | "value">,
-  ): SettingsListRow => ({ id: target, icon, label, target, ...extra });
-  const serverPage = (target: SettingsPageTarget, icon: SettingsListRow["icon"], label: string) =>
-    page(target, icon, label, { disabled: noServerTargets });
-  // The same pages and groups as Settings on web, minus what mobile has no setting for.
-  return [
-    {
-      rows: [
-        page("SettingsOrganization", "gearshape", translator.message("settings.general.title")),
-        page("SettingsAppearance", "paintbrush", translator.message("settings.appearance.title")),
-        page(
-          "SettingsDiffs",
-          "chevron.left.forwardslash.chevron.right",
-          translator.message("mobile.prefs.diffs"),
-        ),
-        page("SettingsBetterT3", "sparkles", "Better T3"),
-        page("SettingsAgents", "person.2", translator.message("mobile.settings.agentSettings")),
-        page(
-          "SettingsProjectIndexing",
-          "folder",
-          translator.message("settings.betterT3.subgroup.project-indexing"),
-        ),
-        page(
-          "SettingsFollowUp",
-          "bubble.left.and.bubble.right",
-          translator.message("settings.betterT3.tab.chat"),
-        ),
-        ...(navigationCustomizationAvailable()
-          ? [
-              page(
-                "SettingsNavigation",
-                "line.3.horizontal",
-                translator.message("mobile.settings.navigationTabs"),
-              ),
-            ]
-          : []),
-        page("SettingsKeyboard", "keyboard", translator.message("mobile.settings.keyboard")),
-        page("SettingsMicrophone", "mic", translator.message("mobile.settings.microphone")),
-        page("SettingsUsage", "chart.bar.xaxis", translator.message("sidebar.navigation.usage")),
-      ],
-    },
-    {
-      title: translator.message("settings.betterT3.tab.agents"),
-      rows: [
-        serverPage(
-          "SettingsProviderAccounts",
-          "person.crop.circle",
-          translator.message("settings.application.section.providers"),
-        ),
-        ...(isMobileSecretsFeatureEnabled
-          ? [serverPage("SettingsSecrets", "lock", translator.message("mobile.access.secrets"))]
-          : []),
-        serverPage(
-          "SettingsDevices",
-          "iphone",
-          translator.message("mobile.projects.devices.title"),
-        ),
-        serverPage(
-          "SettingsThreads",
-          "text.bubble",
-          translator.message("mobile.settings.section.threads"),
-        ),
-        page(
-          "SettingsProjects",
-          "text.bubble",
-          translator.message("settings.application.title.importChats"),
-        ),
-        page(
-          "SettingsScheduledTasks",
-          "clock",
-          translator.message("mobile.settings.scheduledTasks"),
-        ),
-      ],
-    },
-    {
-      title: translator.message("pullRequest.detail.tab.code"),
-      rows: [
-        page(
-          "SettingsProjectOverview",
-          "folder",
-          translator.message("settings.projects.detail.projects"),
-          selectedProjectKey !== null ? { value: projectLabel } : undefined,
-        ),
-        serverPage(
-          "SettingsEnvironmentSourceControl",
-          "arrow.triangle.branch",
-          translator.message("settings.application.title.sourceControl"),
-        ),
-        serverPage(
-          "SettingsProjectScripts",
-          "terminal",
-          translator.message("mobile.projects.scripts.title"),
-        ),
-        serverPage(
-          "SettingsWorktrees",
-          "square.on.square",
-          translator.message("mobile.settings.worktrees"),
-        ),
-      ],
-    },
-    {
-      rows: [
-        serverPage(
-          "SettingsEnvironmentMaintenance",
-          "arrow.clockwise",
-          translator.message("mobile.settings.maintenance"),
-        ),
-        page("SettingsLabs", "sparkles", translator.message("mobile.settings.labs")),
-        page("SettingsAbout", "info.circle", translator.message("settings.about.title")),
-        page(
-          "SettingsUpdateEverything",
-          "arrow.clockwise",
-          translator.message("mobile.insights.updates.title"),
-        ),
-        page(
-          "SettingsServerDiagnostics",
-          "stethoscope",
-          translator.message("mobile.insights.serverDiagnostics"),
-        ),
-        page(
-          "SettingsArchive",
-          "archivebox",
-          translator.message("settings.application.section.archive"),
-        ),
-      ],
-    },
-  ];
+  return buildSettingsIndexSections({
+    translate: translator.message,
+    connections,
+    overflowRows,
+    hasServerTargets: selectedTargets.length > 0,
+    navigationCustomizationAvailable: navigationCustomizationAvailable(),
+    secretsFeatureEnabled: isMobileSecretsFeatureEnabled,
+    ...(selectedProjectKey !== null ? { selectedProjectLabel: projectLabel } : {}),
+    ...(selectedTargets.length === 1
+      ? { betterT3EnvironmentId: selectedTargets[0]!.environmentId }
+      : {}),
+  });
 }
 
 function useOverflowRows(): SettingsListRow[] {

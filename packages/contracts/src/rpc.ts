@@ -608,6 +608,7 @@ import {
   SpeechStreamingStartInput,
   SpeechProcessDictationInput,
   SpeechProcessDictationResult,
+  SpeechLearnedVocabularyResult,
   SpeechDictationError,
   AssemblyAiModelsResult,
   ProjectSpeechProfileListResult,
@@ -690,6 +691,8 @@ export const WS_METHODS = {
   speechCancelStreamingSession: "speech.cancelStreamingSession",
   speechGetProjectProfile: "speech.getProjectProfile",
   speechListProjectProfiles: "speech.listProjectProfiles",
+  speechGetLearnedVocabulary: "speech.getLearnedVocabulary",
+  speechClearLearnedVocabulary: "speech.clearLearnedVocabulary",
   speechIndexProject: "speech.indexProject",
   speechCreateBasicProjectProfile: "speech.createBasicProjectProfile",
   speechTranslateTranscript: "speech.translateTranscript",
@@ -2444,6 +2447,16 @@ const WsSpeechIndexProjectRpc = Rpc.make(WS_METHODS.speechIndexProject, {
   success: ProjectSpeechProfile,
   error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
 });
+const WsSpeechGetLearnedVocabularyRpc = Rpc.make(WS_METHODS.speechGetLearnedVocabulary, {
+  payload: ProjectSpeechProfileInput,
+  success: SpeechLearnedVocabularyResult,
+  error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
+});
+const WsSpeechClearLearnedVocabularyRpc = Rpc.make(WS_METHODS.speechClearLearnedVocabulary, {
+  payload: ProjectSpeechProfileInput,
+  success: Schema.Void,
+  error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
+});
 const WsSpeechCreateBasicProjectProfileRpc = Rpc.make(WS_METHODS.speechCreateBasicProjectProfile, {
   payload: ProjectSpeechProfileInput,
   success: ProjectSpeechProfile,
@@ -2957,6 +2970,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpeechCancelStreamingSessionRpc,
   WsSpeechGetProjectProfileRpc,
   WsSpeechListProjectProfilesRpc,
+  WsSpeechGetLearnedVocabularyRpc,
+  WsSpeechClearLearnedVocabularyRpc,
   WsSpeechIndexProjectRpc,
   WsSpeechCreateBasicProjectProfileRpc,
   WsSpeechTranslateTranscriptRpc,

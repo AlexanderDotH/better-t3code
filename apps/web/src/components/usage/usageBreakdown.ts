@@ -56,7 +56,7 @@ export function tokenTypeSegments(
 
 export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
   return [
-    { label: "Standard", value: cost.standard, color: ink(34) },
+    { label: "Normal", value: cost.standard, color: ink(34) },
     { label: "Fast", value: cost.fast, color: ink(66) },
     { label: "Ultrafast", value: cost.ultrafast, color: ink(100) },
   ];

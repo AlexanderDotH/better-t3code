@@ -1,6 +1,6 @@
-import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
+import type { EnvironmentId, ServerProvider, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
+import { compactUsageWindow, limitsNotice } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -8,9 +8,9 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
-import { LimitWindows } from "../usage/UsageLimits";
+import { CompactLimitWindow, LimitWindows } from "../usage/UsageLimits";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { UsageResetMenu } from "../usage/ResetManagementDialog";
-import { UsagePaceDetails, UsagePaceHeaderLabel } from "../usage/UsagePaceDetails";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -51,21 +51,13 @@ export function usageLimitsBannerItem(
   report: UsageLimitsReport,
   environmentId: EnvironmentId,
   onDismiss: () => void,
+  selectedProvider?: ServerProvider | null,
 ): ComposerBannerStackItem {
   const [first] = report.accounts;
   const single = report.accounts.length === 1 && first ? first : null;
-  const weeklyWindow =
-    single && !limitsNotice(single.limits)
-      ? single.limits.windows.find((window) => window.kind === "weekly")
-      : undefined;
   const summary = single ? (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-4 align-middle">
-      <span className="min-w-0 truncate">
-        <AccountSummary account={single} />
-      </span>
-      {weeklyWindow ? (
-        <UsagePaceHeaderLabel window={weeklyWindow} now={Date.parse(report.createdAt)} />
-      ) : null}
+    <span className="max-w-full min-w-0 truncate align-middle">
+      <AccountSummary account={single} />
     </span>
   ) : (
     `${report.accounts.length} accounts`
@@ -76,11 +68,67 @@ export function usageLimitsBannerItem(
     icon: <GaugeIcon />,
     title: "Usage limits",
     description: summary,
+    compactContent: (
+      <UsageLimitsCompactSummary report={report} selectedProvider={selectedProvider} />
+    ),
     dismissLabel: "Dismiss usage limits",
     onDismiss,
     actions: <UsageResetMenu report={report} environmentId={environmentId} />,
     children: <UsageLimitsBannerBody report={report} />,
   };
+}
+
+function UsageLimitsCompactSummary({
+  report,
+  selectedProvider,
+}: {
+  readonly report: UsageLimitsReport;
+  readonly selectedProvider: ServerProvider | null | undefined;
+}) {
+  const { message } = useInterfaceTranslator();
+  const account =
+    report.accounts.find(
+      (account) =>
+        account.instanceId !== undefined && account.instanceId === selectedProvider?.instanceId,
+    ) ??
+    (selectedProvider?.auth.email
+      ? report.accounts.find(
+          (account) => account.email?.toLowerCase() === selectedProvider.auth.email?.toLowerCase(),
+        )
+      : undefined) ??
+    report.accounts[0];
+  if (!account) {
+    return (
+      <span className="min-w-0 truncate text-muted-foreground">
+        {report.notices[0] ?? "Usage limits"}
+      </span>
+    );
+  }
+  const now = Date.parse(report.createdAt);
+  const notice = limitsNotice(account.limits);
+  const window = compactUsageWindow(
+    { driver: account.driver, windows: account.limits.windows },
+    now,
+  );
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      {notice || !window ? (
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{notice}</span>
+      ) : (
+        <CompactLimitWindow driver={account.driver} window={window} now={now} />
+      )}
+      {report.accounts.length > 1 ? (
+        <span
+          className="shrink-0 text-muted-foreground tabular-nums"
+          aria-label={message("chat.composer.usageLimits.moreAccounts", {
+            count: report.accounts.length - 1,
+          })}
+        >
+          +{report.accounts.length - 1}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 export function modelFallbackBannerItem({
@@ -159,24 +207,6 @@ function UsageLimitsBannerBody({ report }: { readonly report: UsageLimitsReport 
             {notice}
           </span>
         ))}
-        {report.accounts.map((account) =>
-          limitsNotice(account.limits)
-            ? null
-            : account.limits.windows.map((window) => (
-                <UsagePaceDetails
-                  key={`${account.id}:${window.id}`}
-                  window={window}
-                  now={now}
-                  accountLabel={
-                    report.accounts.length > 1 ? <AccountSummary account={account} /> : undefined
-                  }
-                  statusInHeader={
-                    report.accounts.length === 1 &&
-                    window === account.limits.windows.find((entry) => entry.kind === "weekly")
-                  }
-                />
-              )),
-        )}
       </ComposerBanner.Body>
     </ComposerBanner.Scroll>
   );

@@ -107,6 +107,15 @@ describe("buildBetterT3SettingsPreviewModel", () => {
 
     expect(after.chat.animationKey).not.toBe(before.chat.animationKey);
     expect(after.agent.animationKey).toBe(before.agent.animationKey);
+    const classic = buildBetterT3SettingsPreviewModel({
+      ...base,
+      features: [],
+      classicSidebar: true,
+    });
+    expect(classic.chat.classicSidebar).toBe(true);
+    expect(classic.chat.animationKey).not.toBe(
+      buildBetterT3SettingsPreviewModel({ ...base, features: [] }).chat.animationKey,
+    );
   });
 });
 

@@ -66,6 +66,7 @@ export const settingsApplicationInterfaceCatalog = defineLocalizedInterfaceCatal
   "settings.application.section.keybindings": ["Keybindings", "Tastenkürzel", "Raccourcis clavier"],
   "settings.application.section.providers": ["Providers", "Provider", "Fournisseurs"],
   "settings.application.section.betterT3": ["Better T3", "Better T3", "Better T3"],
+  "settings.application.section.t3Code": ["T3 Code", "T3 Code", "T3 Code"],
   "settings.application.section.skills": ["Skills", "Skills", "Compétences"],
   "settings.application.section.mcp": ["MCP Servers", "MCP-Server", "Serveurs MCP"],
   "settings.application.section.integrations": ["Integrations", "Integrationen", "Intégrations"],

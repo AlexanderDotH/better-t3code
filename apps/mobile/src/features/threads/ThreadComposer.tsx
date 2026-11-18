@@ -1777,7 +1777,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   <NativeVoiceDictationControl
                     state={voiceDictation.state}
                     audioWaveform={voiceDictation.audioWaveform}
-                    disabled={voiceInput.isBusy || replies.sending}
+                    disabled={voiceInput.isBusy || replies.sending || !voiceDictation.permitted}
                     onStart={voiceDictation.start}
                     onStop={voiceDictation.stop}
                     onCancel={voiceDictation.cancel}

@@ -69,6 +69,29 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect.each([
+    WS_METHODS.serverCreateAssemblyAiStreamingToken,
+    WS_METHODS.speechStartStreamingSession,
+    WS_METHODS.speechPushStreamingAudio,
+    WS_METHODS.speechFinishStreamingSession,
+    WS_METHODS.speechCancelStreamingSession,
+    WS_METHODS.speechProcessDictation,
+  ])("requires the destination voice grant for %s", (method) =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const command = createCommandPermissions(runtime, method);
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
+      expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+        AuthOrchestrationOperateScope,
+      );
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
+      registry.set(sessions(EnvironmentId.make("other")), AsyncResult.success(grant(false)));
+      expect(registry.get(command.permissionAtom(EnvironmentId.make("other")))).toBe(false);
+    }),
+  );
   it.effect(
     "requires the destination preview grant to close a browser tab or pick an element",
     () =>
@@ -102,30 +125,32 @@ describe("command permissions", () => {
       ),
   );
 
-  it.effect("requires the destination settings grant to run storage cleanup", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const cleanup = createCommandPermissions(runtime, WS_METHODS.serverRunStorageCleanup);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
-        expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
-          "EnvironmentAuthorizationError",
-        );
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(true),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
-        );
-        expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
-        yield* cleanup.authorize(registry, env);
-        registry.set(sessions(other), AsyncResult.success(grant(false)));
-        expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
-      }),
-    ),
+  it.effect.each([WS_METHODS.serverRunStorageCleanup, WS_METHODS.speechClearLearnedVocabulary])(
+    "requires the destination settings grant for %s",
+    (method) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const cleanup = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
+          expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(true),
+              scopes: [AuthSettingsWriteScope],
+              permissions: [AuthSettingsWriteScope],
+            }),
+          );
+          expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
+          yield* cleanup.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
+        }),
+      ),
   );
 
   it.effect("requires the destination settings grant to check OTLP endpoints", () =>

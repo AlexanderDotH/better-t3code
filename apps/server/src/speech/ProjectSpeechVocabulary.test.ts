@@ -3,11 +3,12 @@ import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import type { SpeechVocabularyEntry } from "@t3tools/contracts";
+import { ProjectId, type SpeechVocabularyEntry } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
@@ -139,9 +140,150 @@ it("prioritizes spoken code names and caps both cleanup context limits without s
   expect(JSON.parse(selected.context)).toEqual(selected.entries);
   expect(selected.truncated).toBe(true);
   expect(speechVocabularyKeyterms(entries).length).toBe(100);
+  entries.push(
+    ...Array.from({ length: 10 }, (_, index) => ({
+      kind: "class" as const,
+      name: "FrequentlyUsedController",
+      path: `src/consumers/${index}.ts`,
+      line: 1,
+    })),
+  );
+  expect(speechVocabularyKeyterms(entries)[0]).toBe("FrequentlyUsedController");
+  expect(speechVocabularyKeyterms(entries, ["UserPreferredTerm"])[0]).toBe("UserPreferredTerm");
+  entries.push(
+    ...Array.from({ length: 20 }, (_, index) => ({
+      kind: "type" as const,
+      name: "type",
+      path: `src/types/${index}.ts`,
+      line: 1,
+    })),
+  );
+  expect(speechVocabularyKeyterms(entries)).not.toContain("type");
 });
 
 it.layer(TestLayer)("incremental speech vocabulary", (it) => {
+  it.effect("makes a file edit between dictations available to the next cleanup snapshot", () =>
+    Effect.gen(function* () {
+      const fixture = yield* workspace;
+      yield* fixture.write("Voice.ts", "export class BeforeRename {}");
+      const service = yield* fixture.createService;
+      yield* service.refresh({ workspaceRoot: fixture.root });
+      yield* fixture.write("Voice.ts", "export class AfterRename {}");
+      yield* TestClock.adjust("1 minute");
+      const scanner = yield* ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const next = yield* fixture.createService.pipe(
+        Effect.provideService(ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner, {
+          scan: (root) =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(scanner.scan(root)),
+            ),
+        }),
+      );
+      yield* next.refreshInBackground({ workspaceRoot: fixture.root });
+      yield* Deferred.await(started);
+      const pending = yield* next
+        .snapshot({ workspaceRoot: fixture.root, awaitRefresh: true })
+        .pipe(Effect.forkChild);
+      yield* Deferred.succeed(release, undefined);
+      const snapshot = yield* Fiber.join(pending);
+      expect(snapshot.entries.some((entry) => entry.name === "AfterRename")).toBe(true);
+      expect(snapshot.entries.some((entry) => entry.name === "BeforeRename")).toBe(false);
+    }),
+  );
+
+  it.effect("keeps files throughout a large project when the symbol budget is exhausted", () =>
+    Effect.gen(function* () {
+      const fixture = yield* workspace;
+      const content = Array.from(
+        { length: 128 },
+        (_, index) => `export class Identifier${index} {}`,
+      ).join("\n");
+      for (let index = 0; index < 780; index++) {
+        yield* fixture.write(`a/${String(index).padStart(3, "0")}.ts`, content);
+      }
+      yield* fixture.write("z/ActualVoiceController.ts", "export class ActualVoiceController {}");
+      const service = yield* fixture.createService;
+      const result = yield* service.refresh({ workspaceRoot: fixture.root });
+      expect(result.entries.length).toBeLessThanOrEqual(100_000);
+      expect(result.truncated).toBe(true);
+      expect(result.entries.some((entry) => entry.name === "ActualVoiceController")).toBe(true);
+      expect(result.entries.filter((entry) => entry.kind === "file")).toHaveLength(781);
+    }),
+  );
+
+  it.effect("learns confirmed project terms, persists bounded counts, and can clear them", () =>
+    Effect.gen(function* () {
+      const fixture = yield* workspace;
+      yield* fixture.write(
+        "Voice.ts",
+        "export class VoiceController {}\nexport class RareController {}",
+      );
+      const service = yield* fixture.createService;
+      yield* service.refresh({ workspaceRoot: fixture.root });
+      for (const cleanedText of ["VoiceController", "VoiceController", "RareController"]) {
+        yield* service.learn({
+          projectId: ProjectId.make("voice-project"),
+          workspaceRoot: fixture.root,
+          transcript: "Fix the voice controller; never-persist-this-sentence",
+          cleanedText,
+        });
+      }
+      const restarted = yield* fixture.createService;
+      yield* restarted.learn({
+        projectId: ProjectId.make("voice-project"),
+        workspaceRoot: fixture.root,
+        transcript: "Fix kurivio.",
+        cleanedText: "Fix Curivio.",
+        customKeyterms: ["Curivio Studio"],
+      });
+      expect(yield* restarted.learnedTerms({ projectId: ProjectId.make("voice-project") })).toEqual(
+        ["VoiceController", "Curivio", "RareController"],
+      );
+      expect(yield* restarted.learnedTerms({ projectId: ProjectId.make("other-project") })).toEqual(
+        [],
+      );
+      const files = yield* fixture.fs.readDirectory(
+        fixture.path.join(fixture.temporary, "userdata", "speech-vocabulary"),
+      );
+      const stored = yield* fixture.fs.readFileString(
+        fixture.path.join(fixture.temporary, "userdata", "speech-vocabulary", files[0]!),
+      );
+      expect(stored).toContain('"count":2');
+      expect(stored).not.toContain("never-persist-this-sentence");
+      yield* TestClock.adjust("1 day");
+      const terms = Array.from({ length: 270 }, (_, index) => `LearnedTerm${index}`).join(" ");
+      yield* restarted.learn({
+        projectId: ProjectId.make("voice-project"),
+        workspaceRoot: fixture.root,
+        transcript: terms,
+        cleanedText: terms,
+      });
+      const bounded = yield* restarted.learnedTerms({ projectId: ProjectId.make("voice-project") });
+      expect(bounded).toHaveLength(256);
+      expect(bounded[0]).toBe("VoiceController");
+      yield* restarted.clearLearnedTerms({ projectId: ProjectId.make("voice-project") });
+      const cleared = yield* fixture.createService;
+      expect(yield* cleared.learnedTerms({ projectId: ProjectId.make("voice-project") })).toEqual(
+        [],
+      );
+      const storedPath = fixture.path.join(
+        fixture.temporary,
+        "userdata",
+        "speech-vocabulary",
+        files[0]!,
+      );
+      yield* fixture.fs.writeFileString(storedPath, "{");
+      const damaged = yield* fixture.createService;
+      const read = yield* damaged
+        .learnedTerms({ projectId: ProjectId.make("voice-project") })
+        .pipe(Effect.exit);
+      expect(read._tag).toBe("Failure");
+      expect(yield* fixture.fs.readFileString(storedPath)).toBe("{");
+    }),
+  );
   it.effect(
     "reuses unchanged files, refreshes changed declarations and removes deleted files",
     () =>
@@ -230,7 +372,7 @@ it.layer(TestLayer)("incremental speech vocabulary", (it) => {
         expect(cacheFile).toBeDefined();
         const cachePath = fixture.path.join(cacheDirectory, cacheFile!);
         const encoded = yield* fixture.fs.readFileString(cachePath);
-        yield* fixture.fs.writeFileString(cachePath, encoded.replace('"version":1', '"version":0'));
+        yield* fixture.fs.writeFileString(cachePath, encoded.replace('"version":2', '"version":0'));
         const restarted = yield* fixture.createService;
         expect((yield* restarted.snapshot({ workspaceRoot: fixture.root })).entries).toEqual([]);
         expect((yield* restarted.refresh({ workspaceRoot: fixture.root })).entries).toEqual(

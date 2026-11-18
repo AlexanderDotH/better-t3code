@@ -130,6 +130,53 @@ describe("mergeUsage", () => {
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
   });
 
+  it("filters speed after deduplication and scopes project IDs to their environment", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/claude" };
+    const project = { id: "same-id", title: "Workspace" };
+    const local = summary(
+      [
+        bucket({ speed: "standard", project, costUsd: 2 }),
+        bucket({ speed: "fast", project, costUsd: 4, fastCostUsd: 4 }),
+        bucket({ speed: "fast", costUsd: 1, fastCostUsd: 1 }),
+        bucket({ costUsd: 8 }),
+      ],
+      [{ ...source, distinctSessions: 2 }],
+    );
+    const environments = [
+      environment("mac", {
+        ...local,
+        sources: local.sources.map((entry) => ({
+          ...entry,
+          distinctSessionsBySpeed: { standard: 1, fast: 1, ultrafast: 0 },
+        })),
+      }),
+      environment("mirror", local),
+      environment(
+        "remote",
+        summary(
+          [bucket({ speed: "standard", project, costUsd: 3 })],
+          [{ ...source, hostId: "remote" }],
+        ),
+      ),
+    ];
+    const all = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    expect(all.costUsd).toBe(18);
+    expect(
+      all.projects.map(({ environmentId, totalTokens }) => [environmentId, totalTokens]),
+    ).toEqual([
+      ["mac", 2320],
+      ["remote", 1160],
+    ]);
+    const fast = mergeUsage(environments, USAGE_CONTRACT_VERSION, { speed: "fast" });
+    expect(fast.hasUnknownSpeed).toBe(true);
+    expect(fast.sessions).toBe(1);
+    expect(fast.costUsd).toBe(5);
+    expect(
+      fast.projects.map(({ environmentId, totalTokens }) => [environmentId, totalTokens]),
+    ).toEqual([["mac", 1160]]);
+    expect(fast.unassignedProjectTokens).toBe(1160);
+  });
+
   it("drops only the duplicated provider, keeping the environment's other one", () => {
     const sharedClaude = {
       provider: "claude" as const,
@@ -242,7 +289,15 @@ describe("mergeUsage", () => {
         bucket({
           day: "2026-08-08" as UsageDay,
           sourcePath: source.homePath,
-          costUsd: 3,
+          speed: "standard",
+          costUsd: 2,
+          records: 1,
+        }),
+        bucket({
+          day: "2026-08-08" as UsageDay,
+          sourcePath: source.homePath,
+          speed: "fast",
+          costUsd: 1,
           records: 1,
         }),
       ],
@@ -260,7 +315,7 @@ describe("mergeUsage", () => {
     ]) {
       const merged = mergeUsage(ordered, USAGE_CONTRACT_VERSION);
       expect(merged.costUsd).toBe(13);
-      expect(merged.records).toBe(6);
+      expect(merged.records).toBe(7);
       expect(merged.sessions).toBe(2);
       expect(merged.daily.map(({ day, costUsd }) => [day, costUsd])).toEqual([
         ["2026-08-07", 10],

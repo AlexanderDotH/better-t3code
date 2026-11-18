@@ -3,6 +3,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProjectId, ThreadId, VoiceFileReference } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { assemblyAiDictationBlocksSubmission } from "@t3tools/client-runtime/assembly-ai";
 import {
   requestRecordingPermissionsAsync,
   useAudioStream,
@@ -55,6 +57,10 @@ export function useNativeAssemblyAiDictation(input: {
   readonly onNotice: (title: string, error: Error) => void;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const permitted = useAtomValue(
+    serverEnvironment.startSpeechStreamingSession.permissionAtom(input.environmentId),
+  );
+  const configured = input.configured && permitted;
   const { readDraftText } = input;
   const startStreamingSession = useAtomCommand(serverEnvironment.startSpeechStreamingSession, {
     reportFailure: false,
@@ -141,9 +147,9 @@ export function useNativeAssemblyAiDictation(input: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the native recorder when speech configuration is removed.
   useEffect(() => {
-    if (!shouldDeactivateNativeAssemblyAiDictation(input.configured, stateRef.current)) return;
+    if (!shouldDeactivateNativeAssemblyAiDictation(configured, stateRef.current)) return;
     deactivate();
-  }, [deactivate, input.configured]);
+  }, [deactivate, configured]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate the speech session when another editor or thread takes ownership of its draft.
   useLayoutEffect(() => {
@@ -169,7 +175,7 @@ export function useNativeAssemblyAiDictation(input: {
 
   const start = useCallback(async () => {
     if (stateRef.current !== "idle") return;
-    if (!input.configured) {
+    if (!configured) {
       onNoticeRef.current(
         "Voice input is not configured",
         new Error("Add an AssemblyAI API key in Settings → Agents & Servers."),
@@ -211,6 +217,7 @@ export function useNativeAssemblyAiDictation(input: {
             environmentId: input.environmentId,
             input: {
               projectId: input.projectId,
+              supportsAdvancedMode: true,
               ...(input.processingSupported && input.threadId ? { threadId: input.threadId } : {}),
             },
           });
@@ -264,6 +271,10 @@ export function useNativeAssemblyAiDictation(input: {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
           if (!draftSession.updateTranscript(text)) deactivate();
         },
+        onProcessing: (advancedMode) => {
+          if (advancedMode && attemptRef.current === attempt && !abortController.signal.aborted)
+            transition("interpreting");
+        },
         onAudioLevel: (level) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
           setAudioWaveform((current) => [...current.slice(1), level]);
@@ -306,7 +317,7 @@ export function useNativeAssemblyAiDictation(input: {
     audioStream.stream,
     cancelStreamingSession,
     finishStreamingSession,
-    input.configured,
+    configured,
     input.environmentId,
     input.projectId,
     input.threadId,
@@ -324,16 +335,19 @@ export function useNativeAssemblyAiDictation(input: {
   ]);
 
   const stop = useCallback(async () => {
-    if (stateRef.current === "idle" || stateRef.current === "stopping") return;
+    if (
+      stateRef.current === "idle" ||
+      stateRef.current === "stopping" ||
+      stateRef.current === "interpreting"
+    )
+      return;
     const attempt = attemptRef.current;
     const session = sessionRef.current;
     const draftSession = draftSessionRef.current;
     const abortController = abortRef.current;
     transition("stopping");
     releaseAudio();
-    await (async () => {
-      await session?.stop();
-    })().catch((error) => {
+    const finished = await session?.stop().catch((error: unknown) => {
       if (attemptRef.current === attempt)
         onNoticeRef.current(
           "Could not stop voice input cleanly",
@@ -347,6 +361,7 @@ export function useNativeAssemblyAiDictation(input: {
       const result = await processNativeDictation({
         transcript,
         signal: abortController.signal,
+        ...(finished?.processed ? { processed: finished.processed } : {}),
         ...(input.processingSupported
           ? {
               process: async (transcript: string) => {
@@ -423,7 +438,7 @@ export function useNativeAssemblyAiDictation(input: {
 
   return {
     state,
-    active: state !== "idle",
+    active: assemblyAiDictationBlocksSubmission(state),
     audioWaveform,
     start,
     stop,
@@ -433,5 +448,6 @@ export function useNativeAssemblyAiDictation(input: {
       restorableDraft.text === input.draftText &&
       restorableDraft.lifecycleKey === input.lifecycleKey,
     restoreOriginal,
+    permitted,
   } as const;
 }

@@ -19,6 +19,7 @@ import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { LearnedSpeechVocabulary } from "./LearnedSpeechVocabulary";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   formatChatImportLatest,
@@ -416,6 +417,7 @@ export function EnvironmentSpeechProfileSettings(props: {
                       </Text>
                     )}
 
+                    <LearnedSpeechVocabulary project={project} />
                     <View className="flex-row flex-wrap gap-2">
                       <Pressable
                         accessibilityRole="button"

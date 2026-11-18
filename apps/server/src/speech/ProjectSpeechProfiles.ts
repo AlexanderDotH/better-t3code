@@ -6,8 +6,10 @@ import {
   type ProjectId,
   type ProjectSpeechProfile,
   type ProjectSpeechProfileSource,
+  type SpeechLearnedVocabularyResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,6 +32,7 @@ import { ProjectSpeechVocabulary, speechVocabularyKeyterms } from "./ProjectSpee
 export const PROJECT_SPEECH_PROFILE_INDEX_FILE_LIMIT = 24;
 const PROJECT_SPEECH_PROFILE_KEYTERM_LIMIT = 100;
 const PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT = "5 seconds";
+const PROJECT_SPEECH_PROFILE_REFRESH_INTERVAL_MS = 5 * 60_000;
 export const INDEX_FALLBACK_WARNING =
   "Full project indexing was unavailable; using a basic speech profile.";
 
@@ -220,6 +223,12 @@ export class ProjectSpeechProfiles extends Context.Service<
     readonly contextForProject: (
       projectId: ProjectId,
     ) => Effect.Effect<AssemblyAiSpeechContext, ProjectSpeechProfileError>;
+    readonly getLearnedVocabulary: (
+      projectId: ProjectId,
+    ) => Effect.Effect<SpeechLearnedVocabularyResult, ProjectSpeechProfileError>;
+    readonly clearLearnedVocabulary: (
+      projectId: ProjectId,
+    ) => Effect.Effect<void, ProjectSpeechProfileError>;
   }
 >()("t3/speech/ProjectSpeechProfiles") {}
 
@@ -334,7 +343,10 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(vocabulary)) {
         const refreshed = yield* vocabulary.value
           .refresh({ workspaceRoot: project.workspaceRoot })
-          .pipe(Effect.option);
+          .pipe(
+            Effect.timeoutOption("2 seconds"),
+            Effect.orElseSucceed(() => Option.none()),
+          );
         if (Option.isSome(indexedContent) && Option.isSome(refreshed)) {
           const keyterms = [
             ...indexedContent.value.keyterms.slice(0, 4),
@@ -376,11 +388,70 @@ export const make = Effect.gen(function* () {
     "ProjectSpeechProfiles.contextForProject",
   )(function* (projectId) {
     const existing = yield* store.get(projectId);
-    if (Option.isSome(existing)) return toSpeechContext(existing.value);
-    return toSpeechContext(yield* createBasic(projectId));
+    if (Option.isSome(existing)) {
+      const profile = existing.value;
+      const project = yield* resolveProject(projectId);
+      const now = yield* Clock.currentTimeMillis;
+      const workspaceChanged =
+        profile.workspaceRoot !== project.workspaceRoot || profile.projectTitle !== project.title;
+      if (workspaceChanged && profile.source === "basic" && profile.warning === null)
+        return toSpeechContext(yield* createBasic(projectId));
+      if (
+        workspaceChanged ||
+        ((profile.source === "indexed" || profile.warning !== null) &&
+          now - Date.parse(profile.updatedAt) >= PROJECT_SPEECH_PROFILE_REFRESH_INTERVAL_MS)
+      ) {
+        return toSpeechContext(yield* index(projectId));
+      }
+      return toSpeechContext(profile);
+    }
+    return toSpeechContext(yield* index(projectId));
   });
 
-  return ProjectSpeechProfiles.of({ get, list, index, createBasic, contextForProject });
+  const getLearnedVocabulary = Effect.fn("ProjectSpeechProfiles.getLearnedVocabulary")(function* (
+    projectId: ProjectId,
+  ) {
+    yield* resolveProject(projectId);
+    if (Option.isNone(vocabulary)) return { keyterms: [] };
+    const keyterms = yield* vocabulary.value.learnedTerms({ projectId }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectSpeechProfileError({
+            operation: "get",
+            projectId,
+            reason: "Learned speech terms could not be loaded.",
+            cause,
+          }),
+      ),
+    );
+    return { keyterms };
+  });
+  const clearLearnedVocabulary = Effect.fn("ProjectSpeechProfiles.clearLearnedVocabulary")(
+    function* (projectId: ProjectId) {
+      yield* resolveProject(projectId);
+      if (Option.isSome(vocabulary))
+        yield* vocabulary.value.clearLearnedTerms({ projectId }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectSpeechProfileError({
+                operation: "clear-learned-vocabulary",
+                projectId,
+                reason: "Learned speech terms could not be cleared.",
+                cause,
+              }),
+          ),
+        );
+    },
+  );
+  return ProjectSpeechProfiles.of({
+    get,
+    list,
+    index,
+    createBasic,
+    contextForProject,
+    getLearnedVocabulary,
+    clearLearnedVocabulary,
+  });
 });
 
 export const layer = Layer.effect(ProjectSpeechProfiles, make);

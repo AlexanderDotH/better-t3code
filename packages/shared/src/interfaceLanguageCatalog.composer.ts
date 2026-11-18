@@ -1,6 +1,17 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const composerInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.traits.daybreak": ["Daybreak", "Daybreak", "Daybreak"],
+  "chat.traits.daybreakDescription": [
+    "Broader access for cybersecurity work. Applies to new turns.",
+    "Erweiterter Zugang für Cybersicherheitsaufgaben. Gilt für neue Anfragen.",
+    "Accès élargi pour les tâches de cybersécurité. S’applique aux nouvelles requêtes.",
+  ],
+  "chat.traits.daybreakUnavailable": [
+    "Daybreak isn't offered for this model on this account. Available on: {{models}}.",
+    "Daybreak ist für dieses Modell mit diesem Konto nicht verfügbar. Verfügbar für: {{models}}.",
+    "Daybreak n’est pas disponible pour ce modèle avec ce compte. Disponible pour : {{models}}.",
+  ],
   "chat.responseMetrics.speedInline": ["{{speed}} tok/s", "{{speed}} Tok/s", "{{speed}} jetons/s"],
   "chat.responseMetrics.firstTokenInline": ["TTFT {{time}}", "TTFT {{time}}", "TTFT {{time}}"],
   "chat.responseMetrics.outputInline": [
@@ -120,6 +131,11 @@ export const composerInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Unable to save usage limits visibility",
     "Die Sichtbarkeit der Nutzungslimits konnte nicht gespeichert werden",
     "Impossible d’enregistrer la visibilité des limites d’utilisation",
+  ],
+  "chat.composer.usageLimits.moreAccounts": [
+    "Additional accounts: {{count}}",
+    "Weitere Konten: {{count}}",
+    "Autres comptes : {{count}}",
   ],
   "chat.composer.sync.loadingMessages": [
     "Loading messages...",

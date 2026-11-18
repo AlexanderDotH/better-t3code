@@ -1,4 +1,5 @@
 import type { ChatVisualMode } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { act, createElement, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -12,15 +13,18 @@ vi.mock("react-native", () => ({
     children?: ReactNode;
     disabled?: boolean;
     onPress: () => void;
-    accessibilityState: { checked: boolean };
+    accessibilityRole?: string;
+    accessibilityLabel?: string;
+    accessibilityState?: { checked?: boolean };
   }) =>
     createElement(
       "button",
       {
         disabled: props.disabled,
         onClick: props.onPress,
-        role: "radio",
-        "aria-checked": props.accessibilityState.checked,
+        role: props.accessibilityRole,
+        "aria-label": props.accessibilityLabel,
+        "aria-checked": props.accessibilityState?.checked,
       },
       props.children,
     ),
@@ -48,7 +52,21 @@ vi.mock("../../components/SettingsSection", () => ({
   SettingsSection: ({ children }: { children?: ReactNode }) =>
     createElement("section", {}, children),
 }));
-vi.mock("../components/SettingsPreviews", () => ({ ChatPresentationSettingsPreview: () => null }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => AsyncResult.success({ sidebarThreadSortOrder: "updated_at" }),
+}));
+vi.mock("../../../../state/preferences", () => ({ mobilePreferencesAtom: "preferences" }));
+vi.mock("react-native-reanimated", () => {
+  const animation = { duration: () => animation, reduceMotion: () => animation };
+  return {
+    default: {
+      View: ({ children }: { children?: ReactNode }) => createElement("div", {}, children),
+    },
+    FadeIn: animation,
+    ReduceMotion: { System: "system" },
+    useReducedMotion: () => false,
+  };
+});
 vi.mock("../../../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>
     createInterfaceTranslator({ language: "de", locale: "de-DE" }),
@@ -59,6 +77,7 @@ vi.mock("../AppearancePreferencesProvider", () => ({
     const [presentationMotion, setPresentationMotion] = useState(true);
     return {
       isReady: true,
+      appearance: { projectThreadPreviewCount: 2 },
       chatVisualMode,
       setChatVisualMode,
       presentationMotion,
@@ -75,6 +94,7 @@ vi.mock("../AppearancePreferencesProvider", () => ({
 }));
 
 import { ChatVisualsAppearanceSection } from "./ChatVisualsAppearanceSection";
+import { ThreadListSettingsPreview } from "../components/SettingsPreviews";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -109,4 +129,18 @@ it("keeps the native transition preference when switching modes and explains the
   expect(choices[1]!.getAttribute("aria-checked")).toBe("true");
   expect(motion.checked).toBe(false);
   expect(container.textContent).not.toContain("Zeichen-Streaming");
+});
+
+it("settles and restores a sample thread by tapping the whole preview", async () => {
+  const translator = createInterfaceTranslator({ language: "de", locale: "de-DE" });
+  await act(() => root.render(<ThreadListSettingsPreview interactive />));
+  const preview = container.querySelector<HTMLButtonElement>('[role="button"]')!;
+  expect(preview.textContent).toContain(translator.message("mobile.prefs.working"));
+  await act(() => preview.click());
+  expect(preview.textContent).not.toContain(translator.message("mobile.prefs.working"));
+  expect(preview.getAttribute("aria-label")).toBe(
+    translator.message("mobile.prefs.restorePreview"),
+  );
+  await act(() => preview.click());
+  expect(preview.textContent).toContain(translator.message("mobile.prefs.working"));
 });

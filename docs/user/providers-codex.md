@@ -76,6 +76,17 @@ reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory
 contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
+## Use Daybreak
+
+Daybreak gives eligible accounts broader access for cybersecurity work. Turn on
+**Daybreak** in the model picker, or in the model options on mobile. Your choice
+is saved with the model options and applies to new turns.
+
+Availability depends on both your account and the selected model. If your account
+offers Daybreak on other models, the disabled switch lists those models in its
+tooltip on web and desktop, or below the switch on mobile. Choosing a model
+without Daybreak support leaves Daybreak off for that model.
+
 ## Answer questions while Codex works
 
 Codex can ask a question and keep working. Answer it in the thread's question

@@ -107,4 +107,61 @@ describe("AssemblyAI server streaming proxy", () => {
     proxy.dispose();
     expect(socket.close).toHaveBeenCalledOnce();
   });
+
+  it("retains an independent copy of advanced audio only until finish or cancellation", async () => {
+    const socket = new FakeSocket();
+    const proxy = createAssemblyAiStreamingProxy({
+      createSocket: () => socket,
+      createSessionId: () => "retained",
+    });
+    const started = proxy.start({
+      ...CONFIG,
+      options: { ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, advancedMode: true },
+    });
+    socket.open();
+    await started;
+    const audio = new Uint8Array([1, 2, 3, 4]);
+    await proxy.push({ sessionId: "retained", audio });
+    audio.fill(9);
+    const finished = proxy.finish("retained");
+    socket.message({ type: "Termination" });
+    await expect(finished).resolves.toEqual({
+      transcript: "",
+      audio: new Uint8Array([1, 2, 3, 4]),
+    });
+    await expect(proxy.finish("retained")).rejects.toThrow("not active");
+
+    const second = proxy.start({
+      ...CONFIG,
+      options: { ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, advancedMode: true },
+    });
+    socket.open();
+    await second;
+    await proxy.push({ sessionId: "retained", audio });
+    proxy.cancel("retained");
+    await expect(proxy.finish("retained")).rejects.toThrow("not active");
+    proxy.dispose();
+  });
+
+  it("bounds advanced recordings to five minutes of PCM and removes an over-limit session", async () => {
+    const socket = new FakeSocket();
+    const proxy = createAssemblyAiStreamingProxy({
+      createSocket: () => socket,
+      createSessionId: () => "bounded",
+    });
+    const started = proxy.start({
+      ...CONFIG,
+      options: { ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, advancedMode: true },
+    });
+    socket.open();
+    await started;
+    const chunk = new Uint8Array(32_000);
+    for (let second = 0; second < 300; second += 1)
+      await proxy.push({ sessionId: "bounded", audio: chunk });
+    await expect(
+      proxy.push({ sessionId: "bounded", audio: new Uint8Array([1, 2]) }),
+    ).rejects.toThrow("five minutes");
+    await expect(proxy.finish("bounded")).rejects.toThrow("not active");
+    expect(socket.close).toHaveBeenCalledOnce();
+  });
 });

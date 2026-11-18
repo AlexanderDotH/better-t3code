@@ -867,7 +867,6 @@ function EnvironmentAgentSettings(props: {
         config={config}
         projects={props.projects}
         disabled={providerAuthMutationAccess(authSession) === "read-only"}
-        updateSettings={updateSettings}
       />
       <EnvironmentSpeechProfileSettings
         environmentId={props.environmentId}

@@ -16,6 +16,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
+import { supportsDailyUsagePace } from "@t3tools/shared/usageLimits";
 
 import {
   buildGrokModelCapabilities,
@@ -476,8 +477,8 @@ describe("Grok usage limits", () => {
   };
 
   it("shows zero usage for complete weekly and monthly periods with no percentage", () => {
-    for (const [currentPeriod, kind, label, resetsAt] of [
-      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z"],
+    for (const [currentPeriod, kind, label, resetsAt, windowDurationMins] of [
+      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z", 7 * 24 * 60],
       [
         {
           type: "USAGE_PERIOD_TYPE_MONTHLY",
@@ -487,12 +488,18 @@ describe("Grok usage limits", () => {
         "monthly",
         "Monthly",
         "2026-10-01T00:00:00.000Z",
+        30 * 24 * 60,
       ],
     ] as const) {
       const response = { config: { currentPeriod } };
+      expect(
+        grokUsageResponseToLimits(response, checkedAt).windows.every(supportsDailyUsagePace),
+      ).toBe(true);
       expect
         .soft(grokUsageResponseToLimits(response, checkedAt).windows)
-        .toEqual([{ id: "subscription", kind, label, usedPercent: 0, resetsAt }]);
+        .toEqual([
+          { id: "subscription", kind, label, usedPercent: 0, resetsAt, windowDurationMins },
+        ]);
     }
   });
 
@@ -548,6 +555,29 @@ describe("Grok usage limits", () => {
         checkedAt,
       ).windows,
     ).toEqual([{ id: "subscription", kind: "monthly", label: "Monthly", usedPercent: 100 }]);
+    for (const start of [undefined, "invalid", weeklyPeriod.end, "2026-12-01T00:00:00.000Z"]) {
+      const limits = grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 42,
+            currentPeriod: { type: "USAGE_PERIOD_TYPE_MONTHLY", start, end: weeklyPeriod.end },
+          },
+        },
+        checkedAt,
+      );
+      expect(limits.windows[0]?.windowDurationMins).toBeUndefined();
+    }
+    expect(
+      grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 42,
+            currentPeriod: { ...weeklyPeriod, start: undefined },
+          },
+        },
+        checkedAt,
+      ).windows[0]?.windowDurationMins,
+    ).toBe(7 * 24 * 60);
   });
 });
 

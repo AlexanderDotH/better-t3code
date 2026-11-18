@@ -9,25 +9,19 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  DAILY_USAGE_PACE_LABELS,
-  USAGE_PACE_BAR_DESCRIPTION,
-  dailyUsagePace,
   displayLimitWindows,
   formatDuration,
-  formatResetsIn,
-  type LimitPace,
-  paceOf,
+  formatResetCountdown,
+  formatUsageResetAt,
   remainingPercent,
   usageWindowLabel,
 } from "@t3tools/shared/usageLimits";
-import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 
-import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { formatUpcomingTimestamp } from "../../timestampFormat";
+import { useInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -41,40 +35,13 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
-import { UsagePaceBar } from "./UsagePaceDetails";
-
-const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
-  on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
-};
+import { UsagePaceBar, UsagePaceTooltip, UsageWindowDetails } from "./UsagePaceDetails";
 
 /** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
   const kind: UsageProviderKind | undefined =
     driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
-}
-
-/** Pace as a glyph with the words on hover. */
-export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
-  const Icon = PACE[pace].icon;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={PACE[pace].label}
-            className="inline-flex text-muted-foreground"
-          />
-        }
-      >
-        <Icon className="size-3.5" aria-hidden />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{PACE[pace].label}</TooltipPopup>
-    </Tooltip>
-  );
 }
 
 /**
@@ -84,32 +51,30 @@ function WindowBar({
   color,
   window,
   now,
+  compact = false,
+  focusable = true,
 }: {
   readonly color: string;
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  readonly compact?: boolean;
+  readonly focusable?: boolean;
 }) {
-  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const settings = useClientSettings();
-  const dailyPace = settings.usagePacingEnabled
-    ? dailyUsagePace(window, now, settings.usagePacingWorkdayHours)
-    : null;
+  const { locale } = useInterfaceLocaleRuntime();
   const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
-  const resetsAt = window.resetsAt
-    ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
-    : null;
+  const resetsIn = formatResetCountdown(window, now);
+  const resetsAt = formatUsageResetAt(window, locale);
   const summary = `${usageWindowLabel(window)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
+          <span
             role="group"
             aria-label={summary}
-            tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            tabIndex={focusable ? 0 : undefined}
+            className={`relative block cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${compact ? "h-4" : "h-6"}`}
           />
         }
       >
@@ -127,16 +92,7 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex max-w-80 flex-col gap-1.5">
           <span className="text-foreground">{remaining}% left</span>
-          {dailyPace ? (
-            <>
-              <span>{DAILY_USAGE_PACE_LABELS[dailyPace.status]}</span>
-              <span>
-                {dailyPace.todayUsedPercent === null
-                  ? "Daily pace needs usage history covering the start of today. The bar shows the reported weekly quota remaining."
-                  : USAGE_PACE_BAR_DESCRIPTION}
-              </span>
-            </>
-          ) : null}
+          <UsagePaceTooltip window={window} now={now} />
           {resetsAt ? (
             <span className="text-muted-foreground">
               Resets {resetsAt}
@@ -146,6 +102,29 @@ function WindowBar({
         </div>
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+export function CompactLimitWindow({
+  driver,
+  window,
+  now,
+}: {
+  readonly driver: ServerProvider["driver"];
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+}) {
+  return (
+    <span className="@container/compact-limit flex min-w-0 flex-1 items-center gap-2">
+      <span className="min-w-0 truncate text-muted-foreground">{usageWindowLabel(window)}</span>
+      <span className="shrink-0 font-medium tabular-nums">{remainingPercent(window)}% left</span>
+      <span className="hidden min-w-8 flex-1 @min-[25rem]/compact-limit:block">
+        <WindowBar color={barColor(driver)} window={window} now={now} compact focusable={false} />
+      </span>
+      <span className="ms-auto shrink-0">
+        <UsageWindowDetails window={window} now={now} focusable={false} />
+      </span>
+    </span>
   );
 }
 
@@ -165,34 +144,32 @@ export function LimitWindows({
   readonly compact?: boolean;
 }) {
   const color = barColor(driver);
-  const pacingEnabled = useClientSettings((settings) => settings.usagePacingEnabled);
   return (
-    <div
-      className={
-        compact
-          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
-          : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
-      }
-    >
-      {displayLimitWindows({ driver, windows }).map((window) => {
-        const pace = pacingEnabled && window.kind !== "weekly" ? paceOf(window, now) : null;
-        const resetsIn = formatResetsIn(window, now);
-        return (
-          <Fragment key={window.id}>
-            <span className="flex min-w-0 items-center gap-2 text-xs">
+    <div className="@container/limits">
+      <div
+        className={
+          compact
+            ? "grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 @min-[30rem]/limits:grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto]"
+            : "grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1 @min-[30rem]/limits:grid-cols-[11rem_minmax(3rem,1fr)_auto]"
+        }
+      >
+        {displayLimitWindows({ driver, windows }).map((window) => (
+          <div key={window.id} className="col-span-full grid grid-cols-subgrid items-center">
+            <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{usageWindowLabel(window)}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
                 {remainingPercent(window)}% left
               </span>
             </span>
-            <WindowBar color={color} window={window} now={now} />
-            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-              {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
+            <div className="col-span-full col-start-1 row-start-2 @min-[30rem]/limits:col-span-1 @min-[30rem]/limits:col-start-2 @min-[30rem]/limits:row-start-1">
+              <WindowBar color={color} window={window} now={now} />
+            </div>
+            <span className="col-start-2 row-start-1 flex items-center justify-end text-xs @min-[30rem]/limits:col-start-3">
+              <UsageWindowDetails window={window} now={now} />
             </span>
-          </Fragment>
-        );
-      })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

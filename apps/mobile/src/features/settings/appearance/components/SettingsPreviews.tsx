@@ -7,7 +7,6 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion, useReducedMotion } from "react-native-reanimated";
 import { AppText as Text } from "../../../../components/ui/AppText";
-import { Button } from "../../../../components/ui/Button";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 import { mobilePreferencesAtom } from "../../../../state/preferences";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
@@ -37,6 +36,10 @@ const THREADS = [
   { id: "docs-2", title: "mobile.prefs.sampleThreadOld", created: 0, updated: 0, settled: true },
 ] as const;
 
+const THREAD_PREVIEW_ROW_HEIGHT = { current: 74, classic: 42, boring: 32 };
+const THREAD_PREVIEW_CHROME_HEIGHT = 140;
+const ACTIVE_PREVIEW_THREAD_COUNT = THREADS.filter((thread) => !thread.settled).length;
+
 export function ThreadListSettingsPreview(props: {
   readonly layout?: MobileThreadListLayout;
   readonly interactive?: boolean;
@@ -49,17 +52,48 @@ export function ThreadListSettingsPreview(props: {
     props.layout ??
     resolveMobileThreadListLayout(stored?.legacyThreadListEnabled, stored?.boringThreadListEnabled);
   const [settled, setSettled] = useState(false);
+  const [replay, setReplay] = useState(0);
+  const reducedMotion = useReducedMotion();
   const list = resolveBetterT3ThreadListPreview(THREADS, {
     sort: stored?.sidebarThreadSortOrder ?? "updated_at",
     count: appearance.projectThreadPreviewCount,
     settleId: settled ? "sign-in" : null,
   });
   return (
-    <View className="gap-2 border-t border-border-subtle p-4">
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={translator.message(
+        props.interactive
+          ? settled
+            ? "mobile.prefs.restorePreview"
+            : "mobile.prefs.settlePreview"
+          : "mobile.prefs.replay",
+      )}
+      onPress={() => {
+        setReplay((previous) => previous + 1);
+        if (props.interactive) setSettled((previous) => !previous);
+      }}
+      className="gap-2 border-t border-border-subtle p-4"
+    >
       <Text className="text-xs text-foreground-muted">
         {translator.message("mobile.prefs.preview")}
       </Text>
-      <View className="gap-1 rounded-xl bg-screen p-3">
+      <Animated.View
+        key={`${layout}:${appearance.projectThreadPreviewCount}:${stored?.sidebarThreadSortOrder}:${settled}:${replay}`}
+        entering={
+          !reducedMotion ? FadeIn.duration(240).reduceMotion(ReduceMotion.System) : undefined
+        }
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        pointerEvents="none"
+        className="gap-1 overflow-hidden rounded-xl bg-screen p-3"
+        style={{
+          height:
+            Math.min(ACTIVE_PREVIEW_THREAD_COUNT, appearance.projectThreadPreviewCount) *
+              THREAD_PREVIEW_ROW_HEIGHT[layout] +
+            THREAD_PREVIEW_CHROME_HEIGHT,
+        }}
+      >
         <Text className="font-t3-medium text-sm">better-t3code</Text>
         {list.visible.map((item) => (
           <View
@@ -99,17 +133,15 @@ export function ThreadListSettingsPreview(props: {
             {translator.message(item.title)}
           </Text>
         ))}
-      </View>
+      </Animated.View>
       {props.interactive ? (
-        <Button
-          tone="text"
-          label={translator.message(
+        <Text className="text-xs text-primary">
+          {translator.message(
             settled ? "mobile.prefs.restorePreview" : "mobile.prefs.settlePreview",
           )}
-          onPress={() => setSettled(!settled)}
-        />
+        </Text>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -130,20 +162,23 @@ export function ChatPresentationSettingsPreview(props: {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={translator.message("mobile.prefs.replay")}
-      onPress={() => setReplay(replay + 1)}
+      onPress={() => setReplay((previous) => previous + 1)}
       className="gap-2 border-t border-border-subtle p-4"
     >
       <Text className="text-xs text-foreground-muted">
         {translator.message("mobile.prefs.preview")} · {translator.message("mobile.prefs.replay")}
       </Text>
       <Animated.View
-        key={`${props.mode}:${replay}`}
+        key={`${props.mode}:${props.motion}:${reducedMotion}:${replay}`}
         entering={
           presentation.presentationMotion
             ? FadeIn.duration(240).reduceMotion(ReduceMotion.System)
             : undefined
         }
         className="gap-3 rounded-xl bg-screen p-3"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        pointerEvents="none"
       >
         <View
           className={

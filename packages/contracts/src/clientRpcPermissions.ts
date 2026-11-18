@@ -15,12 +15,19 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.serverCreateAssemblyAiStreamingToken]: AuthOrchestrationOperateScope,
+  [WS_METHODS.speechStartStreamingSession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.speechPushStreamingAudio]: AuthOrchestrationOperateScope,
+  [WS_METHODS.speechFinishStreamingSession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.speechCancelStreamingSession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.speechProcessDictation]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   [WS_METHODS.previewPickElementAt]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
+  [WS_METHODS.speechClearLearnedVocabulary]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,

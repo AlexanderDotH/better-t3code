@@ -203,6 +203,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       : undefined;
   const navGroups = SETTINGS_NAV_GROUPS.map((group, index) => ({
     heading: group.heading,
+    label: translate(group.headingMessageId),
     primary: index === 0,
     rows: group.paths.flatMap((to): ReadonlyArray<SettingsNavRow> => {
       if (to !== "/settings/better-t3") {
@@ -513,7 +514,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <div
                         key={group.heading}
                         role="group"
-                        aria-label={group.heading}
+                        aria-label={group.label}
                         className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
                       >
                         <button
@@ -541,7 +542,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {group.primary ? (
                             <RocketIcon aria-hidden className="me-0.5 size-3 shrink-0" />
                           ) : null}
-                          {group.heading}
+                          {group.label}
                           <ChevronRightIcon
                             aria-hidden
                             className={cn(

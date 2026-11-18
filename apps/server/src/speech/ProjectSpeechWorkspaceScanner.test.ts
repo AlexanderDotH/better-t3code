@@ -46,6 +46,8 @@ it.layer(TestLayer)("ProjectSpeechWorkspaceScanner", (it) => {
             "backup/legacy/README.md",
             "Backups/archive/src/copied.ts",
             "dist/generated.js",
+            "apps/desktop/dist-electron/main.cjs",
+            "apps/desktop/release/mac-arm64/App.app/Contents/Resources/app.js",
             "node_modules/example/index.js",
           ],
           (relativePath) => writeTextFile(workspaceRoot, relativePath),
@@ -57,8 +59,10 @@ it.layer(TestLayer)("ProjectSpeechWorkspaceScanner", (it) => {
         expect(result).toEqual({
           entries: [
             { path: "README.md", kind: "file" },
+            { path: "apps", kind: "directory" },
             { path: "package.json", kind: "file" },
             { path: "src", kind: "directory" },
+            { path: "apps/desktop", kind: "directory" },
             { path: "src/components", kind: "directory" },
             { path: "src/index.ts", kind: "file" },
             { path: "src/components/VoiceInput.tsx", kind: "file" },

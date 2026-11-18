@@ -1,4 +1,7 @@
 import type { ModelCapabilities, ModelSelection } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
@@ -7,6 +10,29 @@ import {
 const CODEX_DEFAULT_SERVICE_TIER = "default";
 export const CODEX_FAST_SERVICE_TIER = "priority";
 const LEGACY_CODEX_FAST_SERVICE_TIER = "fast";
+
+class CodexDaybreakUnavailableError extends Schema.TaggedError<CodexDaybreakUnavailableError>()(
+  "CodexDaybreakUnavailableError",
+  { model: Schema.String },
+) {
+  override get message(): string {
+    return `Daybreak support for model ${this.model} could not be confirmed. Turn off Daybreak or choose a model that offers it on this account.`;
+  }
+}
+
+export const resolveCodexCyberAccessProgram = Effect.fn("resolveCodexCyberAccessProgram")(
+  function* (
+    modelSelection: ModelSelection,
+    programs: CodexSchema.V2ModelListResponse__ModelAccessPrograms | null | undefined,
+  ) {
+    const enabled = getModelSelectionBooleanOptionValue(modelSelection, "daybreak");
+    if (enabled === undefined) return undefined;
+    if (!enabled) return programs?.cyber.includes("standard") ? "standard" : undefined;
+    if (programs?.cyber.includes("daybreakBlue")) return "daybreakBlue";
+    if (programs?.cyber.includes("daybreakRed")) return "daybreakRed";
+    return yield* new CodexDaybreakUnavailableError({ model: modelSelection.model });
+  },
+);
 
 function canonicalizeCodexServiceTier(value: string): string {
   return value === LEGACY_CODEX_FAST_SERVICE_TIER ? CODEX_FAST_SERVICE_TIER : value;

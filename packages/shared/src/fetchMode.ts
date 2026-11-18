@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { createModelSelection, supportsModelSelectionPurpose } from "./model.ts";
 
 export const FETCH_MODE = "repository-exploration" as const;
 
@@ -211,4 +212,40 @@ export function resolveFetchModelSelection(input: {
     return resolveManualSelection(input.providers, input.fetchModelSelection);
   }
   return resolveAutoSelection(input);
+}
+
+export function fetchUltrafastModelCandidates(
+  providers: ReadonlyArray<ServerProvider>,
+  preferred: ModelSelection,
+): ReadonlyArray<{ readonly provider: ServerProvider; readonly selection: ModelSelection }> {
+  const candidates = providers.flatMap((provider) =>
+    !isFetchCapableProvider(provider) || provider.auth.status === "unauthenticated"
+      ? []
+      : provider.models.flatMap((model) =>
+          model.isCustom ||
+          model.isSelectable === false ||
+          !supportsModelSelectionPurpose(model, "agent") ||
+          !model.capabilities?.optionDescriptors?.some(
+            (descriptor) =>
+              descriptor.id === "serviceTier" &&
+              descriptor.type === "select" &&
+              descriptor.options.some((option) => option.id === "ultrafast"),
+          )
+            ? []
+            : [{ provider, model }],
+        ),
+  );
+  const preference = ({ provider, model }: (typeof candidates)[number]) => {
+    if (provider.instanceId !== preferred.instanceId) return model.isDefault ? 3 : 4;
+    if (model.slug === preferred.model) return 0;
+    return model.isDefault ? 1 : 2;
+  };
+  return candidates
+    .sort((left, right) => preference(left) - preference(right))
+    .map(({ provider, model }) => ({
+      provider,
+      selection: createModelSelection(provider.instanceId, model.slug, [
+        { id: "serviceTier", value: "ultrafast" },
+      ]),
+    }));
 }

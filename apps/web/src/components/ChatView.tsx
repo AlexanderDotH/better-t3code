@@ -33,7 +33,6 @@ import { useMacRightPanelWindowExpansion } from "../hooks/useMacRightPanelWindow
 import { selectV2ResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { ThreadSubagents } from "./ThreadSubagents";
 import GitActionsControl, { type GitActionsPanelHost } from "./GitActionsControl";
-import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { useDeepPlanChat } from "./chat/useDeepPlanChat";
 import { useRetryUserMessage } from "./chat/useRetryUserMessage";
 import { resolveResultlessRetryTarget } from "@t3tools/contracts";
@@ -818,6 +817,7 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadStartFromOriginByThreadId,
   ] = useState<Record<string, boolean>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
+  const timelineScrollTopRef = useRef(0);
   const conversationArea = workspaceAreaProps("conversation", 1, "Conversation");
   const composerArea = workspaceAreaProps("composer", 2, "Message input");
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
@@ -830,8 +830,6 @@ export default function ChatView(props: ChatViewProps) {
     resting: boolean;
   } | null>(null);
   const [gitActionsPanelHost, setGitActionsPanelHost] = useState<GitActionsPanelHost | null>(null);
-  const composerOverflowInsetRef = useRef(0);
-  const [composerOverflowInset, setComposerOverflowInset] = useState(0);
   const [timelineOverflows, setTimelineOverflows] = useState(false);
   const [composerReservedHeight, setComposerReservedHeight] = useState(0);
   const composerReservedHeightRef = useRef(0);
@@ -1561,6 +1559,7 @@ export default function ChatView(props: ChatViewProps) {
           usageLimitsReport,
           environmentId,
           () => void dismissUsageLimits(),
+          activeProviderStatus,
         )
       : null;
   const openUsageLimitsFromMenu = useStableCallback(() => void toggleUsageLimits());
@@ -2323,7 +2322,6 @@ export default function ChatView(props: ChatViewProps) {
   } = useTimelineFollow({
     legendListRef,
     composerTimelineInset,
-    composerOverflowInset,
     routeThreadKey,
     activeThreadKey,
     isServerThread,
@@ -2353,14 +2351,14 @@ export default function ChatView(props: ChatViewProps) {
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
-      // Wait an extra frame after window focus so the composer treats focus as an expansion request.
+      // Wait until focus restoration has settled before choosing where to put the caret.
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
             !isInSideChatPane(document.activeElement) &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
+            shouldRefocusComposerOnWindowFocus(document.activeElement, composerRestingRef.current)
           ) {
             focusComposerStable();
           }
@@ -2447,27 +2445,27 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const onComposerRestingChange = useStableCallback((resting: boolean) => {
     composerRestingRef.current = resting;
+    // A queued scroll callback must compare against the position where reading started.
+    if (resting) {
+      timelineScrollTopRef.current =
+        legendListRef.current?.getScrollableNode()?.scrollTop ?? timelineScrollTopRef.current;
+    }
     setComposerRestingState((current) =>
       current?.threadKey === routeThreadKey && current.resting === resting
         ? current
         : { threadKey: routeThreadKey, resting },
     );
-    const inset = resolveComposerOverflowInset({
-      currentInset: composerOverflowInsetRef.current,
-      overlayHeight: composerTimelineInsetRef.current,
-      isResting: resting,
-    });
-    if (composerOverflowInsetRef.current !== inset) {
-      composerOverflowInsetRef.current = inset;
-      setComposerOverflowInset(inset);
-    }
   });
   const getTimelineScrollableNode = useStableCallback(
     () => legendListRef.current?.getScrollableNode() ?? null,
   );
   const handleTimelineEndChange = useStableCallback((atEnd: boolean) => {
+    const scrollTop = legendListRef.current?.getScrollableNode()?.scrollTop ?? 0;
+    const scrolledTowardEnd = scrollTop > timelineScrollTopRef.current;
+    timelineScrollTopRef.current = scrollTop;
     onIsAtEndChangeStable(atEnd);
-    if (atEnd) composerRef.current?.restoreAfterTimelineReachedEnd();
+    // Scrolling up inside the end tolerance is still a reading gesture.
+    if (atEnd && scrolledTowardEnd) composerRef.current?.restoreAfterTimelineReachedEnd();
   });
   const publishComposerOverlayHeight = (height: number, transitionDurationMs = 0) => {
     setComposerInsetTransitionDurationMs(transitionDurationMs);
@@ -2476,18 +2474,15 @@ export default function ChatView(props: ChatViewProps) {
       ? measureComposerOcclusion(composerOverlayElement, height)
       : Math.ceil(height);
     if (nextHeight <= 0) return;
-    const overflowInset = resolveComposerOverflowInset({
-      currentInset: composerOverflowInsetRef.current,
+    const timelineInset = resolveComposerOverflowInset({
+      currentInset: composerTimelineInsetRef.current,
       overlayHeight: nextHeight,
       isResting: composerRestingRef.current,
     });
-    if (composerOverflowInsetRef.current !== overflowInset) {
-      composerOverflowInsetRef.current = overflowInset;
-      setComposerOverflowInset(overflowInset);
-    }
-    if (composerTimelineInsetRef.current !== nextHeight) {
-      composerTimelineInsetRef.current = nextHeight;
-      setComposerTimelineInset(nextHeight);
+    // Resting chrome must not move the list's end or trigger its live-follow scroll.
+    if (composerTimelineInsetRef.current !== timelineInset) {
+      composerTimelineInsetRef.current = timelineInset;
+      setComposerTimelineInset(timelineInset);
     }
     // Reserve the expanded composer height for the terminal drawer and empty placeholder.
     // Keep it while the mobile strip collapses, but allow growth from approvals or tasks.
@@ -2533,7 +2528,6 @@ export default function ChatView(props: ChatViewProps) {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
     composerRestingRef.current = false;
-    composerOverflowInsetRef.current = 0;
     composerReservedHeightRef.current = 0;
     composerExpandedHeightRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
@@ -4345,8 +4339,10 @@ export default function ChatView(props: ChatViewProps) {
               serverProjection &&
               serverProjection.subagents.length > 0 ? (
                 <ThreadSubagents
+                  key={activeThreadKey}
                   threadRef={routeThreadRef}
-                  subagents={projectedSubagentsToRuntime(serverProjection.subagents)}
+                  subagents={serverProjection.subagents}
+                  providersByEnvironment={providersByEnvironment}
                   timestampFormat={timestampFormat}
                   markdownCwd={activeProject?.workspaceRoot}
                   onOpenThread={onOpenRelatedThreadStable}
@@ -4477,7 +4473,6 @@ export default function ChatView(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReadyStable}
                 onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
                 contentInsetEndAdjustment={composerTimelineInset}
-                composerOverflowInset={composerOverflowInset}
                 onContentOverflowChange={setTimelineOverflows}
                 composerInsetTransitionDurationMs={composerInsetTransitionDurationMs}
                 liveFollowEnabled={timelineLiveFollowEnabled}

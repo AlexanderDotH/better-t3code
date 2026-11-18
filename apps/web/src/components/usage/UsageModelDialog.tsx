@@ -1,4 +1,5 @@
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import type { UsageSpeed } from "@t3tools/contracts";
 import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
 
 import { mergeAnsweredUsage, type EnvironmentUsageStatus } from "../../state/usage";
@@ -37,6 +38,7 @@ export function UsageModelDialog({
   model,
   environments,
   metric,
+  speed,
   chartWindow,
   onSetPrice,
   onClose,
@@ -44,6 +46,7 @@ export function UsageModelDialog({
   readonly model: ModelTotals;
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly metric: UsageChartMetric;
+  readonly speed?: UsageSpeed | undefined;
   readonly chartWindow: UsageChartWindow;
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
@@ -51,6 +54,7 @@ export function UsageModelDialog({
   const usage = mergeAnsweredUsage(
     environments,
     (bucket) => bucket.provider === model.provider && bucket.model === model.model,
+    speed,
   );
   const providers = [model.provider];
   const presentation = PROVIDER_PRESENTATION[model.provider];

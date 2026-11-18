@@ -335,7 +335,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           sessionId,
           totals,
           reportedCostUsd,
-          speed: "standard",
+          speed: event.model.endsWith("-fast") ? "fast" : "standard",
           dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
         });
       }

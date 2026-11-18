@@ -9,6 +9,47 @@ import type {
 
 import { resolveChatContentPreviewWidthPercent } from "./chatContentWidth.ts";
 
+export const BETTER_T3_EXAMPLE_FEATURE_IDS = [
+  "agent.contextCompaction",
+  "agent.nativeSubagentDisplay",
+  "chat.hideComposerDivider",
+  "chat.messageEditing",
+  "chat.messageReplies",
+  "chat.visualizations",
+  "workspace.gitWorkbench",
+  "voice.outputLanguage",
+] as const satisfies ReadonlyArray<BetterT3FeatureId>;
+
+export const BETTER_T3_VISUAL_FEATURE_IDS = [
+  "agent.planMode",
+  "agent.promptImprovement",
+  "agent.generalSubagents",
+  "agent.reasoningVisibility",
+  "agent.expandedComposerControls",
+  "chat.sidebarPosition",
+  "chat.classicSidebar",
+  "chat.presentation",
+  "chat.contextWindowSelector",
+  "chat.workspaceCardDeck",
+  "chat.classicBubbleOnly",
+  "chat.characterStreamingMotion",
+  "chat.presentationMotion",
+  "chat.cardMorphing",
+  "chat.draftIndicators",
+  ...BETTER_T3_EXAMPLE_FEATURE_IDS,
+] as const satisfies ReadonlyArray<BetterT3FeatureId>;
+
+export type BetterT3VisualFeatureId = (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number];
+
+export function keyedPreviewCharacters(text: string) {
+  const occurrences = new Map<string, number>();
+  return Array.from(text, (character) => {
+    const occurrence = (occurrences.get(character) ?? 0) + 1;
+    occurrences.set(character, occurrence);
+    return { character, key: `${character}:${occurrence}` };
+  });
+}
+
 export interface BetterT3AgentPreviewModel {
   readonly animationKey: string;
   readonly deepThinking: boolean;
@@ -60,6 +101,7 @@ export function buildBetterT3SettingsPreviewModel(input: {
   readonly chatVisualMode: ChatVisualMode;
   readonly contextWindowSelector: ContextWindowSelector;
   readonly sidebarPosition: SidebarPosition;
+  readonly classicSidebar?: boolean;
   readonly boringSidebar?: boolean;
   readonly showReasoning?: boolean;
   readonly reasoningWorkingOverlay?: boolean;
@@ -107,7 +149,8 @@ export function buildBetterT3SettingsPreviewModel(input: {
       "chat.characterStreamingMotion",
     ),
     composerPlanBubble: effectiveFeatureEnabled(input.features, "chat.classicBubbleOnly"),
-    classicSidebar: effectiveFeatureEnabled(input.features, "chat.classicSidebar"),
+    classicSidebar:
+      input.classicSidebar ?? effectiveFeatureEnabled(input.features, "chat.classicSidebar"),
     boringSidebar: input.boringSidebar ?? false,
     draftIndicators: effectiveFeatureEnabled(input.features, "chat.draftIndicators"),
     presentation: input.chatVisualMode,

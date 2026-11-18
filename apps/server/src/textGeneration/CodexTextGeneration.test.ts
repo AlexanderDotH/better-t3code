@@ -545,6 +545,11 @@ it.effect.each([
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          planFetchExploration: (input) =>
+            Effect.sync(() => {
+              calls.push(input.modelSelection);
+              return { decision: "skip" as const, workers: [] };
+            }),
           generateThreadTitle: (input) =>
             Effect.sync(() => {
               calls.push(input.modelSelection);
@@ -573,6 +578,20 @@ it.effect.each([
         ),
       ),
     );
+    const planFetch = service.planFetchExploration({
+      cwd: "/tmp",
+      userRequest: "Review the implementation",
+      repositoryOrientation: "",
+      maxRecommendedWorkers: 1,
+      modelSelection: selection,
+    });
+    if (exhausted) {
+      expect((yield* planFetch.pipe(Effect.flip)).reason).toBe("rate-limited");
+      expect(calls).toEqual([]);
+    } else if (!hardBudget) {
+      expect(yield* planFetch).toEqual({ decision: "skip", workers: [] });
+      expect(calls.splice(0)).toEqual([selection]);
+    }
     const generateTitle = service.generateThreadTitle({
       cwd: "/tmp",
       message: "hello",

@@ -414,6 +414,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@keyframes voice-dictation-hourglass-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  30%,
+  to {
+    transform: rotate(180deg);
+  }
+}
+
+@utility animate-voice-hourglass {
+  animation: voice-dictation-hourglass-turn 1.2s ease-in-out infinite;
+  will-change: transform;
+}
+
 @utility surface-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -2396,11 +2411,8 @@ code {
   }
 
   .chat-markdown .chat-markdown-table-container[data-expanded="true"] {
-    width: min(
-      var(--chat-markdown-table-expanded-width),
-      calc(100cqw - var(--chat-markdown-table-viewport-gutter))
-    );
-    max-width: calc(100cqw - var(--chat-markdown-table-viewport-gutter));
+    width: min(var(--chat-markdown-table-expanded-width), var(--chat-markdown-table-max-width));
+    max-width: var(--chat-markdown-table-max-width);
     transform: translateX(-50%);
   }
 
@@ -2772,8 +2784,12 @@ code {
   }
 }
 
-/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
-[data-workspace-area]:focus-visible {
+/* Chromium can inherit :focus-visible during automatic focus restoration. */
+[data-workspace-area]:focus {
+  outline: none;
+}
+
+[data-workspace-area][data-workspace-keyboard-focus]:focus {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }

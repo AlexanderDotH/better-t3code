@@ -12,8 +12,9 @@ necessarily offer tools to create more workers.
 
 On web and desktop, choose your display in
 **Settings → Better T3 → Agents → Native T3 Code subagent display**.
-Turn it on to use the native **Agents** panel, or off to use Better T3's floating agent pills.
-Click a pill to inspect its transcript. This switch does not change delegation or agent history.
+Turn it on to use the native **Agents** panel, or off to see agents and their **History** in a
+floating list beside the chat. Select an agent to follow its work. Collapse **History** or the
+whole **Agents** list to make more room for the conversation.
 
 The main agent remains responsible for reviewing those results, integrating changes, and verifying the complete task.
 A subagent that cannot proceed within its permissions reports the blocker to the main agent.
@@ -23,6 +24,9 @@ thread history. Subagents can search project memory, while the root agent owns c
 agent writes are enabled.
 
 For read-only repository exploration before a turn, enable **Fetch** in
-**Settings → Better T3 → Agents** and choose its model there. Subsequent requests can gather
-repository context before the main agent starts. Turn Fetch off in the same settings to skip that
-preparation. Fetch does not replace a subagent assigned to edit or test code.
+**Settings → Better T3 → Agents**. Choose a **Fetch model** to use it for both planning and
+research workers. If that model is unavailable, the main turn continues without Fetch findings.
+
+**Automatic** uses a lightweight model to plan the research. For larger plans, Fetch prefers
+worker models that offer Ultrafast on the selected environment. Turn Fetch off to skip this
+preparation.

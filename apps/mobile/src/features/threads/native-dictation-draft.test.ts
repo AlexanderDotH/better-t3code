@@ -137,6 +137,16 @@ describe("native dictation processing", () => {
       text: `Change ${fileLink}. Do not change the API.`,
       references: [reference],
     });
+    process.mockClear();
+    const alreadyProcessed = await processNativeDictation({
+      transcript,
+      processed: { text: `Ändere ${fileLink}. Die API nicht verändern.`, references: [reference] },
+      process,
+      translate,
+      signal: new AbortController().signal,
+    });
+    expect(alreadyProcessed).toEqual(result);
+    expect(process).not.toHaveBeenCalled();
   });
 
   it("keeps processed text and candidates when translation drops a file reference", async () => {

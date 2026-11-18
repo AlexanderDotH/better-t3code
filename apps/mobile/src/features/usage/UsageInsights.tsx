@@ -4,10 +4,12 @@ import { Pressable, View } from "react-native";
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import {
   isModelCostUnknown,
+  mergeUsage,
   type EnvironmentUsage,
   type MergedUsage,
   type ModelTotals,
 } from "@t3tools/shared/usageMerge";
+import { USAGE_CONTRACT_VERSION, type UsageSpeed } from "@t3tools/contracts";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -23,12 +25,13 @@ export function UsageBreakdown(props: {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsage[];
   readonly metric: UsageChartMetric;
+  readonly speed: UsageSpeed | undefined;
   readonly hourly: boolean;
   readonly days: readonly string[];
   readonly onSetPrice: (model?: string) => void;
 }) {
   const translator = useMobileInterfaceTranslator();
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
   const [selected, setSelected] = useState<ModelTotals | null>(null);
   const models = useMemo(
     () =>
@@ -49,59 +52,64 @@ export function UsageBreakdown(props: {
           <SegmentedControl
             options={[
               { value: "model", label: translator.message("mobile.usage.byModel") },
+              { value: "project", label: translator.message("mobile.insights.byProject") },
               { value: "time", label: translator.message("mobile.insights.byTime") },
             ]}
             selected={breakdown}
             onSelect={setBreakdown}
           />
-          {breakdown === "model"
-            ? models.map((model) => (
-                <Pressable
-                  key={`${model.provider}:${model.model}`}
-                  accessibilityRole="button"
-                  onPress={() => setSelected(model)}
-                  className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle py-2"
-                >
-                  <View className="min-w-0 flex-1">
-                    <Text className="text-base text-foreground">{model.model}</Text>
-                    <Text className="text-xs text-foreground-muted">
-                      {model.provider} · {formatTokens(model.totalTokens)}
-                    </Text>
-                  </View>
-                  <Text className="text-sm tabular-nums text-foreground">
-                    {props.metric === "tokens"
-                      ? formatTokens(model.totalTokens)
-                      : isModelCostUnknown(model)
-                        ? translator.message("mobile.usage.unpriced")
-                        : formatUsd(model.costUsd)}
+          {breakdown === "model" ? (
+            models.map((model) => (
+              <Pressable
+                key={`${model.provider}:${model.model}`}
+                accessibilityRole="button"
+                onPress={() => setSelected(model)}
+                className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle py-2"
+              >
+                <View className="min-w-0 flex-1">
+                  <Text className="text-base text-foreground">{model.model}</Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {model.provider} · {formatTokens(model.totalTokens)}
                   </Text>
-                </Pressable>
-              ))
-            : periods
-                .slice()
-                .reverse()
-                .map((period) => {
-                  const label = props.hourly ? new Date(period.day).toLocaleString() : period.day;
-                  return (
-                    <View key={label} className="border-b border-border-subtle py-2">
+                </View>
+                <Text className="text-sm tabular-nums text-foreground">
+                  {props.metric === "tokens"
+                    ? formatTokens(model.totalTokens)
+                    : isModelCostUnknown(model)
+                      ? translator.message("mobile.usage.unpriced")
+                      : formatUsd(model.costUsd)}
+                </Text>
+              </Pressable>
+            ))
+          ) : breakdown === "project" ? (
+            <UsageProjects {...props} />
+          ) : (
+            periods
+              .slice()
+              .reverse()
+              .map((period) => {
+                const label = props.hourly ? new Date(period.day).toLocaleString() : period.day;
+                return (
+                  <View key={label} className="border-b border-border-subtle py-2">
+                    <InsightValue
+                      label={label}
+                      value={`${formatUsd(period.costUsd)} · ${formatTokens(period.totalTokens)}`}
+                    />
+                    {[...period.byProvider].map(([provider, totals]) => (
                       <InsightValue
-                        label={label}
-                        value={`${formatUsd(period.costUsd)} · ${formatTokens(period.totalTokens)}`}
+                        key={provider}
+                        label={provider}
+                        value={
+                          props.metric === "cost"
+                            ? formatUsd(totals.costUsd)
+                            : formatTokens(totals.totalTokens)
+                        }
                       />
-                      {[...period.byProvider].map(([provider, totals]) => (
-                        <InsightValue
-                          key={provider}
-                          label={provider}
-                          value={
-                            props.metric === "cost"
-                              ? formatUsd(totals.costUsd)
-                              : formatTokens(totals.totalTokens)
-                          }
-                        />
-                      ))}
-                    </View>
-                  );
-                })}
+                    ))}
+                  </View>
+                );
+              })
+          )}
           <Button
             label={translator.message("mobile.insights.modelPrices")}
             tone="text"
@@ -114,6 +122,7 @@ export function UsageBreakdown(props: {
           model={selected}
           environments={props.environments}
           metric={props.metric}
+          speed={props.speed}
           hourly={props.hourly}
           days={props.days}
           onClose={() => setSelected(null)}
@@ -127,10 +136,87 @@ export function UsageBreakdown(props: {
   );
 }
 
+function UsageProjects({
+  merged,
+  environments,
+  speed,
+  hourly,
+  days,
+}: Pick<
+  Parameters<typeof UsageBreakdown>[0],
+  "merged" | "environments" | "speed" | "hourly" | "days"
+>) {
+  const translator = useMobileInterfaceTranslator();
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const project = merged.projects.find(({ key }) => key === selectedKey) ?? merged.projects[0];
+  const usage = useMemo(
+    () =>
+      project === undefined
+        ? null
+        : mergeUsage(environments, USAGE_CONTRACT_VERSION, {
+            speed,
+            keepBucket: (bucket, environmentId) =>
+              environmentId === project.environmentId && bucket.project?.id === project.id,
+          }),
+    [environments, project, speed],
+  );
+  const daily = hourly
+    ? usage?.hourly.map((hour) => ({ ...hour, day: hour.hourStart }))
+    : usage?.daily;
+  const showEnvironment = new Set(merged.projects.map((entry) => entry.environmentId)).size > 1;
+  return (
+    <View className="gap-2">
+      {merged.projects.length === 0 ? (
+        <Text className="py-2 text-sm text-foreground-muted">
+          {translator.message("mobile.insights.noProjectUsage")}
+        </Text>
+      ) : null}
+      {merged.projects.map((entry) => (
+        <Pressable
+          key={entry.key}
+          accessibilityRole="button"
+          accessibilityState={{ selected: entry.key === project?.key }}
+          onPress={() => setSelectedKey(entry.key)}
+          className={`min-h-12 justify-center rounded-xl px-3 py-2 ${entry.key === project?.key ? "bg-muted" : ""}`}
+        >
+          <InsightValue label={entry.title} value={formatTokens(entry.totalTokens)} />
+          {showEnvironment ? (
+            <Text className="text-xs text-foreground-muted">{entry.environmentLabel}</Text>
+          ) : null}
+        </Pressable>
+      ))}
+      {merged.unassignedProjectTokens > 0 ? (
+        <InsightValue
+          label={translator.message("mobile.insights.unassignedTokens")}
+          value={formatTokens(merged.unassignedProjectTokens)}
+        />
+      ) : null}
+      {usage !== null && daily !== undefined ? (
+        <View className="gap-2 border-t border-border-subtle pt-3">
+          <Text className="text-sm font-t3-semibold">
+            {translator.message("mobile.insights.projectTokens")}
+          </Text>
+          <UsageDailyChart days={days} daily={daily} metric="tokens" height={100} />
+          {[...usage.models]
+            .sort((a, b) => b.totalTokens - a.totalTokens)
+            .map((model) => (
+              <InsightValue
+                key={`${model.provider}:${model.model}`}
+                label={model.model}
+                value={formatTokens(model.totalTokens)}
+              />
+            ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function UsageModelDetails(props: {
   readonly model: ModelTotals;
   readonly environments: readonly EnvironmentUsage[];
   readonly metric: UsageChartMetric;
+  readonly speed: UsageSpeed | undefined;
   readonly hourly: boolean;
   readonly days: readonly string[];
   readonly onClose: () => void;
@@ -138,8 +224,8 @@ function UsageModelDetails(props: {
 }) {
   const translator = useMobileInterfaceTranslator();
   const usage = useMemo(
-    () => mergeModelUsage(props.environments, props.model.provider, props.model.model),
-    [props.environments, props.model.provider, props.model.model],
+    () => mergeModelUsage(props.environments, props.model.provider, props.model.model, props.speed),
+    [props.environments, props.model.provider, props.model.model, props.speed],
   );
   const model = usage.models[0] ?? props.model;
   const unknown = isModelCostUnknown(model);

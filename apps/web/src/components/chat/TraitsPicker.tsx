@@ -164,6 +164,10 @@ function getSelectedTraits(
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
+  const daybreakDescriptor =
+    provider === "codex"
+      ? (booleanDescriptors.find((descriptor) => descriptor.id === "daybreak") ?? null)
+      : null;
   const thinkingDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "thinking") ?? null;
 
@@ -203,6 +207,7 @@ function getSelectedTraits(
     contextWindowDescriptor,
     agentDescriptor,
     fastModeDescriptor,
+    daybreakDescriptor,
     thinkingDescriptor,
     effort,
     thinkingEnabled,
@@ -240,6 +245,7 @@ export function getTraitsSectionVisibility(input: {
   const showEffort = selected.primarySelectDescriptor !== null;
   const showThinking = selected.thinkingDescriptor !== null;
   const showFastMode = selected.fastModeDescriptor !== null;
+  const showDaybreak = selected.daybreakDescriptor !== null;
   const showContextWindow = selected.contextWindowDescriptor !== null;
   const showAgent = selected.agentDescriptor !== null;
 
@@ -254,6 +260,7 @@ export function getTraitsSectionVisibility(input: {
       showEffort ||
       showThinking ||
       showFastMode ||
+      showDaybreak ||
       showContextWindow ||
       showAgent ||
       (selected.modelIsUnavailable && selected.descriptors.length > 0),

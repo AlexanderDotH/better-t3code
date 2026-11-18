@@ -86,6 +86,13 @@ export const AssemblyAiVoiceSettings = Schema.Struct({
   voiceFocus: Schema.Literals(["near-field", "far-field"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("near-field" as const)),
   ),
+  advancedMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  interpretationModel: TrimmedNonEmptyString.check(Schema.isMaxLength(200)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("claude-haiku-4-5-20251001")),
+  ),
+  interpretationModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   cleanupMode: Schema.Literals(["off", "conservative", "compact", "custom"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("conservative" as const)),
   ),
@@ -158,12 +165,19 @@ export type VoiceFileReference = typeof VoiceFileReference.Type;
 export const SpeechStreamingStartInput = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.optionalKey(ThreadId),
+  supportsAdvancedMode: Schema.optionalKey(Schema.Boolean),
 });
 export type SpeechStreamingStartInput = typeof SpeechStreamingStartInput.Type;
 export const SpeechProcessDictationInput = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.optionalKey(ThreadId),
   transcript: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_TEXT_TRANSFORM_MAX_CHARS)),
+  additionalTranscripts: Schema.optionalKey(
+    Schema.Tuple([
+      TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_TEXT_TRANSFORM_MAX_CHARS)),
+      TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_TEXT_TRANSFORM_MAX_CHARS)),
+    ]),
+  ),
 });
 export type SpeechProcessDictationInput = typeof SpeechProcessDictationInput.Type;
 export const SpeechProcessDictationResult = Schema.Struct({
@@ -224,6 +238,13 @@ export type ProjectSpeechProfile = typeof ProjectSpeechProfile.Type;
 export const ProjectSpeechProfileInput = Schema.Struct({ projectId: ProjectId });
 export type ProjectSpeechProfileInput = typeof ProjectSpeechProfileInput.Type;
 
+export const SpeechLearnedVocabularyResult = Schema.Struct({
+  keyterms: Schema.Array(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(ASSEMBLY_AI_KEYTERM_MAX_CHARS)),
+  ).check(Schema.isMaxLength(256)),
+});
+export type SpeechLearnedVocabularyResult = typeof SpeechLearnedVocabularyResult.Type;
+
 export const ProjectSpeechProfileListResult = Schema.Struct({
   profiles: Schema.Array(ProjectSpeechProfile),
 });
@@ -232,7 +253,14 @@ export type ProjectSpeechProfileListResult = typeof ProjectSpeechProfileListResu
 export class ProjectSpeechProfileError extends Schema.TaggedError<ProjectSpeechProfileError>()(
   "ProjectSpeechProfileError",
   {
-    operation: Schema.Literals(["get", "list", "index", "create-basic", "resolve-project"]),
+    operation: Schema.Literals([
+      "get",
+      "list",
+      "index",
+      "create-basic",
+      "resolve-project",
+      "clear-learned-vocabulary",
+    ]),
     projectId: Schema.optional(ProjectId),
     reason: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

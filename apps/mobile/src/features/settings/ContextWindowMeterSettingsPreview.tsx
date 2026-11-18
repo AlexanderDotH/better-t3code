@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { ThreadContextMeterRing } from "../threads/ThreadContextMeterRing";
+import { PreviewReveal } from "./BetterT3PreviewFrame";
 
 const EXAMPLE_USED_TOKENS = 64_000;
 const EXAMPLE_MAX_TOKENS = 128_000;
@@ -91,6 +93,7 @@ export function ContextWindowMeterSettingsPreview(props: {
   readonly disabled: boolean;
   readonly onValueChange: (enabled: boolean) => void;
 }) {
+  const [replay, setReplay] = useState({ enabled: props.enabled, count: 0 });
   const translator = useMobileInterfaceTranslator();
   const label = translator.message("settings.contextMeter.label");
   const description = translator.message("settings.contextMeter.description");
@@ -127,7 +130,9 @@ export function ContextWindowMeterSettingsPreview(props: {
               accessibilityState={{ checked: selected, disabled: props.disabled }}
               disabled={props.disabled}
               onPress={() => {
-                if (!props.disabled && !selected) props.onValueChange(enabled);
+                if (props.disabled) return;
+                setReplay((previous) => ({ enabled, count: previous.count + 1 }));
+                if (!selected) props.onValueChange(enabled);
               }}
               className={`min-h-11 min-w-0 gap-3 rounded-[24px] border-2 p-3 active:opacity-70 ${selected ? "border-primary bg-subtle" : "border-border bg-grouped-card"} ${props.disabled ? "opacity-45" : ""}`}
               style={{ flexBasis: 280, flexGrow: 1, flexShrink: 1 }}
@@ -155,8 +160,13 @@ export function ContextWindowMeterSettingsPreview(props: {
                     type="monochrome"
                   />
                 </View>
-                <ComposerContextPreview enabled={enabled} />
-                <ComposerContextPreview enabled={enabled} expanded />
+                <PreviewReveal
+                  key={`${selected}:${replay.enabled === enabled ? replay.count : 0}`}
+                  className="gap-3"
+                >
+                  <ComposerContextPreview enabled={enabled} />
+                  <ComposerContextPreview enabled={enabled} expanded />
+                </PreviewReveal>
                 <Text className="text-xs leading-normal text-foreground-muted">{example}</Text>
               </View>
             </Pressable>

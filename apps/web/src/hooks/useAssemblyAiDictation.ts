@@ -1,5 +1,9 @@
-import { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
-import type { VoiceFileReference } from "@t3tools/contracts";
+import {
+  assemblyAiDictationBlocksSubmission,
+  renderAssemblyAiDictationDraft,
+  type AssemblyAiDictationState,
+} from "@t3tools/client-runtime/assembly-ai";
+import type { SpeechStreamingTranscriptResult, VoiceFileReference } from "@t3tools/contracts";
 export { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -11,7 +15,7 @@ import {
 
 import { useStableCallback } from "./useStableCallback";
 
-export type AssemblyAiDictationState = "idle" | "starting" | "recording" | "stopping";
+export type { AssemblyAiDictationState } from "@t3tools/client-runtime/assembly-ai";
 
 export interface AssemblyAiDictationDraftSnapshot {
   readonly text: string;
@@ -37,7 +41,10 @@ interface ProcessedTranscript {
   readonly references?: ReadonlyArray<VoiceFileReference>;
   readonly warning?: string;
 }
-type TransformTranscript = (transcript: string) => Promise<string | ProcessedTranscript>;
+type TransformTranscript = (
+  transcript: string,
+  processed?: ProcessedTranscript,
+) => Promise<string | ProcessedTranscript>;
 const DICTATION_PROCESSING_TIMEOUT_MS = 65_000;
 const AUDIO_WAVEFORM_SAMPLE_COUNT = 14;
 const EMPTY_AUDIO_WAVEFORM = Object.freeze(
@@ -47,14 +54,15 @@ const EMPTY_AUDIO_WAVEFORM = Object.freeze(
 export async function resolveAssemblyAiDictationTranscript(
   transcript: string,
   transformTranscript?: TransformTranscript,
+  processed?: ProcessedTranscript,
 ): Promise<ProcessedTranscript & { readonly error: Error | null }> {
   if (!transformTranscript || transcript.length === 0) {
-    return { text: transcript, error: null };
+    return { ...(processed ?? { text: transcript }), error: null };
   }
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const transformed = await Promise.race([
-      transformTranscript(transcript),
+      processed ? transformTranscript(transcript, processed) : transformTranscript(transcript),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
           () => reject(new Error("Voice input processing timed out. The original was kept.")),
@@ -85,6 +93,7 @@ export function useAssemblyAiDictation(input: {
   readonly onNotice: (notice: AssemblyAiDictationNotice) => void;
   readonly transformTranscript?: TransformTranscript;
   readonly createToken?: StartAssemblyAiStreamingTranscriptionInput["createToken"];
+  readonly serverTransport?: StartAssemblyAiStreamingTranscriptionInput["serverTransport"];
   readonly startTransport?: StartTransport;
 }) {
   const [state, setState] = useState<AssemblyAiDictationState>("idle");
@@ -107,6 +116,7 @@ export function useAssemblyAiDictation(input: {
   const onNoticeRef = useRef(input.onNotice);
   const startTransportRef = useRef(input.startTransport ?? startAssemblyAiStreamingTranscription);
   const createTokenRef = useRef(input.createToken);
+  const serverTransportRef = useRef(input.serverTransport);
   const transformTranscriptRef = useRef(input.transformTranscript);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep callbacks retained by the microphone and streaming transport current after each commit
@@ -116,6 +126,7 @@ export function useAssemblyAiDictation(input: {
     onNoticeRef.current = input.onNotice;
     startTransportRef.current = input.startTransport ?? startAssemblyAiStreamingTranscription;
     createTokenRef.current = input.createToken;
+    serverTransportRef.current = input.serverTransport;
     transformTranscriptRef.current = input.transformTranscript;
   });
 
@@ -204,6 +215,11 @@ export function useAssemblyAiDictation(input: {
       const session = await startTransportRef.current({
         signal: abortController.signal,
         ...(createTokenRef.current ? { createToken: createTokenRef.current } : {}),
+        ...(serverTransportRef.current ? { serverTransport: serverTransportRef.current } : {}),
+        onProcessing: () => {
+          if (attemptRef.current === attempt && !abortController.signal.aborted)
+            transition("interpreting");
+        },
         onTranscript: ({ text }) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
           if (!draftUnchanged()) {
@@ -253,7 +269,12 @@ export function useAssemblyAiDictation(input: {
   });
 
   const stop = useStableCallback(async () => {
-    if (stateRef.current === "idle" || stateRef.current === "stopping") return;
+    if (
+      stateRef.current === "idle" ||
+      stateRef.current === "stopping" ||
+      stateRef.current === "interpreting"
+    )
+      return;
     const session = sessionRef.current;
     if (!session) {
       attemptRef.current += 1;
@@ -267,8 +288,9 @@ export function useAssemblyAiDictation(input: {
     const attempt = attemptRef.current;
     const originalDraft = originalDraftRef.current;
     transition("stopping");
+    let finished: SpeechStreamingTranscriptResult | void = undefined;
     try {
-      await session.stop();
+      finished = await session.stop();
     } catch (error) {
       if (attemptRef.current === attempt) {
         onNoticeRef.current({
@@ -286,6 +308,7 @@ export function useAssemblyAiDictation(input: {
       const transformed = await resolveAssemblyAiDictationTranscript(
         latestTranscriptRef.current,
         transformTranscriptRef.current,
+        finished?.processed,
       );
       if (attemptRef.current === attempt && draftUnchanged()) {
         const nextText = renderAssemblyAiDictationDraft(originalDraft.text, transformed.text);
@@ -362,7 +385,7 @@ export function useAssemblyAiDictation(input: {
 
   return {
     state,
-    active: state !== "idle",
+    active: assemblyAiDictationBlocksSubmission(state),
     audioWaveform,
     start,
     stop,

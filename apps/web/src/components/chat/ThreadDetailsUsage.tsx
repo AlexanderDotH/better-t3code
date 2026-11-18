@@ -2,33 +2,18 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type {
   ProviderInstanceId,
   ServerProvider,
-  ServerProviderUsageWindow,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
-import {
-  collectProviderUsageLimits,
-  formatDuration,
-  type LimitPace,
-  limitsNotice,
-  paceOf,
-  remainingPercent,
-} from "@t3tools/shared/usageLimits";
+import { collectProviderUsageLimits, limitsNotice } from "@t3tools/shared/usageLimits";
 import type { ReactNode } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
-import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-
-const PACE_LABEL: Record<LimitPace, string> = {
-  ahead: "Ahead of pace",
-  on: "On pace",
-  under: "Under pace",
-};
+import { LimitWindows } from "../usage/UsageLimits";
 
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
@@ -53,10 +38,11 @@ export function ThreadDetailsUsage({
       : null;
   // Only this instance's data: the report keeps one instance per login, and any other entry may be
   // a different login or workspace, so fall back to the instance's own snapshot.
-  const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
+  const account = report?.accounts.find((entry) => entry.instanceId === providerInstanceId);
+  const provider = providers.find((provider) => provider.instanceId === providerInstanceId);
+  const limits = account?.limits ?? provider?.usageLimits;
+  const driver = account?.driver ?? provider?.driver;
+  if (!limits || !driver) return null;
   const notice = limitsNotice(limits);
 
   return (
@@ -65,8 +51,8 @@ export function ThreadDetailsUsage({
       title="Usage limits"
       showHeading={false}
     >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
+      {notice ? (
+        <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
           <UsageRow
             label="Limits"
             fill={null}
@@ -74,10 +60,10 @@ export function ThreadDetailsUsage({
             value="Unavailable"
             tooltip={<span className="text-foreground">{notice}</span>}
           />
-        ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
-        )}
-      </div>
+        </div>
+      ) : (
+        <LimitWindows compact driver={driver} windows={limits.windows} now={now} />
+      )}
     </ThreadDetailsSection>
   );
 }
@@ -136,42 +122,6 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
         />
       </div>
     </ThreadDetailsSection>
-  );
-}
-
-function LimitRow({
-  window,
-  now,
-}: {
-  readonly window: ServerProviderUsageWindow;
-  readonly now: number;
-}) {
-  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const left = remainingPercent(window);
-  const pace = paceOf(window, now);
-  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
-  return (
-    <UsageRow
-      label={window.label}
-      fill={left}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
-      value={`${left}%`}
-      ariaValue={`${left}% left`}
-      tooltip={
-        <>
-          <span className="text-foreground">
-            {window.label}: {left}% left
-          </span>
-          {window.resetsAt && resetsAt > now ? (
-            <span className="text-muted-foreground">
-              Resets in {formatDuration(resetsAt - now)} ·{" "}
-              {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
-            </span>
-          ) : null}
-          {pace ? <span className="text-muted-foreground">{PACE_LABEL[pace]}</span> : null}
-        </>
-      }
-    />
   );
 }
 

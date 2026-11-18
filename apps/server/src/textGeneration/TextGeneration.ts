@@ -105,6 +105,13 @@ export const make = Effect.gen(function* () {
       now,
       selection.model,
     );
+    if (limited && operation === "planFetchExploration") {
+      return yield* new TextGenerationError({
+        operation,
+        detail: "The selected Fetch model has reached its usage limit.",
+        reason: "rate-limited",
+      });
+    }
     if (limited) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(

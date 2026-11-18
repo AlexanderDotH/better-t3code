@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   FETCH_MODE,
+  fetchUltrafastModelCandidates,
   isFetchCapableProvider,
   resolveFetchLunaFallback,
   resolveFetchMode,
@@ -100,6 +101,55 @@ describe("Fetch provider eligibility", () => {
 });
 
 describe("Fetch model selection", () => {
+  it("prefers the main model at Ultrafast only when its account advertises the tier", () => {
+    const ultrafast = (
+      slug: string,
+      flags: Parameters<typeof model>[1] = {},
+    ): ServerProviderModel => ({
+      ...model(slug, flags),
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "serviceTier",
+            label: "Speed",
+            type: "select",
+            options: [
+              { id: "default", label: "Normal" },
+              { id: "ultrafast", label: "Ultrafast" },
+            ],
+          },
+        ],
+      },
+    });
+    const candidates = fetchUltrafastModelCandidates(
+      [
+        provider({ instanceId: "other", driver: "codex", models: [ultrafast("alternate")] }),
+        provider({
+          instanceId: "no-fetch",
+          driver: "codex",
+          fetchCapable: false,
+          models: [ultrafast("preferred")],
+        }),
+        provider({
+          instanceId: "codex",
+          driver: "codex",
+          models: [
+            model("standard-only"),
+            ultrafast("custom", { isCustom: true }),
+            ultrafast("unselectable", { isSelectable: false }),
+            ultrafast("default", { isDefault: true }),
+            ultrafast("preferred"),
+          ],
+        }),
+      ],
+      selection("codex", "preferred"),
+    );
+    expect(candidates.map(({ selection: modelSelection }) => modelSelection)).toEqual([
+      selection("codex", "preferred", [{ id: "serviceTier", value: "ultrafast" }]),
+      selection("codex", "default", [{ id: "serviceTier", value: "ultrafast" }]),
+      selection("other", "alternate", [{ id: "serviceTier", value: "ultrafast" }]),
+    ]);
+  });
   it("prefers a live non-custom Spark from the default Codex instance", () => {
     const result = resolveFetchModelSelection({
       providers: [

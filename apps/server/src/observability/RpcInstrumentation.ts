@@ -28,6 +28,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.speechFinishStreamingSession]: "speech",
   [WS_METHODS.speechCancelStreamingSession]: "speech",
   [WS_METHODS.speechGetProjectProfile]: "speech",
+  [WS_METHODS.speechGetLearnedVocabulary]: "speech",
+  [WS_METHODS.speechClearLearnedVocabulary]: "speech",
   [WS_METHODS.speechListProjectProfiles]: "speech",
   [WS_METHODS.speechIndexProject]: "speech",
   [WS_METHODS.speechCreateBasicProjectProfile]: "speech",

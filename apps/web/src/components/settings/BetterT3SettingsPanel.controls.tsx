@@ -215,7 +215,22 @@ function BetterT3ModelSelectionControl(props: {
     props.selection ?? props.fallbackSelection,
     props.purpose,
   );
-  if (!resolvedSelection) {
+  const isFetchModel = props.featureId === "agent.fetchModel";
+  const displayedSelection = isFetchModel ? props.selection : resolvedSelection;
+  const activeInstanceId = displayedSelection?.instanceId ?? resolvedSelection?.instanceId;
+  const unavailableFetchModel =
+    isFetchModel &&
+    displayedSelection !== null &&
+    !entries.some(
+      (entry) =>
+        entry.instanceId === displayedSelection.instanceId &&
+        entry.models.some(
+          (model) =>
+            model.slug === displayedSelection.model &&
+            supportsModelSelectionPurpose(model, props.purpose),
+        ),
+    );
+  if (!isFetchModel && !resolvedSelection) {
     return (
       <span className="text-xs text-muted-foreground">
         {props.translate("settings.betterT3.value.unavailable")}
@@ -232,23 +247,24 @@ function BetterT3ModelSelectionControl(props: {
         <Button
           size="xs"
           variant={props.selection === null ? "secondary" : "outline"}
+          aria-pressed={props.selection === null}
           onClick={() => props.onChange(null)}
         >
           {props.automaticLabel ?? props.translate("settings.betterT3.value.automatic")}
         </Button>
       ) : null}
-      {resolvedSelection ? (
+      {activeInstanceId ? (
         <ProviderModelPicker
           environmentId={props.environmentId}
-          activeInstanceId={resolvedSelection.instanceId}
-          model={resolvedSelection.model}
+          activeInstanceId={activeInstanceId}
+          model={displayedSelection?.model ?? ""}
           lockedProvider={null}
           instanceEntries={entries}
           modelOptionsByInstance={getCustomModelOptionsByInstance(
             props.settings,
             props.providers,
-            resolvedSelection.instanceId,
-            resolvedSelection.model,
+            activeInstanceId,
+            displayedSelection?.model ?? null,
             props.purpose,
           )}
           modelSelectionPurpose={props.purpose}
@@ -256,8 +272,25 @@ function BetterT3ModelSelectionControl(props: {
           triggerVariant="outline"
           triggerClassName="min-w-0 max-w-56 shrink-0 text-foreground/90 hover:text-foreground"
           triggerAriaLabel={props.translate(`betterT3.${props.featureId}.label`)}
+          {...(isFetchModel
+            ? {
+                fallbackToFirstModel: false,
+                placeholder: props.translate("settings.betterT3.value.chooseModel"),
+                ...(unavailableFetchModel
+                  ? {
+                      triggerLabel: `${displayedSelection.model} · ${props.translate("settings.betterT3.value.unavailable")}`,
+                    }
+                  : {}),
+              }
+            : {})}
           onInstanceModelChange={(instanceId, model) =>
-            props.onChange(createModelSelection(instanceId, model))
+            props.onChange(
+              isFetchModel &&
+                props.selection?.instanceId === instanceId &&
+                props.selection.model === model
+                ? props.selection
+                : createModelSelection(instanceId, model),
+            )
           }
         />
       ) : (
@@ -442,7 +475,7 @@ export function useBetterT3PreparedControls(input: {
         settings={input.settings}
         providers={input.providers}
         selection={input.settings.fetchModelSelection}
-        fallbackSelection={input.settings.textGenerationModelSelection}
+        fallbackSelection={null}
         allowAutomatic
         purpose="text-generation"
         disabled={scalarControlDisabled("agent.fetchModel")}

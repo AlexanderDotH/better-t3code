@@ -33,24 +33,24 @@ export interface FetchWorkerOutcome {
   readonly detail?: string;
 }
 
-export interface FetchRunInput {
-  readonly threadId: ThreadId;
-  readonly parentTurnId?: TurnId;
-  readonly cwd: string;
-  readonly userRequest: string;
+export interface FetchWorkerModel {
   readonly modelSelection: ModelSelection;
   readonly providerDriver: ProviderDriverKind;
   readonly maxRecommendedWorkers: number;
   readonly commandExecutionPolicy: ServerProviderFetchWorkerCommandExecutionPolicy;
+}
+
+export interface FetchRunInput extends FetchWorkerModel {
+  readonly threadId: ThreadId;
+  readonly parentTurnId?: TurnId;
+  readonly cwd: string;
+  readonly userRequest: string;
   /** Remaining main-provider input capacity available to Fetch context. */
   readonly contextMaxChars?: number;
   /** Present only for an Auto-selected Spark run. */
-  readonly lunaFallback?: {
-    readonly modelSelection: ModelSelection;
-    readonly providerDriver: ProviderDriverKind;
-    readonly maxRecommendedWorkers: number;
-    readonly commandExecutionPolicy: ServerProviderFetchWorkerCommandExecutionPolicy;
-  };
+  readonly lunaFallback?: FetchWorkerModel;
+  /** Only automatic Fetch may switch the workers to a faster model. */
+  readonly ultrafastWorkers?: ReadonlyArray<FetchWorkerModel>;
 }
 
 export interface FetchRunResult {

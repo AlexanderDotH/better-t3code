@@ -249,6 +249,12 @@ const THREAD_SETTINGS_SHEET_OPTIONS = {
 // Settings pages are root routes so they share the workspace's columns and header. The
 // `Settings` route marks the Settings tab as open (see settings-navigation.ts).
 const SETTINGS_PAGE_OPTIONS = SHEET_GLASS_HEADER_OPTIONS;
+// These pages draw their own Android app bar. Hidden only after mount, the native header kept its
+// height above heavy pages such as the Chat category.
+const SETTINGS_BETTER_T3_PAGE_OPTIONS: AppScreenOptions = {
+  ...SETTINGS_PAGE_OPTIONS,
+  headerShown: Platform.OS !== "android",
+};
 
 const SETTINGS_SCREENS = {
   Settings: createNativeStackScreen({
@@ -432,11 +438,11 @@ const SETTINGS_SCREENS = {
   }),
   SettingsBetterT3: createNativeStackScreen({
     screen: SettingsBetterT3RouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Better T3" },
+    options: { ...SETTINGS_BETTER_T3_PAGE_OPTIONS, title: "Better T3" },
   }),
   SettingsBetterT3Category: createNativeStackScreen({
     screen: SettingsBetterT3CategoryRouteScreen,
-    options: SETTINGS_PAGE_OPTIONS,
+    options: SETTINGS_BETTER_T3_PAGE_OPTIONS,
   }),
   SettingsBetterT3ResourceDiagnostics: createNativeStackScreen({
     screen: SettingsBetterT3ResourceDiagnosticsRouteScreen,

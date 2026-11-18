@@ -3,6 +3,7 @@ import {
   AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type UsageSpeed,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -102,6 +103,7 @@ export interface UsageView {
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  speed?: UsageSpeed,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -163,8 +165,8 @@ export function useUsage(
             },
           ],
     );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [selectedEnvironments]);
+    return mergeUsage(answered, USAGE_CONTRACT_VERSION, { speed });
+  }, [selectedEnvironments, speed]);
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
