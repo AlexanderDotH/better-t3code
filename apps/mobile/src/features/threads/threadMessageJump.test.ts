@@ -1,4 +1,4 @@
-import { MessageId } from "@t3tools/contracts";
+import { MessageId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { pendingThreadMessageJump, requestThreadMessageJump } from "./threadMessageJump";
@@ -6,8 +6,11 @@ import { pendingThreadMessageJump, requestThreadMessageJump } from "./threadMess
 describe("threadMessageJump", () => {
   it("lets a jump lapse when its thread never showed", () => {
     using now = vi.spyOn(Date, "now").mockReturnValue(0);
-    requestThreadMessageJump("thread-a", MessageId.make("message-1"));
-    expect(pendingThreadMessageJump("thread-a")).toBe("message-1");
+    requestThreadMessageJump("thread-a", MessageId.make("message-1"), ThreadId.make("owner"));
+    expect(pendingThreadMessageJump("thread-a")).toEqual({
+      messageId: "message-1",
+      sourceThreadId: "owner",
+    });
     expect(pendingThreadMessageJump("thread-b")).toBeNull();
     now.mockReturnValue(30_000);
     expect(pendingThreadMessageJump("thread-a")).toBeNull();

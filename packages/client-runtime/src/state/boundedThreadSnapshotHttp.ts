@@ -1,4 +1,8 @@
-import type { ThreadId } from "@t3tools/contracts";
+import {
+  DEEP_PLAN_VERSION_QUERY_PARAM,
+  DEEP_PLAN_VERSION_TEXT,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -31,6 +35,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
   const endpoint = {
     params: { threadId: input.threadId },
     query: {
+      [DEEP_PLAN_VERSION_QUERY_PARAM]: DEEP_PLAN_VERSION_TEXT,
       compactTurnItems: "1",
       dedupeBodies: "1",
       compactIds: "1",

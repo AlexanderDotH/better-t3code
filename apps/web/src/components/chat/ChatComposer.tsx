@@ -418,7 +418,6 @@ export interface ChatComposerProps {
   deepPlanningContent?: React.ReactNode;
   deepPlanImplementation?: {
     suggestion: PlanImplementationSuggestion | null;
-    reviewStatus: PlanParallelismReviewStatus;
     pending: boolean;
     implement: (strategy: PlanImplementationStrategy, inNewThread: boolean) => void;
   } | null;
@@ -1097,8 +1096,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const shownPlanSuggestion = deepPlanImplementation
     ? deepPlanImplementation.suggestion
     : planImplementationSuggestion;
-  const shownPlanReviewStatus =
-    deepPlanImplementation?.reviewStatus ?? planParallelismReview.status;
+  const shownPlanReviewStatus = deepPlanImplementation ? "idle" : planParallelismReview.status;
   const explicitPlanStrategyRef = useRef<PlanImplementationStrategy | null>(null);
   const selectedModelSelection: ModelSelection = createModelSelection(
     selectedInstanceId,
@@ -3357,7 +3355,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         composerMode,
         deepPlanSourceRefs: props.deepPlanSourceRefs ?? composerDraft.deepPlanSourceRefs ?? [],
         deepPlanIncludeProjectChats:
-          props.deepPlanIncludeProjectChats ?? composerDraft.deepPlanIncludeProjectChats !== false,
+          props.deepPlanIncludeProjectChats ?? composerDraft.deepPlanIncludeProjectChats === true,
         interactionMode,
         interactionModeEnabled: planModeUiEnabled,
       }),

@@ -656,7 +656,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.interactionMode === undefined &&
     draft.composerMode === undefined &&
     (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
-    draft.deepPlanIncludeProjectChats !== false &&
+    draft.deepPlanIncludeProjectChats !== true &&
     draft.fetchMode === undefined &&
     draft.messageReply === undefined &&
     draft.workspaceSelection === undefined
@@ -1249,8 +1249,8 @@ export async function removeDeliveredCloudQueuedMessage(
         (editor.composerMode !== undefined && editor.composerMode !== message.composerMode) ||
         JSON.stringify(editor.deepPlanSourceRefs ?? []) !==
           JSON.stringify(message.deepPlanSourceRefs ?? []) ||
-        (editor.deepPlanIncludeProjectChats !== false) !==
-          (message.deepPlanIncludeProjectChats !== false) ||
+        (editor.deepPlanIncludeProjectChats === true) !==
+          (message.deepPlanIncludeProjectChats === true) ||
         editor.fetchMode !== message.fetchMode ||
         (editor.workspaceSelection !== undefined &&
           (editor.workspaceSelection.mode !== message.creation?.workspaceMode ||

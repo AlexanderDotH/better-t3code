@@ -1,54 +1,39 @@
-import { act, render, fakeTimers } from "../../../test/render";
-
-import { StrictMode, useState } from "react";
-import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent, type Locator } from "vite-plus/test/browser";
+import { act, fakeTimers, render } from "../../../test/render";
+import { getNextComposerMode } from "@t3tools/client-runtime/deep-planning";
 import {
   DeepPlanRunId,
-  DeepPlanExportId,
-  DeepPlanSourceId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
-  ProviderDriverKind,
   ThreadId,
-  PlanId,
-  RunId,
-  type ServerProvider,
-  type PlanParallelismReviewInput,
+  deriveDeepPlanImplementationThreadId,
   type ComposerMode,
+  type DeepPlanReview,
   type DeepPlanRun,
   type DeepPlanSourceRef,
+  type ModelSelection,
+  type StoredDeepPlanRun,
 } from "@t3tools/contracts";
+import { StrictMode, useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import { setInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
-import { DeepPlanSourcePicker, type DeepPlanSourceOption } from "./DeepPlanSourcePicker";
-import { DeepPlanAnalysisProgress, DeepPlanChecklist } from "./DeepPlanProgress";
+import { TooltipProvider } from "../ui/tooltip";
+import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { ComposerInteractionModeButton } from "./ComposerInteractionModeButton";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { usePlanParallelismReview } from "../../hooks/usePlanParallelismReview";
-import {
-  __resetPlanParallelismReviewCacheForTests,
-  resolvePlanImplementationSuggestion,
-} from "@t3tools/client-runtime/plan-implementation";
-import {
-  formatDeepPlanMarkdown,
-  getDeepPlanProposalBlockReason,
-  continueDeepPlanForTurn,
-  type DeepPlanningApi,
-} from "@t3tools/client-runtime/deep-planning";
-import { DeepPlanReviewCard } from "./DeepPlanReviewCard";
+import { DeepPlanChecklist } from "./DeepPlanProgress";
+import { DeepPlanRunControls } from "./DeepPlanRunControls";
+import { DeepPlanSourcePicker, type DeepPlanSourceOption } from "./DeepPlanSourcePicker";
+import { runtimeModeConfig } from "./runtimeModeConfig";
 import { useDeepPlanChat } from "./useDeepPlanChat";
 
 vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <div>{text}</div> }));
-const planReview = vi.hoisted(() => ({ request: vi.fn(), approve: vi.fn(), command: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dispatch: vi.fn() }));
 vi.mock("../../state/use-orchestration-command", () => ({
-  useOrchestrationCommand: () => planReview.command,
+  useOrchestrationCommand: () => mocks.dispatch,
 }));
-vi.mock("../../state/deepPlanning", () => ({
-  getWebDeepPlanningApi: () => null,
-  approveWebDeepPlan: (...args: unknown[]) => planReview.approve(...args),
-}));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => planReview.request }));
 vi.mock("../../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../../hooks/useSettings")>()),
   useClientSettings: () => false,
@@ -58,212 +43,121 @@ vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: () => null,
   useSidebarStageBackdropVariant: () => null,
 }));
-import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { DeepPlanRunControls } from "./DeepPlanRunControls";
-import { ComposerInteractionModeButton } from "./ComposerInteractionModeButton";
-import { getNextComposerMode } from "@t3tools/client-runtime/deep-planning";
-import { runtimeModeConfig } from "./runtimeModeConfig";
-import { TooltipProvider } from "../ui/tooltip";
 
 const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("project");
 const threadId = ThreadId.make("owner");
+const owner = { environmentId, threadId };
 const createdAt = "2026-10-16T10:00:00.000Z";
-const sourceId = DeepPlanSourceId.make("source");
-const evidence = [
-  {
-    kind: "test" as const,
-    summary: "Focused workflow checks passed",
-    reference: "vp test run workflow.test.ts",
-    createdAt,
-  },
-];
+const modelSelection: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "implementation",
+};
 
 function makeRun(overrides: Partial<DeepPlanRun> = {}): DeepPlanRun {
+  const steps = ["build", "verify", "document", "package", "test"].map((id) => ({
+    id,
+    title: `Step ${id}`,
+    description: `Complete ${id}`,
+    dependencies: [],
+    acceptanceCriteria: [
+      { id: `${id}-check`, description: "The workflow runs", checkMethod: "Run focused tests" },
+    ],
+  }));
   return {
+    schemaVersion: 2,
     id: DeepPlanRunId.make("run"),
     threadId,
     phase: "awaitingApproval",
     revision: 3,
     plan: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       version: 1,
       goal: "Ship Deep Planning",
       scope: ["All connected clients"],
+      nonGoals: [],
       decisions: [],
       affectedAreas: ["Composer"],
-      steps: [
-        {
-          id: "build",
-          title: "Build the workflow",
-          description: "Implement source-aware planning",
-          dependencies: [],
-          acceptanceCriteria: [
-            {
-              id: "build-check",
-              description: "Archived sources are included",
-              checkMethod: "Run source collection tests",
-            },
-          ],
-        },
-        {
-          id: "verify",
-          title: "Verify the workflow",
-          description: "Check integrated behavior",
-          dependencies: ["build"],
-          acceptanceCriteria: [
-            {
-              id: "verify-check",
-              description: "Implementation respects the approved plan",
-              checkMethod: "Inspect durable execution evidence",
-            },
-          ],
-        },
-      ],
-      finalValidation: {
-        description: "Validate the complete integration",
-        checkMethod: "Run final integration checks",
-      },
+      steps,
+      finalValidation: { description: "Validate the integration", checkMethod: "Run checks" },
     },
+    chats: [],
+    includeProjectChats: false,
     approval: null,
     approvalKey: "approval-key",
-    sources: [
-      {
-        sourceId,
-        origin: { environmentId, projectId, threadId: ThreadId.make("archive") },
-        projectTitle: "Project",
-        threadTitle: "Archived research",
-        archived: true,
-        capturedAt: createdAt,
-        contentVersion: "v1",
-        contentHash: "hash",
-        messageCount: 1,
-        activityCount: 0,
-        attachmentCount: 0,
-        recordCount: 1,
-        forkOrigin: null,
-      },
-    ],
-    sourceCoverage: [
-      {
-        sourceId,
-        status: "summarized",
-        importedRecordCount: 1,
-        readRecordCount: 1,
-        summary: {
-          requirements: ["Preserve archived research"],
-          decisions: [],
-          openIssues: [],
-          rejectedApproaches: [],
-          conflicts: [],
-          citedRecordIds: ["record"],
-        },
-        error: null,
-        updatedAt: createdAt,
-      },
-    ],
-    stepStates: [],
-    finalValidation: {
+    steps: [],
+    finalReview: {
       status: "pending",
-      evidence: [],
-      updatedAt: null,
-      attempt: 0,
-      requestId: null,
-      turnId: null,
+      reviews: [],
+      submission: null,
+      roundLimit: 3,
+      unsubmittedTurns: 0,
     },
-    procedureAdjustments: [],
+    activeTurns: [],
+    pause: null,
     operations: [],
     createdAt,
     updatedAt: createdAt,
-    pauseReason: null,
     ...overrides,
   };
 }
 
-const implementationProvider: ServerProvider = {
-  instanceId: ProviderInstanceId.make("codex"),
-  driver: ProviderDriverKind.make("codex"),
-  enabled: true,
-  installed: true,
-  status: "ready",
-  auth: { status: "authenticated" },
-  checkedAt: createdAt,
-  version: null,
-  models: [],
-  slashCommands: [],
-  skills: [],
-  nativeSubagents: { toolName: "spawn_agent", maxRecommendedSubagents: 8 },
-};
-const reviewerSelection = { instanceId: implementationProvider.instanceId, model: "reviewer" };
-
-function proposal(run: DeepPlanRun) {
-  return {
-    id: PlanId.make(`proposal-${run.plan!.version}`),
-    runId: null,
-    status: "draft" as const,
-    planMarkdown: formatDeepPlanMarkdown(run.plan!),
-    deepPlan: { runId: run.id, planVersion: run.plan!.version },
-    createdAt,
-    updatedAt: createdAt,
-  };
-}
-function PlanComposer({
+function ComposerDeepPlanContent({
   run,
-  plan,
-  onImplement,
+  working = false,
+  readOnlyReview = false,
+  supported = true,
 }: {
-  run: DeepPlanRun;
-  plan: ReturnType<typeof proposal>;
-  onImplement: (
-    strategy: import("@t3tools/client-runtime/plan-implementation").PlanImplementationStrategy,
-  ) => void;
+  run: StoredDeepPlanRun | null;
+  working?: boolean;
+  readOnlyReview?: boolean;
+  supported?: boolean;
 }) {
-  const available = getDeepPlanProposalBlockReason(plan, run) === null;
-  const review = usePlanParallelismReview({
-    enabled: available,
+  const chat = useDeepPlanChat({
     environmentId,
-    threadId,
-    plan,
-    implementationProvider,
-    reviewerProvider: implementationProvider,
-    reviewerSelection,
+    threadRef: owner,
+    projectId,
+    workspaceRoot: undefined,
+    draftTarget: owner,
+    mode: "deep-plan",
+    run,
+    threadShells: [],
+    supported,
+    connected: true,
+    canOperate: true,
+    working,
+    readOnlyReview,
+    providers: [],
+    modelSelection,
+    getModelSelection: () => modelSelection,
   });
-  const suggestion = resolvePlanImplementationSuggestion({
-    featureEnabled: true,
-    planMarkdown: plan.planMarkdown,
-    provider: implementationProvider,
-    reviewedSubagentCount: review.reviewedSubagentCount,
-  });
+  const implementation = chat.implementation;
   return (
     <>
-      <DeepPlanAnalysisProgress run={run} />
-      <DeepPlanReviewCard
-        run={run}
-        environmentId={environmentId}
-        threadRef={{ environmentId, threadId }}
-        workspaceRoot={undefined}
-      />
-      <ComposerPrimaryActions
-        compact={false}
-        canOperateThread
-        canInterrupt
-        pendingAction={null}
-        isRunning={false}
-        showPlanFollowUpPrompt={available}
-        promptHasText={false}
-        isSendBusy={false}
-        sendDisabledReason={null}
-        isConnecting={false}
-        isEnvironmentUnavailable={false}
-        isPreparingWorktree={false}
-        hasSendableContent={false}
-        onPreviousPendingQuestion={() => {}}
-        onInterrupt={() => {}}
-        planImplementationSuggestion={suggestion}
-        planParallelismReviewStatus={review.status}
-        onImplementPlan={onImplement}
-        onImplementPlanInNewThread={() => {}}
-      />
+      {chat.content}
+      {implementation ? (
+        <ComposerPrimaryActions
+          compact={false}
+          canOperateThread
+          canInterrupt={false}
+          pendingAction={null}
+          isRunning={false}
+          showPlanFollowUpPrompt={false}
+          showPlanImplementationActions
+          planTone="deep-plan"
+          promptHasText={false}
+          isSendBusy={implementation.pending}
+          sendDisabledReason={null}
+          isEnvironmentUnavailable={false}
+          isPreparingWorktree={false}
+          hasSendableContent={false}
+          onPreviousPendingQuestion={() => {}}
+          onInterrupt={() => {}}
+          planImplementationSuggestion={implementation.suggestion}
+          onImplementPlan={(strategy) => implementation.implement(strategy, false)}
+          onImplementPlanInNewThread={(strategy) => implementation.implement(strategy, true)}
+        />
+      ) : null}
     </>
   );
 }
@@ -327,6 +221,7 @@ it("selects and removes extra archived chats without changing automatically incl
         projectSourceCount={2}
         options={options}
         selected={selected}
+        includeProjectChats
         loading={false}
         error={null}
         onOpen={() => {}}
@@ -347,7 +242,9 @@ it("selects and removes extra archived chats without changing automatically incl
   expect(document.querySelector('[data-slot="dialog-popup"]')?.textContent).not.toContain(
     "Current work",
   );
-  const extra = document.querySelector<HTMLElement>('[data-slot="checkbox"]:not([data-disabled])')!;
+  const extra = document.querySelector<HTMLElement>(
+    '[data-slot="checkbox"][aria-label="Remote design"]',
+  )!;
   await act(() => extra.click());
   await act(() => button(container, "Done").click());
   expect(container.textContent).toContain("Remote design");
@@ -356,7 +253,7 @@ it("selects and removes extra archived chats without changing automatically incl
   expect(container.textContent).toContain("2 project chats");
 });
 
-it("plans from chosen project chats, or none, after project chats are excluded", async () => {
+it("starts without project chats and can opt in", async () => {
   setup();
   const archive = { environmentId, projectId, threadId: ThreadId.make("archive") };
   const options: DeepPlanSourceOption[] = [
@@ -382,7 +279,7 @@ it("plans from chosen project chats, or none, after project chats are excluded",
     const [state, setState] = useState<{
       refs: readonly DeepPlanSourceRef[];
       include: boolean;
-    }>({ refs: [], include: true });
+    }>({ refs: [], include: false });
     return (
       <DeepPlanSourcePicker
         currentProject={{ environmentId, projectId }}
@@ -407,9 +304,8 @@ it("plans from chosen project chats, or none, after project chats are excluded",
     await act(() => (locator.element() as HTMLElement).click());
   };
   await userEvent.click(screen.getByRole("button", { name: "Add chats" }));
-  const includeAll = page.getByRole("switch", { name: "Include all chats from this project" });
-  await clickInDialog(includeAll);
-  expect(onChange).toHaveBeenLastCalledWith([], false);
+  const includeAll = page.getByRole("checkbox", { name: "Include all chats from this project" });
+  await expect.element(includeAll).not.toBeChecked();
   await expect.element(page.getByRole("checkbox", { name: "Current work" })).not.toBeChecked();
   await expect.element(screen.getByText("No project chats")).toBeInTheDocument();
   await clickInDialog(page.getByRole("checkbox", { name: "Project archive" }));
@@ -421,40 +317,7 @@ it("plans from chosen project chats, or none, after project chats are excluded",
   await expect.element(screen.getByText("2 project chats")).toBeInTheDocument();
 });
 
-function ComposerDeepPlanContent({
-  run,
-  working = false,
-}: {
-  run: DeepPlanRun | null;
-  working?: boolean;
-}) {
-  const chat = useDeepPlanChat({
-    environmentId,
-    threadRef: { environmentId, threadId },
-    projectId,
-    workspaceRoot: undefined,
-    branch: null,
-    worktreePath: null,
-    draftTarget: { environmentId, threadId },
-    mode: "deep-plan",
-    run,
-    supported: true,
-    parallelEnabled: false,
-    connected: true,
-    canOperate: true,
-    working,
-    latestRunId: null,
-    latestUserMessageId: null,
-    runtimeMode: "full-access",
-    providers: [],
-    reviewerSelection,
-    modelSelection: null,
-    getModelSelection: () => undefined,
-  });
-  return <>{chat.content}</>;
-}
-
-it("offers source selection only until the Deep Plan is on its way", async () => {
+it("offers chat selection only before a run starts", async () => {
   setup();
   await using screen = await render(<ComposerDeepPlanContent run={null} />);
   const sources = screen.getByRole("button", { name: "Add chats" });
@@ -463,826 +326,241 @@ it("offers source selection only until the Deep Plan is on its way", async () =>
   await screen.rerender(<ComposerDeepPlanContent run={null} working />);
   await expect.element(sources).not.toBeInTheDocument();
 
-  const running = makeRun({ phase: "planning", plan: null, sources: [], sourceCoverage: [] });
-  await screen.rerender(<ComposerDeepPlanContent run={running} />);
+  await screen.rerender(
+    <ComposerDeepPlanContent run={makeRun({ phase: "planning", plan: null })} />,
+  );
   await expect.element(sources).not.toBeInTheDocument();
-  expect(screen.container.textContent).not.toContain("Sources");
 
-  await screen.rerender(<ComposerDeepPlanContent run={makeRun({ phase: "completed" })} />);
+  await screen.rerender(<ComposerDeepPlanContent run={makeRun({ phase: "cancelled" })} />);
   await expect.element(sources).toBeVisible();
 });
 
-it("skips the preparation card when a plan has nothing slow to prepare", async () => {
+it.each(["current", "new"] as const)("approves in a %s chat with one dispatch", async (target) => {
   setup();
-  const collecting = makeRun({ phase: "collecting", plan: null, sources: [], sourceCoverage: [] });
-  await using screen = await render(<DeepPlanAnalysisProgress run={collecting} />);
-  expect(screen.container.textContent).not.toContain("Preparing chat histories…");
-
-  await screen.rerender(<DeepPlanAnalysisProgress run={{ ...collecting, phase: "planning" }} />);
-  expect(screen.container.textContent).toBe("");
-});
-
-it("keeps the unfinished source visible as reading advances to a saved summary", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const base = makeRun();
-  const finished = base.sources[0]!;
-  const reading = {
-    ...finished,
-    sourceId: DeepPlanSourceId.make("large-source"),
-    threadTitle: "Large pipeline history",
-    recordCount: 100,
-  };
-  let current = makeRun({
-    phase: "planning",
-    plan: null,
-    sources: [finished, reading],
-    sourceCoverage: [
-      base.sourceCoverage[0]!,
-      {
-        ...base.sourceCoverage[0]!,
-        sourceId: reading.sourceId,
-        status: "ready",
-        summary: null,
-        importedRecordCount: 100,
-        readRecordCount: 37,
-      },
-    ],
-  });
-  await act(() => screen.rerender(<DeepPlanAnalysisProgress run={current} />));
-  expect(container.textContent).toContain("1 of 2 sources analyzed");
-  expect(container.querySelector("li")?.textContent).toContain("Large pipeline history");
-  expect(container.querySelector("li")?.textContent).toContain("Reading · 37%");
-  current = {
-    ...current,
-    sourceCoverage: current.sourceCoverage.map((entry) =>
-      entry.sourceId === reading.sourceId ? { ...entry, readRecordCount: 100 } : entry,
-    ),
-  };
-  await act(() => screen.rerender(<DeepPlanAnalysisProgress run={current} />));
-  expect(container.textContent).toContain("1 of 2 sources analyzed");
-  expect(container.querySelector("li")?.textContent).toContain("Read · summary pending");
-  expect(container.textContent).not.toContain("Reading · 37%");
-  current = {
-    ...current,
-    sourceCoverage: current.sourceCoverage.map((entry) =>
-      entry.sourceId === reading.sourceId
-        ? { ...entry, status: "summarized", summary: base.sourceCoverage[0]!.summary }
-        : entry,
-    ),
-  };
-  await act(() => screen.rerender(<DeepPlanAnalysisProgress run={current} />));
-  expect(container.textContent).toContain("2 of 2 sources analyzed");
-  expect(
-    [...container.querySelectorAll("li")].every((row) => row.textContent?.includes("Done")),
-  ).toBe(true);
-});
-
-it("automatically finishes preparation before starting analysis without a Resume click", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  let current = makeRun({
-    phase: "collecting",
-    revision: 0,
-    plan: null,
-    sources: [],
-    sourceCoverage: [],
-  });
-  const source = makeRun().sources[0]!;
-  let releaseExport!: (result: Awaited<ReturnType<DeepPlanningApi["exportSources"]>>) => void;
-  let notifyExportStarted!: () => void;
-  const exportStarted = new Promise<void>((resolve) => {
-    notifyExportStarted = resolve;
-  });
-  const exported = new Promise<Awaited<ReturnType<DeepPlanningApi["exportSources"]>>>((resolve) => {
-    releaseExport = resolve;
-  });
-  const commands: Array<Parameters<DeepPlanningApi["dispatchCommand"]>[0]> = [];
-  const api: DeepPlanningApi = {
-    getRun: async () => current,
-    dispatchCommand: async (command) => {
-      commands.push(command);
-      if (command.type === "thread.deep-plan.start")
-        current = { ...current, id: command.runId, revision: 0, phase: "collecting" };
-      if (command.type === "thread.deep-plan.update")
-        current = { ...current, revision: current.revision + 1, phase: "paused" };
-    },
-    catalogSources: async () => {
-      throw new Error("Unexpected metadata request");
-    },
-    exportSources: () => {
-      notifyExportStarted();
-      return exported;
-    },
-    initializeSources: async (input) => {
-      current = {
-        ...current,
-        sources: input.snapshots,
-        sourceCoverage: input.snapshots.map((snapshot) => ({
-          sourceId: snapshot.sourceId,
-          status: "ready",
-          importedRecordCount: snapshot.recordCount,
-          readRecordCount: 0,
-          summary: null,
-          error: null,
-          updatedAt: createdAt,
-        })),
-        phase: "planning",
-        revision: 1,
-      };
-      renderRun();
-      return { runId: current.id, sources: current.sources, coverage: current.sourceCoverage };
-    },
-    readExportChunk: async () => {
-      throw new Error("Local histories are already imported");
-    },
-    importSourceChunk: async () => {
-      throw new Error("Local histories must not be uploaded again");
-    },
-  };
-  let nextId = 0;
-  let continuation: Promise<DeepPlanRun> | undefined;
-  const resume = async () => {
-    continuation = continueDeepPlanForTurn({
-      run: current,
-      environmentId,
-      projectId,
-      fallbackModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-      runtimeMode: "full-access",
-      apiForEnvironment: () => api,
-      createId: () => `resumed-${++nextId}`,
-      now: () => createdAt,
-    });
-    await continuation;
-  };
-  function renderRun() {
-    screen.rerender(
-      <>
-        <DeepPlanAnalysisProgress run={current} />
-        <DeepPlanRunControls
-          environmentId={environmentId}
-          run={current}
-          disabled={false}
-          canContinue
-          onResume={resume}
-          onFinalValidation={resume}
-        />
-      </>,
-    );
+  const run = makeRun();
+  await using screen = await render(<ComposerDeepPlanContent run={run} />);
+  using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+  if (target === "new") {
+    await userEvent.click(screen.getByRole("button", { name: "Implementation actions" }));
+    const item = page.getByRole("menuitem", { name: "Implement with 4 lanes in a new thread" });
+    await expect.element(item).toBeVisible();
+    await act(() => (item.element() as HTMLElement).click());
+  } else {
+    await userEvent.click(screen.getByRole("button", { name: "Implement with 4 lanes" }));
   }
-  await act(renderRun);
-  await expect.element(screen.getByText("Preparing chat histories…")).toBeVisible();
-  expect(container.textContent).not.toContain("0 of 0");
-  expect(container.querySelector("progress")).toBeNull();
-  await exportStarted;
-  expect(container.textContent).not.toContain("Resume to finish");
-  expect(container.textContent).not.toContain("Resume");
-  expect(commands.some((command) => command.type === "message.dispatch")).toBe(false);
-  await act(async () => {
-    releaseExport({
-      exportId: DeepPlanExportId.make("resumed-export"),
-      capturedAt: createdAt,
-      sources: [source],
-      nextCursor: null,
-    });
-    await continuation;
-  });
-  expect(container.textContent).toContain("0 of 1 sources analyzed");
-  expect(container.textContent).toContain("Archived research");
-  expect(commands.filter((command) => command.type === "message.dispatch")).toHaveLength(1);
-});
-
-it("keeps frozen sources with missing coverage visible and blocks approval", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = makeRun({ sourceCoverage: [] });
-  const implement = vi.fn();
-  await act(() =>
-    screen.rerender(<PlanComposer run={run} plan={proposal(run)} onImplement={implement} />),
-  );
-  expect(container.textContent).toContain("Archived research");
-  expect(container.textContent).toContain("0 of 1 sources analyzed");
-  expect(getDeepPlanProposalBlockReason(proposal(run), run)).toContain("fully read and summarized");
-  expect(container.querySelector("[data-chat-composer-implement-actions]")).toBeNull();
-  expect(planReview.request).not.toHaveBeenCalled();
-  expect(implement).not.toHaveBeenCalled();
-});
-
-it("separates implemented work from verified steps and final validation while keeping checklist disclosure state", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = makeRun({
-    phase: "implementing",
-    stepStates: [
-      { stepId: "build", status: "implemented", evidence, updatedAt: createdAt },
-      { stepId: "verify", status: "inProgress", evidence: [], updatedAt: createdAt },
-    ],
-  });
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} key="owner" run={run} />),
-  );
-  expect(container.textContent).toContain("0 of 2 verified");
-  expect(container.textContent).toContain("Current: Verify the workflow");
-  expect(container.textContent).toContain("Final validation has not run");
-  const firstStep = container.querySelector("details")!;
-  await act(() => {
-    firstStep.open = true;
-  });
-  expect(firstStep.textContent).toContain("Archived sources are included");
-  expect(firstStep.textContent).toContain("Focused workflow checks passed");
-  await act(() => button(container, "Collapse checklist").click());
-  expect(container.querySelector("details")).toBeNull();
-  const verified = {
-    ...run,
-    stepStates: run.stepStates.map((state) => ({
-      ...state,
-      status: "verified" as const,
-      evidence,
-    })),
-  };
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} key="owner" run={verified} />),
-  );
-  expect(container.textContent).toContain("2 of 2 verified");
-  expect(button(container, "Expand checklist").getAttribute("aria-expanded")).toBe("false");
-  await act(() =>
-    screen.rerender(
-      <DeepPlanChecklist
-        environmentId={environmentId}
-        key="different-thread"
-        run={makeRun({ id: DeepPlanRunId.make("different-run"), threadId: ThreadId.make("other") })}
-      />,
-    ),
-  );
-  expect(button(container, "Collapse checklist").getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).not.toContain("Focused workflow checks passed");
-});
-
-it.each([false, true])("restores the checklist expansion %s after remounting", async (expanded) => {
-  setup();
-  const run = makeRun();
-  await using initial = await render(<DeepPlanChecklist environmentId={environmentId} run={run} />);
-  await act(() => button(initial.container, "Collapse checklist").click());
-  if (expanded) await act(() => button(initial.container, "Expand checklist").click());
-  await initial.unmount();
-
-  await using screen = await render(<DeepPlanChecklist environmentId={environmentId} run={run} />);
-  expect(screen.container.querySelector("ol") !== null).toBe(expanded);
-  expect(
-    button(screen.container, expanded ? "Collapse checklist" : "Expand checklist").getAttribute(
-      "aria-expanded",
-    ),
-  ).toBe(String(expanded));
-});
-
-it("keeps checklist choices separate by chat and environment, including implementation chats", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = makeRun();
-  const implementationThreadId = ThreadId.make("implementation");
-  const remoteEnvironmentId = EnvironmentId.make("remote");
-  const renderChecklist = (
-    environment = environmentId,
-    currentThreadId = threadId,
-    placement: "composer" | "plan" = "composer",
-  ) =>
-    screen.rerender(
-      <DeepPlanChecklist
-        run={run}
-        environmentId={environment}
-        threadId={currentThreadId}
-        placement={placement}
-      />,
-    );
-
-  await act(() => renderChecklist(environmentId, implementationThreadId));
-  await act(() => button(container, "Collapse checklist").click());
-  await act(() => renderChecklist());
-  expect(container.querySelector("ol")).not.toBeNull();
-  await act(() => renderChecklist(remoteEnvironmentId, implementationThreadId));
-  expect(container.querySelector("ol")).not.toBeNull();
-  await act(() => renderChecklist(environmentId, implementationThreadId, "plan"));
-  expect(container.querySelector("ol")).toBeNull();
-  await act(() => button(container, "Expand checklist").click());
-  await act(() => renderChecklist(environmentId, implementationThreadId));
-  expect(container.querySelector("ol")).not.toBeNull();
-});
-
-function completedRun(updatedAt: string): DeepPlanRun {
-  const run = makeRun();
-  return {
-    ...run,
-    phase: "completed",
-    updatedAt,
-    approval: {
-      planVersion: 1,
-      approvalKey: run.approvalKey!,
-      approvedAt: updatedAt,
-      approvedBy: "user",
-      implementation: { instanceId: ProviderInstanceId.make("codex"), model: "model" },
-      implementationThreadId: threadId,
-      implementerId: "same-agent",
-    },
-    stepStates: run.plan!.steps.map((step) => ({
-      stepId: step.id,
-      status: "verified",
-      evidence,
-      updatedAt,
-    })),
-    finalValidation: { ...run.finalValidation, status: "passed", evidence, updatedAt },
-  };
-}
-
-it("removes the composer checklist a minute after an active run completes", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  using _timers = fakeTimers();
-  vi.setSystemTime(createdAt);
-  const run = completedRun(createdAt);
-  await act(() =>
-    screen.rerender(
-      <DeepPlanChecklist environmentId={environmentId} run={{ ...run, phase: "implementing" }} />,
-    ),
-  );
-  await act(() => vi.advanceTimersByTime(120_000));
-  expect(container.textContent).toContain("Deep checklist");
-
-  const finished = { ...run, updatedAt: "2026-10-16T10:02:00.000Z" };
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={finished} />),
-  );
-  await act(() => vi.advanceTimersByTime(59_999));
-  expect(container.textContent).toContain("2 of 2 verified");
-  await act(() => vi.advanceTimersByTime(1));
-  expect(container.textContent).toBe("");
-});
-
-it("keeps old completed checklists out of the composer on revisit but available in the plan", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  using _timers = fakeTimers();
-  vi.setSystemTime("2026-10-16T10:10:00.000Z");
-  const run = completedRun(createdAt);
-  await act(() => screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={run} />));
-  expect(container.textContent).toBe("");
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} key="revisit" run={run} />),
-  );
-  expect(container.textContent).toBe("");
-
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={run} placement="plan" />),
-  );
-  expect(container.textContent).toContain("2 of 2 verified");
-  expect(container.textContent).toContain("Focused workflow checks passed");
-});
-
-it("uses the remaining completion time and cancels it when another plan becomes active", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  using _timers = fakeTimers();
-  vi.setSystemTime("2026-10-16T10:00:45.000Z");
-  await act(() =>
-    screen.rerender(
-      <DeepPlanChecklist environmentId={environmentId} run={completedRun(createdAt)} />,
-    ),
-  );
-  await act(() => vi.advanceTimersByTime(14_999));
-  expect(container.textContent).toContain("Deep checklist");
-  await act(() => vi.advanceTimersByTime(1));
-  expect(container.textContent).toBe("");
-
-  const next = makeRun({ id: DeepPlanRunId.make("next"), phase: "implementing" });
-  await act(() => screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={next} />));
-  await act(() => vi.advanceTimersByTime(120_000));
-  expect(container.textContent).toContain("Current: Build the workflow");
-
-  const finished = completedRun("2026-10-16T10:03:00.000Z");
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={finished} />),
-  );
-  await act(() => screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={next} />));
-  await act(() => vi.advanceTimersByTime(60_000));
-  expect(container.textContent).toContain("Current: Build the workflow");
-});
-
-it("shows the structured Deep Plan and its interactive checklist in the normal plan card", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = makeRun();
-  await act(() =>
-    screen.rerender(
-      <DeepPlanReviewCard
-        run={run}
-        environmentId={environmentId}
-        threadRef={{ environmentId, threadId }}
-        workspaceRoot={undefined}
-      />,
-    ),
-  );
-  const card = container.querySelector('[data-plan-kind="deep-plan"]')!;
-  expect(card.querySelector("h3")?.textContent).toBe("Ship Deep Planning");
-  expect(card.querySelector("[data-deep-plan-checklist]")).not.toBeNull();
-  expect(card.textContent).toContain("Project / Archived research");
-  expect(card.textContent).not.toContain("build-check");
-  const summary = [...card.querySelectorAll("summary")].find((item) =>
-    item.textContent?.includes("Build the workflow"),
-  )!;
-  await act(() => summary.click());
-  expect(summary.parentElement?.hasAttribute("open")).toBe(true);
-  expect(summary.parentElement?.textContent).toContain("Run source collection tests");
-  expect(card.querySelector("input")).toBeNull();
-  expect(card.textContent).not.toContain("Implement plan");
-});
-
-it("keeps the in-plan checklist live with named sources, dependencies and final checks", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const initial = makeRun();
-  const run = makeRun({
-    plan: {
-      ...initial.plan!,
-      steps: initial.plan!.steps.map((step) => ({
-        ...step,
-        sources: [{ sourceId, recordIds: ["private-message-reference"] }],
-        acceptanceCriteria: step.acceptanceCriteria.map((criterion) => ({
-          ...criterion,
-          sources: [{ sourceId, recordIds: ["private-message-reference"] }],
-        })),
-      })),
-    },
-  });
-  await act(() =>
-    screen.rerender(<DeepPlanChecklist environmentId={environmentId} run={run} placement="plan" />),
-  );
-  const checklist = container.querySelector("[data-deep-plan-checklist]")!;
-  const steps = checklist.querySelectorAll("details");
-  await act(() => {
-    steps[1]!.open = true;
-  });
-  expect(steps[1]!.textContent).toContain("Depends on: Build the workflow");
-  expect(steps[1]!.textContent).toContain("Project / Archived research");
-  expect(steps[1]!.textContent).not.toContain("private-message-reference");
-  expect(checklist.textContent).toContain("Run final integration checks");
-  await act(() =>
-    screen.rerender(
-      <DeepPlanChecklist
-        environmentId={environmentId}
-        run={{
-          ...run,
-          stepStates: [{ stepId: "build", status: "verified", evidence, updatedAt: createdAt }],
-        }}
-        placement="plan"
-      />,
-    ),
-  );
-  expect(checklist.textContent).toContain("1 of 2 verified");
-  expect(steps[1]!.open).toBe(true);
-  await act(() => button(container, "Collapse checklist").click());
-  expect(checklist.querySelector("details")).toBeNull();
-});
-
-it("analyzes a Deep Plan through the normal composer and offers the reviewed agent count", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = makeRun();
-  const plan = proposal(run);
-  const implement = vi.fn();
-  let resolveReview!: (result: unknown) => void;
-  planReview.request.mockReturnValueOnce(
-    new Promise((resolve) => {
-      resolveReview = resolve;
-    }),
-  );
-  await act(() => screen.rerender(<PlanComposer run={run} plan={plan} onImplement={implement} />));
-  expect(button(container, "Analyzing plan…").disabled).toBe(true);
-  expect(planReview.request).toHaveBeenCalledWith({
-    environmentId,
-    input: {
-      threadId,
-      planId: plan.id,
-      deepPlan: { runId: run.id, planVersion: run.plan!.version },
-      expectedPlanUpdatedAt: plan.updatedAt,
-      implementationProviderInstanceId: implementationProvider.instanceId,
-    },
-  });
-  const card = container.querySelector('[data-plan-kind="deep-plan"]')!;
-  expect(card.querySelector("[data-chat-composer-implement-actions]")).toBeNull();
-  await act(() =>
-    resolveReview({
-      _tag: "Success",
-      value: {
-        planId: plan.id,
-        planUpdatedAt: plan.updatedAt,
-        implementationProviderInstanceId: implementationProvider.instanceId,
-        recommendedSubagents: 4,
-      },
-    }),
-  );
-  const action = button(container, "Implement with 4 subagents");
-  expect(action.disabled).toBe(false);
-  await act(() => action.click());
-  expect(implement).toHaveBeenCalledWith({ kind: "subagents", count: 4 });
-  await act(() => button(container, "Implementation actions").click());
-  const menu = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
-  expect(menu).toContain("Implement normally");
-  expect(menu.some((label) => label?.includes("new thread"))).toBe(true);
-});
-
-it("reviews the durable DeepPlan approval path before dispatching its recommended count", async () => {
-  setup();
-  const base = makeRun();
-  const run = {
-    ...base,
-    sources: base.sources.map((source) => ({
-      ...source,
-      origin: { ...source.origin, environmentId: EnvironmentId.make("remote") },
-    })),
-  };
-  const modelSelection = { instanceId: implementationProvider.instanceId, model: "implementation" };
-  let currentSelection = modelSelection;
-  let resolveReview!: (result: unknown) => void;
-  planReview.request.mockReturnValueOnce(
-    new Promise((resolve) => {
-      resolveReview = resolve;
-    }),
-  );
-  planReview.approve.mockImplementation(async (input) => ({
-    ...run,
-    phase: "implementing",
-    approval: {
-      planVersion: run.plan!.version,
-      approvalKey: run.approvalKey,
-      implementationThreadId: threadId,
-      implementation: modelSelection,
-      requestedParallelism: input.requestedParallelism,
-      approvedAt: createdAt,
-    },
-  }));
-  function DurablePlan() {
-    const plan = useDeepPlanChat({
-      environmentId,
-      threadRef: { environmentId, threadId },
-      projectId,
-      workspaceRoot: "/workspace",
-      branch: "main",
-      worktreePath: null,
-      draftTarget: { environmentId, threadId },
-      mode: "deep-plan",
-      run,
-      supported: true,
-      parallelEnabled: true,
-      connected: true,
-      canOperate: true,
-      working: false,
-      latestRunId: null,
-      latestUserMessageId: null,
-      runtimeMode: "full-access",
-      providers: [implementationProvider],
-      modelSelection,
-      getModelSelection: () => currentSelection,
-      reviewerSelection,
-    });
-    return (
-      <>
-        <output data-frozen-sources>
-          {plan.sourceRefs.map((source) => `${source.environmentId}:${source.threadId}`).join(",")}
-        </output>
-        {plan.content}
-        {plan.review}
-        {plan.implementation ? (
-          <ComposerPrimaryActions
-            compact={false}
-            canOperateThread
-            canInterrupt={false}
-            pendingAction={null}
-            isRunning={false}
-            showPlanFollowUpPrompt={false}
-            showPlanImplementationActions
-            planTone="deep-plan"
-            promptHasText={false}
-            isSendBusy={plan.implementation.pending}
-            sendDisabledReason={null}
-            isEnvironmentUnavailable={false}
-            isPreparingWorktree={false}
-            hasSendableContent={false}
-            onPreviousPendingQuestion={() => {}}
-            onInterrupt={() => {}}
-            planImplementationSuggestion={plan.implementation.suggestion}
-            planParallelismReviewStatus={plan.implementation.reviewStatus}
-            onImplementPlan={(strategy) => plan.implementation?.implement(strategy, false)}
-            onImplementPlanInNewThread={(strategy) =>
-              plan.implementation?.implement(strategy, true)
-            }
-          />
-        ) : null}
-      </>
-    );
-  }
-  await using screen = await render(<DurablePlan />);
-  const container = screen.container;
-  expect(container.querySelector("[data-frozen-sources]")?.textContent).toBe("remote:archive");
-  expect(button(container, "Analyzing plan…").disabled).toBe(true);
-  expect(planReview.approve).not.toHaveBeenCalled();
-  expect(planReview.command).not.toHaveBeenCalled();
-  expect(planReview.request).toHaveBeenCalledWith({
+  expect(mocks.dispatch).toHaveBeenCalledExactlyOnceWith({
     environmentId,
     input: expect.objectContaining({
+      type: "thread.deep-plan.update",
       threadId,
-      deepPlan: { runId: run.id, planVersion: run.plan!.version },
-      expectedPlanUpdatedAt: run.updatedAt,
-    }),
-  });
-  const request = planReview.request.mock.calls[0]![0].input;
-  await act(() =>
-    resolveReview({
-      _tag: "Success",
-      value: {
-        planId: request.planId,
-        planUpdatedAt: run.updatedAt,
-        implementationProviderInstanceId: implementationProvider.instanceId,
-        recommendedSubagents: 4,
+      runId: run.id,
+      expectedRevision: 3,
+      mutation: {
+        type: "approve",
+        planVersion: 1,
+        approvalKey: "approval-key",
+        implementation: modelSelection,
+        implementationThread: target,
+        parallelism: 4,
       },
     }),
+  });
+  if (target === "new") {
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId, threadId: deriveDeepPlanImplementationThreadId(run.id, 1) },
+    });
+    expect(mocks.dispatch).toHaveBeenCalledBefore(navigate);
+  } else {
+    expect(navigate).not.toHaveBeenCalled();
+  }
+});
+
+it("leaves idle Deep Plan runs to the server under Strict Mode", async () => {
+  setup();
+  const planning = makeRun({ phase: "planning", plan: null });
+  const controls = (run: DeepPlanRun) => (
+    <StrictMode>
+      <DeepPlanRunControls
+        run={run}
+        threadRef={owner}
+        threadShells={[]}
+        disabled={false}
+        supported
+      />
+    </StrictMode>
   );
-  expect(container.textContent).toContain("Deep Plan ready");
-  expect(
-    container
-      .querySelector("[data-chat-composer-implement-actions]")
-      ?.getAttribute("data-plan-tone"),
-  ).toBe("deep-plan");
-  currentSelection = {
-    instanceId: ProviderInstanceId.make("missing-provider"),
-    model: "unavailable",
-  };
-  await act(() => button(container, "Implement with 4 subagents").click());
-  expect(planReview.approve).not.toHaveBeenCalled();
-  expect(container.textContent).toContain("Parallel plan implementation is no longer available");
-  currentSelection = modelSelection;
-  await act(() => button(container, "Implement with 4 subagents").click());
-  expect(planReview.approve).toHaveBeenCalledWith(
-    expect.objectContaining({ requestedParallelism: 4, implementation: modelSelection }),
-  );
-  expect(planReview.command).toHaveBeenCalledWith(
-    expect.objectContaining({
-      environmentId,
-      input: expect.objectContaining({
-        threadId,
-        deepPlanRunId: run.id,
-        modelSelection,
-        message: expect.objectContaining({ text: expect.stringContaining("EXACTLY 4 SUBAGENTS") }),
-      }),
+  await using screen = await render(controls(planning));
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Planning");
+  await screen.rerender(controls({ ...planning, phase: "implementing", revision: 4 }));
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Waiting for the next step");
+  await screen.rerender(
+    controls({
+      ...planning,
+      phase: "paused",
+      revision: 5,
+      pause: { kind: "user", reason: "Stopped by the user.", at: createdAt },
     }),
   );
-});
-
-it("keeps Resume and retry errors in the checklist when collapsed", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = {
-    ...completedRun(createdAt),
-    phase: "paused" as const,
-    pauseReason: "Reconnect to continue.",
-  };
-  const resume = vi.fn(async () => {
-    throw new Error("Connection is still unavailable.");
+  expect(mocks.dispatch).not.toHaveBeenCalled();
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Paused by you");
+  await userEvent.click(screen.getByRole("button", { name: "Resume" }));
+  expect(mocks.dispatch).toHaveBeenCalledExactlyOnceWith({
+    environmentId,
+    input: expect.objectContaining({
+      type: "thread.deep-plan.update",
+      threadId,
+      runId: planning.id,
+      expectedRevision: 5,
+      mutation: { type: "resume" },
+    }),
   });
-  await act(() =>
-    screen.rerender(
-      <DeepPlanRunControls
-        run={run}
-        environmentId={environmentId}
-        disabled={false}
-        onResume={resume}
-        onFinalValidation={async () => {}}
-      />,
-    ),
-  );
-  const checklist = container.querySelector("[data-deep-plan-checklist]")!;
-  expect(button(container, "Resume").parentElement).toBe(
-    button(container, "Collapse checklist").parentElement,
-  );
-  await act(() => button(container, "Collapse checklist").click());
-  expect(checklist.querySelector("ol")).toBeNull();
-  expect(checklist.contains(button(container, "Resume"))).toBe(true);
-  await act(() => button(container, "Resume").click());
-  expect(resume).toHaveBeenCalledTimes(1);
-  expect(checklist.querySelector('[role="alert"]')?.textContent).toBe(
-    "Connection is still unavailable.",
-  );
-  expect(button(container, "Resume").disabled).toBe(false);
 });
 
-it("shows a recoverable resume error without hiding the durable blocker", async () => {
+it("shows findings from the last verdict and links to the current review", async () => {
   setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const run = makeRun({ phase: "blocked", pauseReason: "Reconnect the source environment." });
-  await act(() =>
-    screen.rerender(
-      <DeepPlanRunControls
-        environmentId={environmentId}
-        run={run}
-        disabled={false}
-        onResume={async () => {
-          throw new Error("The source is still offline.");
-        }}
-        onFinalValidation={async () => {}}
-      />,
-    ),
-  );
-  expect(container.textContent).toContain("Reconnect the source environment.");
-  await act(() => button(container, "Resume").click());
-  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-    "The source is still offline.",
-  );
-  expect(button(container, "Resume").disabled).toBe(false);
-});
-
-it("keeps final validation separate after all steps are verified", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const initial = makeRun();
-  const approval = {
-    planVersion: 1,
-    approvalKey: "approval-key",
-    approvedAt: createdAt,
-    approvedBy: "user",
-    implementation: { instanceId: ProviderInstanceId.make("codex"), model: "model" },
-    implementationThreadId: threadId,
-    implementerId: `thread:${threadId}`,
+  const review: DeepPlanReview = {
+    round: 1,
+    reviewThreadId: ThreadId.make("review-round-1"),
+    reviewer: modelSelection,
+    diff: null,
+    verdict: "changesRequested",
+    summary: "The disconnect path needs a test.",
+    findings: [
+      {
+        severity: "major",
+        title: "Missing reconnect coverage",
+        detail: "Exercise the reconnect path with a queued message.",
+        file: "chat.ts",
+        line: 42,
+      },
+    ],
+    retries: 0,
+    startedAt: createdAt,
+    completedAt: createdAt,
+  };
+  const currentReview = {
+    ...review,
+    round: 2,
+    reviewThreadId: ThreadId.make("review-round-2"),
+    verdict: null,
+    summary: null,
+    findings: [],
+    completedAt: null,
   };
   const run = makeRun({
     phase: "implementing",
-    approval,
-    stepStates: initial.plan!.steps.map((step) => ({
-      stepId: step.id,
-      status: "verified",
-      evidence,
-      updatedAt: createdAt,
-    })),
-  });
-  const renderChecklist = (value: DeepPlanRun) =>
-    screen.rerender(
-      <>
-        <DeepPlanRunControls
-          environmentId={environmentId}
-          run={value}
-          disabled={false}
-          onResume={async () => {}}
-          onFinalValidation={async () => {}}
-        />
-      </>,
-    );
-  await act(() => renderChecklist(run));
-  expect(container.textContent).toContain("2 of 2 verified");
-  expect(container.textContent).toContain("Final validation has not run");
-  expect(button(container, "Run final validation").disabled).toBe(false);
-  await act(() =>
-    renderChecklist({
-      ...run,
-      phase: "validating",
-      finalValidation: {
-        ...run.finalValidation,
-        status: "inProgress",
-        requestId: "validation-request",
-        attempt: 1,
-        updatedAt: createdAt,
+    approval: {
+      planVersion: 1,
+      approvalKey: "approval-key",
+      approvedAt: createdAt,
+      implementation: modelSelection,
+      reviewer: modelSelection,
+      parallelism: 1,
+      lanes: [{ laneId: "lane-1", threadId }],
+      baseTurnCount: 0,
+    },
+    steps: [
+      {
+        stepId: "build",
+        status: "inReview",
+        laneId: "lane-1",
+        baseTurnCount: 0,
+        submission: null,
+        reviews: [review, currentReview],
+        roundLimit: 3,
+        unsubmittedTurns: 0,
       },
-    }),
-  );
-  expect(container.textContent).not.toContain("Run final validation");
-  expect(container.querySelector("[data-deep-plan-final-validation]")?.textContent).toContain(
-    "In progress",
-  );
+    ],
+  });
+  await using screen = await render(<DeepPlanChecklist run={run} environmentId={environmentId} />);
+  const firstStep = screen.getByText("1. Step build");
+  await userEvent.click(firstStep);
+  await expect
+    .element(screen.getByText("In review · Lane 1 · Round 2/3 · Changes requested"))
+    .toBeVisible();
+  await expect.element(screen.getByText("The disconnect path needs a test.")).toBeVisible();
+  await expect.element(screen.getByText("Major · Missing reconnect coverage")).toBeVisible();
+  await expect.element(screen.getByText("chat.ts:42")).toBeVisible();
+  await expect
+    .element(screen.getByRole("link", { name: "Open review" }))
+    .toHaveAttribute("href", "/local/review-round-2");
 });
+
+it("suggests a fresh Deep Plan only for unfinished legacy runs that can start one", async () => {
+  setup();
+  const legacy: StoredDeepPlanRun = {
+    schemaVersion: 1,
+    kind: "legacy",
+    id: DeepPlanRunId.make("old"),
+    threadId,
+    goal: "Earlier plan",
+    finished: false,
+    updatedAt: createdAt,
+  };
+  const notice = /started in an earlier version/;
+  await using screen = await render(<ComposerDeepPlanContent run={legacy} />);
+  await expect.element(screen.getByText(notice)).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Add chats" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Resume" }).query()).toBeNull();
+  expect(screen.getByRole("button", { name: "Implementation actions" }).query()).toBeNull();
+  await screen.rerender(<ComposerDeepPlanContent run={{ ...legacy, finished: true }} />);
+  await expect.element(screen.getByText(notice)).not.toBeInTheDocument();
+  await screen.rerender(<ComposerDeepPlanContent run={legacy} supported={false} />);
+  await expect.element(screen.getByText(notice)).not.toBeInTheDocument();
+});
+
+it("shows only a read-only notice in reviewer chats", async () => {
+  setup();
+  await using screen = await render(<ComposerDeepPlanContent run={makeRun()} readOnlyReview />);
+  await expect.element(screen.getByText("This review chat is read-only.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Implementation actions" }).query()).toBeNull();
+  expect(screen.getByRole("button", { name: "Pause" }).query()).toBeNull();
+});
+
+it.each([
+  ["completed", "Complete · 0/5 verified"],
+  ["cancelled", "Cancelled"],
+] as const)(
+  "expires %s runs in the composer while keeping the plan checklist",
+  async (phase, label) => {
+    setup();
+    await using screen = await render(null);
+    using _timers = fakeTimers();
+    vi.setSystemTime(createdAt);
+    const run = makeRun({
+      phase,
+      approval: {
+        planVersion: 1,
+        approvalKey: "approval-key",
+        approvedAt: createdAt,
+        implementation: modelSelection,
+        reviewer: modelSelection,
+        parallelism: 1,
+        lanes: [{ laneId: "lane-1", threadId }],
+        baseTurnCount: 0,
+      },
+    });
+    await screen.rerender(
+      <DeepPlanRunControls
+        run={run}
+        threadRef={owner}
+        threadShells={[]}
+        disabled={false}
+        supported
+      />,
+    );
+    expect(screen.container.textContent).toContain(label);
+    expect(screen.container.textContent).toContain("Deep checklist");
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.container.textContent).not.toContain(label);
+    expect(screen.container.textContent).not.toContain("Deep checklist");
+    await screen.rerender(
+      <DeepPlanChecklist run={run} environmentId={environmentId} placement="plan" />,
+    );
+    expect(screen.container.textContent).toContain("Deep checklist");
+  },
+);
 
 it("selects Deep Plan from the compact menu and explains unsupported environments", async () => {
   setup();
@@ -1355,151 +633,8 @@ it("cycles Build, Plan, Deep Plan and Chat with click and Shift+Tab", async () =
   expect(button(container, "Build").getAttribute("aria-pressed")).toBe("false");
 });
 
-it("automatically continues once per idle turn, including under Strict Mode", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const resume = vi.fn(async () => {});
-  let run = makeRun({ phase: "planning", plan: null });
-  let latestRunId = RunId.make("initial-turn");
-  const renderControls = (canContinue = true) =>
-    screen.rerender(
-      <StrictMode>
-        <DeepPlanRunControls
-          environmentId={environmentId}
-          run={run}
-          disabled={!canContinue}
-          canContinue={canContinue}
-          latestRunId={latestRunId}
-          onResume={resume}
-          onFinalValidation={resume}
-        />
-      </StrictMode>,
-    );
-  await act(() => renderControls());
-  expect(resume).toHaveBeenCalledExactlyOnceWith(true);
-  expect(button(container, "Resume").disabled).toBe(false);
-  run = { ...run, revision: run.revision + 1 };
-  await act(() => renderControls());
-  expect(resume).toHaveBeenCalledTimes(1);
-  latestRunId = RunId.make("continued-turn");
-  await act(() => renderControls(false));
-  expect(resume).toHaveBeenCalledTimes(1);
-  await act(() => renderControls());
-  expect(resume).toHaveBeenCalledTimes(2);
-  run = { ...run, phase: "paused", pauseReason: "Stopped by the user." };
-  latestRunId = RunId.make("stopped-turn");
-  await act(() => renderControls());
-  expect(resume).toHaveBeenCalledTimes(2);
-  expect(button(container, "Resume").disabled).toBe(false);
-});
-
-it("shows a failed automatic continuation and lets the user retry", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const resume = vi
-    .fn<() => Promise<void>>()
-    .mockRejectedValueOnce(new Error("Source environment disconnected"))
-    .mockResolvedValue(undefined);
-  await act(() =>
-    screen.rerender(
-      <DeepPlanRunControls
-        environmentId={environmentId}
-        run={makeRun({ phase: "planning", plan: null })}
-        disabled={false}
-        canContinue
-        onResume={resume}
-        onFinalValidation={resume}
-      />,
-    ),
-  );
-  expect(resume).toHaveBeenCalledTimes(1);
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-    "Source environment disconnected",
-  );
-  await act(() => button(container, "Resume").click());
-  expect(resume).toHaveBeenCalledTimes(2);
-  expect(container.querySelector('[role="alert"]')).toBeNull();
-});
-
-it("automatically retries unfinished work after reconnecting", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  const resume = vi
-    .fn<() => Promise<void>>()
-    .mockRejectedValueOnce(new Error("Environment disconnected"))
-    .mockResolvedValue(undefined);
-  const run = makeRun({ phase: "collecting", plan: null });
-  const renderControls = (connected: boolean) =>
-    screen.rerender(
-      <DeepPlanRunControls
-        environmentId={environmentId}
-        run={run}
-        connected={connected}
-        disabled={!connected}
-        canContinue={connected}
-        onResume={resume}
-        onFinalValidation={resume}
-      />,
-    );
-  await act(() => renderControls(true));
-  expect(resume).toHaveBeenCalledTimes(1);
-  await act(() => renderControls(false));
-  expect(resume).toHaveBeenCalledTimes(1);
-  await act(() => renderControls(true));
-  expect(resume).toHaveBeenCalledTimes(2);
-  expect(container.querySelector('[role="alert"]')).toBeNull();
-});
-
-it("does not automatically repeat a manual Resume while startup is being acknowledged", async () => {
-  setup();
-  await using screen = await render(null);
-  const container = screen.container;
-
-  let run = makeRun({ phase: "paused", plan: null });
-  const resume = vi.fn(async () => {});
-  const latestRunId = RunId.make("last-completed-turn");
-  const renderControls = (canContinue = true) =>
-    screen.rerender(
-      <DeepPlanRunControls
-        environmentId={environmentId}
-        run={run}
-        disabled={!canContinue}
-        canContinue={canContinue}
-        latestRunId={latestRunId}
-        onResume={resume}
-        onFinalValidation={resume}
-      />,
-    );
-  await act(() => renderControls());
-  await act(() => button(container, "Resume").click());
-  expect(resume).toHaveBeenCalledTimes(1);
-  run = { ...run, phase: "planning", revision: run.revision + 1 };
-  await act(() => renderControls(false));
-  await act(() => renderControls());
-  expect(resume).toHaveBeenCalledTimes(1);
-});
-
 function setup() {
   localStorage.clear();
-  __resetPlanParallelismReviewCacheForTests();
-  planReview.request
-    .mockReset()
-    .mockImplementation(async ({ input }: { input: PlanParallelismReviewInput }) => ({
-      _tag: "Success",
-      value: {
-        planId: input.planId,
-        planUpdatedAt: input.expectedPlanUpdatedAt,
-        implementationProviderInstanceId: input.implementationProviderInstanceId,
-        recommendedSubagents: 4,
-      },
-    }));
-  planReview.approve.mockReset();
-  planReview.command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
+  mocks.dispatch.mockReset().mockResolvedValue({ _tag: "Success", value: { sequence: 1 } });
   setInterfaceLocaleRuntime({ language: "en", locale: "en-US" });
 }

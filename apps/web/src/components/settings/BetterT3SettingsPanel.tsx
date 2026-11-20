@@ -74,7 +74,10 @@ import {
   resolveBetterT3DescriptorMessageKeys,
   resolveSelectedBetterT3EnvironmentId,
 } from "./BetterT3SettingsPanel.logic";
-import { useBetterT3PreparedControls } from "./BetterT3SettingsPanel.controls";
+import {
+  BetterT3ReplyPresentationControl,
+  useBetterT3PreparedControls,
+} from "./BetterT3SettingsPanel.controls";
 import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
 import {
   BETTER_T3_VISUAL_FEATURE_IDS,
@@ -839,8 +842,9 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
   const translator = useInterfaceTranslator();
   const translate = ((messageId, values) =>
     translator.message(messageId, values)) satisfies Translate;
+  const environmentCapabilities = props.environment.serverConfig?.environment.capabilities;
   const capabilities = Object.fromEntries(
-    Object.entries(props.environment.serverConfig?.environment.capabilities ?? {}).filter(
+    Object.entries(environmentCapabilities ?? {}).filter(
       (entry): entry is [string, number | boolean] =>
         typeof entry[1] === "number" || typeof entry[1] === "boolean",
     ),
@@ -872,7 +876,11 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     surface: isElectron ? "desktop" : "web",
     capabilities,
     environmentAvailable,
-  });
+  }).filter(
+    ({ descriptor }) =>
+      descriptor.id !== "agent.deepPlanReviewModel" ||
+      environmentCapabilities?.deepPlanning?.version === 2,
+  );
   const chatVisualMode = useChatVisualMode();
   const setChatVisualMode = useSetChatVisualMode();
   const { count: sidebarPreviewCount } = useProjectThreadPreviewCount();
@@ -1200,9 +1208,7 @@ export function BetterT3SettingsPanel({
 }) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const deviceInitialization = useClientSettings(
-    (settings) => settings.betterT3Device.initialization,
-  );
+  const deviceSettings = useClientSettings((settings) => settings.betterT3Device);
   const [requestedEnvironmentId, setRequestedEnvironmentId] = useState<EnvironmentId | null>(
     primaryEnvironmentId,
   );
@@ -1219,11 +1225,23 @@ export function BetterT3SettingsPanel({
   }));
   const translator = useInterfaceTranslator();
   if (!selectedEnvironment) {
+    const features = buildBetterT3ControlStates({
+      registry: BETTER_T3_FEATURE_REGISTRY.filter(({ id }) => id === "chat.replyPresentation"),
+      device: deviceSettings,
+      environment: DEFAULT_UNIFIED_SETTINGS.betterT3Environment,
+      surface: isElectron ? "desktop" : "web",
+      capabilities: {},
+      environmentAvailable: false,
+    });
     return (
       <BetterT3SettingsPanelView
         activeCategory={category}
-        features={[]}
-        controls={{}}
+        features={features}
+        controls={{
+          "chat.replyPresentation": (
+            <BetterT3ReplyPresentationControl translate={translator.message} />
+          ),
+        }}
         onSwitchChange={() => undefined}
         translate={translator.message}
         chatSettings={<ResponseMetricsSettings />}
@@ -1235,7 +1253,7 @@ export function BetterT3SettingsPanel({
         }
         introduction={
           <BetterT3SettingsIntroduction
-            deviceInitialization={deviceInitialization}
+            deviceInitialization={deviceSettings.initialization}
             environmentInitialization={null}
             translate={translator.message}
           />
@@ -1248,7 +1266,7 @@ export function BetterT3SettingsPanel({
       category={category}
       environment={selectedEnvironment}
       environmentOptions={environmentOptions}
-      deviceInitialization={deviceInitialization}
+      deviceInitialization={deviceSettings.initialization}
       onEnvironmentChange={setRequestedEnvironmentId}
     />
   );

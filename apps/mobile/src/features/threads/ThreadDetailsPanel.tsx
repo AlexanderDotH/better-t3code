@@ -9,7 +9,7 @@ import {
   type ScheduledTask,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { AppText } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -17,7 +17,8 @@ import { ListRow } from "../../components/ui/ListRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
-import { environmentSnapshotAtom } from "../../state/shell";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { threadFamilies } from "../../state/threads";
 import { useQuietThreadStructure, useThreadWorktreePath } from "../../state/use-thread-detail";
 import { serverEnvironment } from "../../state/server";
 import { previewEnvironment } from "../../state/preview";
@@ -43,7 +44,13 @@ export function ThreadDetailsPanel(props: {
   const worktreePath = useThreadWorktreePath(props.threadRef);
   const cwd = worktreePath ?? thread?.worktreePath ?? project?.workspaceRoot ?? null;
   const projection = useQuietThreadStructure(props.threadRef)?.projection ?? null;
-  const shell = useAtomValue(environmentSnapshotAtom(environmentId));
+  const shell = useAtomValue(threadFamilies.snapshotAtom(environmentId));
+  const supportsThreadFamilies = config?.shellThreadFamilies === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Shell snapshots can omit idle descendants until their thread family is loaded.
+  useEffect(() => {
+    if (!supportsThreadFamilies) return;
+    return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+  }, [environmentId, threadId, supportsThreadFamilies]);
   const openLinkedThread = useOpenLinkedThread();
   const usage = useMemo(() => {
     if (!projection) return null;

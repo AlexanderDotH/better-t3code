@@ -1,580 +1,377 @@
 import {
   CommandId,
-  DeepPlanDocument,
-  DeepPlanRun,
-  DeepPlanRunId,
-  DeepPlanSourceId,
-  EnvironmentId,
-  ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type DeepPlanEvidence,
   type DeepPlanMutation,
-  type DeepPlanSourceCoverage,
-  type DeepPlanSourceSnapshot,
-  type DeepPlanStepStatus,
+  type DeepPlanPlanDraft,
+  type DeepPlanRun,
+  type DeepPlanReviewTarget,
+  type ThreadDeepPlanAdvanceCommand,
   type ThreadDeepPlanUpdateCommand,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 
-import {
-  deepPlanApprovalKey,
-  hasCompleteDeepPlanSources,
-  startDeepPlanRun,
-  updateDeepPlanRun,
-} from "./deepPlanDecision.ts";
+import { advanceDeepPlanRun, startDeepPlanRun, updateDeepPlanRun } from "./deepPlanDecision.ts";
 
 const createdAt = "2026-10-16T08:00:00.000Z";
-const threadId = ThreadId.make("acceptance-deep-plan");
-const runId = DeepPlanRunId.make("acceptance-run");
-const source = {
-  sourceId: DeepPlanSourceId.make("acceptance-source"),
-  origin: {
-    environmentId: EnvironmentId.make("acceptance-environment"),
-    projectId: ProjectId.make("acceptance-project"),
-    threadId: ThreadId.make("acceptance-source-thread"),
-  },
-  projectTitle: "Source project",
-  threadTitle: "Original requirements",
-  archived: true,
-  capturedAt: createdAt,
-  contentVersion: "source-v1",
-  contentHash: "source-hash",
-  messageCount: 2,
-  activityCount: 0,
-  attachmentCount: 0,
-  recordCount: 2,
-  forkOrigin: null,
-} satisfies DeepPlanSourceSnapshot;
-const sourceCoverage = {
-  sourceId: source.sourceId,
-  status: "summarized",
-  importedRecordCount: source.recordCount,
-  readRecordCount: source.recordCount,
-  summary: {
-    requirements: ["Preserve saved work"],
-    decisions: [],
-    openIssues: [],
-    rejectedApproaches: [],
-    conflicts: [],
-    citedRecordIds: ["requirement-1", "requirement-2"],
-  },
-  error: null,
-  updatedAt: createdAt,
-} satisfies DeepPlanSourceCoverage;
-const plan = {
-  schemaVersion: 1,
-  version: 1,
-  goal: "Preserve saved work across reconnects",
+const owner = ThreadId.make("plan-owner");
+const implementation = { instanceId: ProviderInstanceId.make("test-provider"), model: "builder" };
+const reviewer = { ...implementation, model: "reviewer" };
+const document = {
+  goal: "Preserve work across reconnects",
   scope: ["Thread state"],
+  nonGoals: [],
   decisions: [],
-  affectedAreas: ["Thread persistence", "Thread display"],
+  affectedAreas: ["Persistence", "Thread display"],
   steps: [
     {
       id: "persistence",
-      title: "Persist the work",
-      description: "Save the approved work durably.",
+      title: "Save the work",
+      description: "Persist the approved work.",
       dependencies: [],
       acceptanceCriteria: [
-        {
-          id: "restore",
-          description: "Saved work survives restart",
-          checkMethod: "Restore a saved run",
-        },
+        { id: "save", description: "Work survives restart", checkMethod: "Restore it" },
       ],
     },
     {
       id: "display",
-      title: "Display the saved work",
-      description: "Display the saved state after reconnecting.",
+      title: "Display saved work",
+      description: "Show saved work after reconnecting.",
       dependencies: ["persistence"],
       acceptanceCriteria: [
-        {
-          id: "reconnect",
-          description: "Reconnect shows current work",
-          checkMethod: "Reconnect the client",
-        },
+        { id: "show", description: "Work is visible", checkMethod: "Reconnect" },
       ],
     },
   ],
-  finalValidation: {
-    description: "Restore and display the whole approved workflow",
-    checkMethod: "Run the focused reconnect acceptance scenario",
-  },
-} satisfies DeepPlanDocument;
-const implementation = {
-  instanceId: ProviderInstanceId.make("acceptance-provider"),
-  model: "implementation-model",
-};
-const actor = { implementerId: `thread:${threadId}`, model: implementation };
-const evidence = [
-  { kind: "test", summary: "Focused acceptance check passed", createdAt },
-] satisfies ReadonlyArray<DeepPlanEvidence>;
-const startCommand = {
+  finalValidation: { description: "Reconnect with saved work", checkMethod: "Run reconnect tests" },
+} satisfies DeepPlanPlanDraft;
+const step = { kind: "step", stepId: "persistence" } satisfies DeepPlanReviewTarget;
+const started = startDeepPlanRun({
   type: "thread.deep-plan.start",
-  commandId: CommandId.make("acceptance-start"),
-  threadId,
-  runId,
-  sources: [source],
+  commandId: CommandId.make("plan-start"),
+  threadId: owner,
+  chats: [],
+  includeProjectChats: false,
   createdAt,
-} as const;
+});
 
-function commandFor(
+function updateCommand(
   run: DeepPlanRun,
   mutation: DeepPlanMutation,
-  operationId = `${mutation.type}:${run.revision}`,
+  byThreadId?: ThreadId,
+  byTurnCommandId?: CommandId,
 ): ThreadDeepPlanUpdateCommand {
   return {
     type: "thread.deep-plan.update",
-    commandId: CommandId.make(`command:${operationId}`),
-    threadId: run.threadId,
+    threadId: owner,
     runId: run.id,
-    expectedRevision: run.revision,
-    operationId,
+    commandId: CommandId.make(`update:${run.revision}`),
+    operationId: `${mutation.type}:${run.revision}`,
     mutation,
+    expectedRevision: run.revision,
+    ...(byThreadId === undefined ? {} : { byThreadId }),
+    ...(byTurnCommandId === undefined ? {} : { byTurnCommandId }),
     createdAt,
   };
 }
 
-function update(run: DeepPlanRun, mutation: DeepPlanMutation) {
-  return updateDeepPlanRun(run, commandFor(run, mutation));
-}
+const published = started.pipe(
+  Effect.flatMap((run) =>
+    updateDeepPlanRun(run, updateCommand(run, { type: "publish-plan", plan: document }, owner)),
+  ),
+);
 
-function approval(document: DeepPlanDocument = plan) {
+function approval(run: DeepPlanRun) {
   return {
     type: "approve",
-    planVersion: document.version,
-    approvalKey: deepPlanApprovalKey(document),
+    planVersion: run.plan!.version,
+    approvalKey: run.approvalKey!,
     implementation,
-    implementationThreadId: threadId,
-    implementerId: actor.implementerId,
+    reviewer,
+    implementationThread: "current",
+    parallelism: 1,
   } as const;
 }
 
-function stepUpdate(
-  run: DeepPlanRun,
-  stepId: string,
-  status: DeepPlanStepStatus,
-  stepEvidence: ReadonlyArray<DeepPlanEvidence> = [],
-) {
-  return update(run, { type: "step-update", stepId, status, evidence: stepEvidence, actor });
+const approved = published.pipe(
+  Effect.flatMap((run) => updateDeepPlanRun(run, updateCommand(run, approval(run)))),
+);
+
+function advance(run: DeepPlanRun, transition: ThreadDeepPlanAdvanceCommand["transition"]) {
+  return advanceDeepPlanRun(run, {
+    type: "thread.deep-plan.advance",
+    threadId: owner,
+    runId: run.id,
+    commandId: CommandId.make(`advance:${run.revision}`),
+    expectedRevision: run.revision,
+    transition,
+    createdAt,
+  });
 }
 
-const publishedRun = Effect.gen(function* () {
-  const started = yield* startDeepPlanRun(startCommand);
-  const covered = yield* update(started, { type: "source-coverage", coverage: [sourceCoverage] });
-  return yield* update(covered, { type: "publish-plan", plan });
-});
+function startImplementation(run: DeepPlanRun, stepId: string) {
+  return advance(run, {
+    type: "start-turn",
+    turn: {
+      kind: "implement",
+      threadId: owner,
+      stepId,
+      laneId: run.approval!.lanes[0]!.laneId,
+      round: 1,
+      attempt: 0,
+    },
+    latestRunId: null,
+    prompt: "Implement this step.",
+    baseTurnCount: 0,
+  });
+}
 
-const approvedRun = Effect.gen(function* () {
-  return yield* update(yield* publishedRun, approval());
-});
-
-const verifyStep = Effect.fnUntraced(function* (run: DeepPlanRun, stepId: string) {
-  const started = yield* stepUpdate(run, stepId, "inProgress");
-  const implemented = yield* stepUpdate(started, stepId, "implemented");
-  return yield* stepUpdate(implemented, stepId, "verified", evidence);
-});
-
-const validationReadyRun = Effect.gen(function* () {
-  const firstVerified = yield* verifyStep(yield* approvedRun, "persistence");
-  return yield* verifyStep(firstVerified, "display");
-});
-
-const encodeRun = Schema.encodeSync(Schema.fromJsonString(DeepPlanRun));
-const decodeRun = Schema.decodeUnknownSync(Schema.fromJsonString(DeepPlanRun));
-const validationRequestId = (run: DeepPlanRun) =>
-  `deep-plan:${run.id}:validation:${run.plan?.version}:${run.finalValidation.attempt}`;
-
-it("requires a check method for each step criterion and final validation", () => {
-  const decodePlan = Schema.decodeUnknownSync(DeepPlanDocument);
-  expect(() =>
-    decodePlan({ ...plan, steps: [{ ...plan.steps[0], acceptanceCriteria: [] }] }),
-  ).toThrow();
-  expect(() =>
-    decodePlan({
-      ...plan,
-      steps: [
-        {
-          ...plan.steps[0],
-          acceptanceCriteria: [{ id: "missing-check", description: "Check this" }],
-        },
-      ],
-    }),
-  ).toThrow();
-  expect(() =>
-    decodePlan({ ...plan, finalValidation: { description: "Check the whole task" } }),
-  ).toThrow();
-});
-
-it.effect("blocks publication and approval until every frozen source is fully analyzed", () =>
+it.effect("starts planning immediately without captured chat copies", () =>
   Effect.gen(function* () {
-    const started = yield* startDeepPlanRun(startCommand);
-    const incompleteCases: ReadonlyArray<{
-      name: string;
-      coverage: DeepPlanSourceCoverage | null;
-    }> = [
-      { name: "missing", coverage: null },
-      {
-        name: "unavailable",
-        coverage: { ...sourceCoverage, status: "unavailable", error: "Disconnected" },
-      },
-      {
-        name: "failed",
-        coverage: { ...sourceCoverage, status: "failed", error: "Analysis failed" },
-      },
-      {
-        name: "partly imported",
-        coverage: { ...sourceCoverage, importedRecordCount: 1, readRecordCount: 1 },
-      },
-      { name: "partly read", coverage: { ...sourceCoverage, readRecordCount: 1 } },
-      { name: "without summary", coverage: { ...sourceCoverage, summary: null } },
-      {
-        name: "without citations",
-        coverage: { ...sourceCoverage, summary: { ...sourceCoverage.summary, citedRecordIds: [] } },
-      },
-    ];
-    for (const testCase of incompleteCases) {
-      const collecting =
-        testCase.coverage === null
-          ? started
-          : yield* update(started, { type: "source-coverage", coverage: [testCase.coverage] });
-      expect(hasCompleteDeepPlanSources(collecting), testCase.name).toBe(false);
-      const publishError = yield* update(collecting, { type: "publish-plan", plan }).pipe(
+    const run = yield* started;
+    expect(run.phase).toBe("planning");
+    expect(run.chats).toEqual([]);
+    expect(run.includeProjectChats).toBe(false);
+  }),
+);
+
+it.effect("replays an existing operation before checking its now-stale revision", () =>
+  Effect.gen(function* () {
+    const run = yield* approved;
+    const command = updateCommand(run, { type: "pause", reason: "Wait for input" });
+    const paused = yield* updateDeepPlanRun(run, command);
+    const replay = yield* updateDeepPlanRun(paused, {
+      ...command,
+      commandId: CommandId.make("later-receipt"),
+    });
+    expect(replay).toBe(paused);
+    const conflict = yield* updateDeepPlanRun(paused, {
+      ...command,
+      mutation: { type: "cancel" },
+    }).pipe(Effect.flip);
+    expect(conflict.context.deepPlanCode).toBe("operation-conflict");
+    const stale = yield* updateDeepPlanRun(paused, {
+      ...command,
+      operationId: "other",
+    }).pipe(Effect.flip);
+    expect(stale.context.deepPlanCode).toBe("stale-revision");
+  }),
+);
+
+it.effect("accepts a user pause only while the plan is being implemented", () =>
+  Effect.gen(function* () {
+    const running = yield* approved;
+    for (const run of [yield* started, yield* published]) {
+      const rejected = yield* updateDeepPlanRun(run, updateCommand(run, { type: "pause" })).pipe(
         Effect.flip,
       );
-      expect(publishError.detail, testCase.name).toContain("Every frozen source");
-
-      const restoredPublished: DeepPlanRun = {
-        ...collecting,
-        phase: "awaitingApproval",
-        plan,
-        approvalKey: deepPlanApprovalKey(plan),
-      };
-      const approveError = yield* update(restoredPublished, approval()).pipe(Effect.flip);
-      expect(approveError.detail, testCase.name).toContain("Every Deep Plan source");
-      expect(restoredPublished.approval, testCase.name).toBeNull();
+      expect(rejected.context.deepPlanCode).toBe("invalid-transition");
+      const cancelled = yield* updateDeepPlanRun(run, updateCommand(run, { type: "cancel" }));
+      expect(cancelled.phase).toBe("cancelled");
     }
-  }),
-);
-
-it.effect("requires step checks and a matching final check before declaring completion", () =>
-  Effect.gen(function* () {
-    const approved = yield* approvedRun;
-    const dependencyError = yield* stepUpdate(approved, "display", "inProgress").pipe(Effect.flip);
-    expect(dependencyError.detail).toContain("dependencies must be verified");
-    const started = yield* stepUpdate(approved, "persistence", "inProgress");
-    const implemented = yield* stepUpdate(started, "persistence", "implemented");
-    const earlyCheck = yield* update(implemented, {
-      type: "validation-start",
-      actor,
-      requestId: validationRequestId(implemented),
-    }).pipe(Effect.flip);
-    expect(earlyCheck.detail).toContain("Every Deep Plan step must be verified");
-    const noEvidence = yield* stepUpdate(implemented, "persistence", "verified").pipe(Effect.flip);
-    expect(noEvidence.detail).toContain("require evidence");
-
-    const firstVerified = yield* stepUpdate(implemented, "persistence", "verified", evidence);
-    const allVerified = yield* verifyStep(firstVerified, "display");
-    expect(allVerified.phase).toBe("validating");
-    expect(allVerified.finalValidation.status).toBe("pending");
-    const requestId = validationRequestId(allVerified);
-    const missingStart = yield* update(allVerified, {
-      type: "validation-complete",
-      actor,
-      requestId,
-      status: "passed",
-      evidence,
-    }).pipe(Effect.flip);
-    expect(missingStart.detail).toContain("active validation request");
-    const checking = yield* update(allVerified, { type: "validation-start", actor, requestId });
-    const missingEvidence = yield* update(checking, {
-      type: "validation-complete",
-      actor,
-      requestId,
-      status: "passed",
-      evidence: [],
-    }).pipe(Effect.flip);
-    expect(missingEvidence.detail).toContain("explicit final validation evidence");
-    const finished = yield* update(checking, {
-      type: "validation-complete",
-      actor,
-      requestId,
-      status: "passed",
-      evidence,
-    });
-    expect(finished.phase).toBe("completed");
-    expect(finished.finalValidation.evidence).toEqual(evidence);
-    expect(decodeRun(encodeRun(finished)).phase).toBe("completed");
-  }),
-);
-
-it.effect("requires new approval when an approved plan changes", () =>
-  Effect.gen(function* () {
-    const approved = yield* approvedRun;
-    const implementing = yield* stepUpdate(approved, "persistence", "inProgress");
-    const revisedPlan = { ...plan, version: 2, scope: ["Thread state", "Archived thread state"] };
-    const revised = yield* update(implementing, { type: "publish-plan", plan: revisedPlan });
-    expect(revised.phase).toBe("awaitingApproval");
-    expect(revised.approval).toBeNull();
-    expect(revised.stepStates.every((step) => step.status === "pending")).toBe(true);
-    expect(revised.approvalKey).not.toBe(approved.approvalKey);
-    const unapproved = yield* stepUpdate(revised, "persistence", "inProgress").pipe(Effect.flip);
-    expect(unapproved.detail).toContain("approved implementing agent and model");
-    const staleApproval = yield* update(revised, approval()).pipe(Effect.flip);
-    expect(staleApproval.detail).toContain("stale plan version");
-    const resumed = yield* update(revised, approval(revisedPlan));
-    expect(resumed.phase).toBe("implementing");
-    expect(resumed.approval?.planVersion).toBe(2);
-  }),
-);
-
-it.effect("invalidates dependent checks and an active final check when verified work changes", () =>
-  Effect.gen(function* () {
-    const ready = yield* validationReadyRun;
-    const requestId = validationRequestId(ready);
-    const checking = yield* update(ready, { type: "validation-start", requestId, actor });
-    const changed = yield* stepUpdate(checking, "persistence", "inProgress");
-    expect(changed.phase).toBe("implementing");
-    expect(changed.stepStates.find((step) => step.stepId === "display")).toMatchObject({
-      status: "pending",
-      evidence: [],
-    });
-    expect(changed.finalValidation).toMatchObject({
-      status: "pending",
-      evidence: [],
-      attempt: 1,
-      requestId: null,
-    });
-    const staleCheck = yield* update(changed, {
-      type: "validation-complete",
-      requestId,
-      actor,
-      status: "passed",
-      evidence,
-    }).pipe(Effect.flip);
-    expect(staleCheck.detail).toContain("active validation request");
+    for (const run of [running, { ...running, phase: "finalReview" as const }]) {
+      const paused = yield* updateDeepPlanRun(run, updateCommand(run, { type: "pause" }));
+      expect(paused.phase).toBe("paused");
+      const again = yield* updateDeepPlanRun(paused, updateCommand(paused, { type: "pause" }));
+      expect(again.phase).toBe("paused");
+    }
   }),
 );
 
 it.effect(
-  "replays identical operations once and rejects duplicate conflicts, foreign runs, and stale revisions",
+  "retains the stored reviewer when the same approval is retried after settings change",
   () =>
     Effect.gen(function* () {
-      const approved = yield* approvedRun;
-      const command = commandFor(approved, {
-        type: "step-update",
-        stepId: "persistence",
-        status: "inProgress",
-        evidence: [],
-        actor,
+      const run = yield* published;
+      const { reviewer: _explicit, ...selection } = approval(run);
+      const command = { ...updateCommand(run, selection), defaultReviewer: reviewer };
+      const initial = yield* updateDeepPlanRun(run, command);
+      expect(initial.approval?.reviewer).toEqual(reviewer);
+      const replay = yield* updateDeepPlanRun(initial, {
+        ...command,
+        commandId: CommandId.make("approval-replay-after-settings-change"),
+        defaultReviewer: { ...reviewer, model: "different-default" },
       });
-      const updated = yield* updateDeepPlanRun(approved, command);
-      expect(yield* updateDeepPlanRun(updated, command)).toBe(updated);
-      const duplicate = yield* updateDeepPlanRun(updated, {
-        ...command,
-        mutation: { type: "pause" },
-      }).pipe(Effect.flip);
-      expect(duplicate.detail).toContain("reused with different content");
-      const stale = yield* updateDeepPlanRun(updated, {
-        ...command,
-        operationId: "new-operation",
-      }).pipe(Effect.flip);
-      expect(stale.detail).toContain("revision");
-      const foreignThread = yield* updateDeepPlanRun(updated, {
-        ...commandFor(updated, { type: "pause" }),
-        threadId: ThreadId.make("other-thread"),
-      }).pipe(Effect.flip);
-      expect(foreignThread.detail).toContain("does not belong to this thread");
-      const foreignRun = yield* updateDeepPlanRun(updated, {
-        ...commandFor(updated, { type: "pause" }),
-        runId: DeepPlanRunId.make("other-run"),
-      }).pipe(Effect.flip);
-      expect(foreignRun.detail).toContain("does not belong to this thread");
-      expect(updated.revision).toBe(approved.revision + 1);
-      expect(updated.stepStates[0]?.status).toBe("inProgress");
+      expect(replay).toBe(initial);
     }),
 );
 
-it.effect("rejects updates by another implementing agent or model", () =>
-  Effect.gen(function* () {
-    const approved = yield* approvedRun;
-    for (const foreignActor of [
-      { ...actor, implementerId: "thread:another-agent" },
-      { ...actor, model: { ...implementation, model: "another-model" } },
-      {
-        ...actor,
-        model: { ...implementation, instanceId: ProviderInstanceId.make("another-provider") },
-      },
-      {
-        ...actor,
-        model: { ...implementation, options: [{ id: "reasoningEffort", value: "high" }] },
-      },
-    ]) {
-      const rejected = yield* update(approved, {
-        type: "step-update",
-        stepId: "persistence",
-        status: "inProgress",
-        evidence: [],
-        actor: foreignActor,
-      }).pipe(Effect.flip);
-      expect(rejected.detail).toContain("approved implementing agent and model");
-    }
-    expect(approved.stepStates[0]?.status).toBe("pending");
-    const ready = yield* validationReadyRun;
-    const rejectedValidation = yield* update(ready, {
-      type: "validation-start",
-      requestId: validationRequestId(ready),
-      actor: { ...actor, model: { ...implementation, model: "another-model" } },
-    }).pipe(Effect.flip);
-    expect(rejectedValidation.detail).toContain("approved implementing agent and model");
-  }),
+it.effect(
+  "publishes a fresh version and clears step state and approval when replanning from pause",
+  () =>
+    Effect.gen(function* () {
+      const run = yield* approved;
+      const implementing = yield* startImplementation(run, step.stepId);
+      const paused = yield* updateDeepPlanRun(
+        implementing,
+        updateCommand(implementing, { type: "pause" }),
+      );
+      const republished = yield* updateDeepPlanRun(
+        paused,
+        updateCommand(
+          paused,
+          { type: "publish-plan", plan: { ...document, goal: "New goal" } },
+          owner,
+        ),
+      );
+      expect(republished.plan?.version).toBe(2);
+      expect(republished.phase).toBe("awaitingApproval");
+      expect(republished.activeTurns).toEqual([]);
+      expect(republished.steps.every((state) => state.status === "pending")).toBe(true);
+      expect(republished.approval).toBeNull();
+      const stale = yield* updateDeepPlanRun(
+        republished,
+        updateCommand(republished, approval(run)),
+      ).pipe(Effect.flip);
+      expect(stale.context.deepPlanCode).toBe("stale-plan");
+    }),
 );
 
-it.effect("plans without chat sources and keeps that choice across a pause", () =>
+it.effect("requires submission and an independent review before starting dependent steps", () =>
   Effect.gen(function* () {
-    const started = yield* startDeepPlanRun({ ...startCommand, sources: undefined });
-    const pausedWhileCollecting = yield* update(started, { type: "pause" });
-    expect((yield* update(pausedWhileCollecting, { type: "resume" })).phase).toBe("collecting");
-    const planning = yield* update(started, {
-      type: "sources-set",
-      sources: [],
-      includeProjectChats: false,
-    });
-    expect(planning).toMatchObject({ phase: "planning", includeProjectChats: false });
-    const changed = yield* update(planning, { type: "sources-set", sources: [] }).pipe(Effect.flip);
-    expect(changed.detail).toContain("immutable");
-    const paused = yield* update(planning, { type: "pause" });
-    const resumed = yield* update(decodeRun(encodeRun(paused)), { type: "resume" });
-    expect(resumed.phase).toBe("planning");
-    expect((yield* update(resumed, { type: "publish-plan", plan })).phase).toBe("awaitingApproval");
-  }),
-);
+    const run = yield* approved;
+    const dependent = yield* startImplementation(run, "display").pipe(Effect.flip);
+    expect(dependent.context.deepPlanCode).toBe("invalid-transition");
 
-it.effect("restores an approved run and its idempotency history after pausing", () =>
-  Effect.gen(function* () {
-    const approved = yield* approvedRun;
-    const adjusted = yield* update(approved, {
-      type: "procedure-adjust",
-      reason: "Use the focused test fixture",
-      changes: ["Reuse the existing test data"],
-      actor,
-    });
-    const started = yield* stepUpdate(adjusted, "persistence", "inProgress");
-    const pauseCommand = commandFor(started, {
-      type: "pause",
-      reason: "Continue after reconnecting",
-    });
-    const paused = yield* updateDeepPlanRun(started, pauseCommand);
-    const restored = decodeRun(encodeRun(paused));
-    expect(restored.approval).toEqual(approved.approval);
-    expect(restored.procedureAdjustments).toHaveLength(1);
-    expect(yield* updateDeepPlanRun(restored, pauseCommand)).toBe(restored);
-    expect(yield* startDeepPlanRun(startCommand, restored)).toBe(restored);
-    const pausedUpdate = yield* stepUpdate(restored, "persistence", "implemented").pipe(
-      Effect.flip,
+    const implementing = yield* startImplementation(run, step.stepId);
+    const submission = {
+      type: "submit",
+      target: step,
+      summary: "Added persistence",
+      changedFiles: ["state.ts"],
+    } as const;
+    const outsider = yield* updateDeepPlanRun(
+      implementing,
+      updateCommand(
+        implementing,
+        submission,
+        ThreadId.make("outsider"),
+        implementing.activeTurns[0]!.commandId,
+      ),
+    ).pipe(Effect.flip);
+    expect(outsider.context.deepPlanCode).toBe("actor-mismatch");
+    const submitted = yield* updateDeepPlanRun(
+      implementing,
+      updateCommand(implementing, submission, owner, implementing.activeTurns[0]!.commandId),
     );
-    expect(pausedUpdate.detail).toContain("Resume the approved Deep Plan");
-    const resumed = yield* update(restored, { type: "resume" });
-    expect(resumed.phase).toBe("implementing");
-    expect(resumed.stepStates[0]?.status).toBe("inProgress");
-    expect(resumed.approvalKey).toBe(approved.approvalKey);
+    expect(submitted.steps[0]?.status).toBe("implementing");
+    const ready = yield* advance(submitted, {
+      type: "settle-turn",
+      turnCommandId: implementing.activeTurns[0]!.commandId,
+    });
+    const reviewThread = derive.deepPlanReviewThread({
+      runId: ready.id,
+      planVersion: 1,
+      target: step,
+      round: 1,
+    });
+    const reviewing = yield* advance(ready, {
+      type: "start-turn",
+      turn: {
+        kind: "review",
+        threadId: reviewThread,
+        stepId: step.stepId,
+        laneId: run.approval!.lanes[0]!.laneId,
+        round: 1,
+        attempt: 0,
+      },
+      latestRunId: null,
+      prompt: "Review the saved work.",
+      diff: null,
+    });
+    const verdict = {
+      type: "review-verdict",
+      target: step,
+      round: 1,
+      verdict: "approved",
+      summary: "Verified reconnect",
+      findings: [],
+    } as const;
+    for (const [byThreadId, round] of [
+      [owner, 1],
+      [reviewThread, 2],
+    ] as const) {
+      const rejected = yield* updateDeepPlanRun(
+        reviewing,
+        updateCommand(
+          reviewing,
+          { ...verdict, round },
+          byThreadId,
+          reviewing.activeTurns[0]!.commandId,
+        ),
+      ).pipe(Effect.flip);
+      expect(rejected.context.deepPlanCode).toBe("actor-mismatch");
+    }
+    const verified = yield* updateDeepPlanRun(reviewing, {
+      ...updateCommand(reviewing, verdict, reviewThread, reviewing.activeTurns[0]!.commandId),
+      expectedRevision: ready.revision,
+    });
+    expect(verified.steps[0]?.status).toBe("verified");
+    const unfinishedReview = yield* startImplementation(verified, "display").pipe(Effect.flip);
+    expect(unfinishedReview.context.deepPlanCode).toBe("invalid-transition");
+    const settled = yield* advance(verified, {
+      type: "settle-turn",
+      turnCommandId: reviewing.activeTurns[0]!.commandId,
+    });
+    expect((yield* startImplementation(settled, "display")).steps[1]?.status).toBe("implementing");
   }),
 );
 
-it.effect(
-  "restores an active final check and rejects an old result after a failed check is retried",
-  () =>
-    Effect.gen(function* () {
-      const ready = yield* validationReadyRun;
-      const requestId = validationRequestId(ready);
-      const checking = yield* update(ready, { type: "validation-start", requestId, actor });
-      const restored = decodeRun(encodeRun(checking));
-      expect(restored.phase).toBe("validating");
-      expect(restored.finalValidation.requestId).toBe(requestId);
-      const failed = yield* update(restored, {
-        type: "validation-complete",
-        requestId,
-        actor,
-        status: "failed",
-        evidence,
-      });
-      expect(failed.phase).toBe("failed");
-      const resumed = yield* update(decodeRun(encodeRun(failed)), { type: "resume" });
-      expect(resumed.phase).toBe("validating");
-      expect(resumed.finalValidation.status).toBe("pending");
-      expect(resumed.finalValidation.evidence).toEqual([]);
-      expect(resumed.finalValidation.attempt).toBe(1);
-      const newRequestId = validationRequestId(resumed);
-      expect(newRequestId).not.toBe(requestId);
-      const oldStart = yield* update(resumed, { type: "validation-start", requestId, actor }).pipe(
-        Effect.flip,
-      );
-      expect(oldStart.detail).toContain("stale or belongs to another run");
-      const rechecking = yield* update(resumed, {
-        type: "validation-start",
-        requestId: newRequestId,
-        actor,
-      });
-      const oldResult = yield* update(rechecking, {
-        type: "validation-complete",
-        requestId,
-        actor,
-        status: "passed",
-        evidence,
-      }).pipe(Effect.flip);
-      expect(oldResult.detail).toContain("active validation request");
-      const finished = yield* update(rechecking, {
-        type: "validation-complete",
-        requestId: newRequestId,
-        actor,
-        status: "passed",
-        evidence,
-      });
-      expect(finished.phase).toBe("completed");
-    }),
-);
-
-it.effect("requires a new final check after blocking an active validation", () =>
+it.effect("keeps a retry bound to the new turn when it reuses the implementation thread", () =>
   Effect.gen(function* () {
-    const ready = yield* validationReadyRun;
-    const requestId = validationRequestId(ready);
-    const checking = yield* update(ready, { type: "validation-start", requestId, actor });
-    const blocked = yield* update(checking, { type: "block", reason: "The check needs a repair" });
-    expect(blocked.phase).toBe("blocked");
-    expect(blocked.finalValidation).toMatchObject({
-      status: "pending",
-      attempt: checking.finalValidation.attempt + 1,
-      requestId: null,
-      turnId: null,
-      evidence: [],
+    const run = yield* approved;
+    const implementing = yield* startImplementation(run, step.stepId);
+    const first = implementing.activeTurns[0]!;
+    const retried = yield* advance(implementing, {
+      type: "start-turn",
+      turn: {
+        kind: first.kind,
+        threadId: first.threadId,
+        stepId: first.stepId,
+        laneId: first.laneId,
+        round: first.round,
+        attempt: 1,
+      },
+      replaces: first.commandId,
+      retryReason: "missingResult",
+      latestRunId: null,
+      prompt: "Submit the implementation result.",
     });
-    const resumed = yield* update(decodeRun(encodeRun(blocked)), { type: "resume" });
-    expect(resumed.phase).toBe("validating");
-    const nextRequestId = validationRequestId(resumed);
-    expect(nextRequestId).not.toBe(requestId);
-    const rechecking = yield* update(resumed, {
-      type: "validation-start",
-      requestId: nextRequestId,
-      actor,
-    });
-    const staleResult = yield* update(rechecking, {
-      type: "validation-complete",
-      requestId,
-      actor,
-      status: "passed",
-      evidence,
+    const submit = {
+      type: "submit",
+      target: step,
+      summary: "Persisted the work",
+      changedFiles: ["state.ts"],
+    } as const;
+    const staleRevision = { expectedRevision: implementing.revision };
+    const late = yield* updateDeepPlanRun(retried, {
+      ...updateCommand(retried, submit, owner, first.commandId),
+      ...staleRevision,
     }).pipe(Effect.flip);
-    expect(staleResult.detail).toContain("active validation request");
-    const finished = yield* update(rechecking, {
-      type: "validation-complete",
-      requestId: nextRequestId,
-      actor,
-      status: "passed",
-      evidence,
+    expect(late.context.deepPlanCode).toBe("actor-mismatch");
+    const current = retried.activeTurns[0]!;
+    const submission = {
+      ...updateCommand(retried, submit, owner, current.commandId),
+      ...staleRevision,
+    };
+    const submitted = yield* updateDeepPlanRun(retried, submission);
+    const replayed = yield* updateDeepPlanRun(submitted, {
+      ...submission,
+      expectedRevision: submitted.revision,
     });
-    expect(finished.phase).toBe("completed");
+    expect(replayed).toBe(submitted);
+    expect(submitted.steps[0]?.unsubmittedTurns).toBe(1);
+    expect(submitted.steps[0]?.submission?.turnCommandId).toBe(current.commandId);
+    const discarding = yield* advance(submitted, {
+      type: "start-turn",
+      turn: { ...retried.activeTurns[0]!, attempt: 2 },
+      replaces: current.commandId,
+      retryReason: "failed",
+      latestRunId: null,
+      prompt: "Retry the implementation.",
+    }).pipe(Effect.flip);
+    expect(discarding.detail).toBe("The Deep Plan turn already recorded its result.");
   }),
 );

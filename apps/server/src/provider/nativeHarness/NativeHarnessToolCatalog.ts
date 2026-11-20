@@ -96,15 +96,17 @@ const declarationIsAvailable = (
 ): boolean => {
   if (input.interactionMode === "chat") return false;
   if (declaration.availability === "read-only") return true;
+  if (input.sandboxMode === "read-only") return false;
+  if (input.deepPlan?.phase === "review") {
+    return declaration.name === NATIVE_HARNESS_EXEC_COMMAND_TOOL;
+  }
   const planning =
     input.interactionMode === "plan" ||
     input.deepPlan?.readOnly === true ||
     input.deepPlan?.phase === "planning";
   const planningCommand =
-    declaration.name === NATIVE_HARNESS_EXEC_COMMAND_TOOL &&
-    input.deepPlan !== undefined &&
-    input.deepPlan.sourceAnalysis === undefined;
-  if ((planning && !planningCommand) || input.sandboxMode === "read-only") return false;
+    declaration.name === NATIVE_HARNESS_EXEC_COMMAND_TOOL && input.deepPlan?.phase === "planning";
+  if (planning && !planningCommand) return false;
   if (declaration.availability === "default-only") return true;
   if (declaration.availability === "workspace-write") return true;
   return input.sandboxMode !== "workspace-write";

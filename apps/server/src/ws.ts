@@ -9,7 +9,7 @@ import { ProjectMemoryError, type ProjectMemoryOperation } from "@t3tools/contra
 import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
 import * as ProjectTextTransforms from "./speech/ProjectTextTransforms.ts";
 import { AssemblyAiDictation } from "./speech/AssemblyAiDictation.ts";
-import { DeepPlanApplication } from "./deepPlanning/DeepPlanApplication.ts";
+import { DeepPlanWorkflow } from "./deepPlanning/DeepPlanWorkflow.ts";
 import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import { makeT3ChatImport } from "./t3ChatImport.ts";
 import { makeHarnessChatSync } from "./harnessChatSync.ts";
@@ -50,6 +50,8 @@ import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
   AcpRegistryOperationError,
   CommandId,
+  DEEP_PLAN_VERSION_QUERY_PARAM,
+  DEEP_PLAN_VERSION_TEXT,
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -190,6 +192,10 @@ import {
   makeLiveBodyDeduper,
   projectDomainEventForWire,
   projectThreadProjectionForWire,
+  withoutDeepPlanFromProjection,
+  withoutDeepPlanFromShellRows,
+  withoutDeepPlanFromShellStream,
+  withoutDeepPlanFromThreadStream,
 } from "./orchestration-v2/WireProjection.ts";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -1403,6 +1409,7 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
+  acceptsDeepPlan = true,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1415,6 +1422,7 @@ export const layerWsRpc = (
         | FileSystem.FileSystem
         | ServerConfig.ServerConfig
         | ServerSettings.ServerSettingsService
+        | DeepPlanWorkflow
         | DocumentText.DocumentText
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -2090,7 +2098,7 @@ export const layerWsRpc = (
       const projectSpeechProfiles = yield* ProjectSpeechProfiles.make;
       const projectTextTransforms = yield* ProjectTextTransforms.make;
       const assemblyAiDictation = yield* AssemblyAiDictation;
-      const deepPlanApplication = yield* DeepPlanApplication;
+      const deepPlanWorkflow = yield* DeepPlanWorkflow;
       const planParallelismReview = yield* PlanParallelismReview.PlanParallelismReview;
       const t3ChatImport = yield* makeT3ChatImport();
       const harnessChatSync = yield* makeHarnessChatSync();
@@ -2622,17 +2630,8 @@ export const layerWsRpc = (
         [WS_METHODS.speechListAssemblyAiModels]: () =>
           assemblyAiDictation.listModels().pipe(Effect.map((models) => ({ models }))),
         [WS_METHODS.promptImprove]: (input) => projectTextTransforms.improvePrompt(input),
-        [WS_METHODS.deepPlanGetRun]: (input) => deepPlanApplication.getRun(input),
-        [WS_METHODS.deepPlanCatalogSources]: (input) => deepPlanApplication.catalogSources(input),
-        [WS_METHODS.deepPlanExportSources]: (input) => deepPlanApplication.exportSources(input),
-        [WS_METHODS.deepPlanReadExportChunk]: (input) => deepPlanApplication.readExportChunk(input),
-        [WS_METHODS.deepPlanInitializeSources]: (input) =>
-          deepPlanApplication.initializeSources(input),
-        [WS_METHODS.deepPlanImportSourceChunk]: (input) =>
-          deepPlanApplication.importSourceChunk(input),
-        [WS_METHODS.deepPlanListSources]: (input) => deepPlanApplication.listSources(input),
-        [WS_METHODS.deepPlanReadSourceChunk]: (input) => deepPlanApplication.readSourceChunk(input),
-        [WS_METHODS.deepPlanSummarizeSource]: (input) => deepPlanApplication.summarizeSource(input),
+        [WS_METHODS.deepPlanGetRun]: (input) =>
+          acceptsDeepPlan ? deepPlanWorkflow.getRun(input) : Effect.succeed(null),
         [WS_METHODS.planReviewParallelism]: (input) => planParallelismReview.review(input),
         [WS_METHODS.chatImportDiscover]: (_input) => t3ChatImport.discover,
         [WS_METHODS.chatImportRun]: (input) => t3ChatImport.importSource(input),
@@ -2746,6 +2745,9 @@ export const layerWsRpc = (
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
+            Effect.map((result) =>
+              acceptsDeepPlan ? result : withoutDeepPlanFromShellRows(result),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationSearchThreadsError({
@@ -2755,9 +2757,18 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
-          getOrchestrationV2ArchivedShellSnapshot,
+          acceptsDeepPlan
+            ? getOrchestrationV2ArchivedShellSnapshot
+            : Effect.map(getOrchestrationV2ArchivedShellSnapshot, withoutDeepPlanFromShellRows),
         [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
-          readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
+          readOmittableShellRows(
+            { familyOf: input.threadId },
+            "Failed to load the thread family",
+          ).pipe(
+            Effect.map((result) =>
+              acceptsDeepPlan ? result : withoutDeepPlanFromShellRows(result),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: (input) =>
           loadOlderSettledThreadsPage({
             sql,
@@ -2766,6 +2777,9 @@ export const layerWsRpc = (
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
+            Effect.map((result) =>
+              acceptsDeepPlan ? result : withoutDeepPlanFromShellRows(result),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -2794,6 +2808,9 @@ export const layerWsRpc = (
                         projection: projectThreadProjectionForWire(snapshot.projection),
                         snapshotSequence: snapshot.snapshotSequence,
                       }).projection,
+                  ),
+                  Effect.map((projection) =>
+                    acceptsDeepPlan ? projection : withoutDeepPlanFromProjection(projection),
                   ),
                   Effect.mapError(
                     (cause) =>
@@ -2857,7 +2874,11 @@ export const layerWsRpc = (
                   ),
                   Effect.map((result) => ({
                     ...result,
-                    projection: projectThreadProjectionForWire(result.projection),
+                    projection: projectThreadProjectionForWire(
+                      acceptsDeepPlan
+                        ? result.projection
+                        : withoutDeepPlanFromProjection(result.projection),
+                    ),
                   })),
                   Effect.catchTags({
                     AttachmentClaimError: (cause) =>
@@ -2892,12 +2913,38 @@ export const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          Stream.unwrap(subscribeOrchestrationV2Shell(input)),
-        [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
-          Stream.unwrap(
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) => {
+          const stream = Stream.unwrap(subscribeOrchestrationV2Shell(input));
+          return acceptsDeepPlan ? stream : Stream.map(stream, withoutDeepPlanFromShellStream);
+        },
+        [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) => {
+          const stream = Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            ),
+          );
+          return acceptsDeepPlan ? stream : Stream.map(stream, withoutDeepPlanFromThreadStream);
+        },
+        [ORCHESTRATION_V2_WS_METHODS.getInlineReplyPage]: (input) =>
+          threadManagement.getInlineReplyPage(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: "Failed to load inline replies",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeInlineReplies]: (input) =>
+          threadManagement.subscribeInlineReplies(input).pipe(
+            Stream.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: "Failed to stream inline replies",
+                  cause,
+                }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
@@ -3937,7 +3984,14 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            layerWsRpc(session, clientAnalyticsProps, serverBrowser, reportProfiles).pipe(
+            layerWsRpc(
+              session,
+              clientAnalyticsProps,
+              serverBrowser,
+              reportProfiles,
+              requestUrl.value.searchParams.get(DEEP_PLAN_VERSION_QUERY_PARAM) ===
+                DEEP_PLAN_VERSION_TEXT,
+            ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),

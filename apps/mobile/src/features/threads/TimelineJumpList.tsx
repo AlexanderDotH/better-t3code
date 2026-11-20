@@ -1,5 +1,5 @@
 import { LegendList } from "@legendapp/list/react-native";
-import type { MessageId, TimestampFormat } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts";
 import { useMemo } from "react";
 import { Modal, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,7 +14,7 @@ export function TimelineJumpList(props: {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly timestampFormat: TimestampFormat;
   readonly history?: ThreadFeedHistoryControls;
-  readonly onJump: (messageId: MessageId) => void;
+  readonly onJump: (entryId: string) => void;
   readonly onClose: () => void;
 }) {
   const translator = useMobileInterfaceTranslator();
@@ -69,7 +69,7 @@ export function TimelineJumpList(props: {
             <Pressable
               accessibilityRole="button"
               className="min-h-16 gap-1 border-b border-border-subtle py-3 active:opacity-60"
-              onPress={() => props.onJump(item.message.id)}
+              onPress={() => props.onJump(item.id)}
             >
               <View className="flex-row items-center gap-2">
                 <SymbolView

@@ -1,9 +1,10 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import { DeepPlanError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { DeepPlanApplication } from "../deepPlanning/DeepPlanApplication.ts";
+import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -89,10 +90,27 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
 ) {
   const command =
     incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+  if (command.type === "thread.deep-plan.start" || command.type === "thread.deep-plan.update") {
+    const deepPlan = yield* Effect.serviceOption(DeepPlanWorkflow);
+    if (Option.isNone(deepPlan))
+      return yield* new DeepPlanError({
+        code: "target-unavailable",
+        message: "Deep Plan is unavailable.",
+      });
+    return yield* deepPlan.value.dispatch(command);
+  }
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "thread.stop") {
-    const planning = yield* Effect.serviceOption(DeepPlanApplication);
-    if (Option.isSome(planning)) yield* planning.value.pauseForInterrupt(command.threadId);
+    const deepPlan = yield* Effect.serviceOption(DeepPlanWorkflow);
+    if (Option.isSome(deepPlan))
+      yield* deepPlan.value.pauseForStop(command.threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not pause the Deep Plan for a stopped thread", {
+            threadId: command.threadId,
+            error: error.message,
+          }),
+        ),
+      );
   }
   if (command.type === "thread.fork" && command.workspaceStrategy?.type === "worktree") {
     const availableLaunches = yield* Effect.serviceOption(ThreadLaunch.ThreadLaunchService);

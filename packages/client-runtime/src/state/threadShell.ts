@@ -36,6 +36,7 @@ const EMPTY_SIDE_CHATS_BY_PARENT: ReadonlyMap<
   ReadonlyArray<OrchestrationV2ThreadShell>
 > = new Map();
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = Object.freeze([]);
+const emptyReplyTopicsAtom = Atom.make(EMPTY_THREAD_SHELLS);
 const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ProjectId,
   ReadonlyArray<ScopedThreadRef>
@@ -431,6 +432,26 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-quiet-thread-shell:${key}`));
   });
 
+  const replyTopicsAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    let previous = EMPTY_THREAD_SHELLS;
+    return Atom.make((get) => {
+      const next: EnvironmentThreadShell[] = [];
+      for (const thread of get(environmentThreadsAtom(ref.environmentId))) {
+        if (thread.messageReply?.sourceThreadId !== ref.threadId || thread.deletedAt != null)
+          continue;
+        const topic = get(
+          quietThreadShellAtomFamily(
+            threadKey({ environmentId: ref.environmentId, threadId: thread.id }),
+          ),
+        );
+        if (topic !== null) next.push(topic);
+      }
+      if (!arrayElementsEqual(previous, next)) previous = next;
+      return previous;
+    }).pipe(Atom.withLabel(`environment-reply-topics:${key}`));
+  });
+
   // Child approvals and questions are hidden with their sidebar rows. Read their
   // shell summaries, without subscribing to every child transcript. A task
   // delegated to a linked environment is a child too, with its own subagents.
@@ -732,6 +753,8 @@ export function createEnvironmentThreadShellAtoms(input: {
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
     threadShellAtom: (ref: ScopedThreadRef) => threadShellAtomFamily(threadKey(ref)),
     quietThreadShellAtom: (ref: ScopedThreadRef) => quietThreadShellAtomFamily(threadKey(ref)),
+    replyTopicsAtom: (ref: ScopedThreadRef | null) =>
+      ref === null ? emptyReplyTopicsAtom : replyTopicsAtomFamily(threadKey(ref)),
     childThreadInputsAtom: (ref: ScopedThreadRef) => childThreadInputsAtomFamily(threadKey(ref)),
     sideChatsAtom: (ref: ScopedThreadRef) => sideChatsAtomFamily(threadKey(ref)),
   };

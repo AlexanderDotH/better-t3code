@@ -440,6 +440,28 @@ describe("sanitizeMobilePreferences", () => {
     );
   });
 
+  it.effect("retains reply presentation across reloads and unrelated patches", () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    return Effect.gen(function* () {
+      const store = yield* make();
+      expect((yield* store.load).replyPresentation).toBeUndefined();
+      yield* store.savePatch({ replyPresentation: "side-chat" });
+      yield* store.savePatch({ baseFontSize: 18 });
+
+      const reloaded = yield* make();
+      expect(yield* reloaded.load).toMatchObject({
+        replyPresentation: "side-chat",
+        baseFontSize: 18,
+      });
+      yield* reloaded.savePatch({ replyPresentation: "inline" });
+      const reloadedAgain = yield* make();
+      expect((yield* reloadedAgain.load).replyPresentation).toBe("inline");
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  });
+
   it.effect("does not enable the widget from a malformed saved visibility value", () => {
     const dependencies = makeMemoryPreferenceDependencies();
     return Effect.gen(function* () {

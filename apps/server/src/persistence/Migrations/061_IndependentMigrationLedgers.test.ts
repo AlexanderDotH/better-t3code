@@ -67,6 +67,10 @@ const assertCurrent = Effect.gen(function* () {
     yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`,
     forkMigrationManifest.map(([migration_id, name]) => ({ migration_id, name })),
   );
+  assert.deepStrictEqual(
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'deep_plan_*'`,
+    [],
+  );
   const editPlan = yield* sql<{ detail: string }>`
     EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM orchestration_events
     WHERE aggregate_kind = 'thread' AND stream_id = 'thread'
@@ -218,8 +222,6 @@ it.effect(
         const plans = yield* sql`SELECT * FROM projection_thread_proposed_plans`;
         const diffs = yield* sql`SELECT * FROM checkpoint_diff_blobs`;
         const deepPlan = yield* sql`SELECT deep_plan_json FROM projection_threads`;
-        const sources = yield* sql`SELECT * FROM deep_plan_sources`;
-        const sourceRuns = yield* sql`SELECT * FROM deep_plan_source_runs`;
         const ledgers = yield* sql`SELECT * FROM effect_sql_migrations`;
         yield* runMigrations();
         assert.deepStrictEqual(
@@ -228,8 +230,6 @@ it.effect(
         );
         assert.deepStrictEqual(yield* sql`SELECT * FROM legacy_v1_checkpoint_diff_blobs`, diffs);
         assert.deepStrictEqual(yield* sql`SELECT deep_plan_json FROM projection_threads`, deepPlan);
-        assert.deepStrictEqual(yield* sql`SELECT * FROM deep_plan_sources`, sources);
-        assert.deepStrictEqual(yield* sql`SELECT * FROM deep_plan_source_runs`, sourceRuns);
         assert.deepStrictEqual(yield* sql`SELECT * FROM effect_sql_migrations`, ledgers);
         assert.deepStrictEqual(
           yield* sql`SELECT event_id, payload_json, metadata_json FROM orchestration_events WHERE event_id = 'event-preserved'`,
@@ -323,7 +323,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 68 }],
+          [{ id: 69 }],
         );
       }).pipe(
         Effect.provide(
@@ -333,7 +333,7 @@ it.effect(
     }).pipe(Effect.scoped),
 );
 
-it.effect.each([64, 65, 66, 67])(
+it.effect.each([64, 65, 66, 67, 68])(
   "preserves retired migration history with fork migration %s applied",
   (latestForkId) =>
     Effect.gen(function* () {
@@ -352,6 +352,7 @@ it.effect.each([64, 65, 66, 67])(
       yield* sql`DELETE FROM ${sql(forkMigrationTable)} WHERE migration_id > ${latestForkId}`;
       const history = yield* sql`SELECT * FROM ${sql(forkMigrationTable)} WHERE migration_id <= 64`;
       const schema = yield* readSchema;
+      if (latestForkId >= 67) yield* DeepPlanSourcesMigration;
       assert.deepStrictEqual(
         yield* runMigrations(),
         (
@@ -360,6 +361,7 @@ it.effect.each([64, 65, 66, 67])(
             [66, "ProjectionThreadDeepPlan"],
             [67, "DeepPlanSources"],
             [68, "LegacyV1RecoveryArchive"],
+            [69, "DropDeepPlanSources"],
           ] as const
         ).filter(([id]) => id > latestForkId),
       );

@@ -1,113 +1,70 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "@effect/vitest";
 import {
   CommandId,
-  DeepPlanError,
   DeepPlanRunId,
-  DeepPlanSourceError,
-  DeepPlanSourceId,
   EnvironmentId,
-  ProviderInstanceId,
-  ThreadId,
-  type DeepPlanRun,
-  type DeepPlanSourceSnapshot,
+  MessageId,
   ProjectId,
-  SubagentId,
-  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type DeepPlanActiveTurn,
+  type DeepPlanExecutionContext,
+  type DeepPlanRun,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
+import * as Path from "effect/Path";
 import { McpSchema } from "effect/ai";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  GeneralSubagentCoordinator,
-  GeneralSubagentCoordinatorLive,
-} from "../../../subagents/GeneralSubagentCoordinator.ts";
-import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
-import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
-import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
-import * as ServerSettings from "../../../serverSettings.ts";
 
-import {
-  DeepPlanSources,
-  type DeepPlanSourcesShape,
-} from "../../../deepPlanning/DeepPlanSources.ts";
+import { CheckpointDiffQuery } from "../../../checkpointing/CheckpointDiffQuery.ts";
 import { DeepPlanWorkflow } from "../../../deepPlanning/DeepPlanWorkflow.ts";
-import { deepPlanApprovalKey, updateDeepPlanRun } from "../../../deepPlanning/deepPlanDecision.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2, type ProjectRow } from "../../../orchestration-v2/ProjectStore.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import { McpInvocationContext, type McpInvocationScope } from "../../McpInvocationContext.ts";
 import {
-  invokeDeepPlanAnalyzeSources,
-  invokeDeepPlanSources,
   invokeDeepPlanPublish,
-  invokeDeepPlanReadSource,
+  invokeDeepPlanReviewContext,
+  invokeDeepPlanReviewVerdict,
   invokeDeepPlanState,
-  invokeDeepPlanStepUpdate,
-  invokeDeepPlanSummarizeSource,
-  invokeDeepPlanValidation,
+  invokeDeepPlanSubmit,
 } from "./handlers.ts";
 import { DeepPlanToolkit } from "./tools.ts";
 
-const threadId = ThreadId.make("plan-owner");
+const ownerId = ThreadId.make("plan-owner");
+const implementerId = ThreadId.make("plan-implementer");
+const reviewerId = ThreadId.make("plan-reviewer");
 const runId = DeepPlanRunId.make("run-current");
-const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" };
+const environmentId = EnvironmentId.make("local");
+const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test-model" };
 const timestamp = "2026-10-16T10:00:00.000Z";
-const run: DeepPlanRun = {
-  id: runId,
-  threadId,
-  phase: "planning",
-  revision: 3,
-  plan: null,
-  approval: null,
-  approvalKey: null,
-  sources: [],
-  sourceCoverage: [],
-  stepStates: [],
-  procedureAdjustments: [],
-  operations: [],
-  finalValidation: {
-    status: "pending",
-    evidence: [],
-    updatedAt: null,
-    attempt: 0,
-    requestId: null,
-    turnId: null,
-  },
-  createdAt: timestamp,
-  updatedAt: timestamp,
-  pauseReason: null,
-};
-type TestScope = Omit<McpInvocationScope, "thread" | "client" | "requestNamespace"> & {
-  readonly threadId: ThreadId;
-  readonly providerSessionId: string;
-  readonly providerInstanceId: ProviderInstanceId;
-};
-const scope: TestScope = {
-  environmentId: EnvironmentId.make("local"),
-  ownerThreadId: threadId,
-  threadId,
-  providerSessionId: "provider-session",
-  providerInstanceId: modelSelection.instanceId,
-  issuedAt: 1,
-  capabilities: new Set(["deep-plan"]),
-  deepPlan: {
-    runId,
-    runThreadId: threadId,
-    phase: "planning",
-    approvedPlanVersion: null,
-    modelSelection,
-  },
-};
-const plan = {
-  schemaVersion: 1 as const,
-  version: 1,
+const target = { kind: "step", stepId: "step-1" } as const;
+const finalTarget = { kind: "final" } as const;
+const changes = ["src/parser.ts", "src/parser.test.ts"];
+const pendingFinal = {
+  status: "pending",
+  submission: null,
+  reviews: [],
+  roundLimit: 3,
+  unsubmittedTurns: 0,
+} as const;
+
+const draft = {
   goal: "Fix the parser",
   scope: ["Parser behavior"],
+  nonGoals: [],
   decisions: [],
   affectedAreas: ["parser"],
   steps: [
     {
-      id: "step-1",
+      id: target.stepId,
       title: "Fix parser",
       description: "Handle empty input",
       dependencies: [],
@@ -121,947 +78,426 @@ const plan = {
     checkMethod: "Run the parser integration test",
   },
 };
-const evidence = [{ kind: "test" as const, summary: "Parser test passed", createdAt: timestamp }];
+const planning: DeepPlanRun = {
+  schemaVersion: 2,
+  id: runId,
+  threadId: ownerId,
+  phase: "planning",
+  revision: 3,
+  chats: [
+    {
+      environmentId,
+      threadId: ThreadId.make("planning-source"),
+      projectId: ProjectId.make("project"),
+    },
+  ],
+  includeProjectChats: false,
+  plan: null,
+  approval: null,
+  approvalKey: null,
+  steps: [],
+  finalReview: pendingFinal,
+  activeTurns: [],
+  pause: null,
+  operations: [],
+  createdAt: timestamp,
+  updatedAt: timestamp,
+};
+const lane = { threadId: implementerId, laneId: "lane-1" };
+const stepSubmission = {
+  summary: "Handle empty input and add a regression test.",
+  changedFiles: changes,
+  turnCommandId: CommandId.make("implement-step"),
+  at: timestamp,
+};
+const pendingReview = {
+  round: 1,
+  reviewThreadId: reviewerId,
+  reviewer: modelSelection,
+  diff: null,
+  verdict: null,
+  summary: null,
+  findings: [],
+  retries: 0,
+  startedAt: timestamp,
+  completedAt: null,
+} as const;
+const implementingTurn: DeepPlanActiveTurn = {
+  kind: "implement",
+  threadId: implementerId,
+  commandId: stepSubmission.turnCommandId,
+  stepId: target.stepId,
+  laneId: lane.laneId,
+  round: 1,
+  attempt: 0,
+  startedAt: timestamp,
+};
+const reviewingTurn: DeepPlanActiveTurn = {
+  ...implementingTurn,
+  kind: "review",
+  threadId: reviewerId,
+  commandId: CommandId.make("review-step"),
+};
+const approved: DeepPlanRun = {
+  ...planning,
+  phase: "implementing",
+  plan: { ...draft, schemaVersion: 2, version: 1 },
+  approvalKey: "approved-1",
+  approval: {
+    planVersion: 1,
+    approvalKey: "approved-1",
+    approvedAt: timestamp,
+    implementation: modelSelection,
+    reviewer: modelSelection,
+    parallelism: 1,
+    lanes: [lane],
+    baseTurnCount: 0,
+  },
+  steps: [
+    {
+      stepId: target.stepId,
+      status: "inReview",
+      laneId: lane.laneId,
+      baseTurnCount: 0,
+      submission: stepSubmission,
+      reviews: [pendingReview],
+      roundLimit: 3,
+      unsubmittedTurns: 0,
+    },
+  ],
+  activeTurns: [implementingTurn, reviewingTurn],
+};
+
+const turnId = RunId.make("provider-run");
+const grantBase = { runId, runThreadId: ownerId, modelSelection };
+const planningGrant: DeepPlanExecutionContext = {
+  ...grantBase,
+  approvedPlanVersion: null,
+  phase: "planning",
+  readOnly: true,
+};
+const implementationGrant: DeepPlanExecutionContext = {
+  ...grantBase,
+  approvedPlanVersion: 1,
+  phase: "execution",
+  laneId: lane.laneId,
+};
+const reviewGrant: DeepPlanExecutionContext = {
+  ...grantBase,
+  approvedPlanVersion: 1,
+  phase: "review",
+  readOnly: true,
+  review: { target, round: 1 },
+};
 const update = { expectedRunId: runId, expectedRevision: 3, operationId: "operation-1" };
+const submit = { ...update, target, summary: stepSubmission.summary, changedFiles: changes };
+const verdict = {
+  ...update,
+  target,
+  round: 1,
+  verdict: "approved",
+  summary: "The parser checks passed.",
+  findings: [],
+} as const;
 
-function harness(
-  options: {
-    readonly run?: DeepPlanRun;
-    readonly scope?: TestScope;
-    readonly sources?: Partial<DeepPlanSourcesShape>;
-    readonly withRunLock?: DeepPlanWorkflow["Service"]["withRunLock"];
-  } = {},
-) {
-  const current = options.run ?? run;
-  const getRun = vi.fn<DeepPlanWorkflow["Service"]["getRun"]>(() => Effect.succeed(current));
-  const updateRun = vi.fn<DeepPlanWorkflow["Service"]["update"]>(() =>
-    Effect.succeed({ ...current, revision: current.revision + 1 }),
+function harness(input: {
+  readonly threadId: ThreadId;
+  readonly run: DeepPlanRun;
+  readonly grant: DeepPlanExecutionContext;
+  readonly assignment?: DeepPlanActiveTurn;
+  readonly binding?: DeepPlanExecutionContext;
+  readonly ownerThreadId?: ThreadId;
+  readonly status?: OrchestrationV2Run["status"];
+  readonly off?: boolean;
+}) {
+  const { threadId, run, grant } = input;
+  const actor = {
+    id: threadId,
+    projectId: planning.chats[0]!.projectId,
+    worktreePath: null,
+    archivedAt: null,
+    deletedAt: null,
+    activeRunId: turnId,
+    ...(threadId === ownerId ? { deepPlan: run } : { deepPlanExecution: grant }),
+  } as OrchestrationV2ThreadShell;
+  const owner = { ...actor, id: ownerId, deepPlan: run };
+  const turn = {
+    id: turnId,
+    threadId,
+    status: input.status ?? "running",
+    deepPlanRunId: run.id,
+    userMessageId: MessageId.make(
+      input.assignment === undefined ? "plan-request" : `${input.assignment.commandId}:message`,
+    ),
+  };
+  const projections = {
+    getThreadShell: (id: ThreadId) =>
+      Effect.succeed(id === threadId ? actor : id === ownerId ? owner : null),
+    getThreadRecords: (
+      _id: ThreadId,
+      _fields: unknown,
+      filter: { readonly runIds?: readonly RunId[] },
+    ) => Effect.succeed({ runs: filter.runIds?.includes(turnId) ? [turn] : [] }),
+  } as unknown as ProjectionStoreV2["Service"];
+  const invocation: McpInvocationScope = {
+    thread: {
+      threadId,
+      providerSessionId: "test-session",
+      providerInstanceId: modelSelection.instanceId,
+    },
+    ownerThreadId: input.ownerThreadId ?? threadId,
+    workspaceContextThreadId: threadId,
+    environmentId,
+    issuedAt: 0,
+    client: undefined,
+    requestNamespace: "test-session",
+    capabilities: new Set(input.off ? ["deep-plan-tools"] : ["deep-plan"]),
+    deepPlan: input.binding ?? { ...grant, turnId },
+  };
+  const dispatch = vi.fn<DeepPlanWorkflow["Service"]["update"]>(() =>
+    Effect.succeed({
+      ...run,
+      revision: run.revision + 1,
+    }),
   );
-  const workflow = DeepPlanWorkflow.of({
-    withRunLock: options.withRunLock ?? ((_runId, effect) => effect),
-    getRun,
-    update: updateRun,
-    start: () => Effect.die("Unexpected start"),
-  });
-  const sources = DeepPlanSources.of({
-    catalogSources: () => Effect.die("Unexpected catalog"),
-    validatePlanCitations: () => Effect.void,
-    exportSources: () => Effect.die("Unexpected export"),
-    readExportChunk: () => Effect.die("Unexpected export read"),
-    initializeSources: () => Effect.die("Unexpected initialize"),
-    importSourceChunk: () => Effect.die("Unexpected import"),
-    listSources: () =>
-      Effect.succeed({ runId, sources: current.sources, coverage: current.sourceCoverage }),
-    readSourceChunk: () => Effect.die("Unexpected source read"),
-    summarizeSource: () => Effect.die("Unexpected summary"),
-    assertCompleteCoverage: () =>
-      Effect.succeed({ runId, sources: current.sources, coverage: current.sourceCoverage }),
-    ...options.sources,
-  });
-  const provide = <A, E>(
-    effect: Effect.Effect<A, E, DeepPlanWorkflow | DeepPlanSources | McpInvocationContext>,
-    invocation: TestScope = options.scope ?? scope,
-  ) =>
+  const workflow = Layer.mock(DeepPlanWorkflow)({ update: dispatch });
+  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.provideService(DeepPlanWorkflow, workflow),
-      Effect.provideService(DeepPlanSources, sources),
-      Effect.provideService(McpInvocationContext, {
-        ...invocation,
-        requestNamespace: invocation.providerSessionId,
-        client: undefined,
-        thread: {
-          threadId: invocation.ownerThreadId ?? invocation.threadId,
-          providerSessionId: invocation.providerSessionId,
-          providerInstanceId: invocation.providerInstanceId,
-        },
-        workspaceContextThreadId: invocation.threadId,
-      }),
+      Effect.provideService(McpInvocationContext, invocation),
+      Effect.provideService(ProjectionStoreV2, projections),
+      Effect.provide(workflow),
     );
-  return { getRun, updateRun, provide, workflow };
+  return { actor, dispatch, provide };
 }
 
-function implementing(implementationThreadId = threadId) {
-  const approved: DeepPlanRun = {
-    ...run,
-    phase: "implementing",
-    plan,
-    approvalKey: "approval-1",
-    approval: {
-      planVersion: 1,
-      approvalKey: "approval-1",
-      approvedAt: timestamp,
-      approvedBy: "user",
-      implementation: modelSelection,
-      implementationThreadId,
-      implementerId: `thread:${implementationThreadId}`,
-    },
-  };
-  const invocation: TestScope = {
-    ...scope,
-    ownerThreadId: implementationThreadId,
-    threadId: implementationThreadId,
-    deepPlan: {
+const planner = {
+  threadId: ownerId,
+  run: planning,
+  grant: planningGrant,
+} as const;
+const implementer = {
+  threadId: implementerId,
+  run: approved,
+  grant: implementationGrant,
+  assignment: implementingTurn,
+} as const;
+const reviewer = {
+  threadId: reviewerId,
+  run: approved,
+  grant: reviewGrant,
+  assignment: reviewingTurn,
+} as const;
+
+it.effect("publishes the planner's draft with its authenticated owner thread", () =>
+  Effect.gen(function* () {
+    const test = harness(planner);
+    const receipt = yield* test.provide(invokeDeepPlanPublish({ ...update, plan: draft }));
+    expect(receipt.revision).toBe(4);
+    expect(test.dispatch).toHaveBeenCalledWith({
+      threadId: ownerId,
       runId,
-      runThreadId: threadId,
-      phase: "execution",
-      approvedPlanVersion: 1,
-      modelSelection,
-    },
-  };
-  return { run: approved, scope: invocation };
-}
+      expectedRevision: 3,
+      operationId: update.operationId,
+      byThreadId: ownerId,
+      mutation: { type: "publish-plan", plan: draft },
+    });
+  }),
+);
 
-it.effect.each([[], ["deep-plan-tools"]] as const)(
-  "rejects credentials without a run grant before reading any run (%j)",
-  (capabilities) =>
+it.effect(
+  "binds implementation submissions and review verdicts to their separate active turns",
+  () =>
     Effect.gen(function* () {
-      const test = harness({ scope: { ...scope, capabilities: new Set(capabilities) } });
-      const error = yield* test.provide(invokeDeepPlanState()).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "DeepPlanToolScopeError",
-        reason: "credential-not-authorized",
-      });
-      expect(test.getRun).not.toHaveBeenCalled();
+      const build = harness(implementer);
+      const review = harness(reviewer);
+      yield* build.provide(invokeDeepPlanSubmit(submit));
+      yield* review.provide(invokeDeepPlanReviewVerdict(verdict));
+      expect(build.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: ownerId,
+          byThreadId: implementerId,
+          byTurnCommandId: implementingTurn.commandId,
+          mutation: { type: "submit", target, summary: submit.summary, changedFiles: changes },
+        }),
+      );
+      expect(review.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: ownerId,
+          byThreadId: reviewerId,
+          byTurnCommandId: reviewingTurn.commandId,
+          mutation: {
+            type: "review-verdict",
+            target,
+            summary: verdict.summary,
+            verdict: "approved",
+            round: 1,
+            findings: [],
+          },
+        }),
+      );
     }),
 );
 
 it.effect.each([
-  { capabilities: ["deep-plan-tools"], listed: true },
-  { capabilities: ["deep-plan"], listed: true },
-  { capabilities: [], listed: false },
-] as const)("lists the toolkit before a run is bound ($capabilities)", ({ capabilities, listed }) =>
+  {
+    name: "no grant capability",
+    input: { ...reviewer, off: true },
+    expected: "credential-not-authorized",
+  },
+  {
+    name: "delegated identity",
+    input: { ...reviewer, ownerThreadId: ownerId },
+    expected: "owner-mismatch",
+  },
+  { name: "implementer", input: implementer, expected: "phase-mismatch" },
+  { name: "planner", input: planner, expected: "phase-mismatch" },
+  {
+    name: "forged grant",
+    input: { ...implementer, binding: { ...reviewGrant, turnId } },
+    expected: "stale-plan",
+  },
+  {
+    name: "stale plan version",
+    input: { ...reviewer, binding: { ...reviewGrant, turnId, approvedPlanVersion: 2 } },
+    expected: "stale-plan",
+  },
+  {
+    name: "stale provider turn",
+    input: { ...reviewer, binding: { ...reviewGrant, turnId: RunId.make("old-turn") } },
+    expected: "stale-plan",
+  },
+  {
+    name: "completed turn",
+    input: { ...reviewer, status: "completed" as const },
+    expected: "stale-plan",
+  },
+  {
+    name: "other run",
+    input: reviewer,
+    call: { ...verdict, expectedRunId: DeepPlanRunId.make("old-run") },
+    expected: "stale-run",
+  },
+  {
+    name: "other target",
+    input: reviewer,
+    call: { ...verdict, target: finalTarget },
+    expected: "target-mismatch",
+  },
+  {
+    name: "other round",
+    input: reviewer,
+    call: { ...verdict, round: 2 },
+    expected: "target-mismatch",
+  },
+] as const)("denies a verdict from $name", (row) =>
   Effect.gen(function* () {
-    const test = harness({ scope: { ...scope, capabilities: new Set(capabilities) } });
-    const visibility = yield* test.provide(
+    const test = harness(row.input);
+    const result = yield* test
+      .provide(invokeDeepPlanReviewVerdict("call" in row ? row.call : verdict))
+      .pipe(Effect.flip);
+    expect(result).toMatchObject({ _tag: "DeepPlanToolScopeError", reason: row.expected });
+    expect(test.dispatch).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect("keeps the review state scoped to the reviewer’s assigned target", () =>
+  Effect.gen(function* () {
+    const state = yield* harness(reviewer).provide(invokeDeepPlanState());
+    expect(state).toEqual({
+      id: runId,
+      revision: 3,
+      phase: "implementing",
+      planVersion: 1,
+      target,
+      round: 1,
+    });
+    const plannerState = yield* harness(planner).provide(invokeDeepPlanState());
+    expect(plannerState).toHaveProperty("chats", planning.chats);
+  }),
+);
+
+it.effect("gives the first final reviewer all submitted paths even without Git checkpoints", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped();
+    yield* fs.makeDirectory(path.join(workspaceRoot, "src"));
+    yield* fs.writeFileString(path.join(workspaceRoot, "AGENTS.md"), "Follow project rules.");
+    yield* fs.writeFileString(
+      path.join(workspaceRoot, "src", "CLAUDE.md"),
+      "Follow parser conventions.",
+    );
+    const finalReviewingTurn = { ...reviewingTurn, kind: "finalReview", stepId: null } as const;
+    const test = harness({
+      ...reviewer,
+      assignment: finalReviewingTurn,
+      grant: { ...reviewGrant, review: { target: finalTarget, round: 1 } },
+      run: {
+        ...approved,
+        phase: "finalReview",
+        activeTurns: [finalReviewingTurn],
+        finalReview: { ...pendingFinal, status: "inReview", reviews: [pendingReview] },
+      },
+    });
+    const context = yield* test.provide(invokeDeepPlanReviewContext()).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(OrchestratorV2)({
+            getThreadShell: () => Effect.succeed({ ...test.actor, worktreePath: workspaceRoot }),
+          }),
+          Layer.mock(ProjectStoreV2)({
+            get: () =>
+              Effect.succeedSome({
+                projectId: test.actor.projectId,
+                title: "Parser",
+                workspaceRoot,
+                defaultModelSelection: null,
+                defaultThreadEnvMode: null,
+                autoPull: false,
+                faviconPath: null,
+                projectIcon: null,
+                pinnedAt: null,
+                archivedAt: null,
+                scripts: [],
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                deletedAt: null,
+              } satisfies ProjectRow),
+          }),
+          Layer.mock(CheckpointDiffQuery)({
+            getReviewDiff: () => Effect.die("Missing checkpoints should use submitted paths"),
+          }),
+          WorkspacePaths.layer,
+        ),
+      ),
+    );
+    expect(context.target).toEqual(finalTarget);
+    expect(context.diff).toBeNull();
+    expect(context.submission.changedFiles).toEqual(changes);
+    expect(context.instructionPaths.toSorted()).toEqual(
+      ["AGENTS.md", path.join("src", "CLAUDE.md")].toSorted(),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("advertises only reviewer tools to the review grant", () =>
+  Effect.gen(function* () {
+    const visibility = yield* harness(reviewer).provide(
       Effect.sync(() =>
-        Object.values(DeepPlanToolkit.tools).map((tool) =>
+        Object.values(DeepPlanToolkit.tools).flatMap((tool) =>
           Context.getOrUndefined(
             tool.annotations,
             McpSchema.EnabledWhen,
-          )?.({ protocolVersion: "2025-06-18", capabilities: {} }),
+          )?.({ protocolVersion: "2025-06-18", capabilities: {} })
+            ? [tool.name]
+            : [],
         ),
       ),
     );
-    expect(visibility).toEqual(Object.values(DeepPlanToolkit.tools).map(() => listed));
+    expect(visibility.toSorted()).toEqual([
+      "deep_plan_review_context",
+      "deep_plan_review_verdict",
+      "deep_plan_state",
+    ]);
   }),
-);
-
-it.effect("rejects delegated credentials and run assertions from an earlier run", () =>
-  Effect.gen(function* () {
-    const foreign = harness({ scope: { ...scope, ownerThreadId: ThreadId.make("another-owner") } });
-    expect(yield* foreign.provide(invokeDeepPlanState()).pipe(Effect.flip)).toMatchObject({
-      reason: "owner-mismatch",
-    });
-    expect(foreign.getRun).not.toHaveBeenCalled();
-    const current = harness(implementing());
-    expect(
-      yield* current
-        .provide(
-          invokeDeepPlanStepUpdate({
-            ...update,
-            expectedRunId: DeepPlanRunId.make("run-old"),
-            stepId: "step-1",
-            status: "verified",
-            evidence,
-          }),
-        )
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "stale-run" });
-    expect(current.updateRun).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect("rejects an approval superseded by another plan version", () =>
-  Effect.gen(function* () {
-    const current = implementing();
-    const test = harness({
-      ...current,
-      scope: { ...current.scope, deepPlan: { ...current.scope.deepPlan!, approvedPlanVersion: 2 } },
-    });
-    expect(
-      yield* test
-        .provide(
-          invokeDeepPlanStepUpdate({ ...update, stepId: "step-1", status: "verified", evidence }),
-        )
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "stale-plan" });
-    expect(test.updateRun).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect("binds execution in a new implementation thread and ignores caller actor spoofing", () =>
-  Effect.gen(function* () {
-    const implementationThreadId = ThreadId.make("implement-owner");
-    const test = harness(implementing(implementationThreadId));
-    const input = {
-      ...update,
-      stepId: "step-1",
-      status: "verified" as const,
-      evidence,
-      actor: {
-        implementerId: "foreign",
-        model: { instanceId: ProviderInstanceId.make("foreign"), model: "another-model" },
-      },
-    };
-    const receipt = yield* test.provide(invokeDeepPlanStepUpdate(input));
-    expect(receipt).toEqual({
-      runId,
-      revision: 4,
-      phase: "implementing",
-      planVersion: 1,
-      approvedPlanVersion: 1,
-      finalValidation: run.finalValidation,
-    });
-    expect(test.getRun).toHaveBeenCalledWith({ threadId, runId });
-    expect(test.updateRun).toHaveBeenCalledWith({
-      threadId,
-      runId,
-      expectedRevision: 3,
-      operationId: "operation-1",
-      mutation: {
-        type: "step-update",
-        stepId: "step-1",
-        status: "verified",
-        evidence,
-        actor: { implementerId: `thread:${implementationThreadId}`, model: modelSelection },
-      },
-    });
-  }),
-);
-
-it.effect("does not allow planning credentials to record execution or final validation", () =>
-  Effect.gen(function* () {
-    const test = harness();
-    expect(
-      yield* test
-        .provide(
-          invokeDeepPlanValidation({
-            ...update,
-            type: "complete",
-            requestId: "validation-1",
-            status: "passed",
-            evidence,
-          }),
-        )
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "phase-mismatch" });
-    expect(test.updateRun).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect("reads only frozen sources of the credential's run", () =>
-  Effect.gen(function* () {
-    const sourceId = DeepPlanSourceId.make("source-1");
-    const readSourceChunk = vi.fn<DeepPlanSourcesShape["readSourceChunk"]>(() =>
-      Effect.fail(new DeepPlanSourceError({ code: "source-not-found", message: "Not granted" })),
-    );
-    const test = harness({ sources: { readSourceChunk } });
-    const input = {
-      expectedRunId: runId,
-      sourceId,
-      cursor: "cursor-2",
-      limit: 10,
-      threadId: ThreadId.make("foreign"),
-      runId: DeepPlanRunId.make("foreign"),
-    };
-    yield* test.provide(invokeDeepPlanReadSource(input)).pipe(Effect.flip);
-    expect(readSourceChunk).toHaveBeenCalledWith({
-      threadId,
-      runId,
-      sourceId,
-      cursor: "cursor-2",
-      limit: 10,
-      includeBodies: false,
-    });
-  }),
-);
-
-it.effect("rejects stale source summaries before persisting them", () =>
-  Effect.gen(function* () {
-    const summarizeSource = vi.fn<DeepPlanSourcesShape["summarizeSource"]>(() =>
-      Effect.die("Unexpected summary"),
-    );
-    const test = harness({ sources: { summarizeSource } });
-    const error = yield* test
-      .provide(
-        invokeDeepPlanSummarizeSource({
-          ...update,
-          expectedRevision: 2,
-          sourceId: DeepPlanSourceId.make("source-1"),
-          expectedContentHash: "hash",
-          summary: {
-            requirements: [],
-            decisions: [],
-            openIssues: [],
-            rejectedApproaches: [],
-            conflicts: [],
-            citedRecordIds: [],
-          },
-        }),
-      )
-      .pipe(Effect.flip);
-    expect(error).toMatchObject({ code: "stale-revision" });
-    expect(summarizeSource).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect("does not advance source coverage after a run is paused", () =>
-  Effect.gen(function* () {
-    const readSourceChunk = vi.fn<DeepPlanSourcesShape["readSourceChunk"]>(() =>
-      Effect.die("Unexpected source read"),
-    );
-    const test = harness({ run: { ...run, phase: "paused" }, sources: { readSourceChunk } });
-    const error = yield* test
-      .provide(
-        invokeDeepPlanReadSource({
-          expectedRunId: runId,
-          sourceId: DeepPlanSourceId.make("source-1"),
-        }),
-      )
-      .pipe(Effect.flip);
-    expect(error).toMatchObject({ reason: "phase-mismatch" });
-    expect(readSourceChunk).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect("refuses plan publication until authoritative frozen coverage is complete", () =>
-  Effect.gen(function* () {
-    const test = harness({
-      sources: {
-        assertCompleteCoverage: () =>
-          Effect.fail(
-            new DeepPlanSourceError({
-              code: "incomplete-source",
-              message: "Source pages remain unread",
-            }),
-          ),
-      },
-    });
-    expect(
-      yield* test.provide(invokeDeepPlanPublish({ ...update, plan })).pipe(Effect.flip),
-    ).toMatchObject({ code: "incomplete-source" });
-    expect(test.updateRun).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect("persists final evidence with the bound implementing agent and request", () =>
-  Effect.gen(function* () {
-    const test = harness(implementing());
-    yield* test.provide(
-      invokeDeepPlanValidation({
-        ...update,
-        type: "complete",
-        requestId: "validation-1",
-        status: "passed",
-        evidence,
-      }),
-    );
-    expect(test.updateRun.mock.calls[0]?.[0].mutation).toEqual({
-      type: "validation-complete",
-      requestId: "validation-1",
-      status: "passed",
-      evidence,
-      actor: { implementerId: `thread:${threadId}`, model: modelSelection },
-    });
-  }),
-);
-
-it.effect("derives final validation identity and rejects invented request IDs", () =>
-  Effect.gen(function* () {
-    const test = harness(implementing());
-    const error = yield* test
-      .provide(invokeDeepPlanValidation({ ...update, type: "start", requestId: "invented" }))
-      .pipe(Effect.flip);
-    expect(error).toMatchObject({ code: "validation-required" });
-    expect(test.updateRun).not.toHaveBeenCalled();
-    yield* test.provide(invokeDeepPlanValidation({ ...update, type: "start" }));
-    expect(test.updateRun.mock.calls[0]?.[0].mutation).toMatchObject({
-      type: "validation-start",
-      requestId: `deep-plan:${runId}:validation:1:0`,
-    });
-  }),
-);
-
-it.effect(
-  "returns an approved revision to review and rejects its obsolete execution credential",
-  () =>
-    Effect.gen(function* () {
-      for (const phase of ["implementing", "validating"] as const) {
-        const implementationThreadId = ThreadId.make("revision-implementer");
-        const bound = implementing(implementationThreadId);
-        const approvalKey = deepPlanApprovalKey(plan);
-        let current: DeepPlanRun = {
-          ...bound.run,
-          phase,
-          approvalKey,
-          approval: { ...bound.run.approval!, approvalKey },
-          stepStates: [{ stepId: "step-1", status: "verified", evidence, updatedAt: timestamp }],
-        };
-        const test = harness({ ...bound, run: current });
-        test.getRun.mockImplementation(() => Effect.succeed(current));
-        test.updateRun.mockImplementation((input) =>
-          updateDeepPlanRun(current, {
-            ...input,
-            type: "thread.deep-plan.update",
-            commandId: CommandId.make("revision-command"),
-            createdAt: timestamp,
-          }).pipe(
-            Effect.mapError(
-              (error) => new DeepPlanError({ code: "invalid-transition", message: error.detail }),
-            ),
-            Effect.tap((updated) =>
-              Effect.sync(() => {
-                current = updated;
-              }),
-            ),
-          ),
-        );
-        const revised = { ...plan, version: 2, scope: ["Parser behavior", "Parser diagnostics"] };
-        const receipt = yield* test.provide(invokeDeepPlanPublish({ ...update, plan: revised }));
-        expect(receipt).toMatchObject({
-          phase: "awaitingApproval",
-          planVersion: 2,
-          approvedPlanVersion: null,
-        });
-        expect(current.plan).toEqual(revised);
-        expect(current.approval).toBeNull();
-        expect(current.stepStates).toMatchObject([
-          { stepId: "step-1", status: "pending", evidence: [] },
-        ]);
-        expect(current.finalValidation.status).toBe("pending");
-        const stale = yield* test
-          .provide(
-            invokeDeepPlanStepUpdate({
-              ...update,
-              expectedRevision: receipt.revision,
-              stepId: "step-1",
-              status: "verified",
-              evidence,
-            }),
-          )
-          .pipe(Effect.flip);
-        expect(stale).toMatchObject({ reason: "stale-plan" });
-      }
-    }),
-);
-
-function frozenSource(id: string): DeepPlanSourceSnapshot {
-  return {
-    sourceId: DeepPlanSourceId.make(id),
-    origin: {
-      environmentId: scope.environmentId,
-      projectId: ProjectId.make("project"),
-      threadId: ThreadId.make(id),
-    },
-    projectTitle: "Project",
-    threadTitle: id,
-    archived: true,
-    capturedAt: timestamp,
-    contentVersion: "1",
-    contentHash: `hash-${id}`,
-    messageCount: 1,
-    activityCount: 0,
-    attachmentCount: 0,
-    recordCount: 1,
-    forkOrigin: null,
-  };
-}
-
-function sourceWorkerScope(sourceId: import("@t3tools/contracts").DeepPlanSourceId): TestScope {
-  const workerThreadId = ThreadId.make(`analysis-worker:${sourceId}`);
-  return {
-    ...scope,
-    ownerThreadId: workerThreadId,
-    deepPlan: {
-      ...scope.deepPlan!,
-      readOnly: true,
-      sourceAnalysis: { workerThreadId, sourceIds: [sourceId] },
-    },
-  };
-}
-
-it.effect(
-  "limits source workers to their own batch and prevents plan publication or delegation",
-  () =>
-    Effect.gen(function* () {
-      const source = frozenSource("source-1");
-      const other = frozenSource("source-2");
-      const readSourceChunk = vi.fn<DeepPlanSourcesShape["readSourceChunk"]>(() =>
-        Effect.fail(
-          new DeepPlanSourceError({ code: "source-not-found", message: "Read reached storage" }),
-        ),
-      );
-      const test = harness({
-        run: { ...run, sources: [source, other] },
-        scope: sourceWorkerScope(source.sourceId),
-        sources: { readSourceChunk },
-      });
-      expect((yield* test.provide(invokeDeepPlanSources())).sources).toEqual([source]);
-      expect((yield* test.provide(invokeDeepPlanState())).sources).toEqual([source]);
-      expect(
-        yield* test
-          .provide(invokeDeepPlanReadSource({ expectedRunId: runId, sourceId: other.sourceId }))
-          .pipe(Effect.flip),
-      ).toMatchObject({ reason: "owner-mismatch" });
-      expect(readSourceChunk).not.toHaveBeenCalled();
-      expect(
-        yield* test
-          .provide(invokeDeepPlanReadSource({ expectedRunId: runId, sourceId: source.sourceId }))
-          .pipe(Effect.flip),
-      ).toMatchObject({ message: "Read reached storage" });
-      expect(
-        yield* test.provide(invokeDeepPlanPublish({ ...update, plan })).pipe(Effect.flip),
-      ).toMatchObject({ reason: "owner-mismatch" });
-      expect(
-        yield* test
-          .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId }))
-          .pipe(Effect.flip),
-      ).toMatchObject({ reason: "owner-mismatch" });
-      expect(test.updateRun).not.toHaveBeenCalled();
-    }),
-);
-
-it.effect(
-  "rebases only assigned source summaries onto the current revision when parallel workers advance it",
-  () =>
-    Effect.gen(function* () {
-      const source = frozenSource("source-1");
-      const summary = {
-        requirements: ["Preserve behavior"],
-        decisions: [],
-        openIssues: [],
-        rejectedApproaches: [],
-        conflicts: [],
-        citedRecordIds: ["record-1"],
-      };
-      const coverage = {
-        sourceId: source.sourceId,
-        status: "summarized" as const,
-        importedRecordCount: 1,
-        readRecordCount: 1,
-        summary,
-        error: null,
-        updatedAt: timestamp,
-      };
-      const summarizeSource = vi.fn<DeepPlanSourcesShape["summarizeSource"]>(() =>
-        Effect.succeed(coverage),
-      );
-      const test = harness({
-        run: { ...run, revision: 8, sources: [source] },
-        scope: sourceWorkerScope(source.sourceId),
-        sources: {
-          summarizeSource,
-          listSources: () => Effect.succeed({ runId, sources: [source], coverage: [coverage] }),
-        },
-      });
-      yield* test.provide(
-        invokeDeepPlanSummarizeSource({
-          ...update,
-          sourceId: source.sourceId,
-          expectedContentHash: source.contentHash,
-          summary,
-        }),
-      );
-      expect(summarizeSource).toHaveBeenCalledOnce();
-      expect(test.updateRun).toHaveBeenCalledWith(
-        expect.objectContaining({
-          expectedRevision: 8,
-          mutation: { type: "source-coverage", coverage: [coverage] },
-        }),
-      );
-      expect(
-        yield* test
-          .provide(
-            invokeDeepPlanSummarizeSource({
-              ...update,
-              sourceId: DeepPlanSourceId.make("not-assigned"),
-              expectedContentHash: "hash",
-              summary,
-            }),
-          )
-          .pipe(Effect.flip),
-      ).toMatchObject({ reason: "owner-mismatch" });
-      expect(summarizeSource).toHaveBeenCalledOnce();
-    }),
-);
-
-function reentryFailingRunLock(): DeepPlanWorkflow["Service"]["withRunLock"] {
-  const held = new Set<string>();
-  return (lockedRunId, effect) =>
-    Effect.suspend(() => {
-      if (held.has(lockedRunId))
-        return Effect.die(new Error("The run lock was acquired again by its holder."));
-      held.add(lockedRunId);
-      return effect.pipe(Effect.ensuring(Effect.sync(() => held.delete(lockedRunId))));
-    });
-}
-
-function liveCoordinator(
-  workflow: DeepPlanWorkflow["Service"],
-  getThreadRecords: (threadId: ThreadId) => unknown,
-  settings = ServerSettings.layerTest(),
-) {
-  return GeneralSubagentCoordinatorLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.succeed(DeepPlanWorkflow, workflow),
-        Layer.mock(OrchestratorV2)({
-          getThreadRecords: (recordsThreadId) =>
-            Effect.succeed(getThreadRecords(recordsThreadId) as never),
-        }),
-        Layer.mock(ThreadManagementService)({}),
-        Layer.mock(ProviderRegistry)({}),
-        settings,
-        NodeServices.layer,
-      ),
-    ),
-  );
-}
-
-it.effect("analyzes a run without sources at once, without spawning workers", () =>
-  Effect.gen(function* () {
-    const test = harness({ withRunLock: reentryFailingRunLock() });
-    const result = yield* test
-      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 1 }))
-      .pipe(Effect.provide(liveCoordinator(test.workflow, () => ({ runs: [], subagents: [] }))));
-    expect(result).toMatchObject({ agents: [], remainingSourceCount: 0, complete: true });
-  }),
-);
-
-it.effect("reports active source workers under the analysis call's single run lock", () =>
-  Effect.gen(function* () {
-    const source = frozenSource("source-in-progress");
-    const workerThreadId = ThreadId.make("source-worker-thread");
-    const test = harness({
-      run: { ...run, sources: [source] },
-      withRunLock: reentryFailingRunLock(),
-      sources: {
-        listSources: () =>
-          Effect.succeed({
-            runId,
-            sources: [source],
-            coverage: [
-              {
-                sourceId: source.sourceId,
-                status: "ready",
-                importedRecordCount: 1,
-                readRecordCount: 1,
-                summary: null,
-                error: null,
-                updatedAt: timestamp,
-              },
-            ],
-          }),
-      },
-    });
-    const coordinator = liveCoordinator(
-      test.workflow,
-      (recordsThreadId) =>
-        recordsThreadId === workerThreadId
-          ? {
-              thread: {
-                modelSelection,
-                deepPlanExecution: {
-                  runId,
-                  sourceAnalysis: { workerThreadId: threadId, sourceIds: [source.sourceId] },
-                },
-              },
-            }
-          : {
-              runs: [],
-              subagents: [
-                {
-                  id: "source-worker",
-                  childThreadId: workerThreadId,
-                  status: "running",
-                  providerInstanceId: modelSelection.instanceId,
-                  driver: ProviderDriverKind.make("codex"),
-                  model: modelSelection.model,
-                },
-              ],
-            },
-      ServerSettings.layerTest({
-        betterT3Environment: {
-          version: 1,
-          initialization: "clean-install",
-          flags: { "agent.generalSubagents": true },
-        },
-      }),
-    );
-    const result = yield* test
-      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 0 }))
-      .pipe(Effect.provide(coordinator));
-    expect(result).toMatchObject({
-      agents: [{ agentId: "source-worker", status: "running", sourceIds: [source.sourceId] }],
-      remainingSourceCount: 1,
-      complete: false,
-    });
-  }),
-);
-
-it.effect(
-  "releases the run lock while waiting, and never counts a completed worker without a saved summary",
-  () =>
-    Effect.gen(function* () {
-      const source = frozenSource("source-1");
-      let locked = false;
-      const test = harness({
-        run: { ...run, sources: [source] },
-        withRunLock: (_runId, effect) =>
-          Effect.acquireUseRelease(
-            Effect.sync(() => {
-              expect(locked).toBe(false);
-              locked = true;
-            }),
-            () => effect,
-            () =>
-              Effect.sync(() => {
-                locked = false;
-              }),
-          ),
-        sources: {
-          listSources: () =>
-            Effect.succeed({
-              runId,
-              sources: [source],
-              coverage: [
-                {
-                  sourceId: source.sourceId,
-                  status: "ready",
-                  importedRecordCount: 1,
-                  readRecordCount: 1,
-                  summary: null,
-                  error: null,
-                  updatedAt: timestamp,
-                },
-              ],
-            }),
-        },
-      });
-      const agent = {
-        agentId: SubagentId.make("analysis-1"),
-        status: "starting" as const,
-        providerInstanceId: modelSelection.instanceId,
-        providerDriver: ProviderDriverKind.make("codex"),
-        model: modelSelection.model,
-        reasoningEffort: null,
-      };
-      const layer = Layer.mock(GeneralSubagentCoordinator)({
-        analyzeDeepPlanSources: (input) =>
-          Effect.sync(() => {
-            expect(locked).toBe(true);
-            expect(input.sources).toEqual([source]);
-            return [{ ...agent, sourceIds: [source.sourceId] }];
-          }),
-        wait: () =>
-          Effect.sync(() => {
-            expect(locked).toBe(false);
-            return {
-              agents: [{ ...agent, status: "completed", result: null }],
-              allTerminal: true,
-              timedOut: false,
-            };
-          }),
-      });
-      const result = yield* test
-        .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId }))
-        .pipe(Effect.provide(layer));
-      expect(result).toMatchObject({
-        complete: false,
-        remainingSourceCount: 1,
-        batchSize: 4,
-        maxParallelBatches: 4,
-      });
-    }),
-);
-
-it.effect("streams source read progress after waiting without treating it as a saved summary", () =>
-  Effect.gen(function* () {
-    const source = { ...frozenSource("reading-source"), recordCount: 100 };
-    const initialCoverage = {
-      sourceId: source.sourceId,
-      status: "ready" as const,
-      importedRecordCount: 100,
-      readRecordCount: 0,
-      summary: null,
-      error: null,
-      updatedAt: timestamp,
-    };
-    let coverage = initialCoverage;
-    let current: DeepPlanRun = { ...run, sources: [source], sourceCoverage: [initialCoverage] };
-    const test = harness({
-      run: current,
-      sources: {
-        listSources: () => Effect.sync(() => ({ runId, sources: [source], coverage: [coverage] })),
-      },
-    });
-    test.getRun.mockImplementation(() => Effect.sync(() => current));
-    test.updateRun.mockImplementation((input) =>
-      updateDeepPlanRun(current, {
-        ...input,
-        type: "thread.deep-plan.update",
-        commandId: CommandId.make(input.operationId),
-        createdAt: timestamp,
-      }).pipe(
-        Effect.mapError(
-          (error) => new DeepPlanError({ code: "invalid-transition", message: error.detail }),
-        ),
-        Effect.tap((next) =>
-          Effect.sync(() => {
-            current = next;
-          }),
-        ),
-      ),
-    );
-    const agent = {
-      agentId: SubagentId.make("reading-worker"),
-      status: "running" as const,
-      providerInstanceId: modelSelection.instanceId,
-      providerDriver: ProviderDriverKind.make("codex"),
-      model: modelSelection.model,
-      reasoningEffort: null,
-    };
-    const layer = Layer.mock(GeneralSubagentCoordinator)({
-      analyzeDeepPlanSources: () => Effect.succeed([{ ...agent, sourceIds: [source.sourceId] }]),
-      wait: () =>
-        Effect.sync(() => {
-          coverage = { ...coverage, readRecordCount: 37, updatedAt: "2026-10-16T10:00:01.000Z" };
-          return { agents: [{ ...agent, result: null }], allTerminal: false, timedOut: true };
-        }),
-    });
-    const result = yield* test
-      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId }))
-      .pipe(Effect.provide(layer));
-    expect(result).toMatchObject({ complete: false, remainingSourceCount: 1 });
-    expect(current.sourceCoverage[0]).toMatchObject({
-      readRecordCount: 37,
-      status: "ready",
-      summary: null,
-    });
-    expect(current.revision).toBe(4);
-    coverage = { ...coverage, updatedAt: "2026-10-16T10:00:02.000Z" };
-    yield* test
-      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 0 }))
-      .pipe(Effect.provide(layer));
-    expect(test.updateRun).toHaveBeenCalledOnce();
-    coverage = { ...coverage, readRecordCount: 100 };
-    yield* test
-      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 0 }))
-      .pipe(Effect.provide(layer));
-    expect(current.sourceCoverage[0]).toMatchObject({
-      readRecordCount: 100,
-      status: "ready",
-      summary: null,
-    });
-    expect(test.updateRun).toHaveBeenCalledTimes(2);
-  }),
-);
-
-it.effect("rejects a source grant replayed by another worker or after user approval", () =>
-  Effect.gen(function* () {
-    const sourceId = DeepPlanSourceId.make("source-1");
-    const worker = sourceWorkerScope(sourceId);
-    const replay = harness({
-      scope: { ...worker, ownerThreadId: ThreadId.make("sibling-worker") },
-    });
-    expect(yield* replay.provide(invokeDeepPlanState()).pipe(Effect.flip)).toMatchObject({
-      reason: "owner-mismatch",
-    });
-    const approved = harness({ run: implementing().run, scope: worker });
-    expect(yield* approved.provide(invokeDeepPlanState()).pipe(Effect.flip)).toMatchObject({
-      reason: "owner-mismatch",
-    });
-  }),
-);
-
-it.effect(
-  "keeps both summaries when two source workers save against the same observed revision",
-  () =>
-    Effect.gen(function* () {
-      const sources = [frozenSource("parallel-1"), frozenSource("parallel-2")];
-      const coverage = sources.map((source) => ({
-        sourceId: source.sourceId,
-        status: "ready" as const,
-        importedRecordCount: 1,
-        readRecordCount: 1,
-        summary: null,
-        error: null,
-        updatedAt: timestamp,
-      }));
-      let current: DeepPlanRun = { ...run, sources, sourceCoverage: coverage };
-      let storedCoverage: DeepPlanRun["sourceCoverage"] = coverage;
-      const lock = yield* Semaphore.make(1);
-      const test = harness({
-        run: current,
-        withRunLock: (_runId, effect) => lock.withPermit(effect),
-        sources: {
-          listSources: () => Effect.sync(() => ({ runId, sources, coverage: storedCoverage })),
-          summarizeSource: (input) =>
-            Effect.sync(() => {
-              const updated = {
-                sourceId: input.sourceId,
-                status: "summarized" as const,
-                importedRecordCount: 1,
-                readRecordCount: 1,
-                summary: input.summary,
-                error: null,
-                updatedAt: timestamp,
-              };
-              storedCoverage = storedCoverage.map((entry) =>
-                entry.sourceId === input.sourceId ? updated : entry,
-              );
-              return updated;
-            }),
-        },
-      });
-      test.getRun.mockImplementation(() => Effect.sync(() => current));
-      test.updateRun.mockImplementation((input) =>
-        updateDeepPlanRun(current, {
-          ...input,
-          type: "thread.deep-plan.update",
-          commandId: CommandId.make(input.operationId),
-          createdAt: timestamp,
-        }).pipe(
-          Effect.mapError(
-            (error) => new DeepPlanError({ code: "invalid-transition", message: error.detail }),
-          ),
-          Effect.tap((updated) =>
-            Effect.sync(() => {
-              current = updated;
-            }),
-          ),
-        ),
-      );
-      yield* Effect.forEach(
-        sources,
-        (source) =>
-          test.provide(
-            invokeDeepPlanSummarizeSource({
-              ...update,
-              operationId: `summary:${source.sourceId}`,
-              sourceId: source.sourceId,
-              expectedContentHash: source.contentHash,
-              summary: {
-                requirements: [source.threadTitle],
-                decisions: [],
-                openIssues: [],
-                rejectedApproaches: [],
-                conflicts: [],
-                citedRecordIds: ["record-1"],
-              },
-            }),
-            sourceWorkerScope(source.sourceId),
-          ),
-        { concurrency: "unbounded" },
-      );
-      expect(current.revision).toBe(run.revision + 2);
-      expect(current.sourceCoverage.map((entry) => entry.status)).toEqual([
-        "summarized",
-        "summarized",
-      ]);
-      expect(current.sourceCoverage.map((entry) => entry.summary?.requirements)).toEqual([
-        ["parallel-1"],
-        ["parallel-2"],
-      ]);
-    }),
 );

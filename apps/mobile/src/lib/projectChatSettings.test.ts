@@ -39,7 +39,7 @@ const config = {
   environment: {
     capabilities: {
       projectChatSettings: true,
-      deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
+      deepPlanning: { version: 2 },
     },
   },
   providers: ["codex-work", "codex-personal"].map((instanceId) => ({

@@ -31,7 +31,10 @@ import {
   type NativeProviderToolResult,
   type NativeProviderTurnAdmission,
 } from "../nativeHarness/NativeProviderAdapter.ts";
-import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
+import {
+  nativeHarnessTurnGuidance,
+  nativeHarnessWorkspaceInstructions,
+} from "../nativeHarness/NativeHarnessPrompt.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
@@ -371,9 +374,7 @@ export function buildOpenRouterSystemInstructions(input: {
     `The trusted workspace root is ${input.cwd}.`,
     access,
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
-      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
-      : "Carry the request through focused verification and preserve unrelated work.",
+    nativeHarnessTurnGuidance(input),
   ].join("\n");
 }
 

@@ -4,7 +4,6 @@ export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
 export * from "./composerMode.ts";
 export * from "./deepPlanning.ts";
-export * from "./deepPlanningSources.ts";
 export * from "./messageReplies.ts";
 export * from "./composerContextClipboard.ts";
 export * from "./background.ts";

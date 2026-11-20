@@ -430,27 +430,12 @@ import {
   SourceControlSignInResult,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
-import { DeepPlanError, DeepPlanGetRunInput, DeepPlanGetRunResult } from "./deepPlanning.ts";
 import {
   DEEP_PLAN_WS_METHODS,
-  DeepPlanCatalogSourcesInput,
-  DeepPlanCatalogSourcesResult,
-  DeepPlanExportSourcesInput,
-  DeepPlanExportSourcesResult,
-  DeepPlanReadExportChunkInput,
-  DeepPlanReadExportChunkResult,
-  DeepPlanInitializeSourcesInput,
-  DeepPlanInitializeSourcesResult,
-  DeepPlanImportSourceChunkInput,
-  DeepPlanImportSourceChunkResult,
-  DeepPlanListSourcesInput,
-  DeepPlanListSourcesResult,
-  DeepPlanReadSourceChunkInput,
-  DeepPlanReadSourceChunkResult,
-  DeepPlanSummarizeSourceInput,
-  DeepPlanSummarizeSourceResult,
-  DeepPlanSourceError,
-} from "./deepPlanningSources.ts";
+  DeepPlanError,
+  DeepPlanGetRunInput,
+  DeepPlanGetRunResult,
+} from "./deepPlanning.ts";
 import {
   ProjectIndexGetSettingsInput,
   ProjectIndexSettings,
@@ -641,14 +626,6 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 export const WS_METHODS = {
   deepPlanGetRun: DEEP_PLAN_WS_METHODS.getRun,
-  deepPlanCatalogSources: DEEP_PLAN_WS_METHODS.catalogSources,
-  deepPlanExportSources: DEEP_PLAN_WS_METHODS.exportSources,
-  deepPlanReadExportChunk: DEEP_PLAN_WS_METHODS.readExportChunk,
-  deepPlanInitializeSources: DEEP_PLAN_WS_METHODS.initializeSources,
-  deepPlanImportSourceChunk: DEEP_PLAN_WS_METHODS.importSourceChunk,
-  deepPlanListSources: DEEP_PLAN_WS_METHODS.listSources,
-  deepPlanReadSourceChunk: DEEP_PLAN_WS_METHODS.readSourceChunk,
-  deepPlanSummarizeSource: DEEP_PLAN_WS_METHODS.summarizeSource,
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -2209,6 +2186,25 @@ const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   stream: true,
 });
 
+const WsOrchestrationV2GetInlineReplyPageRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getInlineReplyPage,
+  {
+    payload: OrchestrationV2RpcSchemas.getInlineReplyPage.input,
+    success: OrchestrationV2RpcSchemas.getInlineReplyPage.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsOrchestrationV2SubscribeInlineRepliesRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeInlineReplies,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeInlineReplies.input,
+    success: OrchestrationV2RpcSchemas.subscribeInlineReplies.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 const WsOrchestrationV2SubscribeCommandOutputRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   {
@@ -2904,51 +2900,10 @@ const WsSubscribeResourceProtectionRpc = Rpc.make(WS_METHODS.subscribeResourcePr
   stream: true,
 });
 const DeepPlanRpcError = Schema.Union([DeepPlanError, EnvironmentAuthorizationError]);
-const DeepPlanSourcesRpcError = Schema.Union([DeepPlanSourceError, EnvironmentAuthorizationError]);
 const WsDeepPlanGetRunRpc = Rpc.make(DEEP_PLAN_WS_METHODS.getRun, {
   payload: DeepPlanGetRunInput,
   success: DeepPlanGetRunResult,
   error: DeepPlanRpcError,
-});
-const WsDeepPlanCatalogSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.catalogSources, {
-  payload: DeepPlanCatalogSourcesInput,
-  success: DeepPlanCatalogSourcesResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanExportSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.exportSources, {
-  payload: DeepPlanExportSourcesInput,
-  success: DeepPlanExportSourcesResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanReadExportChunkRpc = Rpc.make(DEEP_PLAN_WS_METHODS.readExportChunk, {
-  payload: DeepPlanReadExportChunkInput,
-  success: DeepPlanReadExportChunkResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanInitializeSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.initializeSources, {
-  payload: DeepPlanInitializeSourcesInput,
-  success: DeepPlanInitializeSourcesResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanImportSourceChunkRpc = Rpc.make(DEEP_PLAN_WS_METHODS.importSourceChunk, {
-  payload: DeepPlanImportSourceChunkInput,
-  success: DeepPlanImportSourceChunkResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanListSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.listSources, {
-  payload: DeepPlanListSourcesInput,
-  success: DeepPlanListSourcesResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanReadSourceChunkRpc = Rpc.make(DEEP_PLAN_WS_METHODS.readSourceChunk, {
-  payload: DeepPlanReadSourceChunkInput,
-  success: DeepPlanReadSourceChunkResult,
-  error: DeepPlanSourcesRpcError,
-});
-const WsDeepPlanSummarizeSourceRpc = Rpc.make(DEEP_PLAN_WS_METHODS.summarizeSource, {
-  payload: DeepPlanSummarizeSourceInput,
-  success: DeepPlanSummarizeSourceResult,
-  error: DeepPlanSourcesRpcError,
 });
 
 export const WsRpcGroup = RpcGroup.make(
@@ -3060,14 +3015,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceProtectionRpc,
   WsDeepPlanGetRunRpc,
-  WsDeepPlanCatalogSourcesRpc,
-  WsDeepPlanExportSourcesRpc,
-  WsDeepPlanReadExportChunkRpc,
-  WsDeepPlanInitializeSourcesRpc,
-  WsDeepPlanImportSourceChunkRpc,
-  WsDeepPlanListSourcesRpc,
-  WsDeepPlanReadSourceChunkRpc,
-  WsDeepPlanSummarizeSourceRpc,
 
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
@@ -3277,5 +3224,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
+  WsOrchestrationV2GetInlineReplyPageRpc,
+  WsOrchestrationV2SubscribeInlineRepliesRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);

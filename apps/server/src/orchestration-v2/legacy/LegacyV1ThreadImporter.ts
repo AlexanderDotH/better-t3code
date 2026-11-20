@@ -4,7 +4,7 @@ import {
 } from "../../sourceControl/threadPullRequests.ts";
 import {
   ChatAttachment,
-  DeepPlanRun,
+  StoredDeepPlanRun,
   MessageReplyReference,
   OrchestrationHarnessSyncState,
   SubagentId,
@@ -132,7 +132,7 @@ export class LegacyV1ThreadImporter extends Context.Service<
   LegacyV1ThreadImporterShape
 >()("t3/orchestration-v2/legacy/LegacyV1ThreadImporter") {}
 
-const decodeDeepPlan = Schema.decodeUnknownOption(DeepPlanRun);
+const decodeDeepPlan = Schema.decodeUnknownOption(StoredDeepPlanRun);
 const decodeHarnessSync = Schema.decodeUnknownOption(OrchestrationHarnessSyncState);
 const decodeReply = Schema.decodeUnknownOption(MessageReplyReference);
 const decodeReplyTopic = Schema.decodeUnknownOption(

@@ -1,4 +1,9 @@
-import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import {
+  DEEP_PLAN_MAX_PARALLELISM,
+  type DeepPlanStep,
+  type ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 export type PlanSubagentCount = number;
@@ -196,12 +201,52 @@ function getSupportedPlanSubagentCounts(
   return ceiling === null ? [] : Array.from({ length: ceiling - 1 }, (_, index) => index + 2);
 }
 
+type DeepPlanStepDependencies = Pick<DeepPlanStep, "id" | "dependencies">;
+
+// Lanes beyond the widest dependency level would only wait on unverified steps.
+// DeepPlanDocument already rejects unknown dependencies and cycles.
+function suggestDeepPlanLaneCount(steps: ReadonlyArray<DeepPlanStepDependencies>): number {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const levels = new Map<string, number>();
+  const levelOf = (step: DeepPlanStepDependencies): number => {
+    const known = levels.get(step.id);
+    if (known !== undefined) return known;
+    const level = Math.max(
+      0,
+      ...step.dependencies.map((id) => {
+        const dependency = byId.get(id);
+        return dependency ? levelOf(dependency) + 1 : 0;
+      }),
+    );
+    levels.set(step.id, level);
+    return level;
+  };
+  const widths = new Map<number, number>();
+  for (const step of steps) {
+    const level = levelOf(step);
+    widths.set(level, (widths.get(level) ?? 0) + 1);
+  }
+  return Math.min(Math.max(1, ...widths.values()), DEEP_PLAN_MAX_PARALLELISM);
+}
+
 export function resolvePlanImplementationSuggestion(input: {
   readonly featureEnabled: boolean;
   readonly planMarkdown: string;
   readonly provider: ServerProvider | null | undefined;
   readonly reviewedSubagentCount?: number | null;
+  readonly deepPlanSteps?: ReadonlyArray<DeepPlanStepDependencies>;
 }): PlanImplementationSuggestion | null {
+  if (input.deepPlanSteps !== undefined) {
+    const count = suggestDeepPlanLaneCount(input.deepPlanSteps);
+    if (count < 2) return null;
+    return {
+      strategy: { kind: "subagents", count },
+      supportedCounts: Array.from(
+        { length: DEEP_PLAN_MAX_PARALLELISM - 1 },
+        (_, index) => index + 2,
+      ),
+    };
+  }
   if (!input.featureEnabled) return null;
   const supportedCounts = getSupportedPlanSubagentCounts(input.provider);
   const ceiling = supportedCounts.at(-1);

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
@@ -32,6 +33,7 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import {
   childThreadInputsTitle,
+  mergeInlineReplyItems,
   type CodexFeedbackSubmission,
   type EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
@@ -44,12 +46,14 @@ import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/r
 import type {
   EnvironmentId,
   MessageId,
+  MessageReplyReference,
   ProviderInteractionMode,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
   UsageLimitsReport,
   RunId,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   appendCodexArtifactTemplateUsePrompt,
@@ -151,6 +155,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   finishThreadMessageJump,
   pendingThreadMessageJump,
+  requestThreadMessageJump,
   subscribeThreadMessageJump,
 } from "./threadMessageJump";
 import {
@@ -160,7 +165,9 @@ import {
 import {
   environmentThreadDetails,
   environmentThreadShells,
+  inlineReplyTimeline,
   threadEnvironment,
+  threadFamilies,
 } from "../../state/threads";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
@@ -169,12 +176,15 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
-import type {
-  PendingApproval,
-  PendingUserInput,
-  ThreadFeedEntry,
-  ThreadFeedLatestRun,
+import {
+  buildThreadFeed,
+  createThreadFeedCache,
+  type PendingApproval,
+  type PendingUserInput,
+  type ThreadFeedEntry,
+  type ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
+import { mobileReplyPresentation } from "../../lib/message-replies";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
@@ -203,6 +213,11 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHandle } from "./ThreadFeed";
+import {
+  findMessageJumpEntry,
+  replySourceThreadId,
+  withInlineReplyEntryId,
+} from "./inline-reply-feed";
 import type { ThreadFeedHistoryControls } from "./threadFeedHistory";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
@@ -366,6 +381,7 @@ const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
 
 // Connection failures survive retries and app suspension.
 const RECONNECT_ERROR_DELAY_MS = 5_000;
+const EMPTY_PARENT_REPLY_ROWS = [] as const;
 
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.
@@ -502,6 +518,7 @@ function ThreadDetailBody(
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
+  const isDeepPlanReview = props.selectedThread.deepPlanExecution?.phase === "review";
   const editingRunId = props.queuedRunEdit?.runId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the composer editor on the next animation frame when a queued run edit starts
   useEffect(() => {
@@ -904,14 +921,106 @@ function ThreadDetailBody(
       (entry) => "acknowledged" in entry && entry.acknowledged === true,
     );
   const selectedThreadFeed = props.selectedThreadFeed;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const devicePreferences = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
+  const capabilities = props.serverConfig?.environment.capabilities;
+  const currentReply = props.selectedThread.messageReply;
+  const inlineReplyRef =
+    currentReply === undefined &&
+    mobileReplyPresentation(capabilities, devicePreferences?.replyPresentation) === "inline"
+      ? props.selectedThreadDetailRef
+      : null;
+  const inlineReplies = useAtomValue(inlineReplyTimeline.stateAtom(inlineReplyRef));
+  const loadEarlierReplies = useAtomSet(inlineReplyTimeline.loadEarlierAtom(inlineReplyRef));
+  const [inlineReplyFeedCache] = useState(createThreadFeedCache);
+  const inlineReplyFeed = useMemo(
+    () =>
+      inlineReplies.rows.length > 0
+        ? buildThreadFeed(mergeInlineReplyItems(EMPTY_PARENT_REPLY_ROWS, inlineReplies.rows), {
+            cache: inlineReplyFeedCache,
+          }).map(withInlineReplyEntryId)
+        : undefined,
+    [inlineReplies.rows, inlineReplyFeedCache],
+  );
+  const parentHistory = props.historyControls;
+  const feedHistoryControls: ThreadFeedHistoryControls | undefined =
+    inlineReplies.hasMore || inlineReplies.error !== null
+      ? {
+          hasMoreHistory: parentHistory?.hasMoreHistory === true || inlineReplies.hasMore,
+          loading: parentHistory?.loading === true || inlineReplies.loading,
+          error: parentHistory?.error ?? inlineReplies.error,
+          onLoadEarlier: () => {
+            if (parentHistory?.hasMoreHistory) parentHistory.onLoadEarlier();
+            if (inlineReplies.hasMore) loadEarlierReplies();
+          },
+          onLoadThrough: (entryId) => parentHistory?.onLoadThrough(entryId),
+        }
+      : parentHistory;
+  const replySourceId = currentReply?.sourceThreadId ?? props.selectedThread.id;
+  const replyEnvironmentId = props.selectedThreadDetailRef?.environmentId ?? null;
+  const supportsReplyFamilies =
+    props.serverConfig?.shellThreadFamilies === true && capabilities?.messageReplies === true;
+  useFocusEffect(
+    useCallback(() => {
+      if (!supportsReplyFamilies || replyEnvironmentId === null) return;
+      return threadFamilies.mountReplyTopics(appAtomRegistry, {
+        environmentId: replyEnvironmentId,
+        threadId: replySourceId,
+      });
+    }, [supportsReplyFamilies, replyEnvironmentId, replySourceId]),
+  );
+  const replyTopics = useAtomValue(
+    environmentThreadShells.replyTopicsAtom(
+      replyEnvironmentId === null
+        ? null
+        : { environmentId: replyEnvironmentId, threadId: replySourceId },
+    ),
+  );
+  const openReplySource = (reference: MessageReplyReference, messageThreadId?: ThreadId) => {
+    const selectedThreadId = props.selectedThread.id;
+    const ownerThreadId = messageThreadId ?? selectedThreadId;
+    const ownerReply = ownerThreadId === selectedThreadId ? currentReply : undefined;
+    const inlineOwner = inlineReplies.rows.some((row) => row.threadId === ownerThreadId);
+    const sourceTopicOwner = inlineReplies.rows.find(
+      (row) => row.replyTopicId === reference.replyTopicId,
+    )?.threadId;
+    const sourceThreadId =
+      inlineOwner && reference.replyTopicId === undefined
+        ? replySourceId
+        : (sourceTopicOwner ??
+          replySourceThreadId(reference, ownerThreadId, replyTopics, ownerReply));
+    const target = { messageId: reference.messageId, sourceThreadId };
+    const visibleEntry = findMessageJumpEntry(
+      selectedThreadFeed,
+      inlineReplyFeed,
+      target,
+      selectedThreadId,
+    );
+    const threadId = visibleEntry ? selectedThreadId : sourceThreadId;
+    requestThreadMessageJump(
+      scopedThreadKey(props.environmentId, threadId),
+      reference.messageId,
+      sourceThreadId,
+    );
+    if (threadId !== selectedThreadId)
+      openLinkedThread({ environmentId: props.environmentId, threadId });
+  };
   // A palette message result opens the thread at that message: earlier
   // history loads until the message is in the feed, which then scrolls to it.
-  const jumpMessageId = useSyncExternalStore(subscribeThreadMessageJump, () =>
+  const jumpTarget = useSyncExternalStore(subscribeThreadMessageJump, () =>
     pendingThreadMessageJump(selectedThreadKey),
   );
-  const jumpMessageLoaded =
-    jumpMessageId !== null &&
-    selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === jumpMessageId);
+  const jumpMessageId = jumpTarget?.messageId ?? null;
+  const jumpEntry =
+    jumpTarget === null
+      ? undefined
+      : findMessageJumpEntry(
+          selectedThreadFeed,
+          inlineReplyFeed,
+          jumpTarget,
+          props.selectedThread.id,
+        );
+  const jumpMessageLoaded = jumpEntry !== undefined;
   const historyForJump = props.historyControls;
   // History down to the message in one request; another page if it is not
   // there yet.
@@ -962,7 +1071,6 @@ function ThreadDetailBody(
   const pendingMessageEditBlocked =
     queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
     null;
-  const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const usageLimitsVisible =
     AsyncResult.isSuccess(preferences) && preferences.value.composerUsageLimitsVisible === true;
@@ -1465,6 +1573,9 @@ function ThreadDetailBody(
               detailRef={props.selectedThreadDetailRef}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
+              inlineReplyFeed={inlineReplyFeed}
+              currentReply={currentReply}
+              onOpenReplySource={openReplySource}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
@@ -1483,7 +1594,7 @@ function ThreadDetailBody(
               listRef={listRef}
               freeze={freeze}
               anchorMessageId={anchorMessageId}
-              jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
+              jumpToEntryId={jumpEntry?.id ?? null}
               onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
               ref={feedRef}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
@@ -1494,7 +1605,7 @@ function ThreadDetailBody(
                 (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
               }
               contentMaxWidth={contentMaxWidth}
-              historyControls={props.historyControls}
+              historyControls={feedHistoryControls}
               contentSideInsets={nativeMetrics?.safeArea}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
@@ -1801,6 +1912,12 @@ function ThreadDetailBody(
                         }
                       />
                     </View>
+                  ) : isDeepPlanReview ? (
+                    <View className="px-4 py-3" style={{ paddingBottom: composerBottomInset + 6 }}>
+                      <Text className="text-center text-xs text-foreground-muted">
+                        {translator.message("chat.deepPlan.reviewReadOnly")}
+                      </Text>
+                    </View>
                   ) : (
                     <>
                       <ThreadComposer
@@ -1865,6 +1982,12 @@ function ThreadDetailBody(
                         onNativePasteText={props.onNativePasteText}
                         onRemoveDraftImage={props.onRemoveDraftImage}
                         onStopThread={props.onStopThread}
+                        onOpenReplySource={openReplySource}
+                        onReplySentInTimeline={() => {
+                          feedRef.current?.resetEndFollow();
+                          setAnchorMessageId(null);
+                          composerEditorRef.current?.blur();
+                        }}
                         onResumeQueue={props.onResumeQueue}
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}

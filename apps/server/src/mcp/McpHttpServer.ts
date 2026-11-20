@@ -18,7 +18,8 @@ import { GeneralSubagentToolkit } from "./toolkits/subagents/tools.ts";
 import { GeneralSubagentToolkitHandlersLive } from "./toolkits/subagents/handlers.ts";
 import { DeepPlanToolkit } from "./toolkits/deep-plan/tools.ts";
 import { DeepPlanToolkitHandlersLive } from "./toolkits/deep-plan/handlers.ts";
-import { DEEP_PLAN_TOOL_NAMES } from "./toolkits/deep-plan/toolNames.ts";
+import { isDeepPlanExplorerTool } from "../fetch/FetchWorkerPolicy.ts";
+import { isDeepPlanReviewerTool } from "./toolkits/deep-plan/toolNames.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1088,24 +1089,26 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
                     fiber.context,
                     McpInvocationContext.McpInvocationContext,
                   );
-                  if (
-                    (invocation?.deepPlan?.phase === "planning" ||
-                      invocation?.deepPlan?.readOnly === true) &&
-                    options.tool.annotations?.readOnlyHint !== true &&
-                    (invocation.deepPlan.sourceAnalysis !== undefined ||
-                      options.tool.name === "workspace_edit") &&
-                    !DEEP_PLAN_TOOL_NAMES.has(options.tool.name)
-                  ) {
-                    const message =
-                      "This Deep Plan turn cannot modify the workspace. Source-analysis workers may only inspect sources and save their bound summaries.";
-                    return Effect.succeed(
-                      new McpSchema.CallToolResult({
-                        isError: true,
-                        content: [{ type: "text", text: message }],
-                      }),
-                    );
-                  }
-                  return options.handle(payload);
+                  const name = options.tool.name;
+                  const deepPlan = invocation?.deepPlan;
+                  const denial =
+                    invocation?.capabilities.has("deep-plan-chat-read") &&
+                    !isDeepPlanExplorerTool(name)
+                      ? "Deep Plan explorers can only inspect their workspace and selected chats."
+                      : deepPlan?.phase === "review" && !isDeepPlanReviewerTool(name)
+                        ? "Deep Plan reviewers can only inspect their workspace and assigned review."
+                        : (deepPlan?.phase === "planning" || deepPlan?.readOnly === true) &&
+                            name === "workspace_edit"
+                          ? "This Deep Plan turn cannot edit workspace files."
+                          : undefined;
+                  return denial === undefined
+                    ? options.handle(payload)
+                    : Effect.succeed(
+                        new McpSchema.CallToolResult({
+                          isError: true,
+                          content: [{ type: "text", text: denial }],
+                        }),
+                      );
                 }),
               tool: new McpSchema.Tool({
                 ...options.tool,

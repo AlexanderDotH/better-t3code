@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 
 import type { McpConfigEngineShape } from "../mcp/McpConfigEngine.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
-import { isDeepPlanToolName } from "../mcp/toolkits/deep-plan/toolNames.ts";
+import { isDeepPlanReviewerTool, isDeepPlanToolName } from "../mcp/toolkits/deep-plan/toolNames.ts";
 import { deepPlanContextForThread, isBoundDeepPlanTool } from "./DeepPlanToolContext.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
@@ -145,6 +145,7 @@ export interface NativeProviderMcpToolBridge {
   readonly extensionForThread: (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
+    readonly deepPlanChatReadOnly?: boolean;
   }) => Effect.Effect<NativeHarnessToolExtension, NativeHarnessToolPolicyError>;
   readonly releaseThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly closeAll: Effect.Effect<void>;
@@ -419,16 +420,31 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
     const runtimeContext = yield* Effect.context<never>();
     const runPromise = Effect.runPromiseWith(runtimeContext);
 
-    const buildSession = async (threadId: ThreadId, cwd: string): Promise<SessionTools> => {
-      const configured = providerHost?.resolveMcpServers
-        ? await runPromise(
-            providerHost.resolveMcpServers({ cwd, threadId, providerInstanceId: input.instanceId }),
-          )
-        : await runPromise(
-            input.resolveActiveServers({ cwd, providerInstanceId: input.instanceId }),
-          );
+    const buildSession = async (
+      threadId: ThreadId,
+      cwd: string,
+      deepPlanChatReadOnly: boolean,
+    ): Promise<SessionTools> => {
+      const deepPlan = deepPlanContextForThread(threadId);
+      const reviewer = deepPlan?.phase === "review";
+      const planner = deepPlan?.phase === "planning";
+      const configured =
+        deepPlanChatReadOnly || reviewer
+          ? []
+          : providerHost?.resolveMcpServers
+            ? await runPromise(
+                providerHost.resolveMcpServers({
+                  cwd,
+                  threadId,
+                  providerInstanceId: input.instanceId,
+                }),
+              )
+            : await runPromise(
+                input.resolveActiveServers({ cwd, providerInstanceId: input.instanceId }),
+              );
+      const internal = internalConnection(threadId);
       const connections = [
-        ...(internalConnection(threadId) ? [internalConnection(threadId)!] : []),
+        ...(internal === undefined ? [] : [internal]),
         ...configured.map((server) => connectionForConfiguredServer(server, input.environment)),
       ];
       const clients: NativeProviderMcpClient[] = [];
@@ -457,6 +473,8 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
           const { client, listed } = prepared;
           clients.push(client);
           for (const tool of listed.tools) {
+            if (deepPlanChatReadOnly && tool.name !== "t3_thread_read") continue;
+            if (reviewer && !deepPlanChatReadOnly && !isDeepPlanReviewerTool(tool.name)) continue;
             // The harness runs its own tool of this name, and a catalog cannot list both.
             if (connection.kind === "internal" && NATIVE_HARNESS_BUILTIN_TOOL_NAMES.has(tool.name))
               continue;
@@ -468,9 +486,11 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
               continue;
             const deepPlanTool =
               connection.kind === "internal" && isBoundDeepPlanTool(threadId, tool.name);
-            const deepPlan = deepPlanContextForThread(threadId);
-            const inheritsComposerPermissions =
-              deepPlan !== undefined && deepPlan.sourceAnalysis === undefined;
+            const selectedChatRead =
+              connection.kind === "internal" &&
+              (planner || deepPlanChatReadOnly) &&
+              tool.name === "t3_thread_read";
+            const readOnly = tool.annotations?.readOnlyHint === true || selectedChatRead;
             const exposedName =
               connection.kind === "internal"
                 ? tool.name
@@ -491,21 +511,22 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
                   tool.description?.trim() ||
                   `Run ${tool.name} on the configured MCP server ${connection.displayName}.`,
                 inputSchema: inputSchema(tool.inputSchema),
-                availability:
-                  tool.annotations?.readOnlyHint === true ||
-                  deepPlanTool ||
-                  inheritsComposerPermissions
-                    ? "read-only"
-                    : "default-only",
-                requiresApproval: tool.annotations?.readOnlyHint !== true && !deepPlanTool,
+                availability: readOnly || deepPlanTool || planner ? "read-only" : "default-only",
+                requiresApproval: !readOnly && !deepPlanTool,
               },
             });
           }
         }
         connectedTools.sort(
           (left, right) =>
-            Number(isBoundDeepPlanTool(threadId, right.exposedName)) -
-            Number(isBoundDeepPlanTool(threadId, left.exposedName)),
+            Number(
+              isBoundDeepPlanTool(threadId, right.exposedName) ||
+                (planner && right.exposedName === "t3_thread_read"),
+            ) -
+            Number(
+              isBoundDeepPlanTool(threadId, left.exposedName) ||
+                (planner && left.exposedName === "t3_thread_read"),
+            ),
         );
         const byName = new Map(connectedTools.map((tool) => [tool.exposedName, tool]));
         const catalog = mcpExtensionCatalog(connectedTools);
@@ -605,13 +626,14 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
       }
     };
 
-    const getSession = (threadId: ThreadId, cwd: string) => {
+    const getSession = (threadId: ThreadId, cwd: string, deepPlanChatReadOnly: boolean) => {
       const credential = McpProviderSession.readMcpProviderSession(threadId);
       const credentialKey = JSON.stringify([
         cwd,
         credential?.providerSessionId,
         credential?.endpoint,
         credential?.deepPlan,
+        deepPlanChatReadOnly,
       ]);
       const existing = sessions.get(threadId);
       if (existing?.credentialKey === credentialKey) return existing.prepared;
@@ -623,7 +645,7 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
             /* A failed setup already closed its clients. */
           }
         }
-        return buildSession(threadId, cwd);
+        return buildSession(threadId, cwd, deepPlanChatReadOnly);
       })();
       const entry = { credentialKey, prepared: created };
       sessions.set(threadId, entry);
@@ -661,9 +683,9 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
     yield* Effect.addFinalizer(() => closeAll);
 
     return {
-      extensionForThread: ({ threadId, cwd }) =>
+      extensionForThread: ({ threadId, cwd, deepPlanChatReadOnly = false }) =>
         Effect.tryPromise({
-          try: async () => (await getSession(threadId, cwd)).extension,
+          try: async () => (await getSession(threadId, cwd, deepPlanChatReadOnly)).extension,
           catch: (cause) =>
             new NativeHarnessToolPolicyError({
               detail: `Could not prepare native provider MCP tools: ${cause instanceof Error ? cause.message : String(cause)}`,

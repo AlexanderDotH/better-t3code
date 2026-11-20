@@ -121,8 +121,8 @@ Remembered choices take precedence over initial defaults. Changing or resetting
 the project's model or permission default makes that setting apply again. Branch
 and worktree choices still use the project's workspace defaults.
 
-A new thread starts with empty history. Attachments, message context, Deep Plan
-sources, and agent sessions do not carry over.
+A new thread starts with empty history. Attachments, message context, chats
+selected for Deep Plan, and agent sessions do not carry over.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
@@ -474,28 +474,32 @@ running; choose **Stop** first if you want to interrupt that work.
 
 ## Create a deep plan
 
-Choose **Deep Plan** in the composer’s mode menu or use `/deep-plan` to plan from
-your project’s conversations. By default, all chats in the current project are
-included, including archived chats. Sources are analyzed in parallel batches, with
-progress saved after each chat. Other tools follow the permission mode selected in the
-composer; planning itself stays read-only. Use **Add chats** to include conversations
-from other projects or connected environments. To use only some of this project’s chats,
-turn off **Include all chats from this project** there and select the ones you want.
-With no chats selected, Deep Plan works from your request and the codebase. Sources stay
-fixed once analysis starts.
+Choose **Deep Plan** in the composer’s mode menu or use `/deep-plan`. Explorer
+agents read the codebase in parallel. To give them more context, use **Add chats**
+to select chats from this environment or environments linked to it. Turn on
+**Include all chats from this project** to let explorers read the current
+project’s chats, including archived ones. Deep Plan starts from your request and
+the codebase by default and reads any chats you include as they are needed.
 
-Wait for source analysis, then review the plan and its requirements. Deep Plans use
-the same composer actions as other plans: type feedback to refine, or choose
-**Implement** and its menu to use the suggested agent count or start in a new thread.
-The parallel implementation setting and review model apply to Deep Plans too.
-Resolve missing sources before implementing. Changing the plan requires approving
-its new version before implementation continues.
+Review the proposed steps and their acceptance criteria. Send feedback to revise
+the plan, or use the **Implement** menu to choose one to four parallel lanes in
+the current thread or a new one. Deep Plan suggests as many lanes as steps that can
+run at the same time, so a plan whose steps form a single chain runs in one lane.
+Lanes share a worktree. A revised plan needs your approval again before
+implementation continues.
 
-The implementation checklist keeps each step’s requirements, checks, and evidence.
-Progress survives reconnecting and reopening the thread. Choose **Resume** after a
-pause or failed check. Work finishes after every step is verified and final
-validation passes. Deep Plan is available only when the connected environment and
-selected provider support it.
+After approval, an independent agent reviews each step before Deep Plan marks it
+verified. Use **Open review** on a step to read its findings. After all steps are
+verified, a final reviewer checks the work as a whole. You can close the client
+and check back later.
+
+Use **Pause**, **Resume**, or **Cancel** to control the run. Deep Plan pauses when
+it hits a blocker or when a step or final review still has findings after three
+rounds. It also pauses when a turn fails or a thread it works in becomes
+unavailable; check that thread and its provider, then choose **Resume**. If a
+review reaches its limit, **Resume** gives it three more rounds. To choose the
+review model, go to **Settings → Better T3 → Agents → Deep Plan review model**.
+The default uses the implementation model in a separate review thread.
 
 ## Implement a proposed plan
 

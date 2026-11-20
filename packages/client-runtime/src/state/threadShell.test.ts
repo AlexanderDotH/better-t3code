@@ -1,8 +1,10 @@
 import {
   EnvironmentId,
+  MessageId,
   ProjectId,
   RunId,
   RuntimeRequestId,
+  SubagentId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
@@ -57,6 +59,41 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("keeps every saved reply topic for the selected conversation", () => {
+    const { registry, threads, snapshotAtom } = makeHarness([environmentId, remoteEnvironmentId]);
+    const root = v2ThreadShell;
+    const reply = (id: string) => ({
+      ...root,
+      id: ThreadId.make(id),
+      messageReply: {
+        sourceThreadId: root.id,
+        messageId: MessageId.make("quoted-message"),
+        replyTopicId: SubagentId.make(id),
+      },
+    });
+    const first = reply("reply-first");
+    const second = reply("reply-second");
+    const deleted = { ...reply("deleted"), deletedAt: v2Now };
+    const unrelated = { ...root, id: ThreadId.make("another-thread") };
+    const snapshot = { ...v2ShellSnapshot, threads: [root, first, second, deleted, unrelated] };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, reply("remote-reply")],
+    });
+    const topics = threads.replyTopicsAtom({ environmentId, threadId: root.id });
+    const unmount = registry.mount(topics);
+    const before = registry.get(topics);
+    expect(before.map(({ id }) => id)).toEqual([first.id, second.id]);
+    registry.set(snapshotAtom(environmentId), {
+      ...snapshot,
+      threads: [root, first, second, deleted, { ...unrelated, title: "Updated" }],
+    });
+    expect(registry.get(topics)).toBe(before);
+    unmount();
+    registry.dispose();
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {

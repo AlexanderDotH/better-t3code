@@ -1,96 +1,73 @@
 import {
   CommandId,
   DeepPlanRunId,
-  DeepPlanSourceId,
   EnvironmentId,
-  ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type DeepPlanActiveTurn,
+  type DeepPlanLegacyRun,
+  type DeepPlanReview,
   type DeepPlanRun,
-  type ServerProvider,
 } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import {
-  deepPlanCitationTitles,
-  formatDeepPlanForDisplay,
-  getDeepPlanComposerChecklistExpiresAt,
-} from "./deepPlanningPresentation.ts";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
-  approveDeepPlanImplementation,
-  buildDeepPlanFinalValidationPrompt,
-  buildDeepPlanImplementationPrompt,
-  buildDeepPlanContinuationPrompt,
-  formatDeepPlanMarkdown,
-  getApprovedDeepPlanReference,
-  getDeepPlanApprovalBlockReason,
+  buildDeepPlanApproveCommand,
+  formatDeepPlanForDisplay,
+  getDeepPlanComposerChecklistExpiresAt,
   getDeepPlanProposalBlockReason,
-  selectDeepPlanProgress,
+  selectDeepPlanRunControls,
+  selectDeepPlanStatus,
   selectDeepPlanSteps,
   selectDurableDeepPlan,
-  shouldAutoContinueDeepPlan,
-} from "./deepPlanningRun.ts";
+} from "./deepPlanning.ts";
 
 const threadId = ThreadId.make("owner");
 const implementationThreadId = ThreadId.make("implementation");
+const otherLaneThreadId = ThreadId.make("other-lane");
+const reviewThreadId = ThreadId.make("review");
 const environmentId = EnvironmentId.make("environment");
 const createdAt = "2026-10-16T08:00:00.000Z";
 const implementation = { instanceId: ProviderInstanceId.make("provider"), model: "model" };
-const evidence = [{ kind: "test" as const, summary: "Focused checks passed", createdAt }];
-const provider: ServerProvider = {
-  ...implementation,
-  driver: ProviderDriverKind.make("custom"),
-  enabled: true,
-  installed: true,
-  status: "ready",
-  auth: { status: "authenticated" },
-  checkedAt: createdAt,
-  version: null,
-  nativeSubagents: { toolName: "spawn_agent", maxRecommendedSubagents: 8 },
-  models: [],
-  slashCommands: [],
-  skills: [],
+const english = createInterfaceTranslator({ language: "en", locale: "en-US" });
+const approvedReview: DeepPlanReview = {
+  round: 1,
+  reviewThreadId,
+  reviewer: implementation,
+  diff: null,
+  verdict: "approved",
+  summary: "Checks passed",
+  findings: [],
+  retries: 0,
+  startedAt: createdAt,
+  completedAt: createdAt,
 };
 
 function run(overrides?: Partial<DeepPlanRun>): DeepPlanRun {
   return {
+    schemaVersion: 2,
     id: DeepPlanRunId.make("run"),
     threadId,
     phase: "implementing",
     revision: 4,
     plan: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       version: 2,
       goal: "Ship the complete workflow",
       scope: ["Both clients"],
+      nonGoals: ["Provider changes"],
       decisions: [{ id: "decision", text: "Persist the approved version" }],
       affectedAreas: ["Client runtime"],
-      steps: [
-        {
-          id: "build",
-          title: "Build",
-          description: "Implement the approved scope",
-          dependencies: [],
-          acceptanceCriteria: [
-            { id: "build-check", description: "Feature works", checkMethod: "Run focused tests" },
-          ],
-        },
-        {
-          id: "verify",
-          title: "Verify",
-          description: "Inspect the complete integration",
-          dependencies: ["build"],
-          acceptanceCriteria: [
-            {
-              id: "verify-check",
-              description: "Clients agree",
-              checkMethod: "Inspect both clients",
-            },
-          ],
-        },
-      ],
+      steps: ["build", "verify", "document"].map((id) => ({
+        id,
+        title: id,
+        description: "Implement the approved scope",
+        dependencies: [],
+        acceptanceCriteria: [
+          { id: `${id}-check`, description: "Feature works", checkMethod: "Run focused tests" },
+        ],
+      })),
       finalValidation: {
         description: "Validate the entire implementation",
         checkMethod: "Run the final integration checks",
@@ -101,93 +78,118 @@ function run(overrides?: Partial<DeepPlanRun>): DeepPlanRun {
       planVersion: 2,
       approvalKey: "revision-2-key",
       approvedAt: createdAt,
-      approvedBy: "user",
       implementation,
-      implementationThreadId,
-      implementerId: `thread:${implementationThreadId}`,
+      reviewer: implementation,
+      parallelism: 2,
+      lanes: [
+        { laneId: "lane-1", threadId: implementationThreadId },
+        { laneId: "lane-2", threadId: otherLaneThreadId },
+      ],
+      baseTurnCount: 0,
     },
-    sources: [],
-    sourceCoverage: [],
-    stepStates: [],
-    finalValidation: {
+    chats: [],
+    includeProjectChats: false,
+    steps: [],
+    finalReview: {
       status: "pending",
-      evidence: [],
-      updatedAt: null,
-      attempt: 0,
-      requestId: null,
-      turnId: null,
+      submission: null,
+      reviews: [],
+      roundLimit: 3,
+      unsubmittedTurns: 0,
     },
-    procedureAdjustments: [],
+    activeTurns: [],
+    pause: null,
     operations: [],
     createdAt,
     updatedAt: createdAt,
-    pauseReason: null,
     ...overrides,
   };
 }
 
-describe("DeepPlan durable client state", () => {
-  it("expires completed composer checklists one minute after their durable update", () => {
+const legacyRun: DeepPlanLegacyRun = {
+  schemaVersion: 1,
+  kind: "legacy",
+  id: DeepPlanRunId.make("old-run"),
+  threadId,
+  goal: "Earlier plan",
+  updatedAt: createdAt,
+};
+
+const implementationTurn: DeepPlanActiveTurn = {
+  kind: "implement",
+  threadId: implementationThreadId,
+  commandId: CommandId.make("implement"),
+  stepId: "build",
+  laneId: "lane-1",
+  round: 1,
+  attempt: 1,
+  startedAt: createdAt,
+};
+
+const reviewTurn: DeepPlanActiveTurn = {
+  ...implementationTurn,
+  kind: "review",
+  threadId: reviewThreadId,
+  commandId: CommandId.make("review"),
+  round: 2,
+};
+
+const finalReviewTurn: DeepPlanActiveTurn = {
+  ...reviewTurn,
+  kind: "finalReview",
+  stepId: null,
+  laneId: null,
+};
+
+describe("Deep Plan durable client state", () => {
+  it("expires finished composer checklists one minute after their durable update", () => {
     expect(
       getDeepPlanComposerChecklistExpiresAt({ phase: "completed", updatedAt: createdAt }),
     ).toBe(Date.parse("2026-10-16T08:01:00.000Z"));
     expect(
+      getDeepPlanComposerChecklistExpiresAt({ phase: "cancelled", updatedAt: createdAt }),
+    ).toBe(Date.parse("2026-10-16T08:01:00.000Z"));
+    expect(
       getDeepPlanComposerChecklistExpiresAt({ phase: "completed", updatedAt: "invalid" }),
     ).toBe(0);
+    expect(
+      getDeepPlanComposerChecklistExpiresAt({ phase: "implementing", updatedAt: createdAt }),
+    ).toBeNull();
   });
 
-  it.each([
-    "collecting",
-    "planning",
-    "awaitingApproval",
-    "implementing",
-    "validating",
-    "paused",
-    "failed",
-    "blocked",
-  ] as const)("keeps %s plans available regardless of age", (phase) => {
-    expect(getDeepPlanComposerChecklistExpiresAt({ phase, updatedAt: createdAt })).toBeNull();
-  });
-
-  it("resolves owner and implementation threads without crossing environments", () => {
+  it("resolves owners and additional lanes without crossing environments", () => {
     const plan = run();
     const owner = { id: threadId, environmentId, deepPlan: plan };
     expect(selectDurableDeepPlan(owner)).toBe(plan);
-    expect(selectDurableDeepPlan({ id: implementationThreadId, environmentId }, [owner])).toBe(
-      plan,
-    );
+    expect(selectDurableDeepPlan({ id: otherLaneThreadId, environmentId }, [owner])).toBe(plan);
     expect(
-      selectDurableDeepPlan({ id: implementationThreadId, environmentId, deepPlan: plan }),
-    ).toBe(plan);
-    expect(
-      selectDurableDeepPlan(
-        { id: implementationThreadId, environmentId: EnvironmentId.make("other") },
-        [owner],
-      ),
+      selectDurableDeepPlan({ id: otherLaneThreadId, environmentId: EnvironmentId.make("other") }, [
+        owner,
+      ]),
     ).toBeNull();
     expect(selectDurableDeepPlan({ id: ThreadId.make("unrelated"), deepPlan: plan })).toBeNull();
-    const worker = {
-      id: ThreadId.make("source-analysis"),
+    expect(selectDurableDeepPlan({ ...owner, deepPlan: legacyRun })).toBe(legacyRun);
+    const reviewer = {
+      id: reviewThreadId,
       environmentId,
       deepPlanExecution: {
+        phase: "review" as const,
+        readOnly: true as const,
+        review: { target: { kind: "step" as const, stepId: "build" }, round: 1 },
         runId: plan.id,
-        runThreadId: owner.id,
-        approvedPlanVersion: null,
-        phase: "planning" as const,
-        modelSelection: {
-          ...plan.approval!.implementation,
-          options: plan.approval!.implementation.options ?? [],
-        },
+        runThreadId: threadId,
+        approvedPlanVersion: 2,
+        modelSelection: implementation,
       },
     };
-    expect(selectDurableDeepPlan(worker, [owner])).toBe(plan);
+    expect(selectDurableDeepPlan(reviewer, [owner])).toBe(plan);
     expect(
       selectDurableDeepPlan(
         {
-          ...worker,
+          ...reviewer,
           deepPlanExecution: {
-            ...worker.deepPlanExecution,
-            runId: DeepPlanRunId.make("older-run"),
+            ...reviewer.deepPlanExecution,
+            runId: legacyRun.id,
           },
         },
         [owner],
@@ -195,407 +197,268 @@ describe("DeepPlan durable client state", () => {
     ).toBeNull();
   });
 
-  it("keeps missing steps pending and dependencies blocked until verified", () => {
-    const pending = selectDeepPlanSteps(run());
-    expect(pending[0]).toMatchObject({ status: "pending", canStart: true });
-    expect(pending[1]).toMatchObject({
-      status: "pending",
-      canStart: false,
-      blockedByDependencies: ["build"],
-    });
-    const afterBuild = selectDeepPlanSteps(
-      run({
-        stepStates: [{ stepId: "build", status: "verified", evidence, updatedAt: createdAt }],
-      }),
-    );
-    expect(afterBuild[1]).toMatchObject({ canStart: true, blockedByDependencies: [] });
-  });
-
-  it("does not equate implemented work or stale approval with completion", () => {
-    const plan = run();
-    const stepStates = plan.plan!.steps.map((step) => ({
-      stepId: step.id,
-      status: "implemented" as const,
-      evidence,
-      updatedAt: createdAt,
-    }));
-    expect(selectDeepPlanProgress({ ...plan, stepStates })).toMatchObject({
-      implementedSteps: 2,
-      verifiedSteps: 0,
-      completed: false,
-    });
-    const verified = stepStates.map((state) => ({ ...state, status: "verified" as const }));
-    const completed = {
-      ...plan,
-      phase: "completed" as const,
-      stepStates: verified,
-      finalValidation: { ...plan.finalValidation, status: "passed" as const, evidence },
-    };
-    expect(selectDeepPlanProgress(completed).completed).toBe(true);
-    expect(selectDeepPlanProgress({ ...completed, approvalKey: "new-key" }).completed).toBe(false);
+  it("requires a current approval key and keeps legacy proposals read-only", () => {
+    const awaitingApproval = run({ phase: "awaitingApproval", approval: null });
+    const proposal = { deepPlan: { runId: awaitingApproval.id, planVersion: 2 } };
+    expect(getDeepPlanProposalBlockReason(proposal, awaitingApproval)).toBeNull();
     expect(
-      selectDeepPlanProgress({
-        ...completed,
-        finalValidation: { ...completed.finalValidation, evidence: [] },
-      }).completed,
-    ).toBe(false);
+      getDeepPlanProposalBlockReason(proposal, { ...awaitingApproval, approvalKey: null }),
+    ).toContain("approval key");
+    expect(getDeepPlanProposalBlockReason(proposal, legacyRun)).toContain("earlier version");
   });
 
-  it("requires the exact approved plan version and approval fingerprint", () => {
-    expect(getApprovedDeepPlanReference(run())).toEqual({ runId: "run", planVersion: 2 });
-    expect(() => getApprovedDeepPlanReference(run({ approval: null }))).toThrow("Approve");
-    expect(() => getApprovedDeepPlanReference(run({ approvalKey: "new-key" }))).toThrow("Approve");
-    const current = run();
-    expect(() =>
-      getApprovedDeepPlanReference({ ...current, plan: { ...current.plan!, version: 3 } }),
-    ).toThrow("Approve");
-  });
-
-  it("requires full source reading and summaries before approval", () => {
-    const sourceId = DeepPlanSourceId.make("source");
-    const pending = run({
-      phase: "awaitingApproval",
-      approval: null,
-      sources: [
-        {
-          sourceId,
-          origin: { environmentId, projectId: ProjectId.make("project"), threadId },
-          projectTitle: "Project",
-          threadTitle: "Prior work",
-          archived: true,
-          capturedAt: createdAt,
-          contentVersion: "v1",
-          contentHash: "hash",
-          messageCount: 1,
-          activityCount: 0,
-          attachmentCount: 0,
-          recordCount: 3,
-          forkOrigin: null,
-        },
-      ],
-      sourceCoverage: [
-        {
-          sourceId,
-          status: "ready",
-          importedRecordCount: 3,
-          readRecordCount: 0,
-          summary: null,
-          error: null,
-          updatedAt: createdAt,
-        },
-      ],
+  it("binds approval to the proposal revision and leaves reviewer selection to the server", () => {
+    const awaitingApproval = run({ phase: "awaitingApproval", approval: null });
+    const input = {
+      commandId: CommandId.make("approve"),
+      operationId: "approve",
+      createdAt,
+      implementation,
+      implementationThread: "new" as const,
+      parallelism: 2,
+    };
+    expect(buildDeepPlanApproveCommand({ ...input, run: awaitingApproval })).toEqual({
+      type: "thread.deep-plan.update",
+      commandId: "approve",
+      threadId: "owner",
+      runId: "run",
+      expectedRevision: 4,
+      operationId: "approve",
+      createdAt,
+      mutation: {
+        type: "approve",
+        planVersion: 2,
+        approvalKey: "revision-2-key",
+        implementation,
+        implementationThread: "new",
+        parallelism: 2,
+      },
     });
-    expect(getDeepPlanApprovalBlockReason(pending)).toContain("fully read");
-    const summarized = {
-      ...pending,
-      sourceCoverage: [
+    expect(() => buildDeepPlanApproveCommand({ ...input, run: legacyRun })).toThrow(
+      "earlier version",
+    );
+  });
+
+  it("uses the latest review for the review link and the latest completed verdict for findings", () => {
+    const review = {
+      ...approvedReview,
+      verdict: "changesRequested" as const,
+      summary: "Fix the integration",
+      findings: [
         {
-          ...pending.sourceCoverage[0]!,
-          status: "summarized" as const,
-          readRecordCount: 3,
-          summary: {
-            requirements: ["Complete source context"],
-            decisions: [],
-            openIssues: [],
-            rejectedApproaches: [],
-            conflicts: [],
-            citedRecordIds: ["record-1"],
-          },
+          severity: "major" as const,
+          title: "Missing integration",
+          detail: "Connect both clients.",
         },
       ],
     };
-    expect(getDeepPlanApprovalBlockReason(summarized)).toBeNull();
+    const nextReview = {
+      ...review,
+      round: 2,
+      reviewThreadId: ThreadId.make("next-review"),
+      verdict: null,
+      summary: null,
+      findings: [],
+      completedAt: null,
+    };
     expect(
-      getDeepPlanApprovalBlockReason({
-        ...summarized,
-        sourceCoverage: [{ ...summarized.sourceCoverage[0]!, readRecordCount: 2 }],
-      }),
-    ).toContain("fully read");
+      selectDeepPlanSteps(
+        run({
+          steps: [
+            {
+              stepId: "build",
+              status: "inReview",
+              laneId: "lane-1",
+              baseTurnCount: 0,
+              submission: null,
+              reviews: [review, nextReview],
+              roundLimit: 3,
+              unsubmittedTurns: 0,
+            },
+          ],
+        }),
+      )[0],
+    ).toMatchObject({ review: nextReview, verdict: review });
   });
 
-  it("uses normal plan actions only for the current, fully analyzed Deep Plan revision", () => {
-    const ready = run({ phase: "awaitingApproval", approval: null });
-    const proposal = { deepPlan: { runId: ready.id, planVersion: ready.plan!.version } };
-    expect(getDeepPlanProposalBlockReason({}, null)).toBeNull();
-    expect(getDeepPlanProposalBlockReason(proposal, ready)).toBeNull();
-    expect(getDeepPlanProposalBlockReason(proposal, null)).toContain("latest version");
-    expect(
-      getDeepPlanProposalBlockReason(proposal, { ...ready, id: DeepPlanRunId.make("another-run") }),
-    ).toContain("latest version");
-    expect(
-      getDeepPlanProposalBlockReason(proposal, { ...ready, plan: { ...ready.plan!, version: 3 } }),
-    ).toContain("latest version");
-    expect(getDeepPlanProposalBlockReason(proposal, { ...ready, phase: "implementing" })).toContain(
-      "waiting for approval",
-    );
-    const sourceId = DeepPlanSourceId.make("unread-source");
-    expect(
-      getDeepPlanProposalBlockReason(proposal, {
-        ...ready,
-        sources: [
+  it.each([
+    ["planning", null, true],
+    ["awaitingApproval", null, true],
+    ["implementing", "pause", true],
+    ["finalReview", "pause", true],
+    ["paused", "resume", true],
+    ["completed", null, false],
+    ["cancelled", null, false],
+  ] as const)("offers run controls that mean something while %s", (phase, toggle, cancel) => {
+    expect(selectDeepPlanRunControls(run({ phase }))).toEqual({ toggle, cancel });
+    expect(selectDeepPlanRunControls(legacyRun)).toEqual({ toggle: null, cancel: false });
+  });
+
+  it("shows non-goals in the plan overview", () => {
+    const text = formatDeepPlanForDisplay(run(), english, { includeImplementation: false });
+    expect(text).toContain("Provider changes");
+    expect(text).not.toContain("Run the final integration checks");
+  });
+});
+
+describe("Deep Plan status", () => {
+  it.each([
+    { name: "planning", value: run({ phase: "planning" }), label: "Planning", tone: "info" },
+    {
+      name: "approval",
+      value: run({ phase: "awaitingApproval" }),
+      label: "Waiting for approval",
+      tone: "neutral",
+    },
+    {
+      name: "a step",
+      value: run({ activeTurns: [implementationTurn] }),
+      label: "Implementing step 1/3",
+      tone: "info",
+      stepId: "build",
+      destination: implementationThreadId,
+    },
+    {
+      name: "parallel lanes",
+      value: run({
+        activeTurns: [
+          implementationTurn,
           {
-            sourceId,
-            origin: { environmentId, projectId: ProjectId.make("project"), threadId },
-            projectTitle: "Project",
-            threadTitle: "Unread research",
-            archived: true,
-            capturedAt: createdAt,
-            contentVersion: "v1",
-            contentHash: "hash",
-            messageCount: 1,
-            activityCount: 0,
-            attachmentCount: 0,
-            recordCount: 1,
-            forkOrigin: null,
+            ...implementationTurn,
+            stepId: "verify",
+            laneId: "lane-2",
+            threadId: otherLaneThreadId,
           },
         ],
       }),
-    ).toContain("fully read");
-  });
-
-  it("preserves structured decisions, source citations, checks and final validation in exported plans", () => {
-    const plan = run().plan!;
-    const sourceId = DeepPlanSourceId.make("source");
-    const markdown = formatDeepPlanMarkdown({
-      ...plan,
-      decisions: [{ ...plan.decisions[0]!, sources: [{ sourceId, recordIds: ["record-7"] }] }],
-    });
-    expect(markdown).toContain("Persist the approved version Sources: source (record-7)");
-    expect(markdown).toContain("Dependencies: build");
-    expect(markdown).toContain("Run focused tests");
-    expect(markdown).toContain("Run the final integration checks");
-  });
-
-  it("shows chat titles and step titles while keeping internal references in the agent plan", () => {
-    const sourceId = DeepPlanSourceId.make("source-internal-1234");
-    const current = run();
-    const citation = { sourceId, recordIds: ["message-internal-5678"] };
-    const plan = {
-      ...current.plan!,
-      decisions: [{ id: "decision-internal", text: "Reuse the research", sources: [citation] }],
-      steps: current.plan!.steps.map((step) => ({
-        ...step,
-        sources: [citation],
-        acceptanceCriteria: step.acceptanceCriteria.map((criterion) => ({
-          ...criterion,
-          sources: [citation],
-        })),
-      })),
-    };
-    const value = run({
-      plan,
-      sources: [
-        {
-          sourceId,
-          origin: { environmentId, projectId: ProjectId.make("project"), threadId },
-          environmentLabel: "Office Mac",
-          projectTitle: "Infrastructure",
-          threadTitle: "GitLab storage",
-          archived: true,
-          capturedAt: createdAt,
-          contentVersion: "version-internal",
-          contentHash: "hash-internal",
-          messageCount: 1,
-          activityCount: 0,
-          attachmentCount: 0,
-          recordCount: 1,
-          forkOrigin: null,
-        },
-      ],
-    });
-    const translator = createInterfaceTranslator({ language: "de", locale: "de-DE" });
-    const display = formatDeepPlanForDisplay(value, translator);
-    expect(display).toContain("Office Mac / Infrastructure / GitLab storage");
-    expect(display).toContain("Abhängig von: Build");
-    expect(display).toContain("- [ ] Feature works");
-    expect(display).toContain("Prüfung: Run focused tests");
-    expect(display).toContain("Run the final integration checks");
-    for (const internal of [
-      sourceId,
-      "message-internal-5678",
-      "version-internal",
-      "hash-internal",
-      "(build)",
-      "(build-check)",
-    ]) {
-      expect(display).not.toContain(internal);
-    }
-    expect(formatDeepPlanMarkdown(plan)).toContain(`${sourceId} (message-internal-5678)`);
-    expect(formatDeepPlanMarkdown(plan)).toContain("Dependencies: build");
-    const overview = formatDeepPlanForDisplay(value, translator, { includeImplementation: false });
-    expect(overview).toContain("Reuse the research");
-    expect(overview).not.toContain("Run focused tests");
-    expect(overview).not.toContain("Run the final integration checks");
-    expect(deepPlanCitationTitles([citation, citation], value.sources, "Unavailable")).toEqual([
-      "Office Mac / Infrastructure / GitLab storage",
-    ]);
-    expect(
-      deepPlanCitationTitles(
-        [{ sourceId: DeepPlanSourceId.make("missing"), recordIds: [] }],
-        value.sources,
-        "Unavailable",
-      ),
-    ).toEqual(["Unavailable"]);
-    expect(formatDeepPlanForDisplay(run({ plan: null }), translator)).toBe("");
-  });
-
-  it("preserves normal and exact-count implementation contracts while binding the approved workflow", () => {
-    expect(buildDeepPlanImplementationPrompt(run())).toContain("PLEASE IMPLEMENT THIS PLAN:");
-    const prompt = buildDeepPlanImplementationPrompt(run(), {
-      strategy: { kind: "subagents", count: 8 },
-      provider,
-    });
-    expect(prompt).toContain("spawn exactly 8 direct child subagents");
-    expect(prompt).toContain("Subagents must not spawn additional agents");
-    expect(prompt).toContain("run run, approved plan version 2");
-    expect(prompt).toContain("deep_plan_step_update");
-    expect(prompt).toContain("deep_plan_adjust_procedure");
-    expect(prompt).toContain("separate final validation");
-  });
-
-  it("builds final validation only after every step has recorded verification evidence", () => {
-    expect(() => buildDeepPlanFinalValidationPrompt(run())).toThrow("Verify every");
-    const current = run();
-    const verified = {
-      ...current,
-      stepStates: current.plan!.steps.map((step) => ({
-        stepId: step.id,
-        status: "verified" as const,
-        evidence,
-        updatedAt: createdAt,
-      })),
-    };
-    expect(buildDeepPlanFinalValidationPrompt(verified)).toContain("same requestId");
-    expect(buildDeepPlanFinalValidationPrompt(verified)).toContain(
-      "Run the final integration checks",
-    );
-  });
-});
-
-describe("DeepPlan approval dispatch", () => {
-  const metadata = {
-    commandId: CommandId.make("approve-command"),
-    operationId: "approve-op",
-    createdAt,
-  };
-
-  it("approves the latest matching snapshot and confirms the durable model and implementer", async () => {
-    const awaiting = run({ phase: "awaitingApproval", approval: null });
-    const approved = run();
-    const getRun = vi.fn().mockResolvedValueOnce(awaiting).mockResolvedValueOnce(approved);
-    const dispatchCommand = vi.fn().mockResolvedValue({});
-    expect(
-      await approveDeepPlanImplementation({
-        run: awaiting,
-        implementation,
-        implementationThreadId,
-        ...metadata,
-        getRun,
-        dispatchCommand,
-      }),
-    ).toBe(approved);
-    expect(dispatchCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadId,
-        runId: awaiting.id,
-        expectedRevision: 4,
-        mutation: expect.objectContaining({
-          type: "approve",
-          planVersion: 2,
-          approvalKey: "revision-2-key",
-          implementationThreadId,
-          implementerId: `thread:${implementationThreadId}`,
-          implementation,
-        }),
-      }),
-    );
-  });
-
-  it("rejects a revised plan without approving the unseen version", async () => {
-    const old = run({ phase: "awaitingApproval", approval: null });
-    const latest = { ...old, plan: { ...old.plan!, version: 3 }, approvalKey: "revision-3-key" };
-    const dispatchCommand = vi.fn();
-    await expect(
-      approveDeepPlanImplementation({
-        run: old,
-        implementation,
-        implementationThreadId,
-        ...metadata,
-        getRun: async () => latest,
-        dispatchCommand,
-      }),
-    ).rejects.toThrow("Review the latest");
-    expect(dispatchCommand).not.toHaveBeenCalled();
-  });
-
-  it("does not queue an implementation when durable approval is not confirmed", async () => {
-    const awaiting = run({ phase: "awaitingApproval", approval: null });
-    await expect(
-      approveDeepPlanImplementation({
-        run: awaiting,
-        implementation,
-        implementationThreadId,
-        ...metadata,
-        getRun: async () => awaiting,
-        dispatchCommand: async () => ({}),
-      }),
-    ).rejects.toThrow("not confirmed");
-  });
-});
-
-describe("automatic Deep Plan continuation", () => {
-  it.each(["collecting", "planning"] as const)("continues %s in the owning thread", (phase) => {
-    const current = run({ phase, plan: null, approval: null });
-    expect(shouldAutoContinueDeepPlan(current, threadId)).toBe(true);
-    expect(shouldAutoContinueDeepPlan(current, implementationThreadId)).toBe(false);
-  });
-
-  it("continues approved work only in the implementing thread", () => {
-    const current = run();
-    expect(shouldAutoContinueDeepPlan(current, implementationThreadId)).toBe(true);
-    expect(shouldAutoContinueDeepPlan(current, threadId)).toBe(false);
-  });
-
-  it.each(["paused", "blocked", "failed", "awaitingApproval", "validating", "completed"] as const)(
-    "keeps %s runs waiting for their owner",
-    (phase) => {
-      expect(shouldAutoContinueDeepPlan(run({ phase }), implementationThreadId)).toBe(false);
-      expect(shouldAutoContinueDeepPlan(run({ phase, approval: null }), threadId)).toBe(false);
+      label: "2 active lanes · steps 1, 2",
+      tone: "info",
     },
-  );
-
-  it("leaves verified work to the server's validation reactor", () => {
-    const current = run();
-    const verified = {
-      ...current,
-      stepStates: current.plan!.steps.map((step) => ({
-        stepId: step.id,
-        status: "verified" as const,
-        evidence,
-        updatedAt: createdAt,
-      })),
-    };
-    expect(shouldAutoContinueDeepPlan(verified, implementationThreadId)).toBe(false);
+    {
+      name: "step review",
+      value: run({ activeTurns: [reviewTurn] }),
+      label: "Reviewing step 1 (round 2/3)",
+      tone: "info",
+      stepId: "build",
+      destination: reviewThreadId,
+    },
+    {
+      name: "a fix",
+      value: run({ activeTurns: [{ ...implementationTurn, kind: "fix" }] }),
+      label: "Addressing findings for step 1",
+      tone: "info",
+      stepId: "build",
+      destination: implementationThreadId,
+    },
+    {
+      name: "final review",
+      value: run({ phase: "finalReview", activeTurns: [finalReviewTurn] }),
+      label: "Final review",
+      tone: "info",
+      destination: reviewThreadId,
+    },
+    {
+      name: "a final fix",
+      value: run({
+        phase: "finalReview",
+        activeTurns: [{ ...finalReviewTurn, kind: "finalFix", threadId: implementationThreadId }],
+      }),
+      label: "Addressing final review findings",
+      tone: "info",
+      destination: implementationThreadId,
+    },
+    {
+      name: "paused",
+      value: run({
+        phase: "paused",
+        pause: { kind: "blocked", reason: "A decision is needed", at: createdAt },
+      }),
+      label: "Paused · A decision is needed",
+      tone: "warning",
+    },
+    ...(
+      [
+        ["by the user", "user", "Paused by you"],
+        ["at the review limit", "reviewLimit", "Paused · Review limit reached"],
+        ["after a failed turn", "turnFailed", "Paused · A turn failed"],
+        [
+          "while a thread is unavailable",
+          "unavailable",
+          "Paused · A thread or provider is unavailable",
+        ],
+      ] as const
+    ).map(([name, kind, label]) => ({
+      name: `paused ${name}`,
+      value: run({
+        phase: "paused",
+        pause: { kind, reason: "English server text", at: createdAt },
+      }),
+      label,
+      tone: "warning",
+    })),
+    {
+      name: "paused with a known lane",
+      value: run({
+        phase: "paused",
+        pause: { kind: "blocked", reason: "Check the lane", stepId: "verify", at: createdAt },
+        steps: [
+          {
+            stepId: "verify",
+            status: "implementing",
+            laneId: "lane-2",
+            baseTurnCount: 0,
+            submission: null,
+            reviews: [],
+            roundLimit: 3,
+            unsubmittedTurns: 0,
+          },
+        ],
+      }),
+      label: "Paused · Check the lane",
+      tone: "warning",
+      stepId: "verify",
+      shells: [{ id: otherLaneThreadId }],
+      destination: otherLaneThreadId,
+    },
+    { name: "idle", value: run(), label: "Waiting for the next step", tone: "neutral" },
+    {
+      name: "complete",
+      value: run({
+        phase: "completed",
+        steps: ["build", "verify", "document"].map((stepId) => ({
+          stepId,
+          status: "verified" as const,
+          laneId: "lane-1",
+          baseTurnCount: 0,
+          submission: null,
+          reviews: [approvedReview],
+          roundLimit: 3,
+          unsubmittedTurns: 0,
+        })),
+        finalReview: {
+          status: "approved",
+          submission: null,
+          reviews: [approvedReview],
+          roundLimit: 3,
+          unsubmittedTurns: 0,
+        },
+      }),
+      label: "Complete · 3/3 verified",
+      tone: "success",
+    },
+    { name: "cancelled", value: run({ phase: "cancelled" }), label: "Cancelled", tone: "neutral" },
+    {
+      name: "legacy",
+      value: legacyRun,
+      label: "This Deep Plan started in an earlier version. Start a new Deep Plan to continue.",
+      tone: "neutral",
+    },
+  ])("shows $name from durable state", ({ value, label, tone, stepId, destination, shells }) => {
+    expect(selectDeepPlanStatus(value, shells, english)).toEqual({
+      label,
+      tone,
+      ...(stepId === undefined ? {} : { stepId }),
+      ...(destination === undefined ? {} : { threadId: destination }),
+    });
   });
-});
-
-it("continues from saved progress and agents without restarting the implementation contract", () => {
-  const current = run();
-  const continuing = {
-    ...current,
-    approval: { ...current.approval!, requestedParallelism: 4 },
-    stepStates: [
-      { stepId: "build", status: "verified" as const, evidence, updatedAt: createdAt },
-      { stepId: "verify", status: "blocked" as const, evidence: [], updatedAt: createdAt },
-    ],
-  };
-  const prompt = buildDeepPlanContinuationPrompt(continuing);
-  expect(prompt).toContain("approved plan version 2");
-  expect(prompt).toContain("- build: verified");
-  expect(prompt).toContain("- verify: blocked");
-  expect(prompt).toContain("Reuse the existing subagents and their results");
-  expect(prompt).toContain("approved parallelism of 4");
-  expect(prompt).toContain("required user decisions and external prerequisites");
-  expect(prompt).not.toContain("PLEASE IMPLEMENT THIS COMPLETE PLAN");
-  expect(continuing.stepStates[0]?.evidence).toEqual(evidence);
 });

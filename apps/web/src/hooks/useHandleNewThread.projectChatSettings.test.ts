@@ -256,7 +256,7 @@ function reset() {
           repositoryIdentity: false,
           midChatProviderSwitching: false,
           projectChatSettings: true,
-          deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
+          deepPlanning: { version: 2 },
         },
       },
     });

@@ -3,9 +3,9 @@ import {
   readFrozenForkMessages,
   frozenConversationItem,
 } from "./FrozenMessageHistory.ts";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { pendingGuestMessageCount, resolveResultlessRetryTarget } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
-import { projectTurnItemForWire } from "./WireProjection.ts";
+import { capInlineReplyRowForWire, projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
@@ -78,6 +78,10 @@ import {
   NodeId,
   ProjectId,
   ProviderInstanceId,
+  SubagentId,
+  type InlineReplyPage,
+  InlineReplyRow,
+  NonNegativeInt,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -112,6 +116,18 @@ import {
   THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+
+const INLINE_REPLY_PAGE_ROWS = 48;
+const INLINE_REPLY_PAGE_BYTES = 1_000_000;
+const INLINE_REPLY_REMOVE_ROWS = 128;
+const InlineReplyCursor = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, ThreadId, NonNegativeInt, TurnItemId]),
+);
+const decodeInlineReplyCursor = Schema.decodeUnknownEffect(InlineReplyCursor);
+const encodeInlineReplyCursor = Schema.encodeSync(InlineReplyCursor);
+const encodeInlineReplyRow = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.toCodecJson(InlineReplyRow)),
+);
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -263,6 +279,7 @@ export interface ProjectionCheckpointCaptureContext {
   readonly readyCheckpointOrdinals: ReadonlyArray<number>;
   /** Side chats share their parent's worktree and never snapshot it. */
   readonly sideChat: boolean;
+  readonly deepPlanReview: boolean;
 }
 
 const RollbackTargetAttempts = Schema.Array(
@@ -435,6 +452,31 @@ export interface OlderSettledThreadsListing {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly getInlineReplyScope: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    { readonly projectId: ProjectId; readonly childThreadIds: ReadonlyArray<ThreadId> } | null,
+    ProjectionStoreV2Error
+  >;
+  readonly getInlineReplyPage: (input: {
+    readonly threadId: ThreadId;
+    readonly before?: string;
+  }) => Effect.Effect<InlineReplyPage, ProjectionStoreV2Error>;
+  readonly listPendingInlineReplyTranscripts: (input: {
+    readonly threadId: ThreadId;
+    readonly after?: ThreadId;
+  }) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  readonly getInlineReplyRow: (input: {
+    readonly threadId: ThreadId;
+    readonly childThreadId: ThreadId;
+    readonly itemId: TurnItemId;
+  }) => Effect.Effect<InlineReplyRow | null, ProjectionStoreV2Error>;
+  readonly listRemovedInlineReplyMessages: (input: {
+    readonly threadId: ThreadId;
+    readonly childThreadId: ThreadId;
+    readonly runId?: RunId;
+    readonly after?: MessageId;
+  }) => Effect.Effect<ReadonlyArray<MessageId>, ProjectionStoreV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -989,6 +1031,7 @@ type ShellThreadRow = {
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
   readonly latest_run_stop_requested: number;
+  readonly reply_retry_message_id: string | null;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
   readonly activity_run_status: string | null;
@@ -1483,6 +1526,8 @@ export function threadShellFromProjection(
       projection.turnItems,
       providerSession?.lastError ?? null,
     ) ?? latestUnheldRun(runs);
+  const replyRetry =
+    projection.thread.messageReply === undefined ? null : resolveResultlessRetryTarget(projection);
   const activeRun =
     runs
       .filter(isInterruptibleRunForShell)
@@ -1574,6 +1619,9 @@ export function threadShellFromProjection(
       projection.turnItems.some(
         (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
       ),
+    ...(replyRetry !== null && replyRetry.runId === latestRun?.id
+      ? { replyRetryMessageId: replyRetry.messageId }
+      : {}),
     activeRunId: activeRun?.id ?? null,
     blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
@@ -1622,6 +1670,8 @@ export function threadShellFromProjection(
     opens: projection.thread.opens ?? null,
     messageReply: projection.thread.messageReply,
     deepPlan: projection.thread.deepPlan ?? null,
+    deepPlanExecution: projection.thread.deepPlanExecution,
+    fetchWorker: projection.thread.fetchWorker,
     harnessSync: projection.thread.harnessSync ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
@@ -1694,6 +1744,7 @@ type ShellThreadState = {
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
   readonly latestRunStopRequested: boolean;
+  readonly replyRetryMessageId?: MessageId;
   readonly activeRunId: RunId | null;
   readonly blockedOnThreadWait: boolean;
   readonly activityRunStatus: ShellActivityRunStatus | null;
@@ -1857,6 +1908,9 @@ function shellFromState(input: {
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
     latestRunStopRequested: input.state.latestRunStopRequested,
+    ...(input.state.replyRetryMessageId === undefined
+      ? {}
+      : { replyRetryMessageId: input.state.replyRetryMessageId }),
     activeRunId: input.state.activeRunId,
     blockedOnThreadWait: input.state.blockedOnThreadWait,
     activityRunStatus: input.state.activityRunStatus,
@@ -1894,6 +1948,8 @@ function shellFromState(input: {
     opens: input.state.thread.opens ?? null,
     messageReply: input.state.thread.messageReply,
     deepPlan: input.state.thread.deepPlan ?? null,
+    deepPlanExecution: input.state.thread.deepPlanExecution,
+    fetchWorker: input.state.thread.fetchWorker,
     harnessSync: input.state.thread.harnessSync ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
@@ -1950,6 +2006,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
       OR item.payload_json LIKE '%"viewedImagePath"%'
       OR item.payload_json LIKE '%"toolName":"%delegate_task"%')`;
+
+    const visibleConversationRun = sql`
+      (run.status IS NULL OR run.status <> 'rolled_back')
+      AND NOT (item.type = 'user_message'
+        AND json_extract(item.payload_json, '$.inputIntent') IS 'queued_turn'
+        AND run.status IS 'cancelled')
+    `;
 
     const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
       CASE
@@ -2875,12 +2938,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND (
                       ${window.requiredRunId ?? null} IS NOT NULL
                       OR (
-                        (run.status IS NULL OR run.status <> 'rolled_back')
-                        AND NOT (
-                          item.type = 'user_message'
-                          AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
-                          AND run.status IS 'cancelled'
-                        )
+                        ${visibleConversationRun}
                       )
                     )
                     AND (
@@ -5261,8 +5319,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const threadRows = yield* sql<{ readonly side_chat: number | null }>`
-          SELECT json_extract(payload_json, '$.lineage.sideChat') AS side_chat
+            const threadRows = yield* sql<{
+              readonly side_chat: number | null;
+              readonly deep_plan_phase: string | null;
+            }>`
+          SELECT json_extract(payload_json, '$.lineage.sideChat') AS side_chat,
+            json_extract(payload_json, '$.deepPlanExecution.phase') AS deep_plan_phase
           FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId} LIMIT 1`;
             if (threadRows[0] === undefined) {
               return yield* new ProjectionStoreThreadNotFoundError({ threadId });
@@ -5304,6 +5366,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               readyCheckpointOrdinals: readyRows.map(({ ordinal }) => ordinal),
               sideChat: threadRows[0].side_chat === 1,
+              deepPlanReview: threadRows[0].deep_plan_phase === "review",
             };
           }),
         )
@@ -5651,6 +5714,230 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
         );
+
+    const inlineReplyChildLink = sql`child.project_id = parent.project_id
+      AND child.thread_id <> parent.thread_id
+      AND json_extract(child.payload_json, '$.messageReply.sourceThreadId') = parent.thread_id`;
+    const replyChildren = (threadId: ThreadId) => sql`
+      FROM orchestration_v2_projection_threads AS parent
+      JOIN orchestration_v2_projection_threads AS child ON ${inlineReplyChildLink}
+      WHERE parent.thread_id = ${threadId} AND parent.deleted_at IS NULL
+    `;
+    const getInlineReplyScope: ProjectionStoreV2Shape["getInlineReplyScope"] = Effect.fn(
+      "ProjectionStore.getInlineReplyScope",
+    )(
+      function* (threadId) {
+        const rows = yield* sql<{
+          readonly project_id: string;
+          readonly child_thread_id: string | null;
+        }>`
+          SELECT parent.project_id, child.thread_id AS child_thread_id
+          FROM orchestration_v2_projection_threads AS parent
+          LEFT JOIN orchestration_v2_projection_threads AS child
+            ON ${inlineReplyChildLink} AND child.deleted_at IS NULL
+          WHERE parent.thread_id = ${threadId} AND parent.deleted_at IS NULL
+        `;
+        const [parent] = rows;
+        return parent === undefined
+          ? null
+          : {
+              projectId: ProjectId.make(parent.project_id),
+              childThreadIds: rows.flatMap(({ child_thread_id }) =>
+                child_thread_id === null ? [] : [ThreadId.make(child_thread_id)],
+              ),
+            };
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
+    const inlineReplyCreatedAt = sql`COALESCE(message.created_at,
+      json_extract(item.payload_json, '$.startedAt'), child.created_at)`;
+    const readInlineReplyItems = (
+      threadId: ThreadId,
+      filter: Statement.Fragment,
+      limit: number,
+    ) => sql<{
+      readonly thread_id: string;
+      readonly reply_topic_id: string;
+      readonly created_at: string;
+      readonly ordinal: number;
+      readonly turn_item_id: string;
+      readonly payload_json: string | null;
+    }>`
+      WITH children AS (
+        SELECT child.thread_id, child.created_at,
+          json_extract(child.payload_json, '$.messageReply.replyTopicId') AS reply_topic_id
+        ${replyChildren(threadId)} AND child.deleted_at IS NULL
+      ), selected AS (
+        SELECT child.thread_id, child.reply_topic_id, item.ordinal, item.turn_item_id,
+          ${inlineReplyCreatedAt} AS created_at,
+          item.rowid AS item_rowid
+        FROM children AS child
+        JOIN orchestration_v2_projection_turn_items AS item ON item.thread_id = child.thread_id
+        LEFT JOIN orchestration_v2_projection_messages AS message ON message.thread_id = item.thread_id
+          AND message.message_id = json_extract(item.payload_json, '$.messageId')
+        LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
+        WHERE item.type IN ('user_message', 'assistant_message')
+          AND ${visibleConversationRun} ${filter}
+        ORDER BY created_at DESC, child.thread_id DESC, item.ordinal DESC, item.turn_item_id DESC
+        LIMIT ${limit}
+      )
+      SELECT selected.thread_id, selected.reply_topic_id, selected.created_at, selected.ordinal,
+        selected.turn_item_id, CASE WHEN ROW_NUMBER() OVER newest = 1 OR
+          SUM(length(CAST(item.payload_json AS BLOB))) OVER newest <= ${INLINE_REPLY_PAGE_BYTES}
+          THEN item.payload_json END AS payload_json
+      FROM selected
+      JOIN orchestration_v2_projection_turn_items AS item ON item.rowid = selected.item_rowid
+      WINDOW newest AS (ORDER BY selected.created_at DESC, selected.thread_id DESC,
+        selected.ordinal DESC, selected.turn_item_id DESC)
+      ORDER BY selected.created_at DESC, selected.thread_id DESC, selected.ordinal DESC,
+        selected.turn_item_id DESC
+    `;
+
+    const materializeInlineReplyRow = Effect.fn("ProjectionStore.materializeInlineReplyRow")(
+      function* (
+        record: Effect.Success<ReturnType<typeof readInlineReplyItems>>[number],
+      ): Effect.fn.Return<
+        { readonly row: InlineReplyRow; readonly encodedBytes: number } | null,
+        Schema.SchemaError | ProjectionStoreReadError
+      > {
+        if (record.payload_json === null) return null;
+        const item = projectTurnItemForWire(yield* decodeTurnItemPayload(record.payload_json));
+        if (item.type !== "user_message" && item.type !== "assistant_message") return null;
+        const threadId = ThreadId.make(record.thread_id);
+        const row: InlineReplyRow = {
+          threadId,
+          replyTopicId: SubagentId.make(record.reply_topic_id),
+          createdAt: record.created_at,
+          row: {
+            position: record.ordinal,
+            visibility: "local",
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            item,
+          },
+        };
+        const encodedBytes = Buffer.byteLength(yield* encodeInlineReplyRow(row), "utf8");
+        if (encodedBytes <= INLINE_REPLY_PAGE_BYTES) return { row, encodedBytes };
+
+        const capped = capInlineReplyRowForWire(row, INLINE_REPLY_PAGE_BYTES);
+        const cappedBytes = Buffer.byteLength(yield* encodeInlineReplyRow(capped), "utf8");
+        if (cappedBytes > INLINE_REPLY_PAGE_BYTES)
+          return yield* new ProjectionStoreReadError({
+            threadId,
+            cause: "Inline reply metadata exceeds the payload limit.",
+          });
+        return { row: capped, encodedBytes: cappedBytes };
+      },
+    );
+
+    const getInlineReplyPage: ProjectionStoreV2Shape["getInlineReplyPage"] = Effect.fn(
+      "ProjectionStore.getInlineReplyPage",
+    )(
+      function* ({ threadId, before }) {
+        const cursor =
+          before === undefined
+            ? undefined
+            : yield* decodeInlineReplyCursor(Buffer.from(before, "base64url").toString("utf8"));
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const [snapshot] = yield* sql<{ readonly sequence: number }>`
+              SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events
+              WHERE application_event_version = 2 AND aggregate_kind = 'thread'
+            `;
+            const candidates = yield* readInlineReplyItems(
+              threadId,
+              cursor === undefined
+                ? sql``
+                : sql`AND (${inlineReplyCreatedAt}, child.thread_id, item.ordinal, item.turn_item_id)
+                    < (${cursor[0]}, ${cursor[1]}, ${cursor[2]}, ${cursor[3]})`,
+              INLINE_REPLY_PAGE_ROWS + 1,
+            );
+            const rows: InlineReplyRow[] = [];
+            let bytes = 0;
+            for (const candidate of candidates.slice(0, INLINE_REPLY_PAGE_ROWS)) {
+              const entry = yield* materializeInlineReplyRow(candidate);
+              if (entry === null) break;
+              bytes += entry.encodedBytes + 1;
+              if (rows.length > 0 && bytes > INLINE_REPLY_PAGE_BYTES) break;
+              rows.push(entry.row);
+            }
+            const oldest = rows.at(-1);
+            const nextCursor =
+              oldest !== undefined && candidates.length > rows.length
+                ? Buffer.from(
+                    encodeInlineReplyCursor([
+                      oldest.createdAt,
+                      oldest.threadId,
+                      oldest.row.position,
+                      oldest.row.sourceItemId,
+                    ]),
+                    "utf8",
+                  ).toString("base64url")
+                : null;
+            return { rows: rows.reverse(), nextCursor, snapshotSequence: snapshot?.sequence ?? 0 };
+          }),
+        );
+      },
+      (effect, input) => effect.pipe(Effect.mapError(controlReadError(input.threadId))),
+    );
+
+    const listPendingInlineReplyTranscripts: ProjectionStoreV2Shape["listPendingInlineReplyTranscripts"] =
+      Effect.fn("ProjectionStore.listPendingInlineReplyTranscripts")(
+        function* ({ threadId, after }) {
+          const rows = yield* sql<{ readonly thread_id: string }>`
+            SELECT child.thread_id ${replyChildren(threadId)}
+              AND child.deleted_at IS NULL AND EXISTS (
+                SELECT 1 FROM orchestration_v2_legacy_imports AS legacy
+                WHERE legacy.thread_id = child.thread_id AND legacy.transcript_imported_at IS NULL
+              )
+            ${after === undefined ? sql`` : sql`AND child.thread_id > ${after}`}
+            ORDER BY child.thread_id
+            LIMIT ${INLINE_REPLY_PAGE_ROWS}
+          `;
+          return rows.map((row) => ThreadId.make(row.thread_id));
+        },
+        (effect, input) => effect.pipe(Effect.mapError(controlReadError(input.threadId))),
+      );
+
+    const getInlineReplyRow: ProjectionStoreV2Shape["getInlineReplyRow"] = Effect.fn(
+      "ProjectionStore.getInlineReplyRow",
+    )(
+      function* ({ threadId, childThreadId, itemId }) {
+        const [record] = yield* readInlineReplyItems(
+          threadId,
+          sql`AND child.thread_id = ${childThreadId} AND item.turn_item_id = ${itemId}`,
+          1,
+        );
+        return record === undefined
+          ? null
+          : ((yield* materializeInlineReplyRow(record))?.row ?? null);
+      },
+      (effect, input) => effect.pipe(Effect.mapError(controlReadError(input.threadId))),
+    );
+
+    const listRemovedInlineReplyMessages: ProjectionStoreV2Shape["listRemovedInlineReplyMessages"] =
+      Effect.fn("ProjectionStore.listRemovedInlineReplyMessages")(
+        function* ({ threadId, childThreadId, runId, after }) {
+          const [child] = yield* sql<{ readonly deleted_at: string | null }>`
+            SELECT child.deleted_at ${replyChildren(threadId)}
+            AND child.thread_id = ${childThreadId}
+          `;
+          if (child === undefined || (runId === undefined && child.deleted_at === null)) return [];
+          const rows = yield* sql<{ readonly message_id: string }>`
+            SELECT DISTINCT json_extract(item.payload_json, '$.messageId') AS message_id
+            FROM orchestration_v2_projection_turn_items AS item
+            LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
+            WHERE item.thread_id = ${childThreadId} AND item.type IN ('user_message', 'assistant_message')
+              ${runId === undefined ? sql`` : sql`AND item.run_id = ${runId} AND NOT (${visibleConversationRun})`}
+              ${after === undefined ? sql`` : sql`AND message_id > ${after}`}
+            ORDER BY message_id
+            LIMIT ${INLINE_REPLY_REMOVE_ROWS}
+          `;
+          return rows.map((row) => MessageId.make(row.message_id));
+        },
+        (effect, input) => effect.pipe(Effect.mapError(controlReadError(input.threadId))),
+      );
 
     type TimelineIndexItem = Pick<
       OrchestrationV2TurnItem,
@@ -6286,6 +6573,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
+              CASE WHEN json_type(t.payload_json, '$.messageReply') = 'object'
+                AND t.archived_at IS NULL
+                AND presented.status IN ('failed', 'interrupted')
+                AND active.run_id IS NULL
+                AND (json_extract(presented.payload_json, '$.startedAt') IS NOT NULL
+                  OR json_extract(presented.payload_json, '$.workspacePreparation') IS NULL)
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_turn_items answer
+                  WHERE answer.thread_id = t.thread_id AND answer.run_id = presented.run_id
+                    AND answer.type = 'assistant_message'
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_messages answer
+                  WHERE answer.thread_id = t.thread_id AND answer.run_id = presented.run_id
+                    AND answer.role = 'assistant'
+                )
+                THEN json_extract(presented.payload_json, '$.userMessageId')
+              END AS reply_retry_message_id,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
@@ -6961,6 +7266,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           latestRunStopRequested,
+          ...(row.reply_retry_message_id !== null &&
+          row.latest_run_id === latestRunId &&
+          pendingRuntimeRequest === null
+            ? { replyRetryMessageId: MessageId.make(row.reply_retry_message_id) }
+            : {}),
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
           blockedOnThreadWait: deriveBlockedOnThreadWait({
             activeRun:
@@ -7450,6 +7760,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),
       getThreadSnapshot: readOnReader(getThreadSnapshot),
+      getInlineReplyScope: readOnReader(getInlineReplyScope),
+      getInlineReplyPage: readOnReader(getInlineReplyPage),
+      listPendingInlineReplyTranscripts: readOnReader(listPendingInlineReplyTranscripts),
+      getInlineReplyRow: readOnReader(getInlineReplyRow),
+      listRemovedInlineReplyMessages: readOnReader(listRemovedInlineReplyMessages),
       getThreadSnapshotWindow: readOnReader(getThreadSnapshotWindow),
       getTimelinePage: readOnReader(getTimelinePage),
       getThreadHistoryPage: readOnReader(getThreadHistoryPage),

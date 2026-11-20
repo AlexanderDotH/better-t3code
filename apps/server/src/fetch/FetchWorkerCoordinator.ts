@@ -49,7 +49,11 @@ const make = Effect.gen(function* () {
     function* (input) {
       const parent = yield* orchestration.getThreadRecords(input.threadId, ["runs"]);
       const parentRun = parent.runs
-        .filter((run) => ["starting", "running", "waiting"].includes(run.status))
+        .filter(
+          (run) =>
+            ["starting", "running", "waiting"].includes(run.status) &&
+            (input.exploration === undefined || run.id === input.exploration.parentRunId),
+        )
         .at(-1);
       const counts = { plannedWorkers: 0, completedWorkers: 0, successfulWorkers: 0 };
       let modelSelection = input.modelSelection;
@@ -76,7 +80,13 @@ const make = Effect.gen(function* () {
           modelSelection,
           maxRecommendedWorkers,
         }).pipe(Effect.provideService(TextGeneration, generation));
-      let planning = yield* plan();
+      let planning =
+        input.exploration === undefined
+          ? yield* plan()
+          : {
+              plan: { decision: "run" as const, workers: input.exploration.assignments },
+              fallbackReason: null,
+            };
       const typedFallback = (reason: typeof planning.fallbackReason) =>
         reason === "model-unavailable" || reason === "entitlement" || reason === "rate-limited";
       if (typedFallback(planning.fallbackReason) && input.lunaFallback !== undefined) {
@@ -98,18 +108,23 @@ const make = Effect.gen(function* () {
         };
       if (planning.plan.decision === "skip")
         return { ...base(), ...counts, status: "skipped", warnings };
-      if (input.ultrafastWorkers !== undefined && isLargeExploration(planning.plan)) {
+      const assignments = planning.plan.workers;
+      if (
+        input.exploration === undefined &&
+        input.ultrafastWorkers !== undefined &&
+        isLargeExploration(planning.plan)
+      ) {
         const ultrafast = input.ultrafastWorkers.find(
           (candidate) =>
             candidate.commandExecutionPolicy === "deny" &&
-            candidate.maxRecommendedWorkers >= planning.plan.workers.length,
+            candidate.maxRecommendedWorkers >= assignments.length,
         );
         if (ultrafast) {
           modelSelection = ultrafast.modelSelection;
           providerDriver = ultrafast.providerDriver;
         }
       }
-      const tasks = yield* Effect.forEach(planning.plan.workers, (assignment) =>
+      const tasks = yield* Effect.forEach(assignments, (assignment) =>
         Effect.gen(function* () {
           const result = yield* orchestration.dispatch({
             type: "delegated_task.request",
@@ -117,12 +132,21 @@ const make = Effect.gen(function* () {
             parentThreadId: input.threadId,
             parentRunId: parentRun.id,
             parentNodeId: parentRun.rootNodeId!,
-            task: buildFetchWorkerPrompt({ userRequest: input.userRequest, ...assignment }),
-            title: `Fetch: ${assignment.scope}`,
+            task: buildFetchWorkerPrompt({
+              userRequest: input.userRequest,
+              ...assignment,
+              ...(input.exploration === undefined ? {} : { chats: input.exploration.chats }),
+            }),
+            title: `${input.exploration === undefined ? "Fetch" : "Deep Plan"}: ${assignment.scope}`,
             modelSelection,
             runtimeMode: "approval-required",
             interactionMode: "plan",
-            fetchWorker: { commandExecutionPolicy: "deny" },
+            fetchWorker: {
+              commandExecutionPolicy: "deny",
+              ...(input.exploration === undefined
+                ? {}
+                : { deepPlanRunId: input.exploration.runId }),
+            },
             createdBy: "agent",
             creationSource: "server",
           });
@@ -141,7 +165,7 @@ const make = Effect.gen(function* () {
             if (task.childThreadId === null)
               return {
                 index,
-                scope: planning.plan.workers[index]!.scope,
+                scope: assignments[index]!.scope,
                 status: "error",
                 findings: "",
                 detail: "The worker has no child thread.",
@@ -165,7 +189,7 @@ const make = Effect.gen(function* () {
               .join("\n\n");
             return {
               index,
-              scope: planning.plan.workers[index]!.scope,
+              scope: assignments[index]!.scope,
               status: result.timedOut
                 ? "timed-out"
                 : result.run?.status === "completed"

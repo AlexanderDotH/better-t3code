@@ -1,19 +1,26 @@
 // @effect-diagnostics nodeBuiltinImport:off - Approval fingerprints must be computed in the pure command decision.
 import {
-  type DeepPlanActor,
+  DEEP_PLAN_MAX_OPERATIONS,
+  DEEP_PLAN_REVIEW_ROUND_LIMIT,
+  deriveDeepPlanImplementationThreadId,
+  deriveDeepPlanRunId,
+  isDeepPlanRun,
   type DeepPlanDocument,
   type DeepPlanError,
-  type DeepPlanFinalValidation,
   type DeepPlanRun,
-  type DeepPlanStepStatus,
+  type DeepPlanReviewTarget,
+  type StoredDeepPlanRun,
+  type ThreadDeepPlanAdvanceCommand,
   type ThreadDeepPlanStartCommand,
   type ThreadDeepPlanUpdateCommand,
 } from "@t3tools/contracts";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
-
 import * as Schema from "effect/Schema";
+
+import { deepPlanTurnHasResult, reviewTarget } from "./deepPlanNextAction.ts";
 
 export class DeepPlanDecisionError extends Schema.TaggedError<DeepPlanDecisionError>()(
   "DeepPlanDecisionError",
@@ -23,6 +30,18 @@ export class DeepPlanDecisionError extends Schema.TaggedError<DeepPlanDecisionEr
     context: Schema.Struct({ deepPlanCode: Schema.String }),
   },
 ) {}
+
+export function invalidDeepPlanCommand(
+  command: { readonly type: string },
+  detail: string,
+  code: DeepPlanError["code"] = "invalid-transition",
+) {
+  return new DeepPlanDecisionError({
+    commandType: command.type,
+    detail,
+    context: { deepPlanCode: code },
+  });
+}
 
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
@@ -40,547 +59,630 @@ function fingerprint(value: unknown): string {
     .digest("hex");
 }
 
-export function deepPlanApprovalKey(plan: DeepPlanDocument): string {
+function deepPlanApprovalKey(plan: DeepPlanDocument): string {
   return fingerprint(plan);
 }
 
-function invalid(
-  command: { readonly type: string },
-  detail: string,
-  code: DeepPlanError["code"] = "invalid-transition",
-) {
-  return new DeepPlanDecisionError({
-    commandType: command.type,
-    detail,
-    context: { deepPlanCode: code },
-  });
-}
+type ActiveTurn = DeepPlanRun["activeTurns"][number];
+type StepState = DeepPlanRun["steps"][number];
 
-function pendingFinalValidation(attempt = 0): DeepPlanFinalValidation {
+function pendingReview(): DeepPlanRun["finalReview"] {
   return {
     status: "pending",
-    evidence: [],
-    updatedAt: null,
-    attempt,
-    requestId: null,
-    turnId: null,
+    submission: null,
+    reviews: [],
+    roundLimit: DEEP_PLAN_REVIEW_ROUND_LIMIT,
+    unsubmittedTurns: 0,
   };
 }
 
-function validationAfterSuspension(run: DeepPlanRun): DeepPlanFinalValidation {
-  return run.phase === "validating" && run.finalValidation.status === "inProgress"
-    ? pendingFinalValidation(run.finalValidation.attempt + 1)
-    : run.finalValidation;
+function isReviewTurn(turn: Pick<ActiveTurn, "kind">): boolean {
+  return turn.kind === "review" || turn.kind === "finalReview";
 }
 
-export function hasCompleteDeepPlanSources(run: DeepPlanRun): boolean {
-  return run.sources.every((source) => {
-    const coverage = run.sourceCoverage.find((entry) => entry.sourceId === source.sourceId);
-    return (
-      coverage !== undefined &&
-      coverage.status === "summarized" &&
-      coverage.importedRecordCount === source.recordCount &&
-      coverage.readRecordCount === source.recordCount &&
-      coverage.summary !== null &&
-      (source.recordCount === 0 || coverage.summary.citedRecordIds.length > 0)
-    );
-  });
+function matchesTarget(turn: ActiveTurn, target: DeepPlanReviewTarget): boolean {
+  return turn.stepId === (target.kind === "step" ? target.stepId : null);
 }
 
-function actorMatches(run: DeepPlanRun, actor: DeepPlanActor): boolean {
-  return (
-    run.approval !== null &&
-    actor.implementerId === run.approval.implementerId &&
-    fingerprint(actor.model) === fingerprint(run.approval.implementation)
-  );
+function replaceStep(run: DeepPlanRun, step: StepState): DeepPlanRun {
+  return {
+    ...run,
+    steps: run.steps.map((existing) => (existing.stepId === step.stepId ? step : existing)),
+  };
 }
 
-function hasCurrentApproval(run: DeepPlanRun): boolean {
-  return (
-    run.plan !== null &&
-    run.approval !== null &&
-    run.approval.planVersion === run.plan.version &&
-    run.approval.approvalKey === deepPlanApprovalKey(run.plan)
-  );
+function pause(
+  run: DeepPlanRun,
+  request: Omit<NonNullable<DeepPlanRun["pause"]>, "at">,
+  at: string,
+): DeepPlanRun {
+  return { ...run, phase: "paused", pause: { ...request, at } };
 }
 
-function resumedPhase(run: DeepPlanRun): DeepPlanRun["phase"] {
-  if (run.plan === null)
-    return run.sources.length > 0 || run.includeProjectChats !== undefined
+function resume(run: DeepPlanRun): DeepPlanRun {
+  const pause = run.pause;
+  const moreRounds = pause?.kind === "reviewLimit";
+  const finalReview =
+    run.finalReview.status !== "pending" || run.activeTurns.some((turn) => turn.stepId === null);
+  const phase =
+    run.plan === null
       ? "planning"
-      : "collecting";
-  if (!hasCurrentApproval(run)) return "awaitingApproval";
-  return run.stepStates.every((step) => step.status === "verified") ? "validating" : "implementing";
+      : run.approval === null
+        ? "awaitingApproval"
+        : finalReview
+          ? "finalReview"
+          : "implementing";
+  return {
+    ...run,
+    phase,
+    pause: null,
+    activeTurns: run.activeTurns.map((turn) => ({ ...turn, attempt: 0 })),
+    steps: run.steps.map((step) => ({
+      ...step,
+      unsubmittedTurns: 0,
+      roundLimit:
+        moreRounds && pause.stepId === step.stepId
+          ? step.roundLimit + DEEP_PLAN_REVIEW_ROUND_LIMIT
+          : step.roundLimit,
+    })),
+    finalReview: {
+      ...run.finalReview,
+      unsubmittedTurns: 0,
+      roundLimit:
+        moreRounds && pause.stepId === undefined
+          ? run.finalReview.roundLimit + DEEP_PLAN_REVIEW_ROUND_LIMIT
+          : run.finalReview.roundLimit,
+    },
+  };
 }
-
-function dependentStepIds(plan: DeepPlanDocument, changedStepId: string): ReadonlySet<string> {
-  const invalidated = new Set([changedStepId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const step of plan.steps) {
-      if (!invalidated.has(step.id) && step.dependencies.some((id) => invalidated.has(id))) {
-        invalidated.add(step.id);
-        changed = true;
-      }
-    }
-  }
-  invalidated.delete(changedStepId);
-  return invalidated;
-}
-
-const allowedStepTransitions: Record<DeepPlanStepStatus, ReadonlyArray<DeepPlanStepStatus>> = {
-  pending: ["pending", "inProgress", "blocked"],
-  inProgress: ["inProgress", "implemented", "failed", "blocked"],
-  implemented: ["implemented", "verified", "inProgress", "failed", "blocked"],
-  verified: ["verified", "inProgress", "failed"],
-  failed: ["failed", "inProgress", "blocked"],
-  blocked: ["blocked", "inProgress"],
-};
 
 export const startDeepPlanRun = Effect.fn("startDeepPlanRun")(function* (
   command: ThreadDeepPlanStartCommand,
-  current?: DeepPlanRun | null,
+  current?: StoredDeepPlanRun | null,
 ): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
-  if (current != null && current.threadId !== command.threadId) {
-    return yield* invalid(
+  const id = deriveDeepPlanRunId(command.commandId);
+  if (isDeepPlanRun(current) && current.threadId !== command.threadId) {
+    return yield* invalidDeepPlanCommand(
       command,
-      "This thread is implementing a Deep Plan owned by another thread.",
+      "This thread belongs to a Deep Plan owned by another thread.",
       "operation-conflict",
     );
   }
-  if (current?.id === command.runId) {
-    if (current.threadId !== command.threadId) {
-      return yield* invalid(command, "Deep Plan run belongs to another thread.");
+  if (isDeepPlanRun(current)) {
+    if (current.id === id) return current;
+    if (current.phase === "implementing" || current.phase === "finalReview") {
+      return yield* invalidDeepPlanCommand(
+        command,
+        "Pause the current Deep Plan before starting another run.",
+      );
     }
-    if (
-      command.sources !== undefined &&
-      fingerprint(command.sources) !== fingerprint(current.sources)
-    ) {
-      return yield* invalid(command, "Deep Plan run sources are already frozen.");
-    }
-    return current;
-  }
-  if (current?.phase === "implementing" || current?.phase === "validating") {
-    return yield* invalid(command, "Pause the current Deep Plan before starting another run.");
-  }
-  const sources = command.sources ?? [];
-  if (new Set(sources.map((source) => source.sourceId)).size !== sources.length) {
-    return yield* invalid(command, "Deep Plan source IDs must be unique.");
   }
   return {
-    id: command.runId,
+    schemaVersion: 2,
+    id,
     threadId: command.threadId,
-    phase: sources.length > 0 ? "planning" : "collecting",
+    phase: "planning",
     revision: 0,
     plan: null,
     approvalKey: null,
     approval: null,
-    sources,
-    sourceCoverage: [],
-    stepStates: [],
-    finalValidation: pendingFinalValidation(),
-    procedureAdjustments: [],
+    chats: command.chats,
+    includeProjectChats: command.includeProjectChats,
+    steps: [],
+    finalReview: pendingReview(),
+    activeTurns: [],
     operations: [],
     createdAt: command.createdAt,
     updatedAt: command.createdAt,
-    pauseReason: null,
+    pause: null,
   };
 });
 
-export const updateDeepPlanRun = Effect.fn("updateDeepPlanRun")(function* (
-  run: DeepPlanRun | null | undefined,
-  command: ThreadDeepPlanUpdateCommand,
+const requireRun = Effect.fn("DeepPlanDecision.requireRun")(function* (
+  run: StoredDeepPlanRun | null | undefined,
+  command: ThreadDeepPlanUpdateCommand | ThreadDeepPlanAdvanceCommand,
 ): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
-  if (run == null || run.id !== command.runId || run.threadId !== command.threadId) {
-    return yield* invalid(
+  if (!isDeepPlanRun(run) || run.id !== command.runId || run.threadId !== command.threadId) {
+    return yield* invalidDeepPlanCommand(
       command,
       "Deep Plan run does not belong to this thread.",
       "run-not-found",
     );
   }
-  const operationFingerprint = fingerprint({
-    threadId: command.threadId,
-    runId: command.runId,
-    expectedRevision: command.expectedRevision,
-    mutation: command.mutation,
-  });
-  const operation = run.operations.find((entry) => entry.operationId === command.operationId);
-  if (operation !== undefined) {
-    if (operation.fingerprint !== operationFingerprint) {
-      return yield* invalid(
-        command,
-        "Deep Plan operation ID was reused with different content.",
-        "operation-conflict",
-      );
-    }
-    return run;
-  }
-  if (run.revision !== command.expectedRevision) {
-    return yield* invalid(
-      command,
-      `Deep Plan revision ${command.expectedRevision} is stale; current revision is ${run.revision}.`,
-      "stale-revision",
-    );
-  }
-  if (run.phase === "completed") {
-    return yield* invalid(command, "Completed Deep Plans cannot be updated.");
-  }
+  return run;
+});
+
+function currentRevisionError(
+  run: DeepPlanRun,
+  command: ThreadDeepPlanUpdateCommand | ThreadDeepPlanAdvanceCommand,
+) {
+  return invalidDeepPlanCommand(
+    command,
+    `Deep Plan revision ${command.expectedRevision} is stale; current revision is ${run.revision}.`,
+    "stale-revision",
+  );
+}
+
+const applyMutation = Effect.fn("DeepPlanDecision.applyMutation")(function* (
+  run: DeepPlanRun,
+  command: ThreadDeepPlanUpdateCommand,
+  baseTurnCount: number,
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
   const mutation = command.mutation;
-  if ("actor" in mutation && (!hasCurrentApproval(run) || !actorMatches(run, mutation.actor))) {
-    return yield* invalid(
-      command,
-      "Deep Plan updates require the approved implementing agent and model.",
-      hasCurrentApproval(run) ? "actor-mismatch" : "approval-required",
-    );
-  }
-  let next: DeepPlanRun = run;
   switch (mutation.type) {
-    case "sources-set": {
-      if (run.plan !== null || (run.phase !== "collecting" && run.phase !== "planning")) {
-        return yield* invalid(command, "Deep Plan sources cannot change after planning.");
-      }
-      const includeProjectChats = mutation.includeProjectChats ?? true;
-      if (
-        (run.sources.length > 0 && fingerprint(run.sources) !== fingerprint(mutation.sources)) ||
-        (run.includeProjectChats !== undefined && run.includeProjectChats !== includeProjectChats)
-      ) {
-        return yield* invalid(
-          command,
-          "Deep Plan source snapshots are immutable; start a new run to change sources.",
-        );
-      }
-      if (
-        new Set(mutation.sources.map((source) => source.sourceId)).size !== mutation.sources.length
-      ) {
-        return yield* invalid(command, "Deep Plan source IDs must be unique.");
-      }
-      next = { ...run, sources: mutation.sources, includeProjectChats, phase: "planning" };
-      break;
-    }
-    case "source-coverage": {
-      if (run.plan !== null || (run.phase !== "collecting" && run.phase !== "planning")) {
-        return yield* invalid(
-          command,
-          "Deep Plan source coverage is frozen with the published plan.",
-        );
-      }
-      const coverage = new Map(run.sourceCoverage.map((entry) => [entry.sourceId, entry]));
-      const seen = new Set<string>();
-      for (const entry of mutation.coverage) {
-        const source = run.sources.find((candidate) => candidate.sourceId === entry.sourceId);
-        const previous = coverage.get(entry.sourceId);
-        if (source === undefined || seen.has(entry.sourceId)) {
-          return yield* invalid(
-            command,
-            "Deep Plan coverage must reference unique frozen sources.",
-          );
-        }
-        if (
-          entry.importedRecordCount > source.recordCount ||
-          entry.readRecordCount > entry.importedRecordCount ||
-          (previous !== undefined &&
-            (entry.importedRecordCount < previous.importedRecordCount ||
-              entry.readRecordCount < previous.readRecordCount))
-        ) {
-          return yield* invalid(
-            command,
-            "Deep Plan source coverage counts must match the frozen snapshot and cannot regress.",
-          );
-        }
-        seen.add(entry.sourceId);
-        coverage.set(entry.sourceId, entry);
-      }
-      next = { ...run, sourceCoverage: [...coverage.values()], phase: "planning" };
-      break;
-    }
     case "publish-plan": {
-      if (run.phase === "paused" || run.phase === "collecting") {
-        return yield* invalid(
+      if (command.byThreadId !== run.threadId)
+        return yield* invalidDeepPlanCommand(
           command,
-          "Finish collecting sources and resume the Deep Plan before publishing.",
+          "Only the planning thread can publish a Deep Plan.",
+          "actor-mismatch",
         );
-      }
-      if (!hasCompleteDeepPlanSources(run)) {
-        return yield* invalid(
+      if (run.phase !== "planning" && run.phase !== "awaitingApproval" && run.phase !== "paused")
+        return yield* invalidDeepPlanCommand(
           command,
-          "Every frozen source must be imported, read, and summarized before publishing a Deep Plan.",
-          "sources-incomplete",
+          "Pause the Deep Plan before publishing a new version.",
         );
-      }
-      if (mutation.plan.version !== (run.plan?.version ?? 0) + 1) {
-        return yield* invalid(command, "Deep Plan versions must increase by one.", "stale-plan");
-      }
-      next = {
+      const plan: DeepPlanDocument = {
+        ...mutation.plan,
+        schemaVersion: 2,
+        version: (run.plan?.version ?? 0) + 1,
+      };
+      return {
         ...run,
         phase: "awaitingApproval",
-        plan: mutation.plan,
-        approvalKey: deepPlanApprovalKey(mutation.plan),
+        plan,
+        approvalKey: deepPlanApprovalKey(plan),
         approval: null,
-        stepStates: mutation.plan.steps.map((step) => ({
+        steps: plan.steps.map((step) => ({
           stepId: step.id,
           status: "pending",
-          evidence: [],
-          updatedAt: command.createdAt,
+          laneId: null,
+          baseTurnCount: null,
+          submission: null,
+          reviews: [],
+          roundLimit: DEEP_PLAN_REVIEW_ROUND_LIMIT,
+          unsubmittedTurns: 0,
         })),
-        finalValidation: pendingFinalValidation(),
-        pauseReason: null,
+        finalReview: pendingReview(),
+        activeTurns: [],
+        pause: null,
       };
-      break;
     }
     case "approve": {
-      if (run.phase !== "awaitingApproval" || run.plan === null) {
-        return yield* invalid(
+      if (run.phase !== "awaitingApproval" || run.plan === null)
+        return yield* invalidDeepPlanCommand(
           command,
-          "A published Deep Plan must await approval before implementation.",
+          "Publish a Deep Plan before approving implementation.",
         );
-      }
-      if (!hasCompleteDeepPlanSources(run)) {
-        return yield* invalid(
-          command,
-          "Every Deep Plan source must be imported, read, and summarized before approval.",
-          "sources-incomplete",
-        );
-      }
-      if (
-        mutation.planVersion !== run.plan.version ||
-        mutation.approvalKey !== deepPlanApprovalKey(run.plan)
-      ) {
-        return yield* invalid(
+      if (mutation.planVersion !== run.plan.version || mutation.approvalKey !== run.approvalKey)
+        return yield* invalidDeepPlanCommand(
           command,
           "Deep Plan approval references a stale plan version.",
           "stale-plan",
         );
-      }
-      if (mutation.implementerId !== `thread:${mutation.implementationThreadId}`) {
-        return yield* invalid(
-          command,
-          "Deep Plan implementer must be bound to the implementation thread.",
-        );
-      }
-      next = {
+      const primaryThreadId =
+        mutation.implementationThread === "current"
+          ? run.threadId
+          : deriveDeepPlanImplementationThreadId(run.id, mutation.planVersion);
+      return {
         ...run,
         phase: "implementing",
         approval: {
           planVersion: mutation.planVersion,
           approvalKey: mutation.approvalKey,
           implementation: mutation.implementation,
-          implementationThreadId: mutation.implementationThreadId,
-          implementerId: mutation.implementerId,
-          ...(mutation.requestedParallelism === undefined
-            ? {}
-            : { requestedParallelism: mutation.requestedParallelism }),
+          reviewer: mutation.reviewer ?? command.defaultReviewer ?? mutation.implementation,
           approvedAt: command.createdAt,
-          approvedBy: "user",
+          parallelism: mutation.parallelism,
+          lanes: Array.from({ length: mutation.parallelism }, (_, index) => {
+            const laneId = `v${mutation.planVersion}:${index + 1}`;
+            const threadId =
+              index === 0 ? primaryThreadId : derive.deepPlanLaneThread({ runId: run.id, laneId });
+            return { laneId, threadId };
+          }),
+          baseTurnCount,
         },
-        pauseReason: null,
+        pause: null,
       };
-      break;
-    }
-    case "step-update": {
-      if (run.phase === "paused" || run.plan === null) {
-        return yield* invalid(command, "Resume the approved Deep Plan before updating steps.");
-      }
-      const step = run.plan.steps.find((entry) => entry.id === mutation.stepId);
-      const state = run.stepStates.find((entry) => entry.stepId === mutation.stepId);
-      if (step === undefined || state === undefined) {
-        return yield* invalid(command, "Deep Plan step does not exist in the approved plan.");
-      }
-      if (!allowedStepTransitions[state.status].includes(mutation.status)) {
-        return yield* invalid(
-          command,
-          `Deep Plan step cannot change from ${state.status} to ${mutation.status}.`,
-        );
-      }
-      if (
-        (mutation.status === "inProgress" ||
-          mutation.status === "implemented" ||
-          mutation.status === "verified") &&
-        step.dependencies.some(
-          (id) =>
-            !run.stepStates.some((entry) => entry.stepId === id && entry.status === "verified"),
-        )
-      ) {
-        return yield* invalid(command, "Deep Plan step dependencies must be verified first.");
-      }
-      if (
-        (mutation.status === "verified" || mutation.status === "failed") &&
-        mutation.evidence.length === 0
-      ) {
-        return yield* invalid(command, "Deep Plan verification and failures require evidence.");
-      }
-      const invalidatesValidation = state.status === "verified" && mutation.status !== "verified";
-      const invalidatedDependencies = invalidatesValidation
-        ? dependentStepIds(run.plan, step.id)
-        : new Set<string>();
-      const stepStates = run.stepStates.map((entry) =>
-        entry.stepId === mutation.stepId
-          ? {
-              stepId: mutation.stepId,
-              status: mutation.status,
-              evidence: mutation.evidence,
-              updatedAt: command.createdAt,
-            }
-          : invalidatedDependencies.has(entry.stepId)
-            ? {
-                stepId: entry.stepId,
-                status: "pending" as const,
-                evidence: [],
-                updatedAt: command.createdAt,
-              }
-            : entry,
-      );
-      const allVerified = stepStates.every((entry) => entry.status === "verified");
-      const finalValidation =
-        invalidatesValidation || run.finalValidation.status === "failed"
-          ? pendingFinalValidation(run.finalValidation.attempt + 1)
-          : run.finalValidation;
-      next = {
-        ...run,
-        stepStates,
-        phase:
-          mutation.status === "failed"
-            ? "failed"
-            : mutation.status === "blocked"
-              ? "blocked"
-              : allVerified
-                ? "validating"
-                : "implementing",
-        finalValidation,
-        pauseReason: null,
-      };
-      break;
-    }
-    case "validation-start": {
-      if (
-        run.phase !== "validating" ||
-        !run.stepStates.every((step) => step.status === "verified")
-      ) {
-        return yield* invalid(
-          command,
-          "Every Deep Plan step must be verified before final validation.",
-        );
-      }
-      const expectedRequestId = `deep-plan:${run.id}:validation:${run.plan?.version ?? 0}:${run.finalValidation.attempt}`;
-      if (mutation.requestId !== expectedRequestId) {
-        return yield* invalid(
-          command,
-          "Deep Plan validation request is stale or belongs to another run.",
-        );
-      }
-      if (run.finalValidation.status !== "pending" && run.finalValidation.status !== "inProgress") {
-        return yield* invalid(
-          command,
-          "Deep Plan final validation must be pending before starting.",
-        );
-      }
-      next = {
-        ...run,
-        finalValidation: {
-          ...run.finalValidation,
-          status: "inProgress",
-          requestId: mutation.requestId,
-          turnId: mutation.turnId ?? run.finalValidation.turnId,
-          updatedAt: command.createdAt,
-        },
-      };
-      break;
-    }
-    case "validation-complete": {
-      if (
-        run.phase !== "validating" ||
-        run.finalValidation.status !== "inProgress" ||
-        mutation.requestId !== run.finalValidation.requestId
-      ) {
-        return yield* invalid(
-          command,
-          "Deep Plan final validation must match the active validation request.",
-        );
-      }
-      if (
-        !run.stepStates.every((step) => step.status === "verified") ||
-        mutation.evidence.length === 0
-      ) {
-        return yield* invalid(
-          command,
-          "Deep Plan completion requires all steps verified and explicit final validation evidence.",
-        );
-      }
-      next = {
-        ...run,
-        phase: mutation.status === "passed" ? "completed" : "failed",
-        finalValidation: {
-          ...run.finalValidation,
-          status: mutation.status,
-          evidence: mutation.evidence,
-          updatedAt: command.createdAt,
-        },
-      };
-      break;
-    }
-    case "procedure-adjust": {
-      if ((run.phase !== "implementing" && run.phase !== "validating") || run.plan === null) {
-        return yield* invalid(
-          command,
-          "Procedure adjustments require an active approved Deep Plan.",
-        );
-      }
-      next = {
-        ...run,
-        procedureAdjustments: [
-          ...run.procedureAdjustments,
-          {
-            id: command.operationId,
-            planVersion: run.plan.version,
-            reason: mutation.reason,
-            changes: mutation.changes,
-            actor: mutation.actor,
-            createdAt: command.createdAt,
-          },
-        ],
-      };
-      break;
     }
     case "pause":
-      next = {
-        ...run,
-        phase: "paused",
-        pauseReason: mutation.reason ?? null,
-        finalValidation: validationAfterSuspension(run),
-      };
-      break;
-    case "block":
-      next = {
-        ...run,
-        phase: "blocked",
-        pauseReason: mutation.reason,
-        finalValidation: validationAfterSuspension(run),
-      };
-      break;
-    case "resume": {
-      if (run.phase !== "paused" && run.phase !== "failed" && run.phase !== "blocked") {
-        return yield* invalid(command, "Only paused, failed, or blocked Deep Plans can resume.");
+      if (run.phase === "paused") return run;
+      if (run.phase !== "implementing" && run.phase !== "finalReview")
+        return yield* invalidDeepPlanCommand(
+          command,
+          "Only a Deep Plan that is being implemented can pause.",
+        );
+      return pause(
+        run,
+        { kind: "user", reason: mutation.reason ?? "Paused by the user." },
+        command.createdAt,
+      );
+    case "resume":
+      if (run.phase !== "paused")
+        return yield* invalidDeepPlanCommand(command, "Only a paused Deep Plan can resume.");
+      return resume(run);
+    case "cancel":
+      return { ...run, phase: "cancelled", pause: null };
+    case "block": {
+      const planning =
+        command.byThreadId === run.threadId &&
+        (run.phase === "planning" || run.phase === "awaitingApproval" || run.phase === "paused");
+      const implementation = run.activeTurns.find(
+        (turn) =>
+          !isReviewTurn(turn) &&
+          turn.threadId === command.byThreadId &&
+          turn.commandId === command.byTurnCommandId,
+      );
+      if (!planning && implementation === undefined)
+        return yield* invalidDeepPlanCommand(
+          command,
+          "Only the planner or active implementer can report a blocker.",
+          "actor-mismatch",
+        );
+      return pause(
+        run,
+        {
+          kind: "blocked",
+          reason: mutation.reason,
+          ...(implementation?.stepId == null ? {} : { stepId: implementation.stepId }),
+        },
+        command.createdAt,
+      );
+    }
+    case "submit":
+    case "review-verdict": {
+      const review = mutation.type === "review-verdict";
+      const turn = run.activeTurns.find(
+        (turn) =>
+          isReviewTurn(turn) === review &&
+          matchesTarget(turn, mutation.target) &&
+          turn.threadId === command.byThreadId &&
+          turn.commandId === command.byTurnCommandId &&
+          (mutation.type !== "review-verdict" || turn.round === mutation.round),
+      );
+      if (turn === undefined)
+        return yield* invalidDeepPlanCommand(
+          command,
+          "This thread has no matching active Deep Plan turn.",
+          "actor-mismatch",
+        );
+      const step = run.steps.find((step) => step.stepId === turn.stepId);
+      const state = step ?? run.finalReview;
+      if (mutation.type === "submit") {
+        if (state.submission?.turnCommandId === turn.commandId)
+          return yield* invalidDeepPlanCommand(
+            command,
+            "This Deep Plan turn already submitted its work.",
+          );
+        const submission = {
+          summary: mutation.summary,
+          changedFiles: mutation.changedFiles,
+          turnCommandId: turn.commandId,
+          at: command.createdAt,
+        };
+        return step === undefined
+          ? { ...run, finalReview: { ...run.finalReview, submission } }
+          : replaceStep(run, { ...step, submission });
       }
-      next = {
-        ...run,
-        phase: resumedPhase(run),
-        pauseReason: null,
-        finalValidation:
-          run.finalValidation.status === "failed"
-            ? pendingFinalValidation(run.finalValidation.attempt + 1)
-            : run.finalValidation,
-      };
-      break;
+      const latest = state.reviews.at(-1);
+      if (latest?.round !== mutation.round || latest.verdict !== null)
+        return yield* invalidDeepPlanCommand(
+          command,
+          "This Deep Plan turn has no pending review verdict.",
+        );
+      const reviews = [
+        ...state.reviews.slice(0, -1),
+        {
+          ...latest,
+          verdict: mutation.verdict,
+          summary: mutation.summary,
+          findings: mutation.findings,
+          completedAt: command.createdAt,
+        },
+      ];
+      return step === undefined
+        ? { ...run, finalReview: { ...run.finalReview, reviews, status: mutation.verdict } }
+        : replaceStep(run, {
+            ...step,
+            reviews,
+            status: mutation.verdict === "approved" ? "verified" : "changesRequested",
+          });
     }
   }
+});
+
+export const updateDeepPlanRun = Effect.fn("updateDeepPlanRun")(function* (
+  current: StoredDeepPlanRun | null | undefined,
+  command: ThreadDeepPlanUpdateCommand,
+  baseTurnCount = 0,
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
+  const run = yield* requireRun(current, command);
+  // Parallel lanes keep moving the revision; these mutations are bound to their active turn instead.
+  const turnBound =
+    command.mutation.type === "submit" || command.mutation.type === "review-verdict";
+  const operationFingerprint = fingerprint({
+    threadId: command.threadId,
+    runId: command.runId,
+    ...(turnBound ? {} : { expectedRevision: command.expectedRevision }),
+    byThreadId: command.byThreadId,
+    byTurnCommandId: command.byTurnCommandId,
+    mutation: command.mutation,
+  });
+  const operation = run.operations.find((entry) => entry.operationId === command.operationId);
+  if (operation !== undefined) {
+    if (operation.fingerprint !== operationFingerprint)
+      return yield* invalidDeepPlanCommand(
+        command,
+        "Deep Plan operation ID was reused with different content.",
+        "operation-conflict",
+      );
+    return run;
+  }
+  if (!turnBound && run.revision !== command.expectedRevision)
+    return yield* currentRevisionError(run, command);
+  if (run.phase === "completed" || run.phase === "cancelled")
+    return yield* invalidDeepPlanCommand(command, "Finished Deep Plans cannot be updated.");
+
+  const next = yield* applyMutation(run, command, baseTurnCount);
   const revision = run.revision + 1;
   return {
     ...next,
     revision,
     updatedAt: command.createdAt,
     operations: [
-      ...run.operations,
-      { operationId: command.operationId, fingerprint: operationFingerprint, revision },
+      ...run.operations.slice(-(DEEP_PLAN_MAX_OPERATIONS - 1)),
+      {
+        operationId: command.operationId,
+        fingerprint: operationFingerprint,
+        revision,
+      },
     ],
   };
+});
+
+const startTurn = Effect.fn("DeepPlanDecision.startTurn")(function* (
+  run: DeepPlanRun,
+  command: ThreadDeepPlanAdvanceCommand,
+  transition: Extract<ThreadDeepPlanAdvanceCommand["transition"], { type: "start-turn" }>,
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
+  const { turn } = transition;
+  const approval = run.approval;
+  if (approval === null || run.plan === null)
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The Deep Plan must be approved before starting a turn.",
+      "approval-required",
+    );
+
+  const target = reviewTarget(turn);
+  const review = isReviewTurn(turn);
+  const step = run.steps.find((step) => step.stepId === turn.stepId);
+  const definition = run.plan.steps.find((step) => step.id === turn.stepId);
+  if (
+    (turn.kind === "finalReview" || turn.kind === "finalFix") !== (target.kind === "final") ||
+    (target.kind === "step" && (step === undefined || definition === undefined))
+  )
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The turn does not match a step in the approved Deep Plan.",
+    );
+
+  const lane =
+    target.kind === "final"
+      ? approval.lanes[0]
+      : approval.lanes.find((lane) => lane.laneId === turn.laneId);
+  const previous = run.activeTurns.find((candidate) => candidate.commandId === transition.replaces);
+  if (
+    lane === undefined ||
+    (target.kind === "final" && turn.laneId !== lane.laneId) ||
+    (step?.laneId != null && step.laneId !== lane.laneId) ||
+    (transition.replaces !== undefined &&
+      (previous === undefined ||
+        previous.kind !== turn.kind ||
+        previous.stepId !== turn.stepId ||
+        previous.laneId !== turn.laneId ||
+        previous.round !== turn.round ||
+        previous.attempt + (transition.retryReason === "restarted" ? 0 : 1) !== turn.attempt ||
+        transition.retryReason === undefined)) ||
+    (transition.replaces === undefined &&
+      (turn.attempt !== 0 || transition.retryReason !== undefined))
+  )
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The turn does not match its assigned Deep Plan lane or retry.",
+    );
+
+  if (previous !== undefined && deepPlanTurnHasResult(run, previous))
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The Deep Plan turn already recorded its result.",
+    );
+
+  const expectedThreadId = review
+    ? derive.deepPlanReviewThread({
+        runId: run.id,
+        planVersion: approval.planVersion,
+        target,
+        round: turn.round,
+      })
+    : lane.threadId;
+  if (
+    expectedThreadId !== turn.threadId ||
+    (review && approval.lanes.some((lane) => lane.threadId === turn.threadId))
+  )
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The turn does not match its Deep Plan thread.",
+      "target-unavailable",
+    );
+
+  const otherTurns = run.activeTurns.filter((candidate) => candidate !== previous);
+  if (
+    otherTurns.some(
+      (candidate) =>
+        candidate.threadId === turn.threadId ||
+        candidate.stepId === turn.stepId ||
+        (!review && !isReviewTurn(candidate) && candidate.laneId === turn.laneId),
+    )
+  )
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The Deep Plan target or lane already has an active turn.",
+    );
+
+  const state = step ?? run.finalReview;
+  const lastReview = state.reviews.at(-1);
+  if (previous === undefined) {
+    if (turn.round !== (lastReview?.round ?? 0) + 1 || turn.round > state.roundLimit)
+      return yield* invalidDeepPlanCommand(
+        command,
+        "The Deep Plan turn does not match the next review round.",
+      );
+    switch (turn.kind) {
+      case "implement":
+        if (
+          step?.status !== "pending" ||
+          definition?.dependencies.some(
+            (dependency) =>
+              !run.steps.some((step) => step.stepId === dependency && step.status === "verified") ||
+              otherTurns.some((turn) => turn.stepId === dependency),
+          )
+        )
+          return yield* invalidDeepPlanCommand(
+            command,
+            "The Deep Plan step is not ready to implement.",
+          );
+        break;
+      case "review":
+        if (step?.status !== "inReview" || state.submission === null)
+          return yield* invalidDeepPlanCommand(
+            command,
+            "The Deep Plan step must have a submission before review.",
+          );
+        break;
+      case "fix":
+      case "finalFix":
+        if (state.status !== "changesRequested")
+          return yield* invalidDeepPlanCommand(
+            command,
+            "The Deep Plan target has no requested changes.",
+          );
+        break;
+      case "finalReview":
+        if (
+          run.steps.some((step) => step.status !== "verified") ||
+          otherTurns.length !== 0 ||
+          (state.status !== "pending" && (state.status !== "inReview" || state.submission === null))
+        )
+          return yield* invalidDeepPlanCommand(
+            command,
+            "Every step must finish its review before final review.",
+          );
+        break;
+    }
+  }
+
+  const reviews = review
+    ? [
+        ...(previous === undefined ? state.reviews : state.reviews.slice(0, -1)),
+        {
+          round: turn.round,
+          reviewThreadId: turn.threadId,
+          reviewer: approval.reviewer,
+          diff: transition.diff ?? null,
+          verdict: null,
+          summary: null,
+          findings: [],
+          retries: previous === undefined ? 0 : (lastReview?.retries ?? 0) + 1,
+          startedAt: command.createdAt,
+          completedAt: null,
+        },
+      ]
+    : state.reviews;
+  const progress = {
+    submission: review ? state.submission : null,
+    reviews,
+    unsubmittedTurns:
+      previous === undefined
+        ? 0
+        : state.unsubmittedTurns + (transition.retryReason === "missingResult" ? 1 : 0),
+  };
+  const next: DeepPlanRun = {
+    ...run,
+    activeTurns: [
+      ...otherTurns,
+      { ...turn, commandId: command.commandId, startedAt: command.createdAt },
+    ],
+  };
+  if (step !== undefined) {
+    return replaceStep(next, {
+      ...step,
+      ...progress,
+      status: review ? "inReview" : "implementing",
+      laneId: lane.laneId,
+      baseTurnCount: step.baseTurnCount ?? transition.baseTurnCount ?? 0,
+    });
+  }
+  return {
+    ...next,
+    phase: "finalReview",
+    finalReview: { ...run.finalReview, ...progress, status: "inReview" },
+  };
+});
+
+const settleTurn = Effect.fn("DeepPlanDecision.settleTurn")(function* (
+  run: DeepPlanRun,
+  command: ThreadDeepPlanAdvanceCommand,
+  turnCommandId: ActiveTurn["commandId"],
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
+  const turn = run.activeTurns.find((turn) => turn.commandId === turnCommandId);
+  if (turn === undefined)
+    return yield* invalidDeepPlanCommand(command, "The Deep Plan turn is no longer active.");
+  const step = run.steps.find((step) => step.stepId === turn.stepId);
+  const state = step ?? run.finalReview;
+  const review = isReviewTurn(turn);
+  if (
+    review
+      ? state.reviews.at(-1)?.verdict == null
+      : state.submission?.turnCommandId !== turnCommandId
+  )
+    return yield* invalidDeepPlanCommand(
+      command,
+      "The Deep Plan turn ended without a required submission or verdict.",
+    );
+  const next: DeepPlanRun = {
+    ...run,
+    activeTurns: run.activeTurns.filter((candidate) => candidate !== turn),
+  };
+  if (review)
+    return turn.kind === "finalReview" && next.finalReview.status === "approved"
+      ? { ...next, phase: "completed" }
+      : next;
+  return step === undefined
+    ? { ...next, finalReview: { ...next.finalReview, status: "inReview" } }
+    : replaceStep(next, { ...step, status: "inReview" });
+});
+
+export const advanceDeepPlanRun = Effect.fn("advanceDeepPlanRun")(function* (
+  current: StoredDeepPlanRun | null | undefined,
+  command: ThreadDeepPlanAdvanceCommand,
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
+  const run = yield* requireRun(current, command);
+  if (run.revision !== command.expectedRevision) return yield* currentRevisionError(run, command);
+  if (run.phase !== "implementing" && run.phase !== "finalReview")
+    return yield* invalidDeepPlanCommand(command, "Only a running Deep Plan can advance.");
+  const transition = command.transition;
+  let next;
+  switch (transition.type) {
+    case "start-turn":
+      next = yield* startTurn(run, command, transition);
+      break;
+    case "settle-turn":
+      next = yield* settleTurn(run, command, transition.turnCommandId);
+      break;
+    case "pause":
+      next = pause(run, transition.pause, command.createdAt);
+      break;
+  }
+  return { ...next, revision: run.revision + 1, updatedAt: command.createdAt };
 });

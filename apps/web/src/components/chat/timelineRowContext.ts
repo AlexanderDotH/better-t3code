@@ -66,10 +66,13 @@ export interface TimelineRowSharedState {
   canAnimateInitialText?: (rowId: string) => boolean;
   /** The row after which a fork's own history begins. */
   forkDividerAfterRowId?: string | null;
-  replyTopicsByMessageId?: ReadonlyMap<MessageId, TimelineReplyTopicSummary>;
+  inlineReply?: boolean;
+  replyTopicsByMessageId?: ReadonlyMap<MessageId, ReadonlyArray<TimelineReplyTopicSummary>>;
   onOpenReplyTopic?: ((threadId: ThreadId) => void) | undefined;
   /** False when the source is not in this thread's history. */
-  onJumpToReplySource?: ((messageId: MessageId) => boolean) | undefined;
+  onJumpToReplySource?:
+    | ((source: import("@t3tools/contracts").MessageReplyReference) => boolean)
+    | undefined;
   onForkBoundary?:
     | ((boundary: import("@t3tools/contracts").ThreadForkBoundary) => void)
     | undefined;
@@ -83,7 +86,6 @@ export interface TimelineRowSharedState {
     readonly pending: boolean;
     readonly onRetry: (messageId: MessageId) => void;
   } | null;
-  replySourceThreadId?: ThreadId | undefined;
   onReplyMessage?: ((message: import("../../types").ChatMessage) => void) | undefined;
   onEditMessage?: ((message: import("../../types").ChatMessage) => void) | undefined;
   editAvailable?: boolean;

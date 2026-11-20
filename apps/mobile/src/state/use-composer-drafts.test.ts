@@ -2972,9 +2972,9 @@ describe("DeepPlan mobile draft persistence", () => {
           composerMode: "deep-plan",
           interactionMode: "plan",
           deepPlanSourceRefs: refs,
-          deepPlanIncludeProjectChats: false,
+          deepPlanIncludeProjectChats: true,
         },
-        "choice:thread": { text: "Inspect", attachments: [], deepPlanIncludeProjectChats: false },
+        "choice:thread": { text: "Inspect", attachments: [], deepPlanIncludeProjectChats: true },
         "remote:thread": { text: "Other task", attachments: [], interactionMode: "default" },
       },
     }).drafts;
@@ -2988,9 +2988,9 @@ describe("DeepPlan mobile draft persistence", () => {
       composerMode: "deep-plan",
       interactionMode: "plan",
       deepPlanSourceRefs: refs,
-      deepPlanIncludeProjectChats: false,
+      deepPlanIncludeProjectChats: true,
     });
-    expect(reloaded["choice:thread"]?.deepPlanIncludeProjectChats).toBe(false);
+    expect(reloaded["choice:thread"]?.deepPlanIncludeProjectChats).toBe(true);
     expect(reloaded["remote:thread"]?.deepPlanSourceRefs).toBeUndefined();
     expect(reloaded["remote:thread"]?.interactionMode).toBe("default");
   });

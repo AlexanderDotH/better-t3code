@@ -103,6 +103,7 @@ import {
   orchestrationV2WorktreePending,
   type EnvironmentId,
   type MessageId,
+  type MessageReplyReference,
   type ModelSelection,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
@@ -284,7 +285,7 @@ import {
   primaryServerKeybindingsAtom,
   serverEnvironment,
 } from "../state/server";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreadShells, threadEnvironment, threadFamilies } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import {
@@ -404,6 +405,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
+import { randomUUID } from "../lib/utils";
 import { RefreshCwIcon } from "lucide-react";
 import { Button } from "./ui/button";
 import { agentSettingsEnvironment } from "../state/agentSettings";
@@ -432,6 +434,16 @@ import {
   type LocalThreadErrorEntry,
   makeThreadErrorSetter,
 } from "./ChatView.logic";
+
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    replySourceJump?: {
+      readonly ref: ScopedThreadRef;
+      readonly source: Pick<MessageReplyReference, "messageId" | "replyTopicId">;
+      readonly key: string;
+    };
+  }
+}
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
@@ -630,6 +642,7 @@ export default function ChatView(props: ChatViewProps) {
   const citationKey = useLocation({
     select: (location) => location.state.assistantCitationActivation ?? location.state.__TSR_key,
   });
+  const replySourceJump = useLocation({ select: (location) => location.state.replySourceJump });
   const citationLocation = { href: citationHref, key: citationKey };
   const citationRequest = (() => {
     const citation = assistantCitationFromLocation(citationLocation.href);
@@ -913,6 +926,7 @@ export default function ChatView(props: ChatViewProps) {
     : undefined;
   const isServerThread = serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const readOnlyDeepPlanReview = activeThread?.deepPlanExecution?.phase === "review";
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
   const serverActivityRun =
@@ -1917,6 +1931,7 @@ export default function ChatView(props: ChatViewProps) {
         );
   const showComposerContextStrip =
     !embedded &&
+    !readOnlyDeepPlanReview &&
     shouldShowComposerContextStrip({
       isDraftHeroState,
       persistInActiveThreads: settings.persistComposerContextStrip,
@@ -1932,6 +1947,7 @@ export default function ChatView(props: ChatViewProps) {
   const mountComposerContextStrip =
     showComposerContextStrip ||
     (!embedded &&
+      !readOnlyDeepPlanReview &&
       settings.composerLayout === "classic" &&
       isServerThread &&
       activeProject !== null &&
@@ -1995,9 +2011,12 @@ export default function ChatView(props: ChatViewProps) {
   };
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    !readOnlyDeepPlanReview &&
+    canOperateThread &&
+    deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = async () => {
     if (
+      readOnlyDeepPlanReview ||
       !activeThread ||
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
     )
@@ -3269,24 +3288,16 @@ export default function ChatView(props: ChatViewProps) {
     threadRef: routeThreadRef,
     projectId: activeProject?.id ?? null,
     workspaceRoot: activeProject?.workspaceRoot,
-    branch: activeThreadBranch,
-    worktreePath: activeThread?.worktreePath ?? null,
     draftTarget: composerDraftTarget,
     mode: composerMode,
     run: selectDurableDeepPlan(activeThread, deepPlanOwnerThreads),
+    threadShells: deepPlanOwnerThreads,
     supported: deepPlanningAvailability.supported,
-    parallelEnabled:
-      resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.parallelPlanImplementation") &&
-      (serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1,
     connected: !activeEnvironmentUnavailable,
     canOperate: canOperateThread,
     working: isWorking || isSendBusy || phase === "connecting",
-    latestRunId: activeLatestRun?.runId ?? null,
-    latestUserMessageId:
-      timelineMessages.findLast((message) => message.role === "user")?.id ?? null,
-    runtimeMode,
+    readOnlyReview: readOnlyDeepPlanReview,
     providers: providerStatuses,
-    reviewerSelection: settings.parallelPlanReviewModelSelection,
     modelSelection: composerSelectedModelSelection ?? activeThread?.modelSelection ?? null,
     getModelSelection: () => composerRef.current?.getSendContext().selectedModelSelection,
   });
@@ -3333,16 +3344,71 @@ export default function ChatView(props: ChatViewProps) {
   const messageRepliesEnabled =
     isServerThread &&
     canOperateThread &&
+    clientSettingsHydrated &&
     resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.messageReplies") &&
     serverConfig?.environment.capabilities.messageReplies === true;
+  const replyPresentation = useClientSettings((settings) => settings.replyPresentation);
+  const replyTopicParentId =
+    isServerThread &&
+    activeThread?.messageReply === undefined &&
+    serverConfig?.environment.capabilities.messageReplies === true
+      ? (routeThreadDetailRef?.threadId ?? null)
+      : null;
+  const replyTopicThreads = useAtomValue(
+    environmentThreadShells.replyTopicsAtom(
+      replyTopicParentId === null ? null : scopeThreadRef(environmentId, replyTopicParentId),
+    ),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads saved reply shells omitted from the live shell while their parent is visible
+  useEffect(() => {
+    if (replyTopicParentId === null) return;
+    return threadFamilies.mountReplyTopics(
+      appAtomRegistry,
+      scopeThreadRef(environmentId, replyTopicParentId),
+    );
+  }, [environmentId, replyTopicParentId]);
+  const inlineReplyRef =
+    replyTopicParentId !== null &&
+    replyPresentation === "inline" &&
+    serverConfig?.environment.capabilities.inlineMessageReplies === true
+      ? routeThreadDetailRef
+      : null;
+  const jumpToParentReplySource = useStableCallback(
+    (source: Pick<MessageReplyReference, "messageId" | "replyTopicId">) => {
+      const parentId = activeThread?.messageReply?.sourceThreadId;
+      if (parentId === undefined) return false;
+      const parentRef = scopeThreadRef(environmentId, parentId);
+      if (embedded) useRightPanelStore.getState().close(parentRef);
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(parentRef),
+        resetScroll: false,
+        state: {
+          replySourceJump: {
+            ref: parentRef,
+            source: {
+              messageId: source.messageId,
+              ...(source.replyTopicId === undefined ? {} : { replyTopicId: source.replyTopicId }),
+            },
+            key: randomUUID(),
+          },
+        },
+      });
+      return true;
+    },
+  );
   const messageReplies = useMessageReplies({
     messageReply: activeThread?.messageReply,
     threadRef: routeThreadRef,
     composerRef,
     enabled: messageRepliesEnabled,
+    replyPresentation,
     blocked: activeEnvironmentUnavailable || isRevertingCheckpoint,
     runtimeMode,
-    onSent: scheduleComposerFocus,
+    onSent: (presentation) => {
+      if (presentation === "inline" && activeThread?.messageReply === undefined) scrollToEnd();
+      scheduleComposerFocus();
+    },
   });
   const { onSend: onSendStandard, isImprovingPrompt } = useComposerSend({
     environmentId,
@@ -3419,9 +3485,14 @@ export default function ChatView(props: ChatViewProps) {
     persistThreadSettingsForNextTurn,
   });
   const onSend = (...args: Parameters<typeof onSendStandard>) => {
-    if (harnessSendDisabledReason) {
+    if (readOnlyDeepPlanReview || harnessSendDisabledReason) {
       args[0]?.preventDefault();
-      setThreadError(activeThreadId, harnessSendDisabledReason);
+      setThreadError(
+        activeThreadId,
+        readOnlyDeepPlanReview
+          ? translate("chat.deepPlan.reviewReadOnly")
+          : harnessSendDisabledReason,
+      );
       return;
     }
     if (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTarget) {
@@ -4003,7 +4074,9 @@ export default function ChatView(props: ChatViewProps) {
                 }
               />
             ) : null}
-            {!composerMounted ? null : (
+            {readOnlyDeepPlanReview ? (
+              deepPlanChat.content
+            ) : !composerMounted ? null : (
               <ChatComposer
                 floatingBubbleHost={activeComposerFloatingBubbleHost}
                 restingControlsHost={restingComposerControlsHost}
@@ -4355,7 +4428,16 @@ export default function ChatView(props: ChatViewProps) {
                     ? { reference: deepPlanChat.reference, content: deepPlanChat.review }
                     : undefined
                 }
-                replySourceThreadId={activeThread?.messageReply?.sourceThreadId}
+                replyTopicId={activeThread?.messageReply?.replyTopicId}
+                replyTopicThreads={replyTopicThreads}
+                replySourceJump={
+                  replySourceJump?.ref.threadId === displayedThreadRef?.threadId &&
+                  replySourceJump?.ref.environmentId === displayedThreadRef?.environmentId &&
+                  serverProjection !== null
+                    ? replySourceJump
+                    : undefined
+                }
+                onJumpToParentReplySource={jumpToParentReplySource}
                 onForkBoundary={
                   isServerThread &&
                   canOperateThread &&
@@ -4384,6 +4466,7 @@ export default function ChatView(props: ChatViewProps) {
                 onRespondToApproval={onRespondToApprovalStable}
                 canOperateThread={canOperateThread}
                 threadDetailRef={routeThreadDetailRef}
+                inlineReplyRef={inlineReplyRef}
                 entriesInput={timelineEntriesInput}
                 draftEntries={isServerThread ? null : draftTimelineEntries}
                 activeThreadKey={activeThreadKey}

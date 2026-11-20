@@ -1,16 +1,14 @@
+import { deepPlanSourceRefKey } from "@t3tools/client-runtime/deep-planning";
 import {
-  deepPlanSourceRefKey,
-  loadDeepPlanSourceCatalog,
-} from "@t3tools/client-runtime/deep-planning";
-import type {
-  DeepPlanSourceCatalogEntry,
-  DeepPlanSourceRef,
-  EnvironmentId,
-  ProjectId,
+  DEEP_PLAN_MAX_CHATS,
+  isListedThreadLineage,
+  type DeepPlanSourceRef,
+  type EnvironmentId,
+  type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Modal,
   Platform,
@@ -26,25 +24,29 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
-import { useProjects, useServerConfigs } from "../../state/entities";
-import { getMobileDeepPlanningApi } from "../../state/deep-planning";
-import { useWorkspaceState } from "../../state/workspace";
+import { useProjects, useThreadShells } from "../../state/entities";
+import { useLinkedEnvironments } from "../../state/peerLinks";
+import { useWorkspaceEnvironments } from "../../state/workspace";
+import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
 
-type SourceOption = DeepPlanSourceCatalogEntry & { readonly environmentLabel?: string };
+interface SourceOption {
+  readonly origin: DeepPlanSourceRef;
+  readonly threadTitle: string;
+  readonly projectTitle: string;
+  readonly environmentLabel?: string;
+  readonly archived: boolean;
+}
 
 export function DeepPlanSourceSheet(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly sources: ReadonlyArray<SourceOption>;
   readonly selected: ReadonlyArray<DeepPlanSourceRef>;
-  readonly includeProjectChats?: boolean;
-  readonly loading: boolean;
-  readonly error: string | null;
+  readonly includeProjectChats: boolean;
   readonly onChange: (
     sources: ReadonlyArray<DeepPlanSourceRef>,
     includeProjectChats: boolean,
   ) => void;
-  readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
   const translator = useMobileInterfaceTranslator();
@@ -52,10 +54,11 @@ export function DeepPlanSourceSheet(props: {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const includeProjectChats = props.includeProjectChats !== false;
+  const includeProjectChats = props.includeProjectChats;
   const belongsToCurrentProject = (ref: DeepPlanSourceRef) =>
     ref.environmentId === props.environmentId && ref.projectId === props.projectId;
   const selectedKeys = new Set(props.selected.map(deepPlanSourceRefKey));
+  const atLimit = selectedKeys.size >= DEEP_PLAN_MAX_CHATS;
   const sources = props.sources.filter((source) =>
     [source.threadTitle, source.projectTitle, source.environmentLabel ?? ""]
       .join(" ")
@@ -135,27 +138,10 @@ export function DeepPlanSourceSheet(props: {
             autoCorrect={false}
             className="mx-4 mb-3 min-h-11 rounded-xl bg-subtle px-3 text-base text-foreground"
           />
-          {props.loading ? (
-            <ActivityIndicator
-              accessibilityLabel={translator.message("chat.deepPlan.preparing")}
-              className="my-3"
-            />
-          ) : null}
-          {props.error ? (
-            <View className="gap-1 px-5 pb-2">
-              <Text accessibilityRole="alert" className="text-sm text-danger">
-                {props.error}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                className="min-h-11 justify-center"
-                onPress={props.onRetry}
-              >
-                <Text className="text-sm font-t3-medium text-foreground">
-                  {translator.message("chat.deepPlan.retry")}
-                </Text>
-              </Pressable>
-            </View>
+          {atLimit ? (
+            <Text className="px-5 pb-2 text-xs text-foreground-muted">
+              {translator.message("chat.deepPlan.sourceLimit", { count: DEEP_PLAN_MAX_CHATS })}
+            </Text>
           ) : null}
           <FlatList
             data={sources}
@@ -163,16 +149,15 @@ export function DeepPlanSourceSheet(props: {
             keyboardDismissMode="on-drag"
             keyExtractor={(source) => deepPlanSourceRefKey(source.origin)}
             ListEmptyComponent={
-              !props.loading ? (
-                <Text className="p-5 text-sm text-foreground-muted">
-                  {translator.message("chat.deepPlan.noSources")}
-                </Text>
-              ) : undefined
+              <Text className="p-5 text-sm text-foreground-muted">
+                {translator.message("chat.deepPlan.noSources")}
+              </Text>
             }
             renderItem={({ item: source }) => {
               const key = deepPlanSourceRefKey(source.origin);
               const automatic = includeProjectChats && belongsToCurrentProject(source.origin);
               const checked = automatic || selectedKeys.has(key);
+              const disabled = automatic || (atLimit && !checked);
               return (
                 <Pressable
                   accessibilityRole="checkbox"
@@ -183,8 +168,8 @@ export function DeepPlanSourceSheet(props: {
                   ]
                     .filter(Boolean)
                     .join(", ")}
-                  accessibilityState={{ checked, disabled: automatic }}
-                  disabled={automatic}
+                  accessibilityState={{ checked, disabled }}
+                  disabled={disabled}
                   className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle px-5 py-3"
                   onPress={() =>
                     props.onChange(
@@ -232,6 +217,7 @@ export function DeepPlanSourceSheet(props: {
 export function DeepPlanSources(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
   readonly selected: ReadonlyArray<DeepPlanSourceRef>;
   readonly includeProjectChats: boolean;
   readonly disabled?: boolean;
@@ -242,123 +228,103 @@ export function DeepPlanSources(props: {
 }) {
   const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
-  const configs = useServerConfigs();
-  const { environments } = useWorkspaceState();
+  const shells = useThreadShells();
+  const environments = useWorkspaceEnvironments();
+  const linkedEnvironments = useLinkedEnvironments(props.environmentId);
   const [open, setOpen] = useState(false);
-  const [retryVersion, setRetryVersion] = useState(0);
-  const scopeKey = JSON.stringify([props.environmentId, props.projectId]);
-  const environmentById = new Map(
-    environments.map((environment) => [environment.environmentId, environment]),
+  const eligibleEnvironments = useMemo(
+    () =>
+      new Map(
+        environments
+          .filter(
+            (environment) =>
+              environment.connectionState === "connected" &&
+              (environment.environmentId === props.environmentId ||
+                linkedEnvironments.has(environment.environmentId)),
+          )
+          .map((environment) => [environment.environmentId, environment.environmentLabel]),
+      ),
+    [environments, linkedEnvironments, props.environmentId],
   );
-  const targets = projects.filter((project) => {
-    const isCurrent =
-      project.environmentId === props.environmentId && project.id === props.projectId;
-    const selected = props.selected.some(
-      (ref) => ref.environmentId === project.environmentId && ref.projectId === project.id,
-    );
-    return (
-      (isCurrent || open || selected) &&
-      environmentById.get(project.environmentId)?.connectionState === "connected" &&
-      configs.get(project.environmentId)?.environment.capabilities.deepPlanning?.sourceExport ===
-        true
-    );
-  });
-  const targetKey = JSON.stringify(
-    targets.map((project) => ({
-      environmentId: project.environmentId,
-      projectId: project.id,
-      projectTitle: project.title,
-      environmentLabel:
-        environmentById.get(project.environmentId)?.environmentLabel ??
-        String(project.environmentId),
-    })),
+  const archivedEnvironmentIds = useMemo(
+    () =>
+      open
+        ? [...eligibleEnvironments.keys()]
+        : [
+            ...new Set(
+              props.selected
+                .map((ref) => ref.environmentId)
+                .filter((environmentId) => eligibleEnvironments.has(environmentId)),
+            ),
+          ],
+    [eligibleEnvironments, open, props.selected],
   );
-  const requestKey = JSON.stringify([scopeKey, targetKey, retryVersion]);
-  const [catalog, setCatalog] = useState<{
-    readonly scopeKey: string;
-    readonly requestKey: string;
-    readonly sources: ReadonlyArray<SourceOption>;
-    readonly error: string | null;
-  }>({ scopeKey: "", requestKey: "", sources: [], error: null });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load source catalogs from connected environments and abort replaced catalog requests.
-  useEffect(() => {
-    const controller = new AbortController();
-    const requestedProjects = JSON.parse(targetKey) as ReadonlyArray<{
-      readonly environmentId: EnvironmentId;
-      readonly projectId: ProjectId;
-      readonly projectTitle: string;
-      readonly environmentLabel: string;
-    }>;
-    void Promise.allSettled(
-      requestedProjects.map(async (project) => {
-        const result = await loadDeepPlanSourceCatalog({
-          environmentId: project.environmentId,
-          projectId: project.projectId,
-          api: getMobileDeepPlanningApi(project.environmentId),
-          signal: controller.signal,
-        });
-        return result.sources.map((source) => ({
-          ...source,
-          environmentLabel: project.environmentLabel,
-        }));
-      }),
-    ).then((results) => {
-      if (controller.signal.aborted) return;
-      const sources = results.flatMap((result) =>
-        result.status === "fulfilled" ? result.value : [],
-      );
-      const errors = results.flatMap((result, index) =>
-        result.status === "rejected"
-          ? [
-              `${requestedProjects[index]?.projectTitle ?? ""}: ${result.reason instanceof Error ? result.reason.message : translator.message("chat.deepPlan.sourceUnavailable")}`,
-            ]
-          : [],
-      );
-      setCatalog({
-        scopeKey,
-        requestKey,
-        sources,
-        error: errors.length > 0 ? errors.join("\n") : null,
+  const { snapshots } = useArchivedThreadSnapshots(archivedEnvironmentIds);
+  const byRef = useMemo(() => {
+    if (!open && props.selected.length === 0) return new Map<string, SourceOption>();
+    const selectedKeys = new Set(props.selected.map(deepPlanSourceRefKey));
+    const projectTitles = new Map(
+      [
+        ...projects,
+        ...snapshots.flatMap(({ environmentId, snapshot }) =>
+          snapshot.projects.map((project) => ({ ...project, environmentId })),
+        ),
+      ].map((project) => [JSON.stringify([project.environmentId, project.id]), project.title]),
+    );
+    const options = new Map<string, SourceOption>();
+    const archivedShells = snapshots.flatMap(({ environmentId, snapshot }) =>
+      snapshot.threads.map((thread) => ({ ...thread, environmentId })),
+    );
+    for (const thread of [...shells, ...archivedShells]) {
+      const environmentLabel = eligibleEnvironments.get(thread.environmentId);
+      if (
+        environmentLabel === undefined ||
+        thread.deletedAt !== null ||
+        !isListedThreadLineage(thread.lineage) ||
+        thread.deepPlanExecution?.readOnly ||
+        (thread.environmentId === props.environmentId && thread.id === props.threadId)
+      )
+        continue;
+      const origin = {
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+        threadId: thread.id,
+      };
+      const key = deepPlanSourceRefKey(origin);
+      if (options.has(key) || (!open && !selectedKeys.has(key))) continue;
+      options.set(key, {
+        origin,
+        threadTitle: thread.title,
+        projectTitle:
+          projectTitles.get(JSON.stringify([thread.environmentId, thread.projectId])) ??
+          String(thread.projectId),
+        environmentLabel,
+        archived: thread.archivedAt !== null,
       });
-    });
-    return () => controller.abort();
-  }, [scopeKey, targetKey, requestKey, translator]);
-  const loading = catalog.requestKey !== requestKey;
-  const error = loading ? null : catalog.error;
-  const sources = catalog.scopeKey === scopeKey ? catalog.sources : [];
-  const byRef = useMemo(
-    () => new Map(sources.map((source) => [deepPlanSourceRefKey(source.origin), source])),
-    [sources],
-  );
-  const projectCount = sources.filter(
-    (source) =>
-      source.origin.environmentId === props.environmentId &&
-      source.origin.projectId === props.projectId,
-  ).length;
-  const currentProjectAvailable = targets.some(
-    (project) => project.environmentId === props.environmentId && project.id === props.projectId,
-  );
+    }
+    return options;
+  }, [
+    eligibleEnvironments,
+    open,
+    projects,
+    props.environmentId,
+    props.selected,
+    props.threadId,
+    shells,
+    snapshots,
+  ]);
   const chosenProjectCount = props.selected.filter(
     (ref) => ref.environmentId === props.environmentId && ref.projectId === props.projectId,
   ).length;
   return (
     <View className="gap-1 px-3 pb-2">
       <View className="min-h-11 flex-row items-center gap-2">
-        <Text
-          {...(props.includeProjectChats
-            ? { accessibilityHint: translator.message("chat.deepPlan.allProjectChats") }
-            : {})}
-          className="min-w-0 flex-1 text-xs text-foreground-muted"
-        >
-          {!props.includeProjectChats
-            ? chosenProjectCount === 0
-              ? translator.message("chat.deepPlan.noProjectChats")
-              : translator.message("chat.deepPlan.projectSources", { count: chosenProjectCount })
-            : !currentProjectAvailable
-              ? translator.message("chat.deepPlan.sourceUnavailable")
-              : loading
-                ? translator.message("chat.deepPlan.preparing")
-                : translator.message("chat.deepPlan.projectSources", { count: projectCount })}
+        <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
+          {props.includeProjectChats
+            ? translator.message("chat.deepPlan.allProjectChats")
+            : chosenProjectCount > 0
+              ? translator.message("chat.deepPlan.projectSources", { count: chosenProjectCount })
+              : translator.message("chat.deepPlan.noProjectChats")}
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -405,22 +371,14 @@ export function DeepPlanSources(props: {
           })}
         </ScrollView>
       ) : null}
-      {error && !open ? (
-        <Text accessibilityRole="alert" className="text-xs text-danger">
-          {error}
-        </Text>
-      ) : null}
       {open ? (
         <DeepPlanSourceSheet
           environmentId={props.environmentId}
           projectId={props.projectId}
-          sources={sources}
+          sources={[...byRef.values()]}
           selected={props.selected}
           includeProjectChats={props.includeProjectChats}
-          loading={loading}
-          error={error}
           onChange={props.onChange}
-          onRetry={() => setRetryVersion((version) => version + 1)}
           onClose={() => setOpen(false)}
         />
       ) : null}

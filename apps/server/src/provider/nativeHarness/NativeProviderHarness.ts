@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
 import type { ProcessRunner } from "../../processRunner.ts";
 import type { NativeProviderToolResult } from "./NativeProviderTypes.ts";
@@ -49,6 +50,7 @@ export interface NativeProviderHarness {
   readonly requiresApproval: (
     toolName: string,
     runtimeMode: ProviderSession["runtimeMode"],
+    threadId?: ThreadId,
   ) => boolean;
   readonly requestType: (toolName: string) => CanonicalRequestType;
   readonly approvalDetail: (toolName: string, args: Readonly<Record<string, unknown>>) => string;
@@ -75,6 +77,7 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
       | ((input: {
           readonly threadId: ThreadId;
           readonly cwd: string;
+          readonly deepPlanChatReadOnly?: true;
         }) => Effect.Effect<NativeHarnessToolExtension, NativeHarnessToolPolicyError>)
       | undefined;
     readonly releaseThread?: ((threadId: ThreadId) => Effect.Effect<void>) | undefined;
@@ -82,21 +85,31 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
 ) {
   const executor = yield* makeNativeHarnessToolExecutor(processRunner);
   const extensionApprovalByToolName = new Map<string, boolean>();
-  const extensionsForThread = (threadId: ThreadId, cwd: string, fetchWorker: boolean) =>
-    !fetchWorker && options?.extensionForThread
-      ? options.extensionForThread({ threadId, cwd }).pipe(
-          Effect.tap((extension) =>
-            Effect.sync(() => {
-              for (const declaration of extension.declarations) {
-                if (declaration.requiresApproval !== undefined) {
-                  extensionApprovalByToolName.set(declaration.name, declaration.requiresApproval);
+  const extensionsForThread = (threadId: ThreadId, cwd: string, fetchWorker: boolean) => {
+    const deepPlanChatReadOnly =
+      fetchWorker &&
+      McpProviderSession.readMcpProviderSession(threadId)?.capabilities.has("deep-plan-chat-read");
+    return (!fetchWorker || deepPlanChatReadOnly) && options?.extensionForThread
+      ? options
+          .extensionForThread({
+            threadId,
+            cwd,
+            ...(deepPlanChatReadOnly ? { deepPlanChatReadOnly: true as const } : {}),
+          })
+          .pipe(
+            Effect.tap((extension) =>
+              Effect.sync(() => {
+                for (const declaration of extension.declarations) {
+                  if (declaration.requiresApproval !== undefined && !deepPlanChatReadOnly) {
+                    extensionApprovalByToolName.set(declaration.name, declaration.requiresApproval);
+                  }
                 }
-              }
-            }),
-          ),
-          Effect.map((extension): ReadonlyArray<NativeHarnessToolExtension> => [extension]),
-        )
+              }),
+            ),
+            Effect.map((extension): ReadonlyArray<NativeHarnessToolExtension> => [extension]),
+          )
       : Effect.succeed<ReadonlyArray<NativeHarnessToolExtension>>([]);
+  };
 
   return {
     declarations: Effect.fn("NativeProviderHarness.declarations")(function* (input) {
@@ -122,7 +135,19 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
           }),
         ),
       ),
-    requiresApproval: (toolName, runtimeMode) => {
+    requiresApproval: (
+      toolName: string,
+      runtimeMode: ProviderSession["runtimeMode"],
+      threadId?: ThreadId,
+    ) => {
+      if (toolName === "t3_thread_read" && threadId !== undefined) {
+        const session = McpProviderSession.readMcpProviderSession(threadId);
+        if (
+          session?.capabilities.has("deep-plan-chat-read") ||
+          session?.deepPlan?.phase === "planning"
+        )
+          return false;
+      }
       const extensionRequiresApproval = extensionApprovalByToolName.get(toolName);
       return extensionRequiresApproval === undefined
         ? nativeHarnessToolRequiresApproval(toolName, runtimeMode)

@@ -1,10 +1,11 @@
 import { DecisionUsage } from "./decision.ts";
 import {
-  ClientDeepPlanMutation,
+  ClientThreadDeepPlanUpdateCommand,
   DeepPlanExecutionContext,
   DeepPlanRunReference,
-  DeepPlanRun,
   DeepPlanRunId,
+  StoredDeepPlanRun,
+  ThreadDeepPlanAdvanceCommand,
   ThreadDeepPlanStartCommand,
   ThreadDeepPlanUpdateCommand,
 } from "./deepPlanning.ts";
@@ -467,6 +468,10 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+const LenientDeepPlanExecution = Schema.UndefinedOr(DeepPlanExecutionContext).pipe(
+  Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+);
+
 export const OrchestrationV2MessageReply = Schema.Struct({
   replyTopicId: SubagentId,
   sourceThreadId: ThreadId,
@@ -489,6 +494,11 @@ export const OrchestrationV2ContextCompactionCheckpoint = Schema.Struct({
 export type OrchestrationV2ContextCompactionCheckpoint =
   typeof OrchestrationV2ContextCompactionCheckpoint.Type;
 
+const FetchWorkerContext = Schema.Struct({
+  commandExecutionPolicy: Schema.Literal("deny"),
+  deepPlanRunId: Schema.optional(DeepPlanRunId),
+});
+
 const BetterT3ThreadFields = {
   contextCompaction: Schema.optional(
     Schema.Struct({
@@ -497,10 +507,10 @@ const BetterT3ThreadFields = {
     }),
   ),
   pendingHistoryEdit: Schema.optional(CommandId),
-  deepPlanExecution: Schema.optional(DeepPlanExecutionContext),
-  fetchWorker: Schema.optional(Schema.Struct({ commandExecutionPolicy: Schema.Literal("deny") })),
+  deepPlanExecution: Schema.optional(LenientDeepPlanExecution),
+  fetchWorker: Schema.optional(FetchWorkerContext),
   generalSubagent: Schema.optional(Schema.Literal(true)),
-  deepPlan: Schema.optional(Schema.NullOr(DeepPlanRun)),
+  deepPlan: Schema.optional(Schema.NullOr(StoredDeepPlanRun)),
   harnessSync: Schema.optional(Schema.NullOr(OrchestrationHarnessSyncState)),
   messageReply: Schema.optional(OrchestrationV2MessageReply),
 };
@@ -512,8 +522,6 @@ const MessageReplyFields = {
 
 const BetterT3MessageDispatchFields = {
   ...MessageReplyFields,
-  deepPlanRunId: Schema.optional(DeepPlanRunId),
-  deepPlanContinuation: Schema.optional(Schema.Literal(true)),
   fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   idleGuard: Schema.optional(
     Schema.Struct({
@@ -1710,40 +1718,44 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+const OrchestrationV2UserMessageTurnItem = Schema.Struct({
+  ...OrchestrationV2TurnItemBaseFields,
+  ...OrchestrationV2CreationFields,
+  type: Schema.Literal("user_message"),
+  ...MessageReplyFields,
+  messageId: MessageId,
+  scheduledTaskId: Schema.optional(ScheduledTaskId),
+  senderThreadId: Schema.optional(ThreadId),
+  idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+  workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+  inputIntent: OrchestrationV2UserMessageInputIntent,
+  text: Schema.String,
+  /** Same as the text of message `messageId`. */
+  textOmitted: DedupedBodyMarker,
+  context: Schema.optional(OrchestrationMessageContext),
+  attachments: Schema.Array(ChatAttachment),
+  modelSwitch: Schema.optional(OrchestrationV2ModelSwitch),
+});
+
+const OrchestrationV2AssistantMessageTurnItem = Schema.Struct({
+  ...OrchestrationV2TurnItemBaseFields,
+  type: Schema.Literal("assistant_message"),
+  ...MessageReplyFields,
+  messageId: MessageId,
+  text: Schema.String,
+  textOmitted: DedupedBodyMarker,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  streaming: Schema.Boolean,
+});
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("notification"),
     ...OrchestrationV2Notification.fields,
   }),
-  Schema.Struct({
-    ...OrchestrationV2TurnItemBaseFields,
-    ...OrchestrationV2CreationFields,
-    type: Schema.Literal("user_message"),
-    ...MessageReplyFields,
-    messageId: MessageId,
-    scheduledTaskId: Schema.optional(ScheduledTaskId),
-    senderThreadId: Schema.optional(ThreadId),
-    idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
-    workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
-    inputIntent: OrchestrationV2UserMessageInputIntent,
-    text: Schema.String,
-    /** Same as the text of message `messageId`. */
-    textOmitted: DedupedBodyMarker,
-    context: Schema.optional(OrchestrationMessageContext),
-    attachments: Schema.Array(ChatAttachment),
-    modelSwitch: Schema.optional(OrchestrationV2ModelSwitch),
-  }),
-  Schema.Struct({
-    ...OrchestrationV2TurnItemBaseFields,
-    type: Schema.Literal("assistant_message"),
-    ...MessageReplyFields,
-    messageId: MessageId,
-    text: Schema.String,
-    textOmitted: DedupedBodyMarker,
-    attachments: Schema.optional(Schema.Array(ChatAttachment)),
-    streaming: Schema.Boolean,
-  }),
+  OrchestrationV2UserMessageTurnItem,
+  OrchestrationV2AssistantMessageTurnItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("reasoning"),
@@ -1970,6 +1982,43 @@ export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
   item: OrchestrationV2TurnItem,
 });
 export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTurnItem.Type;
+
+export const InlineReplyRow = Schema.Struct({
+  threadId: ThreadId,
+  replyTopicId: SubagentId,
+  createdAt: IsoDateTime,
+  row: OrchestrationV2ProjectedTurnItem.mapFields((fields) => ({
+    ...fields,
+    item: Schema.Union([
+      OrchestrationV2UserMessageTurnItem,
+      OrchestrationV2AssistantMessageTurnItem,
+    ]),
+  })),
+});
+export type InlineReplyRow = typeof InlineReplyRow.Type;
+
+export const InlineReplyPage = Schema.Struct({
+  rows: Schema.Array(InlineReplyRow),
+  nextCursor: Schema.NullOr(Schema.String),
+  snapshotSequence: NonNegativeInt,
+});
+export type InlineReplyPage = typeof InlineReplyPage.Type;
+
+export const InlineReplyStreamItem = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("snapshot"), page: InlineReplyPage }),
+  Schema.Struct({
+    kind: Schema.Literal("upsert"),
+    sequence: NonNegativeInt,
+    rows: Schema.Array(InlineReplyRow),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("remove"),
+    sequence: NonNegativeInt,
+    threadId: ThreadId,
+    messageIds: Schema.Array(MessageId),
+  }),
+]);
+export type InlineReplyStreamItem = typeof InlineReplyStreamItem.Type;
 
 const OrchestrationV2EventBase = Schema.Struct({
   id: EventId,
@@ -2306,6 +2355,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStopRequested: Schema.optional(Schema.Boolean),
+  replyRetryMessageId: Schema.optional(MessageId),
   activeRunId: Schema.NullOr(RunId),
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   activityRunStatus: Schema.optional(
@@ -3109,14 +3159,8 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
 export const OrchestrationV2Command = Schema.Union([
-  Schema.Struct({
-    type: ThreadDeepPlanStartCommand.fields.type,
-    commandId: ThreadDeepPlanStartCommand.fields.commandId,
-    threadId: ThreadDeepPlanStartCommand.fields.threadId,
-    runId: ThreadDeepPlanStartCommand.fields.runId,
-    createdAt: ThreadDeepPlanStartCommand.fields.createdAt,
-  }),
-  Schema.Struct({ ...ThreadDeepPlanUpdateCommand.fields, mutation: ClientDeepPlanMutation }),
+  ThreadDeepPlanStartCommand,
+  ClientThreadDeepPlanUpdateCommand,
   Schema.Struct({
     type: Schema.Literal("message.edit"),
     commandId: CommandId,
@@ -3590,9 +3634,8 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
-    fetchWorker: Schema.optional(Schema.Struct({ commandExecutionPolicy: Schema.Literal("deny") })),
+    fetchWorker: Schema.optional(FetchWorkerContext),
     generalSubagent: Schema.optional(Schema.Literal(true)),
-    deepPlanExecution: Schema.optional(DeepPlanExecutionContext),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,
@@ -3671,8 +3714,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     runId: RunId,
     context: Schema.optional(Schema.String.check(Schema.isMaxLength(64_000))),
   }),
-  ThreadDeepPlanStartCommand,
   ThreadDeepPlanUpdateCommand,
+  ThreadDeepPlanAdvanceCommand,
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
@@ -3890,6 +3933,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  getInlineReplyPage: "orchestration.getInlineReplyPage",
+  subscribeInlineReplies: "orchestration.subscribeInlineReplies",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
 } as const;
 
@@ -4569,6 +4614,17 @@ export const OrchestrationV2RpcSchemas = {
   subscribeThread: {
     input: OrchestrationV2SubscribeThreadInput,
     output: OrchestrationV2ThreadStreamItem,
+  },
+  getInlineReplyPage: {
+    input: Schema.Struct({
+      threadId: ThreadId,
+      before: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_096))),
+    }),
+    output: InlineReplyPage,
+  },
+  subscribeInlineReplies: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: InlineReplyStreamItem,
   },
   subscribeCommandOutput: {
     input: OrchestrationV2SubscribeCommandOutputInput,

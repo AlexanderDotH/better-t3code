@@ -43,8 +43,56 @@ const unusedWorkspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
 });
 
 describe("NativeProviderHarness", () => {
+  it.effect("gives a Deep Plan Fetch worker its internal chat read tool", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("deep-plan-explorer-tools");
+      McpProviderSession.setMcpProviderSession({
+        threadId,
+        environmentId: EnvironmentId.make("local"),
+        providerSessionId: "explorer-session",
+        providerInstanceId: ProviderInstanceId.make("openai"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test",
+        capabilities: new Set(["deep-plan-chat-read"]),
+      });
+      try {
+        const harness = yield* makeNativeProviderHarness(unusedProcessRunner, {
+          extensionForThread: ({ deepPlanChatReadOnly }) =>
+            Effect.succeed({
+              declarations: [
+                {
+                  name: deepPlanChatReadOnly ? "t3_thread_read" : "configured_read",
+                  description: "Read chat messages.",
+                  inputSchema: { type: "object" },
+                  availability: "read-only",
+                },
+              ],
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional extension result.
+              execute: () => Effect.succeed(undefined),
+            }),
+        });
+        const definitions = yield* harness.declarations({
+          threadId,
+          cwd: process.cwd(),
+          interactionMode: "plan",
+          sandboxMode: "read-only",
+          fetchWorker: true,
+        });
+        expect(definitions.map((tool) => tool.name)).toEqual([
+          ...WORKSPACE_READ_TOOL_NAMES,
+          "t3_thread_read",
+        ]);
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
+    }).pipe(
+      Effect.provideService(WorkspaceContext.WorkspaceContext, unusedWorkspaceContext),
+      Effect.provideService(WorkspaceFileSystem.WorkspaceFileSystem, unusedWorkspaceFileSystem),
+    ),
+  );
+
   it.effect(
-    "honors Full Access for Deep Plan research commands while retaining plan and source boundaries",
+    "honors Full Access for Deep Plan research commands while retaining read-only worker boundaries",
     () =>
       Effect.gen(function* () {
         const threadId = ThreadId.make("deep-plan-command-permissions");
@@ -104,16 +152,6 @@ describe("NativeProviderHarness", () => {
               fetchWorker: true,
               toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL,
             }),
-          ).toBe(false);
-          McpProviderSession.setMcpProviderSession({
-            ...config,
-            deepPlan: {
-              ...config.deepPlan,
-              sourceAnalysis: { workerThreadId: threadId, sourceIds: [] },
-            },
-          });
-          expect(
-            yield* harness.isAvailable({ ...input, toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL }),
           ).toBe(false);
         } finally {
           McpProviderSession.clearMcpProviderSession(threadId);

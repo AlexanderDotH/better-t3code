@@ -1465,7 +1465,14 @@ export function codexThreadRuntimeParams(input: {
             mcp_servers:
               t3Server === undefined
                 ? {}
-                : { "t3-code": { ...t3Server, enabled_tools: CODEX_FETCH_WORKER_T3_TOOLS } },
+                : {
+                    "t3-code": {
+                      ...t3Server,
+                      enabled_tools: mcpSession?.capabilities?.has("deep-plan-chat-read")
+                        ? [...CODEX_FETCH_WORKER_T3_TOOLS, "t3_thread_read"]
+                        : CODEX_FETCH_WORKER_T3_TOOLS,
+                    },
+                  },
           }
         : t3Server === undefined
           ? {}

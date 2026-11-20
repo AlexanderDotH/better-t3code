@@ -1708,6 +1708,28 @@ describe("ClientSettings context window selector", () => {
   });
 });
 
+describe("ClientSettings reply presentation", () => {
+  it("defaults existing settings to inline without changing an unrelated patch", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.replyPresentation).toBe("inline");
+    expect(decodeClientSettings({ wordWrap: false }).replyPresentation).toBe("inline");
+    expect(decodeClientSettingsPatch({ wordWrap: false })).toEqual({ wordWrap: false });
+  });
+
+  it.each(["side-chat", "inline"] as const)("retains %s across a settings reload", (mode) => {
+    const patch = decodeClientSettingsPatch({ replyPresentation: mode });
+    expect(patch).toEqual({ replyPresentation: mode });
+    const saved = encodeClientSettings(
+      decodeClientSettings({ ...DEFAULT_CLIENT_SETTINGS, ...patch }),
+    );
+    expect(decodeClientSettings(saved).replyPresentation).toBe(mode);
+  });
+
+  it("rejects unknown presentation modes", () => {
+    expect(() => decodeClientSettings({ replyPresentation: "thread" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ replyPresentation: "thread" })).toThrow();
+  });
+});
+
 describe("ClientSettings send shortcut", () => {
   it("defaults to Enter and validates the supported choices", () => {
     expect(decodeClientSettings({}).sendShortcut).toBe("enter");
@@ -2190,6 +2212,33 @@ describe("ServerSettings parallel plan review model", () => {
       model: "openai/gpt-5",
       options: [{ id: "variant", value: "fast" }],
     });
+  });
+});
+
+describe("ServerSettings Deep Plan review model", () => {
+  it("defaults to the implementation model and accepts an atomic model selection or reset", () => {
+    const settings = decodeServerSettings({});
+    const reviewer = {
+      instanceId: ProviderInstanceId.make("claude_work"),
+      model: "claude-opus-4-6",
+      options: [{ id: "effort", value: "max" }],
+    } as const;
+
+    expect(settings.deepPlanReviewModelSelection).toBeNull();
+    expect(
+      decodeServerSettings(
+        encodeServerSettings({ ...settings, deepPlanReviewModelSelection: reviewer }),
+      ).deepPlanReviewModelSelection,
+    ).toEqual(reviewer);
+    expect(decodeServerSettingsPatch({ deepPlanReviewModelSelection: reviewer })).toEqual({
+      deepPlanReviewModelSelection: reviewer,
+    });
+    expect(decodeServerSettingsPatch({ deepPlanReviewModelSelection: null })).toEqual({
+      deepPlanReviewModelSelection: null,
+    });
+    expect(() =>
+      decodeServerSettingsPatch({ deepPlanReviewModelSelection: { model: reviewer.model } }),
+    ).toThrow();
   });
 });
 

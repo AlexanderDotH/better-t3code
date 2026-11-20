@@ -13,6 +13,7 @@ import {
   RuntimeRequestId,
   TurnItemId,
   ScheduledTaskId,
+  SubagentId,
   ThreadId,
   type OrchestrationV2Subagent,
   type ThreadForkBoundary,
@@ -453,6 +454,73 @@ describe("MessagesTimeline work rows", () => {
 });
 
 describe("MessagesTimeline messages", () => {
+  it("opens the quoted reply from reply history and keeps its child thread identity", async () => {
+    setup();
+    const topicId = SubagentId.make("reply-topic");
+    const childId = ThreadId.make("reply-thread");
+    const root = message("Main timeline answer", { role: "assistant" }, "source-message");
+    const childItem = (type: "assistant_message" | "user_message") =>
+      ({ ...(v2Item(type, {}) as object), sourceThreadId: childId }) as NonNullable<
+        Extract<Entry, { kind: "message" }>["projectedItem"]
+      >;
+    const earlierReply = {
+      ...message(
+        "Earlier topic answer",
+        { role: "assistant", replyTopicId: topicId },
+        "source-message",
+      ),
+      projectedItem: childItem("assistant_message"),
+    };
+    const laterReply = {
+      ...message(
+        "Follow-up",
+        {
+          replyTopicId: topicId,
+          replyTo: {
+            messageId: earlierReply.message.id,
+            replyTopicId: topicId,
+            role: "assistant",
+            text: earlierReply.message.text,
+          },
+        },
+        "follow-up",
+      ),
+      projectedItem: childItem("user_message"),
+    };
+    const props = baseProps();
+    const loadEarlierTurns = vi.fn();
+    function Timeline({ inline }: { inline: boolean }) {
+      const [loaded, setLoaded] = useState(false);
+      return (
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[root]}
+          inlineReplyEntries={inline ? (loaded ? [earlierReply, laterReply] : [laterReply]) : []}
+          inlineHistoryControls={{
+            hasMoreHistory: !loaded,
+            loading: false,
+            error: null,
+            onLoadEarlier: () => setLoaded(true),
+          }}
+          historyControls={{
+            hasMoreHistory: true,
+            loading: false,
+            error: null,
+            onLoadEarlier: loadEarlierTurns,
+          }}
+        />
+      );
+    }
+    await using screen = await renderElement(<Timeline inline />);
+    await userEvent.click(page.getByRole("button", { name: "Go to original message" }));
+    const childSource = () =>
+      screen.container.querySelector('[data-assistant-citation-thread="reply-thread"]');
+    await vi.waitFor(() => expect(childSource()?.textContent).toBe("Earlier topic answer"));
+    expect(loadEarlierTurns).not.toHaveBeenCalled();
+    await screen.rerender(<Timeline inline={false} />);
+    await vi.waitFor(() => expect(childSource()).toBeNull());
+  });
+
   it.each(["assistant", "user"] as const)(
     "adds %s diagram fixes to the draft without dispatching an app message",
     async (role) => {

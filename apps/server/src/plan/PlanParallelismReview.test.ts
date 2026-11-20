@@ -28,15 +28,17 @@ const updatedAt = "2026-10-16T08:00:00.000Z";
 
 function runFixture(): DeepPlanRun {
   return {
+    schemaVersion: 2,
     id: DeepPlanRunId.make("deep-plan-run"),
     threadId,
     phase: "awaitingApproval",
     revision: 4,
     plan: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       version: 2,
       goal: "Preserve the reviewed plan",
       scope: ["Saved chat"],
+      nonGoals: [],
       decisions: [],
       affectedAreas: ["Planning"],
       steps: [
@@ -61,22 +63,21 @@ function runFixture(): DeepPlanRun {
     },
     approval: null,
     approvalKey: "approval",
-    sources: [],
-    sourceCoverage: [],
-    stepStates: [],
-    finalValidation: {
+    chats: [],
+    includeProjectChats: false,
+    steps: [],
+    finalReview: {
       status: "pending",
-      evidence: [],
-      updatedAt: null,
-      attempt: 0,
-      requestId: null,
-      turnId: null,
+      submission: null,
+      reviews: [],
+      roundLimit: 3,
+      unsubmittedTurns: 0,
     },
-    procedureAdjustments: [],
+    activeTurns: [],
     operations: [],
     createdAt: updatedAt,
     updatedAt,
-    pauseReason: null,
+    pause: null,
   };
 }
 

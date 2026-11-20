@@ -724,6 +724,7 @@ it("restores deduped bodies from the records it already holds, also in a partial
 describe("BetterT3 V2 thread metadata", () => {
   it("retains DeepPlan and reply ownership in full thread updates and leaves timeline collections stable", () => {
     const deepPlan = {
+      schemaVersion: 2 as const,
       id: DeepPlanRunId.make("durable-plan"),
       threadId,
       phase: "planning" as const,
@@ -731,22 +732,21 @@ describe("BetterT3 V2 thread metadata", () => {
       plan: null,
       approvalKey: null,
       approval: null,
-      sources: [],
-      sourceCoverage: [],
-      stepStates: [],
-      finalValidation: {
+      chats: [],
+      includeProjectChats: false,
+      steps: [],
+      finalReview: {
         status: "pending" as const,
-        evidence: [],
-        updatedAt: null,
-        attempt: 0,
-        requestId: null,
-        turnId: null,
+        submission: null,
+        reviews: [],
+        roundLimit: 3,
+        unsubmittedTurns: 0,
       },
-      procedureAdjustments: [],
+      activeTurns: [],
       operations: [],
       createdAt: DateTime.formatIso(now),
       updatedAt: DateTime.formatIso(now),
-      pauseReason: null,
+      pause: null,
     };
     const messageReply = {
       replyTopicId: SubagentId.make("reply-topic"),

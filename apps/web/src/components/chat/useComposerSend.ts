@@ -13,12 +13,13 @@ import {
 } from "@t3tools/shared/voiceFileContext";
 import { resolvePlanImplementationDispatch } from "@t3tools/client-runtime/plan-implementation";
 import {
+  buildDeepPlanStartCommand,
+  isDeepPlanLegacyRun,
   parseDeepPlanComposerCommand,
-  prepareDeepPlanForTurn,
   resolveDeepPlanningAvailability,
 } from "@t3tools/client-runtime/deep-planning";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { getWebDeepPlanningApi } from "../../state/deepPlanning";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { randomUUID } from "../../lib/utils";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
@@ -41,6 +42,7 @@ import {
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -372,6 +374,9 @@ export function useComposerSend(input: ComposerSendInput) {
   const createDeepPlanThread = useOrchestrationCommand(threadEnvironment.create, {
     reportFailure: false,
   });
+  const dispatchDeepPlan = useOrchestrationCommand(orchestrationEnvironment.v2.dispatchCommand, {
+    reportFailure: false,
+  });
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
@@ -639,8 +644,19 @@ export function useComposerSend(input: ComposerSendInput) {
           activeThread?.id ?? null,
           multipleModelSelections !== null
             ? "DeepPlan supports one model at a time."
-            : availability.reason,
+            : availability.reasonKey
+              ? translate(availability.reasonKey)
+              : availability.reason,
         );
+        return;
+      }
+      const run = activeThread.deepPlan;
+      if (
+        run &&
+        !isDeepPlanLegacyRun(run) &&
+        (run.phase === "implementing" || run.phase === "finalReview")
+      ) {
+        setThreadError(activeThread.id, translate("chat.deepPlan.finishActiveRun"));
         return;
       }
     }
@@ -1584,26 +1600,38 @@ export function useComposerSend(input: ComposerSendInput) {
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       const startPromise = (async () => {
         let dispatchBootstrap = bootstrap;
-        let deepPlanRun: import("@t3tools/contracts").DeepPlanRun | null = null;
         if (sendCtx.composerMode === "deep-plan") {
+          const serverThread = readThreadShell(scopeThreadRef(environmentId, threadIdForSend));
           if (bootstrap?.createThread) {
-            const created = await createDeepPlanThread({
-              environmentId,
-              input: { threadId: threadIdForSend, ...bootstrap.createThread },
-            });
-            if (created._tag === "Failure") return created;
+            if (!serverThread) {
+              const created = await createDeepPlanThread({
+                environmentId,
+                input: { threadId: threadIdForSend, ...bootstrap.createThread },
+              });
+              if (created._tag === "Failure") return created;
+            }
             const { createThread: _created, ...remaining } = bootstrap;
             dispatchBootstrap = remaining.prepareWorktree ? remaining : undefined;
           }
-          deepPlanRun = await prepareDeepPlanForTurn({
-            environmentId,
-            projectId: activeProject.id,
-            threadId: threadIdForSend,
-            additionalSourceRefs: sendCtx.deepPlanSourceRefs,
-            includeProjectChats: sendCtx.deepPlanIncludeProjectChats,
-            apiForEnvironment: getWebDeepPlanningApi,
-            createId: randomUUID,
-          });
+          const run = serverThread?.deepPlan ?? activeThread.deepPlan;
+          if (
+            !run ||
+            isDeepPlanLegacyRun(run) ||
+            run.phase === "completed" ||
+            run.phase === "cancelled"
+          ) {
+            const started = await dispatchDeepPlan({
+              environmentId,
+              input: buildDeepPlanStartCommand({
+                threadId: threadIdForSend,
+                commandId: CommandId.make(randomUUID()),
+                createdAt: messageCreatedAt,
+                chats: sendCtx.deepPlanSourceRefs,
+                includeProjectChats: sendCtx.deepPlanIncludeProjectChats === true,
+              }),
+            });
+            if (started._tag === "Failure") return started;
+          }
         }
         return startThreadTurn(
           preparedComposerTurnRequest(
@@ -1628,7 +1656,6 @@ export function useComposerSend(input: ComposerSendInput) {
                 interactionMode: sendInteractionMode,
                 dispatchMode: turnDispatchMode,
                 ...(dispatchBootstrap ? { bootstrap: dispatchBootstrap } : {}),
-                ...(deepPlanRun ? { deepPlanRunId: deepPlanRun.id } : {}),
                 createdAt: messageCreatedAt,
               },
             },

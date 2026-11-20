@@ -2,6 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   BETTER_T3_FEATURE_REGISTRY,
   DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+  DEFAULT_REPLY_PRESENTATION,
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   resolveBetterT3FeatureFlag,
@@ -10,6 +11,7 @@ import {
   type BetterT3FeatureSection,
   type BetterT3SwitchFeatureId,
   EnvironmentId,
+  ReplyPresentation,
   type ExecutionEnvironmentCapabilities,
   type ModelSelection,
   type ProjectId,
@@ -349,6 +351,7 @@ function BetterT3SettingsPage(props: {
     | "caveman"
     | "context-compaction"
     | "project-sort"
+    | "reply-presentation"
     | "sidebar-style"
     | "thread-sort"
     | "reasoning"
@@ -405,6 +408,7 @@ function BetterT3SettingsPage(props: {
   const deviceSettings = devicePreferences?.betterT3Device
     ? devicePreferences.betterT3Device
     : DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
+  const replyPresentation = devicePreferences?.replyPresentation ?? DEFAULT_REPLY_PRESENTATION;
   const environmentSettings =
     serverConfig?.settings.betterT3Environment ?? DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
   const mobileSurface = mobileBetterT3SurfaceForWidth(width);
@@ -675,6 +679,22 @@ function BetterT3SettingsPage(props: {
                     ? "settings.betterT3.preview.examples.context.background"
                     : "settings.betterT3.preview.examples.context.native",
                 )
+              : status
+          }
+        />
+      );
+    }
+    if (control.id === "chat.replyPresentation") {
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={description}
+          label={label}
+          onPress={() => setActiveChoice("reply-presentation")}
+          status={
+            available
+              ? translator.message(`settings.betterT3.replyPresentation.${replyPresentation}`)
               : status
           }
         />
@@ -1131,6 +1151,17 @@ function BetterT3SettingsPage(props: {
         }
         title={translator.message("settings.betterT3.sidebarStyle.title")}
         visible={activeChoice === "sidebar-style"}
+      />
+      <BetterT3ChoiceModal<ReplyPresentation>
+        choices={ReplyPresentation.literals.map((value) => ({
+          value,
+          label: translator.message(`settings.betterT3.replyPresentation.${value}`),
+        }))}
+        current={replyPresentation}
+        onClose={() => setActiveChoice(null)}
+        onSelect={(replyPresentation) => savePreferences({ replyPresentation })}
+        title={translator.message("betterT3.chat.replyPresentation.label")}
+        visible={activeChoice === "reply-presentation"}
       />
       <BetterT3ChoiceModal<ReasoningDisplayMode>
         choices={REASONING_DISPLAY_MODES.map((value) => ({

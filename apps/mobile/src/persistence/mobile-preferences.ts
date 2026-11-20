@@ -17,6 +17,7 @@ import {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
+  ReplyPresentation,
   type PullRequestMergeMethod,
   BetterT3SettingsV1,
   bootstrapBetterT3SettingsV1,
@@ -58,6 +59,7 @@ const decodeChatVisualModeSyncRecordV2 = Schema.decodeUnknownOption(ChatVisualMo
 const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownOption(InterfaceLanguageSyncRecord);
 const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownOption(InterfaceLocaleSyncRecordV1);
 const decodeBetterT3SettingsV1 = Schema.decodeUnknownOption(BetterT3SettingsV1);
+const decodeReplyPresentation = Schema.decodeUnknownOption(ReplyPresentation);
 const decodeChecklistExpansion = Schema.decodeUnknownOption(
   Schema.Record(Schema.String, Schema.Boolean),
 );
@@ -210,6 +212,7 @@ export interface Preferences {
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly dismissedDatabaseStorageNotices?: readonly string[];
   readonly followUpBehavior?: FollowUpBehavior;
+  readonly replyPresentation?: ReplyPresentation;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly planModeEnabled?: boolean;
   readonly workingShelfEnabled?: boolean;
@@ -365,6 +368,7 @@ export function sanitizeMobilePreferences(
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    replyPresentation?: ReplyPresentation;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -589,6 +593,10 @@ export function sanitizeMobilePreferences(
   }
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
+  }
+  const replyPresentation = decodeReplyPresentation(parsed.replyPresentation);
+  if (Option.isSome(replyPresentation)) {
+    preferences.replyPresentation = replyPresentation.value;
   }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {

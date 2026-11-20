@@ -298,6 +298,18 @@ const CURSOR_AGENT_SETTING_SOURCES = [
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+const CURSOR_READ_ONLY_TOOLS = ["read", "glob", "grep", "ls"] as const;
+
+// Cursor raises no approval requests, so only its toolset can keep a reviewer from editing.
+function cursorToolPolicy(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
+) {
+  if (runtimePolicy.interactionMode === "chat") return "chat";
+  if (runtimePolicy.commandExecutionPolicy === "deny") return "read-only-worker";
+  return mcpSession?.deepPlan?.phase === "review" ? "reviewer" : "agent";
+}
+
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
@@ -313,14 +325,17 @@ export function makeCursorAgentOptions(input: {
     input.managedMcpServers && Object.keys(input.managedMcpServers).length
       ? { ...input.managedMcpServers, ...internal }
       : internal;
+  const toolPolicy = cursorToolPolicy(input.runtimePolicy, input.mcpSession);
   return {
     model: cursorSdkModelSelection(input.modelSelection),
     name: `T3 Code ${input.threadId}`,
-    ...(input.runtimePolicy.interactionMode === "chat"
+    ...(toolPolicy === "chat"
       ? { tools: [] }
-      : input.runtimePolicy.commandExecutionPolicy === "deny"
-        ? { tools: ["read", "glob", "grep", "ls"] }
-        : {}),
+      : toolPolicy === "read-only-worker"
+        ? { tools: [...CURSOR_READ_ONLY_TOOLS] }
+        : toolPolicy === "reviewer"
+          ? { tools: [...CURSOR_READ_ONLY_TOOLS, "mcp"] }
+          : {}),
     mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
     local: {
@@ -2251,12 +2266,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             Effect.orDie,
           );
           const existing = yield* Ref.get(liveAgent);
-          const toolPolicyKey =
-            openInput.runtimePolicy.interactionMode === "chat"
-              ? "chat"
-              : openInput.runtimePolicy.commandExecutionPolicy === "deny"
-                ? "read-only-worker"
-                : "agent";
+          const mcpSession = yield* mcpSessions.read(openInput.threadId);
+          const toolPolicyKey = cursorToolPolicy(openInput.runtimePolicy, mcpSession);
           if (
             existing !== null &&
             openInput.operation === "resume" &&
@@ -2276,7 +2287,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
+            mcpSession,
             managedMcpServers,
           });
           if (

@@ -6,13 +6,7 @@ import {
   type PlanParallelismReviewState,
 } from "@t3tools/client-runtime/plan-implementation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  DeepPlanRun,
-  EnvironmentId,
-  ModelSelection,
-  ServerProvider,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, ServerProvider, ThreadId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -24,7 +18,6 @@ export function useMobilePlanParallelismReview(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly plan: MobileProposedPlan | null;
-  readonly deepPlanRun?: DeepPlanRun | null | undefined;
   readonly implementationProvider: ServerProvider | null;
   readonly reviewerSelection: ModelSelection | null;
   readonly providers: ReadonlyArray<ServerProvider>;

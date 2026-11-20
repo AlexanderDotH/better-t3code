@@ -948,7 +948,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.interactionMode === null &&
     draft.composerMode == null &&
     (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
-    draft.deepPlanIncludeProjectChats !== false
+    draft.deepPlanIncludeProjectChats !== true
   );
 }
 
@@ -1954,7 +1954,7 @@ function normalizePersistedDraftsByThreadId(
     const deepPlanSourceRefs = Array.isArray(draftCandidate.deepPlanSourceRefs)
       ? draftCandidate.deepPlanSourceRefs.filter(isDeepPlanSourceRef)
       : [];
-    const excludesProjectChats = draftCandidate.deepPlanIncludeProjectChats === false;
+    const includesProjectChats = draftCandidate.deepPlanIncludeProjectChats === true;
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -2049,7 +2049,7 @@ function normalizePersistedDraftsByThreadId(
       !interactionMode &&
       !composerMode &&
       deepPlanSourceRefs.length === 0 &&
-      !excludesProjectChats
+      !includesProjectChats
     ) {
       continue;
     }
@@ -2089,7 +2089,7 @@ function normalizePersistedDraftsByThreadId(
       ...(interactionMode ? { interactionMode } : {}),
       ...(composerMode ? { composerMode } : {}),
       ...(deepPlanSourceRefs.length > 0 ? { deepPlanSourceRefs } : {}),
-      ...(excludesProjectChats ? { deepPlanIncludeProjectChats: false } : {}),
+      ...(includesProjectChats ? { deepPlanIncludeProjectChats: true } : {}),
     };
   }
 
@@ -2134,7 +2134,7 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
         retained.interactionMode ||
         retained.composerMode ||
         retained.deepPlanSourceRefs?.length ||
-        retained.deepPlanIncludeProjectChats === false
+        retained.deepPlanIncludeProjectChats === true
         ? [[threadKey, retained]]
         : [];
     }),
@@ -2198,7 +2198,7 @@ export function partializeComposerDraftStoreState(
       draft.interactionMode === null &&
       draft.composerMode == null &&
       (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
-      draft.deepPlanIncludeProjectChats !== false
+      draft.deepPlanIncludeProjectChats !== true
     ) {
       continue;
     }
@@ -2275,9 +2275,7 @@ export function partializeComposerDraftStoreState(
       ...(draft.deepPlanSourceRefs?.length
         ? { deepPlanSourceRefs: draft.deepPlanSourceRefs.map((ref) => ({ ...ref })) }
         : {}),
-      ...(draft.deepPlanIncludeProjectChats === false
-        ? { deepPlanIncludeProjectChats: false }
-        : {}),
+      ...(draft.deepPlanIncludeProjectChats === true ? { deepPlanIncludeProjectChats: true } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2562,8 +2560,8 @@ function toHydratedThreadDraft(
     interactionMode: persistedDraft.interactionMode ?? null,
     composerMode: persistedDraft.composerMode ?? persistedDraft.interactionMode ?? null,
     deepPlanSourceRefs: persistedDraft.deepPlanSourceRefs?.map((ref) => ({ ...ref })) ?? [],
-    ...(persistedDraft.deepPlanIncludeProjectChats === false
-      ? { deepPlanIncludeProjectChats: false }
+    ...(persistedDraft.deepPlanIncludeProjectChats === true
+      ? { deepPlanIncludeProjectChats: true }
       : {}),
   };
 }
@@ -3402,7 +3400,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey };
           });
         },
-        setDeepPlanSourceRefs: (threadRef, refs, includeProjectChats = true) => {
+        setDeepPlanSourceRefs: (threadRef, refs, includeProjectChats = false) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
           const deepPlanSourceRefs = uniqueDeepPlanSourceRefs(refs.filter(isDeepPlanSourceRef)).map(
@@ -3410,13 +3408,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           );
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey];
-            if (!existing && deepPlanSourceRefs.length === 0 && includeProjectChats) return state;
+            if (!existing && deepPlanSourceRefs.length === 0 && !includeProjectChats) return state;
             const { deepPlanIncludeProjectChats: _previous, ...base } =
               existing ?? createEmptyThreadDraft();
             const nextDraft = {
               ...base,
               deepPlanSourceRefs,
-              ...(includeProjectChats ? {} : { deepPlanIncludeProjectChats: false }),
+              ...(includeProjectChats ? { deepPlanIncludeProjectChats: true } : {}),
             };
             const draftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];

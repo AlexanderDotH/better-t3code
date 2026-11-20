@@ -100,6 +100,7 @@ export interface NativeProviderToolHarness<ToolCall extends NativeProviderToolCa
   readonly requiresApproval: (
     toolName: string,
     runtimeMode: ProviderSession["runtimeMode"],
+    threadId?: ThreadId,
   ) => boolean;
   readonly requestType: (toolName: string) => CanonicalRequestType;
   readonly approvalDetail: (toolName: string, args: Readonly<Record<string, unknown>>) => string;

@@ -1724,38 +1724,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:deep-plan:get-run",
       tag: WS_METHODS.deepPlanGetRun,
     }),
-    catalogDeepPlanSources: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:catalog",
-      tag: WS_METHODS.deepPlanCatalogSources,
-    }),
-    exportDeepPlanSources: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:export",
-      tag: WS_METHODS.deepPlanExportSources,
-    }),
-    readDeepPlanExportChunk: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:read-export",
-      tag: WS_METHODS.deepPlanReadExportChunk,
-    }),
-    initializeDeepPlanSources: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:initialize",
-      tag: WS_METHODS.deepPlanInitializeSources,
-    }),
-    importDeepPlanSourceChunk: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:import",
-      tag: WS_METHODS.deepPlanImportSourceChunk,
-    }),
-    listDeepPlanSources: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:list",
-      tag: WS_METHODS.deepPlanListSources,
-    }),
-    readDeepPlanSourceChunk: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:read-source",
-      tag: WS_METHODS.deepPlanReadSourceChunk,
-    }),
-    summarizeDeepPlanSource: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:deep-plan:summarize",
-      tag: WS_METHODS.deepPlanSummarizeSource,
-    }),
     reviewPlanParallelism: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plan:review-parallelism",
       tag: WS_METHODS.planReviewParallelism,

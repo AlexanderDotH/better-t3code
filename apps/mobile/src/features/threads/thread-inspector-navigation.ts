@@ -26,7 +26,8 @@ export function useOpenThreadInspector() {
     if (Platform.OS !== "ios" || !fileInspector.supported) return false;
     if (openInInspector) openInInspector(target);
     else {
-      const parent = navigation.getState()?.routes.findLast((route) => route.name === "Thread");
+      const state = navigation.getState();
+      const parent = state?.routes.findLast((route) => route.name === "Thread");
       if (
         !parent?.params ||
         !("environmentId" in parent.params) ||
@@ -35,6 +36,16 @@ export function useOpenThreadInspector() {
         parent.params.threadId !== source.threadId
       )
         return false;
+      const inspector = (parent.params as ReactNavigation.RootParamList["Thread"])?.inspector;
+      if (
+        state?.routes[state.index]?.key === parent.key &&
+        inspector?.type === target.type &&
+        inspector.environmentId === target.environmentId &&
+        inspector.threadId === target.threadId &&
+        inspector.deviceKey === target.deviceKey
+      ) {
+        return true;
+      }
       navigation.dispatch(
         StackActions.popTo("Thread", { ...source, inspector: target }, { merge: true }),
       );

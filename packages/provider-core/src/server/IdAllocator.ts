@@ -20,6 +20,8 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type DeepPlanRunId,
+  type DeepPlanReviewTarget,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -132,6 +134,16 @@ export interface IdAllocatorV2Derive {
   }) => ProviderSessionId;
   readonly delegatedTaskNode: (input: { readonly commandId: CommandId }) => NodeId;
   readonly delegatedTaskThread: (input: { readonly commandId: CommandId }) => ThreadId;
+  readonly deepPlanLaneThread: (input: {
+    readonly runId: DeepPlanRunId;
+    readonly laneId: string;
+  }) => ThreadId;
+  readonly deepPlanReviewThread: (input: {
+    readonly runId: DeepPlanRunId;
+    readonly planVersion: number;
+    readonly target: DeepPlanReviewTarget;
+    readonly round: number;
+  }) => ThreadId;
   readonly delegatedTaskMessage: (input: { readonly commandId: CommandId }) => MessageId;
   readonly delegatedTaskTurnItem: (input: { readonly commandId: CommandId }) => TurnItemId;
   readonly createdThreadTurnItem: (input: { readonly commandId: CommandId }) => TurnItemId;
@@ -259,6 +271,21 @@ export const derive: IdAllocatorV2Derive = {
   delegatedTaskNode: (input) => NodeId.make(joinId("node", "delegated-task", input.commandId)),
   delegatedTaskThread: (input) =>
     ThreadId.make(joinId("thread", "delegated-task", input.commandId)),
+  deepPlanLaneThread: ({ runId, laneId }) =>
+    ThreadId.make(joinId("thread", "deep-plan", "lane", runId, laneId)),
+  deepPlanReviewThread: ({ runId, planVersion, target, round }) =>
+    ThreadId.make(
+      joinId(
+        "thread",
+        "deep-plan",
+        "review",
+        runId,
+        planVersion,
+        target.kind,
+        ...(target.kind === "step" ? [target.stepId] : []),
+        round,
+      ),
+    ),
   delegatedTaskMessage: (input) =>
     MessageId.make(joinId("message", "delegated-task", input.commandId)),
   delegatedTaskTurnItem: (input) =>

@@ -173,6 +173,7 @@ describe("DesktopClientSettings", () => {
           const settings = yield* DesktopClientSettings.DesktopClientSettings;
           const savedSettings: ClientSettings = {
             ...clientSettings,
+            replyPresentation: "side-chat",
             chatVisualModeLocalRecord: {
               mode: "current",
               updatedAt: 1_790_860_000_100,
@@ -381,6 +382,7 @@ describe("DesktopClientSettings", () => {
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
           assert.equal(persisted.value.timestampFormat, "12-hour");
+          assert.equal(persisted.value.replyPresentation, "inline");
         }
       }),
     ),

@@ -607,6 +607,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
+      inlineReplyThreadId?: ThreadId;
       showAssistantMeta: boolean;
       /** The latest finished reply of a still-running response shows only its timestamp. */
       showAssistantTimestamp: boolean;
@@ -664,6 +665,59 @@ type MessagesTimelineRowContent =
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
   result: MessagesTimelineRow[];
+}
+
+export function insertInlineReplyMessageRows(
+  parentRows: MessagesTimelineRow[],
+  inlineReplyEntries: ReadonlyArray<TimelineEntry>,
+): MessagesTimelineRow[] {
+  if (inlineReplyEntries.length === 0) return parentRows;
+  const replyRows = inlineReplyEntries.flatMap((entry) => {
+    if (entry.kind !== "message" || !entry.projectedItem) return [];
+    const threadId = entry.projectedItem.sourceThreadId;
+    const assistant = entry.message.role === "assistant";
+    const settled = !entry.message.streaming;
+    return [
+      {
+        kind: "message",
+        id: `reply:${threadId}:${entry.id}`,
+        createdAt: entry.createdAt,
+        message: entry.message,
+        projectedItem: entry.projectedItem,
+        inlineReplyThreadId: threadId,
+        showAssistantMeta: assistant && settled,
+        showAssistantTimestamp: false,
+        showAssistantCopyButton: assistant && settled,
+        assistantCopyStreaming: !settled,
+      } satisfies MessagesTimelineRow,
+    ];
+  });
+  const merged: MessagesTimelineRow[] = [];
+  let replyIndex = 0;
+  for (const row of parentRows) {
+    const boundary = row.createdAt;
+    if (boundary !== null) {
+      while (replyIndex < replyRows.length) {
+        const reply = replyRows[replyIndex]!;
+        if (reply.createdAt >= boundary) break;
+        merged.push(reply);
+        replyIndex += 1;
+      }
+    }
+    merged.push(row);
+  }
+  return merged.concat(replyRows.slice(replyIndex));
+}
+
+export function timelineMessageMatchesReplySource(
+  message: ChatMessage,
+  source: Pick<import("@t3tools/contracts").MessageReplyReference, "messageId" | "replyTopicId">,
+  threadReplyTopicId?: import("@t3tools/contracts").SubagentId,
+): boolean {
+  return (
+    message.id === source.messageId &&
+    (message.replyTopicId ?? threadReplyTopicId) === source.replyTopicId
+  );
 }
 
 export function workGroupId(timelineEntryId: string): string {
@@ -2628,6 +2682,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
+        a.inlineReplyThreadId === bm.inlineReplyThreadId &&
         (a.reasoningGroup === bm.reasoningGroup ||
           (a.reasoningGroup !== undefined &&
             bm.reasoningGroup !== undefined &&
@@ -2735,7 +2790,7 @@ export type TimelineReplyTopicStatus =
 export interface TimelineReplyTopicSummary {
   readonly messageId: MessageId;
   readonly threadId: ThreadId;
-  readonly count: number;
+  readonly title?: string;
   readonly status: TimelineReplyTopicStatus | null;
   readonly statusMessage: string | null;
   /** The prompt of a side chat that ended without output; the server still validates it. */
@@ -2744,6 +2799,7 @@ export interface TimelineReplyTopicSummary {
 
 interface TimelineReplyTopicThread {
   readonly id: ThreadId;
+  readonly title?: string;
   readonly createdAt: string;
   readonly messageReply?: { readonly sourceThreadId: ThreadId; readonly messageId: MessageId };
   readonly latestRun: {
@@ -2754,6 +2810,7 @@ interface TimelineReplyTopicThread {
   readonly hasPendingApprovals?: boolean;
   readonly hasPendingUserInput?: boolean;
   readonly source?: {
+    readonly replyRetryMessageId?: MessageId | undefined;
     readonly latestVisibleMessage: { readonly id: MessageId; readonly role: string } | null;
     readonly lastError?: string | null | undefined;
   };
@@ -2788,45 +2845,37 @@ function replyTopicRetry(
 ): TimelineReplyTopicSummary["retry"] {
   const runId = thread.latestRun?.runId;
   const prompt = thread.source?.latestVisibleMessage;
+  const messageId =
+    thread.source?.replyRetryMessageId ?? (prompt?.role === "user" ? prompt.id : undefined);
   return (status === "failed" || status === "interrupted") &&
     runId !== undefined &&
     !thread.latestRun?.assistantMessageId &&
-    prompt?.role === "user"
-    ? { messageId: prompt.id, runId }
+    messageId !== undefined
+    ? { messageId, runId }
     : null;
 }
 
-/**
- * Side chats that reply to this thread's messages, one summary per source message. The newest
- * side chat is the one a summary opens and reports on.
- */
 export function deriveTimelineReplyTopics(
   threads: ReadonlyArray<TimelineReplyTopicThread>,
   sourceThreadId: ThreadId | undefined,
 ): ReadonlyArray<TimelineReplyTopicSummary> {
   if (sourceThreadId === undefined) return [];
-  const byMessageId = new Map<MessageId, TimelineReplyTopicSummary & { createdAt: string }>();
-  for (const thread of threads) {
-    const reply = thread.messageReply;
-    if (reply?.sourceThreadId !== sourceThreadId) continue;
-    const previous = byMessageId.get(reply.messageId);
-    const count = (previous?.count ?? 0) + 1;
-    if (previous !== undefined && thread.createdAt < previous.createdAt) {
-      byMessageId.set(reply.messageId, { ...previous, count });
-      continue;
-    }
-    const status = replyTopicStatus(thread);
-    byMessageId.set(reply.messageId, {
-      messageId: reply.messageId,
-      threadId: thread.id,
-      createdAt: thread.createdAt,
-      count,
-      status,
-      statusMessage: status === "failed" ? (thread.source?.lastError ?? null) : null,
-      retry: replyTopicRetry(thread, status),
-    });
-  }
-  return [...byMessageId.values()]
-    .map(({ createdAt: _createdAt, ...topic }) => topic)
+  return threads
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .flatMap((thread) => {
+      const reply = thread.messageReply;
+      if (reply?.sourceThreadId !== sourceThreadId) return [];
+      const status = replyTopicStatus(thread);
+      return [
+        {
+          messageId: reply.messageId,
+          threadId: thread.id,
+          ...(thread.title === undefined ? {} : { title: thread.title }),
+          status,
+          statusMessage: status === "failed" ? (thread.source?.lastError ?? null) : null,
+          retry: replyTopicRetry(thread, status),
+        },
+      ];
+    })
     .toSorted((left, right) => left.messageId.localeCompare(right.messageId));
 }

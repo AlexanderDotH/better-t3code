@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadFamily,
   type OrchestrationV2ThreadShell,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -196,6 +197,39 @@ export function createThreadFamilyAtoms<R, ER, E>(
     return release;
   };
 
+  const mountReplyTopics = (registry: AtomRegistry.AtomRegistry, ref: ScopedThreadRef) => {
+    const release = mount(registry, ref.environmentId, ref.threadId);
+    let previousState: EnvironmentShellState | null = null;
+    let previousThreads: ReadonlyArray<OrchestrationV2ThreadShell> | undefined;
+    const unsubscribe = registry.subscribe(
+      shellStateAtom(ref.environmentId),
+      (result) => {
+        const state = shellStateValue(result);
+        const threads = state === null ? undefined : Option.getOrUndefined(state.snapshot)?.threads;
+        const replyRemoved =
+          state !== null &&
+          previousState !== null &&
+          state.generation === previousState.generation &&
+          state.removedAt !== previousState.removedAt &&
+          previousThreads?.some(
+            (thread) =>
+              thread.messageReply?.sourceThreadId === ref.threadId &&
+              (state.removedAt.get(thread.id) ?? 0) >
+                (previousState?.removedAt.get(thread.id) ?? 0),
+          );
+        previousState = state;
+        previousThreads = threads;
+        // A settled reply can leave the live shell while remaining in the family.
+        if (replyRemoved) refresh(registry, ref.environmentId, ref.threadId);
+      },
+      { immediate: true },
+    );
+    return () => {
+      unsubscribe();
+      release();
+    };
+  };
+
   const snapshotAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: {
       readonly snapshot: OrchestrationV2ShellSnapshot;
@@ -251,6 +285,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
     familyAtom: (environmentId: EnvironmentId, threadId: ThreadId) =>
       familyAtom(familyKey(environmentId, threadId)),
     mount,
+    mountReplyTopics,
     mountRows,
     refresh,
   };

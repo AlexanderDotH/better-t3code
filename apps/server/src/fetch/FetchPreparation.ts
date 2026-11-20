@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type RunId,
   type ServerProvider,
+  type ServerSettings,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -12,6 +13,7 @@ import {
   resolveFetchLunaFallback,
   resolveFetchModelSelection,
 } from "@t3tools/shared/fetchMode";
+import { supportsModelSelectionPurpose } from "@t3tools/shared/model";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
@@ -29,7 +31,7 @@ import { FetchWorkerCoordinator } from "./FetchWorkerCoordinator.ts";
 import type { FetchWorkerModel } from "./FetchWorkerState.ts";
 import { forkParked } from "../serverActivation.ts";
 
-function workerModel(candidate: {
+export function workerModel(candidate: {
   readonly selection: ModelSelection;
   readonly provider: ServerProvider;
 }): FetchWorkerModel {
@@ -39,6 +41,47 @@ function workerModel(candidate: {
     maxRecommendedWorkers: candidate.provider.fetchWorkers?.maxRecommendedWorkers ?? 1,
     commandExecutionPolicy: "deny",
   };
+}
+
+export function resolveFetchProviderSelection(input: {
+  readonly available: ReadonlyArray<ServerProvider>;
+  readonly settings: Pick<
+    ServerSettings,
+    "fetchModelSelection" | "textGenerationModelSelection" | "usageHardBudgetEnabled"
+  >;
+  readonly now: number;
+  readonly requireAgentModel?: boolean;
+}) {
+  const { available, settings, now, requireAgentModel } = input;
+  const eligible =
+    settings.fetchModelSelection && !requireAgentModel
+      ? available
+      : available
+          .filter(
+            (provider) =>
+              isFetchCapableProvider(provider) &&
+              provider.auth.status !== "unauthenticated" &&
+              (!settings.usageHardBudgetEnabled ||
+                usageHardBudgetBlockReason(provider.usageLimits, now) === null),
+          )
+          .map((provider) => {
+            const exhausted = exhaustedUsageWindow(provider, now);
+            if (!requireAgentModel && !exhausted) return provider;
+            return {
+              ...provider,
+              models: provider.models.filter(
+                (model) =>
+                  (!requireAgentModel || supportsModelSelectionPurpose(model, "agent")) &&
+                  (!exhausted || !exhaustedUsageWindow(provider, now, model.slug)),
+              ),
+            };
+          });
+  const selection = resolveFetchModelSelection({
+    providers: eligible,
+    fetchModelSelection: settings.fetchModelSelection,
+    textGenerationModelSelection: settings.textGenerationModelSelection,
+  });
+  return { eligible, selection };
 }
 
 export const layer = Layer.effectDiscard(
@@ -71,30 +114,10 @@ export const layer = Layer.effectDiscard(
       let context = "";
       const available = yield* providers.getProviders;
       const now = yield* Clock.currentTimeMillis;
-      const eligible = current.fetchModelSelection
-        ? available
-        : available
-            .filter(
-              (provider) =>
-                isFetchCapableProvider(provider) &&
-                provider.auth.status !== "unauthenticated" &&
-                (!current.usageHardBudgetEnabled ||
-                  usageHardBudgetBlockReason(provider.usageLimits, now) === null),
-            )
-            .map((provider) =>
-              exhaustedUsageWindow(provider, now)
-                ? {
-                    ...provider,
-                    models: provider.models.filter(
-                      (model) => !exhaustedUsageWindow(provider, now, model.slug),
-                    ),
-                  }
-                : provider,
-            );
-      const selection = resolveFetchModelSelection({
-        providers: eligible,
-        fetchModelSelection: current.fetchModelSelection,
-        textGenerationModelSelection: current.textGenerationModelSelection,
+      const { eligible, selection } = resolveFetchProviderSelection({
+        available,
+        settings: current,
+        now,
       });
       if (selection.status === "resolved") {
         const luna =

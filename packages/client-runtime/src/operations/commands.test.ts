@@ -1,5 +1,4 @@
 import {
-  DeepPlanRunId,
   SubagentId,
   CheckpointId,
   CheckpointRef,
@@ -310,7 +309,6 @@ describe("V2 environment commands", () => {
         yield* startThreadTurn({
           commandId: CommandId.make(`command-${mode}`),
           threadId: v2ThreadId,
-          deepPlanRunId: DeepPlanRunId.make("deep-plan"),
           idleGuard: { latestRunId: RunId.make("previous"), latestUserMessageId: null },
           replyTo: { messageId: MessageId.make("quoted"), role: "assistant", text: "Reference" },
           replyTopicId: SubagentId.make("reply-topic"),
@@ -329,7 +327,6 @@ describe("V2 environment commands", () => {
           type: "message.dispatch",
           runtimeMode: "full-access",
           interactionMode: "default",
-          deepPlanRunId: "deep-plan",
           idleGuard: { latestRunId: "previous", latestUserMessageId: null },
           replyTo: { messageId: "quoted", role: "assistant", text: "Reference" },
           replyTopicId: "reply-topic",

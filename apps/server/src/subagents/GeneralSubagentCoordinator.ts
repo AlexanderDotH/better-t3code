@@ -1,7 +1,6 @@
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { derive as deriveV2Id } from "@t3tools/provider-core/server/IdAllocator";
 import { subagentThreadTitle } from "@t3tools/provider-core/server/subagentProjection";
-import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import {
   CommandId,
   MessageId,
@@ -12,10 +11,7 @@ import {
   type ModelSelection,
   type ThreadId,
   type ProviderInstanceId,
-  type DeepPlanSourceId,
-  type DeepPlanSourceSnapshot,
 } from "@t3tools/contracts";
-import type { McpDeepPlanContext } from "../mcp/McpInvocationContext.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -24,10 +20,6 @@ import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  buildDeepPlanSourceBatchTask,
-  selectDeepPlanSourceBatches,
-} from "../deepPlanning/DeepPlanSourceBatches.ts";
 import {
   listGeneralSubagentModels,
   resolveGeneralSubagentSelection,
@@ -64,24 +56,12 @@ export interface GeneralSubagentCaller {
   readonly callerProviderInstanceId: ProviderInstanceId;
 }
 
-export interface DeepPlanSourceAnalysisBatch extends GeneralSubagentSpawnResult {
-  readonly sourceIds: ReadonlyArray<DeepPlanSourceId>;
-}
-
 export interface GeneralSubagentCoordinatorShape {
-  /** The caller holds the run's lock, which is not reentrant. */
-  readonly analyzeDeepPlanSources: (
-    input: GeneralSubagentCaller & {
-      readonly binding: McpDeepPlanContext;
-      readonly sources: ReadonlyArray<DeepPlanSourceSnapshot>;
-    },
-  ) => Effect.Effect<ReadonlyArray<DeepPlanSourceAnalysisBatch>, GeneralSubagentError>;
   readonly listModels: (
     input: GeneralSubagentCaller,
   ) => Effect.Effect<GeneralSubagentModelsResult, GeneralSubagentError>;
   readonly spawn: (
-    input: GeneralSubagentCaller &
-      GeneralSubagentSpawnInput & { readonly deepPlanExecution?: McpDeepPlanContext },
+    input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
   ) => Effect.Effect<GeneralSubagentSpawnResult, GeneralSubagentError>;
   readonly wait: (
     input: GeneralSubagentCaller & GeneralSubagentWaitInput,
@@ -93,8 +73,7 @@ export interface GeneralSubagentCoordinatorShape {
     input: GeneralSubagentCaller,
   ) => Effect.Effect<GeneralSubagentListResult, GeneralSubagentError>;
   readonly spawnAgent: (
-    input: GeneralSubagentCaller &
-      GeneralSubagentSpawnInput & { readonly deepPlanExecution?: McpDeepPlanContext },
+    input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
   ) => Effect.Effect<GeneralSubagentSpawnResult, GeneralSubagentError>;
   readonly sendMessage: (
     input: GeneralSubagentCaller & GeneralSubagentSendMessageInput,
@@ -120,7 +99,6 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
   const providers = yield* ProviderRegistry;
   const settings = yield* ServerSettingsService;
-  const workflow = yield* DeepPlanWorkflow;
   const crypto = yield* Crypto.Crypto;
   const failure = (cause: unknown) =>
     new GeneralSubagentError({
@@ -222,10 +200,7 @@ const make = Effect.gen(function* () {
     const selected = resolveGeneralSubagentSelection({
       providers: yield* providers.getProviders,
       callerProviderInstanceId: input.callerProviderInstanceId,
-      parentModelSelection:
-        input.deepPlanExecution?.modelSelection ??
-        run.resolvedModelSelection ??
-        projection.thread.modelSelection,
+      parentModelSelection: run.resolvedModelSelection ?? projection.thread.modelSelection,
       request: input,
     });
     if (selected.status !== "resolved") return yield* new GeneralSubagentError(selected);
@@ -250,13 +225,10 @@ const make = Effect.gen(function* () {
             prompt: input.task,
             ordinal: projection.subagents.length + 1,
           }),
-        ...(input.deepPlanExecution === undefined
-          ? {}
-          : { deepPlanExecution: input.deepPlanExecution }),
         generalSubagent: true,
         modelSelection: selected.selection,
         runtimeMode: projection.thread.runtimeMode,
-        interactionMode: input.deepPlanExecution?.readOnly ? "plan" : "default",
+        interactionMode: "default",
         createdBy: "agent",
         creationSource: "server",
       })
@@ -383,63 +355,6 @@ const make = Effect.gen(function* () {
         }),
       };
     }),
-    analyzeDeepPlanSources: Effect.fn("GeneralSubagentCoordinator.analyzeDeepPlanSources")(
-      function* (input) {
-        const run = yield* workflow
-          .getRun({ threadId: input.binding.runThreadId, runId: input.binding.runId })
-          .pipe(Effect.mapError(failure));
-        const projection = yield* parent(input);
-        const active: DeepPlanSourceAnalysisBatch[] = [];
-        for (const task of projection.subagents) {
-          if (
-            task.childThreadId === null ||
-            !["pending", "running", "waiting"].includes(task.status)
-          )
-            continue;
-          const child = yield* orchestration
-            .getThreadRecords(task.childThreadId, [])
-            .pipe(Effect.mapError(failure));
-          const grant = child.thread.deepPlanExecution;
-          if (grant?.runId === input.binding.runId && grant.sourceAnalysis)
-            active.push({
-              ...identity(task, child.thread.modelSelection),
-              sourceIds: grant.sourceAnalysis.sourceIds,
-            });
-        }
-        const summarized = new Set(
-          run?.sourceCoverage
-            .filter((entry) => entry.status === "summarized")
-            .map((entry) => entry.sourceId),
-        );
-        const pending = input.sources.filter((source) => !summarized.has(source.sourceId));
-        const created = yield* Effect.forEach(
-          selectDeepPlanSourceBatches(
-            pending,
-            active.map((agent) => agent.sourceIds),
-          ),
-          (batch) =>
-            spawn({
-              ...input,
-              task: buildDeepPlanSourceBatchTask(input.binding, batch),
-              name: "Deep Plan source analysis",
-              deepPlanExecution: {
-                ...input.binding,
-                readOnly: true,
-                sourceAnalysis: {
-                  workerThreadId: input.parentThreadId,
-                  sourceIds: batch.map((source) => source.sourceId),
-                },
-              },
-            }).pipe(
-              Effect.map((agent) => ({
-                ...agent,
-                sourceIds: batch.map((source) => source.sourceId),
-              })),
-            ),
-        );
-        return [...active, ...created];
-      },
-    ),
   });
 });
 export const GeneralSubagentCoordinatorLive = Layer.effect(GeneralSubagentCoordinator, make);

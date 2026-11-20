@@ -32,6 +32,7 @@ import {
   ChatImageAttachment,
   CheckpointId,
   ClaudeSettings,
+  DeepPlanRunId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -555,6 +556,45 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       mcpServers: T3_MCP_SERVERS,
     });
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
+    const explorer = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: { ...mcpSession, capabilities: new Set(["deep-plan-chat-read"]) },
+      readOnlySandbox: true,
+    });
+    assert.include(explorer.allowedTools ?? [], "mcp__t3-code__t3_thread_read");
+  });
+
+  it("pre-approves the MCP tools for the active Deep Plan role", () => {
+    const threadId = ThreadId.make("thread-claude-deep-plan");
+    const mcpSession = mcpSessionFor(threadId);
+    const base = {
+      runId: DeepPlanRunId.make("claude-deep-plan"),
+      runThreadId: threadId,
+      modelSelection: { instanceId: mcpSession.providerInstanceId, model: "claude-opus" },
+    };
+    const planner = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: {
+        ...mcpSession,
+        deepPlan: { ...base, phase: "planning", approvedPlanVersion: null, readOnly: true },
+      },
+      readOnlySandbox: true,
+    });
+    const reviewer = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: {
+        ...mcpSession,
+        deepPlan: {
+          ...base,
+          phase: "review",
+          approvedPlanVersion: 1,
+          readOnly: true,
+          review: { target: { kind: "final" }, round: 1 },
+        },
+      },
+      readOnlySandbox: true,
+    });
+    assert.include(planner.allowedTools ?? [], "mcp__t3-code__deep_plan_explore");
+    assert.notInclude(planner.allowedTools ?? [], "mcp__t3-code__deep_plan_review_verdict");
+    assert.include(reviewer.allowedTools ?? [], "mcp__t3-code__deep_plan_review_verdict");
+    assert.notInclude(reviewer.allowedTools ?? [], "mcp__t3-code__deep_plan_explore");
   });
 
   it("invalidates live-query reuse when MCP credentials rotate", () => {
@@ -4387,6 +4427,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
       runtimeMode: "auto" | "full-access",
       approvalPolicy?: "never",
+      deepPlan?: "active" | "stale",
     ) {
       const harness = yield* makeWakeHarness;
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -4404,6 +4445,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         attachments: [],
         runtimePolicy,
       });
+      if (deepPlan !== undefined) {
+        const mcp = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcp.set({
+          environmentId: EnvironmentId.make("environment-claude-plan"),
+          threadId: harness.threadId,
+          providerSessionId: "mcp-claude-plan",
+          providerInstanceId: input.modelSelection.instanceId,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: "Bearer test",
+          browserToolsAvailable: false,
+          deepPlan: {
+            runId: DeepPlanRunId.make("claude-live-deep-plan"),
+            runThreadId: harness.threadId,
+            turnId: deepPlan === "active" ? input.runId : RunId.make("stale-claude-plan-turn"),
+            phase: "planning",
+            approvedPlanVersion: null,
+            modelSelection: input.modelSelection,
+            readOnly: true,
+          },
+        });
+      }
       yield* harness.runtime.startTurn({
         ...input,
         appThread: { ...input.appThread, runtimeMode, interactionMode: "plan" },
@@ -4414,11 +4476,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       return { ...harness, canUseTool: canUseTool! };
     });
 
-    const requestWrite = Effect.fn("requestPlanWrite")(function* (
+    const requestToolPermission = Effect.fn("requestPlanToolPermission")(function* (
       turn: Effect.Success<ReturnType<typeof openPlanTurn>>,
       toolName: string,
       toolInput: Record<string, unknown>,
-      options?: { toolUseID: string; agentID?: string },
+      options?: {
+        toolUseID?: string;
+        agentID?: string;
+        matchedAskRule?: { source: string; toolName: string };
+      },
     ) {
       const decision = yield* Effect.promise(() =>
         turn.canUseTool(toolName, toolInput, {
@@ -4426,6 +4492,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           toolUseID: options?.toolUseID ?? "tool-plan-write",
           requestId: "request-plan-write",
           ...(options?.agentID === undefined ? {} : { agentID: options.agentID }),
+          ...(options?.matchedAskRule === undefined
+            ? {}
+            : { matchedAskRule: options.matchedAskRule }),
         }),
       ).pipe(Effect.forkScoped);
       const first = yield* Effect.raceFirst(
@@ -4436,6 +4505,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       return { first, decision };
     });
+
+    it.effect.each(["mcp__t3-code__deep_plan_explore", "mcp__t3-code__t3_thread_read"])(
+      "allows the bound planner to call %s without an approval card",
+      (toolName) =>
+        Effect.gen(function* () {
+          const turn = yield* openPlanTurn("full-access", undefined, "active");
+          const args = { threadId: "selected-chat" };
+          const { first } = yield* requestToolPermission(turn, toolName, args);
+          assert.equal(first.type, "decision");
+          if (first.type !== "decision") return;
+          assert.deepEqual(first.result, {
+            behavior: "allow",
+            updatedInput: args,
+            toolUseID: "tool-plan-write",
+          });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect.each([
+      { grant: "active", toolName: "mcp__t3-code__deep_plan_review_verdict" },
+      { grant: "stale", toolName: "mcp__t3-code__deep_plan_explore" },
+      { grant: "active", toolName: "mcp__other__deep_plan_explore" },
+      {
+        grant: "active",
+        toolName: "mcp__t3-code__deep_plan_explore",
+        matchedAskRule: { source: "projectSettings", toolName: "mcp__t3-code__deep_plan_explore" },
+      },
+    ] as const)(
+      "keeps approval for $toolName with a $grant planner grant",
+      ({ grant, toolName, ...options }) =>
+        Effect.gen(function* () {
+          const turn = yield* openPlanTurn("full-access", undefined, grant);
+          const { first, decision } = yield* requestToolPermission(turn, toolName, {}, options);
+          assert.equal(first.type, "request");
+          if (first.type !== "request") return;
+          yield* turn.runtime.respondToRuntimeRequest({
+            requestId: first.event.runtimeRequest.id,
+            decision: "decline",
+          });
+          assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
 
     it.effect.each([
       {
@@ -4463,7 +4584,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ({ runtimeMode, toolName, toolInput, kind, decision, behavior }) =>
         Effect.gen(function* () {
           const turn = yield* openPlanTurn(runtimeMode);
-          const permission = yield* requestWrite(turn, toolName, toolInput);
+          const permission = yield* requestToolPermission(turn, toolName, toolInput);
           assert.equal(permission.first.type, "request", "the planned write bypassed approval");
           if (permission.first.type !== "request") return;
           const request = permission.first.event.runtimeRequest;
@@ -4484,10 +4605,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
 
+    it.effect("lets a Deep Plan reviewer request shell checks but no edits or other tools", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-reviewer"),
+          text: "Review the submitted step.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn({
+          ...input,
+          appThread: {
+            ...input.appThread,
+            deepPlanExecution: {
+              phase: "review",
+              runId: DeepPlanRunId.make("claude-review-plan"),
+              runThreadId: harness.threadId,
+              approvedPlanVersion: 1,
+              modelSelection: input.modelSelection,
+              readOnly: true,
+              review: { target: { kind: "final" }, round: 1 },
+            },
+          },
+        });
+        assert.includeMembers(harness.getOpenedOptions()?.disallowedTools ?? [], [
+          "Edit",
+          "Write",
+          "MultiEdit",
+          "NotebookEdit",
+        ]);
+        const turn = { ...harness, canUseTool: harness.getOpenedOptions()!.canUseTool! };
+        const external = yield* requestToolPermission(turn, "mcp__acme__write_file", {
+          path: "src/lookup.ts",
+        });
+        assert.equal(external.first.type, "decision", "the external MCP tool raised a request");
+        if (external.first.type !== "decision") return;
+        assert.equal(external.first.result?.behavior, "deny");
+        const check = yield* requestToolPermission(
+          turn,
+          "Bash",
+          { command: "pnpm test" },
+          { toolUseID: "reviewer-check" },
+        );
+        assert.equal(check.first.type, "request");
+        if (check.first.type !== "request") return;
+        assert.equal(check.first.event.runtimeRequest.kind, "command");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
     it.effect("denies Plan writes without asking when approvals are never allowed", () =>
       Effect.gen(function* () {
         const turn = yield* openPlanTurn("full-access", "never");
-        const permission = yield* requestWrite(turn, "Bash", {
+        const permission = yield* requestToolPermission(turn, "Bash", {
           command: "echo after > target.txt",
         });
         assert.equal(permission.first.type, "decision", "Never raised an approval request");
@@ -4506,7 +4683,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       () =>
         Effect.gen(function* () {
           const turn = yield* openPlanTurn("full-access");
-          const parentPermission = yield* requestWrite(
+          const parentPermission = yield* requestToolPermission(
             turn,
             "Bash",
             { command: "git status" },
@@ -4514,7 +4691,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.equal(parentPermission.first.type, "request");
           if (parentPermission.first.type !== "request") return;
-          const permission = yield* requestWrite(
+          const permission = yield* requestToolPermission(
             turn,
             "Bash",
             { command: "rm -f $W/*/*.obj" },

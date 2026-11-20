@@ -480,6 +480,7 @@ describe("resolveThreadStatusPill", () => {
 
   it("distinguishes a ready Deep Plan without hiding higher-priority statuses", () => {
     const deepPlan: NonNullable<SidebarThreadSummary["deepPlan"]> = {
+      schemaVersion: 2,
       id: DeepPlanRunId.make("deep-plan"),
       threadId: ThreadId.make("thread-deep-plan"),
       phase: "awaitingApproval",
@@ -487,22 +488,21 @@ describe("resolveThreadStatusPill", () => {
       plan: null,
       approval: null,
       approvalKey: null,
-      sources: [],
-      sourceCoverage: [],
-      stepStates: [],
-      finalValidation: {
+      chats: [],
+      includeProjectChats: false,
+      steps: [],
+      finalReview: {
         status: "pending",
-        evidence: [],
-        updatedAt: null,
-        attempt: 0,
-        requestId: null,
-        turnId: null,
+        submission: null,
+        reviews: [],
+        roundLimit: 3,
+        unsubmittedTurns: 0,
       },
-      procedureAdjustments: [],
+      activeTurns: [],
       operations: [],
       createdAt: "2026-03-09T10:00:00.000Z",
       updatedAt: "2026-03-09T10:00:00.000Z",
-      pauseReason: null,
+      pause: null,
     };
     const thread = {
       ...baseThread,

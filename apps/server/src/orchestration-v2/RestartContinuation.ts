@@ -47,7 +47,7 @@ function restartContinuationBlocked(
 ): boolean {
   const { thread } = projection;
   if (
-    // DeepPlanValidationReactor continues these turns from the durable plan.
+    // Deep Plan execution recovers from its persisted turn bindings.
     source.deepPlanRunId !== undefined ||
     thread.archivedAt !== null ||
     thread.deletedAt !== null ||

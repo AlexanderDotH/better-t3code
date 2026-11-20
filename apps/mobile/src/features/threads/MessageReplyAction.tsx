@@ -1,6 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createMessageReplyReference } from "@t3tools/client-runtime/messageReplies";
-import { SubagentId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  createMessageReplyReference,
+  resolveMessageReplyTarget,
+} from "@t3tools/client-runtime/messageReplies";
+import {
+  SubagentId,
+  type EnvironmentId,
+  type OrchestrationV2MessageReply,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { mobileMessageRepliesEnabled } from "../../lib/message-replies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -51,6 +59,7 @@ const MessageReplyAction = memo(function MessageReplyAction(props: {
 type ThreadReplyTarget = {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly currentReply?: OrchestrationV2MessageReply | undefined;
   readonly message: Parameters<typeof createMessageReplyReference>[0] & {
     readonly role: "user" | "assistant";
   };
@@ -70,10 +79,14 @@ function useReplyTarget(props: ThreadReplyTarget) {
       translator.message(props.message.role === "user" ? "chat.reply.you" : "chat.reply.assistant"),
     );
     if (enabled && replyTo)
-      setComposerDraftMessageReply(scopedThreadKey(props.environmentId, props.threadId), {
-        replyTo,
-        replyTopicId: props.message.replyTopicId ?? SubagentId.make(uuidv4()),
-      });
+      setComposerDraftMessageReply(
+        scopedThreadKey(props.environmentId, props.threadId),
+        resolveMessageReplyTarget({
+          reference: replyTo,
+          currentReply: props.currentReply,
+          createTopicId: () => SubagentId.make(uuidv4()),
+        }),
+      );
   };
   return { enabled, select };
 }

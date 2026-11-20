@@ -39,6 +39,7 @@ const featureIds = [
   "agent.fetchModel",
   "agent.parallelPlanImplementation",
   "agent.parallelPlanReviewer",
+  "agent.deepPlanReviewModel",
   "agent.contextCompaction",
   "agent.contextCompactionModel",
   "agent.autoReasoningModel",
@@ -58,6 +59,7 @@ const featureIds = [
   "chat.hideComposerDivider",
   "chat.messageEditing",
   "chat.messageReplies",
+  "chat.replyPresentation",
   "chat.characterStreamingMotion",
   "chat.presentation",
   "chat.presentationMotion",
@@ -282,6 +284,14 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     mirrors: [serverMirror("parallelPlanReviewModelSelection")],
   }),
   descriptor({
+    id: "agent.deepPlanReviewModel",
+    section: "agent-workflows",
+    scope: "environment",
+    controlKind: "selector",
+    capabilities: [capability("agentWorkflowVersion", 1)],
+    mirrors: [serverMirror("deepPlanReviewModelSelection")],
+  }),
+  descriptor({
     id: "agent.contextCompaction",
     section: "agent-workflows",
     scope: "environment",
@@ -436,6 +446,12 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     existing: true,
     clean: true,
     capabilities: [capability("messageReplies")],
+  }),
+  descriptor({
+    id: "chat.replyPresentation",
+    section: "chat-layout",
+    scope: "device",
+    controlKind: "selector",
   }),
   descriptor({
     id: "chat.characterStreamingMotion",

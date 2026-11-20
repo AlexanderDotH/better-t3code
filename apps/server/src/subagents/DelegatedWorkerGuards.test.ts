@@ -12,6 +12,7 @@ import {
   ProviderSessionId,
   RuntimeRequestId,
   ThreadId,
+  type DeepPlanExecutionContext,
   type OrchestrationV2Command,
   type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
@@ -66,7 +67,10 @@ const layerGuards = DelegatedWorkerGuards.layer.pipe(
   Layer.provideMerge(layerTest),
 );
 
-const startParent = Effect.fn("DelegatedWorkerGuardsTest.startParent")(function* (name: string) {
+const startParent = Effect.fn("DelegatedWorkerGuardsTest.startParent")(function* (
+  name: string,
+  reviewGrant?: DeepPlanExecutionContext,
+) {
   const orchestrator = yield* OrchestratorV2;
   const threadId = ThreadId.make(`${name}:parent`);
   yield* orchestrator.dispatch({
@@ -94,14 +98,29 @@ const startParent = Effect.fn("DelegatedWorkerGuardsTest.startParent")(function*
     creationSource: "web",
     dispatchMode: { type: "start_immediately" },
   });
-  const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-  return { threadId, run };
+  const { thread, runs } = yield* orchestrator.getThreadProjection(threadId);
+  if (reviewGrant !== undefined) {
+    const events = yield* EventSinkV2;
+    const now = yield* DateTime.now;
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make(`${name}:reviewer`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: { ...thread, deepPlanExecution: reviewGrant },
+        },
+      ],
+    });
+  }
+  return { threadId, run: runs[0]! };
 });
 
 type DelegationMarker = Partial<
   Pick<
     Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
-    "generalSubagent" | "fetchWorker" | "deepPlanExecution"
+    "generalSubagent" | "fetchWorker"
   >
 >;
 
@@ -231,7 +250,16 @@ it.effect("answers worker approvals itself and stops a worker that asks a questi
       fetchWorker: { commandExecutionPolicy: "deny" },
     });
     const plain = yield* delegate(parent, "approvals-plain", {});
-    for (const threadId of [general.threadId, fetch.threadId, plain.threadId])
+    const reviewer = yield* startParent("approvals-reviewer", {
+      phase: "review",
+      runId: DeepPlanRunId.make("approvals-plan"),
+      runThreadId: parent.threadId,
+      approvedPlanVersion: 1,
+      review: { target: { kind: "step", stepId: "step-one" }, round: 1 },
+      readOnly: true,
+      modelSelection,
+    });
+    for (const threadId of [general.threadId, fetch.threadId, plain.threadId, reviewer.threadId])
       yield* attachSession(threadId);
     for (const [threadId, name, kind, expected] of [
       [general.threadId, "general-read", "file-read", ["accept"]],
@@ -240,6 +268,11 @@ it.effect("answers worker approvals itself and stops a worker that asks a questi
       [fetch.threadId, "fetch-read", "file-read", ["accept"]],
       [fetch.threadId, "fetch-change", "file-change", ["decline"]],
       [plain.threadId, "plain-command", "command", []],
+      [reviewer.threadId, "reviewer-command", "command", ["accept"]],
+      [reviewer.threadId, "reviewer-change", "file-change", ["decline"]],
+      [reviewer.threadId, "reviewer-read", "file-read", ["accept"]],
+      [reviewer.threadId, "reviewer-app", "mcp-elicitation", ["decline"]],
+      [reviewer.threadId, "reviewer-permission", "permission", ["decline"]],
     ] as const) {
       yield* guards.handle(yield* openRequest(threadId, name, kind));
       assert.deepEqual(yield* decisionFor(name), [...expected], name);
@@ -249,6 +282,8 @@ it.effect("answers worker approvals itself and stops a worker that asks a questi
     yield* assertRunning(general.threadId);
     yield* guards.handle(yield* openRequest(plain.threadId, "plain-question", "user_input"));
     yield* assertRunning(plain.threadId);
+    yield* guards.handle(yield* openRequest(reviewer.threadId, "reviewer-question", "user_input"));
+    yield* assertStopped(reviewer.threadId);
   }).pipe(Effect.provide(layerGuards)),
 );
 
@@ -317,36 +352,18 @@ it.effect("stops a general agent at its deadline without blocking the child's ot
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("stops general agents when the feature is disabled and keeps Deep Plan analysis", () =>
+it.effect("stops general agents while Fetch workers keep running", () =>
   Effect.gen(function* () {
-    const orchestrator = yield* OrchestratorV2;
     const guards = yield* DelegatedWorkerGuards.DelegatedWorkerGuards;
     const parent = yield* startParent("disabled");
-    const deepPlanRunId = DeepPlanRunId.make("disabled-plan");
-    yield* orchestrator.dispatch({
-      type: "thread.deep-plan.start",
-      commandId: CommandId.make("disabled-plan-start"),
-      threadId: parent.threadId,
-      runId: deepPlanRunId,
-      createdAt: DateTime.formatIso(yield* DateTime.now),
-    });
     const general = yield* delegate(parent, "disabled-general", { generalSubagent: true });
-    const analysis = yield* delegate(parent, "disabled-analysis", {
-      generalSubagent: true,
-      deepPlanExecution: {
-        runId: deepPlanRunId,
-        runThreadId: parent.threadId,
-        approvedPlanVersion: null,
-        phase: "planning",
-        readOnly: true,
-        sourceAnalysis: { workerThreadId: parent.threadId, sourceIds: [] },
-        modelSelection,
-      },
+    const fetch = yield* delegate(parent, "disabled-fetch", {
+      fetchWorker: { commandExecutionPolicy: "deny" },
     });
     const plain = yield* delegate(parent, "disabled-plain", {});
     yield* guards.stopDisabledGeneralSubagents;
     yield* assertStopped(general.threadId);
-    yield* assertRunning(analysis.threadId);
+    yield* assertRunning(fetch.threadId);
     yield* assertRunning(plain.threadId);
   }).pipe(Effect.provide(layerGuards)),
 );

@@ -18,7 +18,11 @@ import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
 } from "../../session-logic";
 import type { ChatMessage } from "../../types";
-import { deriveMessagesTimelineRows } from "./MessagesTimeline.logic";
+import {
+  deriveMessagesTimelineRows,
+  insertInlineReplyMessageRows,
+  timelineMessageMatchesReplySource,
+} from "./MessagesTimeline.logic";
 
 function message(
   id: string,
@@ -126,19 +130,34 @@ describe("inline reply timeline", () => {
   });
 
   it.each(["current", "classic"] as const)(
-    "preserves root checkpoints with interleaved %s replies",
+    "keeps %s reply turns visible alongside a folded parent turn and its checkpoint",
     (chatVisualMode) => {
       const rootUser = message("user", "user", 1);
       const topicUser = message("user", "user", 2, "reply");
       const rootAssistant = message("assistant", "assistant", 4);
       const topicAssistant = message("assistant", "assistant", 5, "reply");
-      const rows = deriveMessagesTimelineRows({
-        chatVisualMode,
-        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
-          visibleTurnItems: [rootUser, topicUser, rootAssistant, topicAssistant].map(
-            projectedMessage,
-          ),
+      const workId = "parent-command";
+      const workTime = "2026-10-01T12:00:03.000Z";
+      const project = (messages: ReadonlyArray<ChatMessage>) =>
+        deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: messages.map(projectedMessage),
           optimisticMessages: [],
+        });
+      const parentRows = deriveMessagesTimelineRows({
+        chatVisualMode,
+        timelineEntries: project([rootUser, rootAssistant]).toSpliced(1, 0, {
+          kind: "work",
+          id: workId,
+          createdAt: workTime,
+          entry: {
+            id: workId,
+            createdAt: workTime,
+            runId: rootUser.runId,
+            label: "Ran command",
+            tone: "tool",
+            itemType: "command_execution",
+            toolLifecycleStatus: "completed",
+          },
         }),
         latestRun: {
           runId: rootAssistant.runId!,
@@ -147,7 +166,7 @@ describe("inline reply timeline", () => {
           completedAt: rootAssistant.updatedAt,
           turnEnded: true,
         },
-        expandedRunIds: new Set([rootUser.runId!, topicUser.runId!]),
+        expandedRunIds: new Set(),
         isWorking: false,
         activeTurnStartedAt: null,
         supportsConversationRollback: true,
@@ -164,17 +183,44 @@ describe("inline reply timeline", () => {
           },
         ],
       });
+      const rows = insertInlineReplyMessageRows(parentRows, project([topicUser, topicAssistant]));
+      const [fold] = rows.filter((row) => row.kind === "turn-fold");
+      expect(fold).toMatchObject({ runId: rootUser.runId, expanded: false });
+      expect(rows.some((row) => row.id === workId)).toBe(false);
       const messages = rows.filter((row) => row.kind === "message");
+      expect(messages.map(({ message }) => message.id)).toEqual([
+        rootUser.id,
+        topicUser.id,
+        rootAssistant.id,
+        topicAssistant.id,
+      ]);
+      expect(
+        messages.find((row) => row.message.id === topicAssistant.id)?.inlineReplyThreadId,
+      ).toBe("child:reply");
+      const matching = messages.filter(({ message }) =>
+        timelineMessageMatchesReplySource(message, {
+          messageId: topicAssistant.id,
+          ...(topicAssistant.replyTopicId ? { replyTopicId: topicAssistant.replyTopicId } : {}),
+        }),
+      );
+      expect(matching.map(({ message }) => message)).toEqual([topicAssistant]);
+      expect(
+        timelineMessageMatchesReplySource(topicAssistant, { messageId: topicAssistant.id }),
+      ).toBe(false);
       expect(messages.find((row) => row.id === rootUser.id)?.revertTurnCount).toBe(0);
-      expect(messages.find((row) => row.id === topicUser.id)?.revertTurnCount).toBeUndefined();
+      expect(
+        messages.find((row) => row.message.id === topicUser.id)?.revertTurnCount,
+      ).toBeUndefined();
       expect(
         messages.find((row) => row.id === rootAssistant.id)?.assistantTurnDiffSummary
           ?.checkpointRef,
       ).toBe("root-checkpoint");
-      expect(messages.find((row) => row.id === topicAssistant.id)).toMatchObject({
+      expect(messages.find((row) => row.message.id === topicAssistant.id)).toMatchObject({
         showAssistantMeta: true,
-        assistantTurnDiffSummary: undefined,
       });
+      expect(
+        messages.find((row) => row.message.id === topicAssistant.id)?.assistantTurnDiffSummary,
+      ).toBeUndefined();
     },
   );
 });

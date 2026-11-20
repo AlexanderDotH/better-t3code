@@ -141,7 +141,9 @@ export function resolveQueuedThreadSettings(
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
     interactionMode: resolveProviderInteractionMode(
       provider,
-      message.interactionMode ?? thread.interactionMode,
+      message.composerMode === "deep-plan"
+        ? "plan"
+        : (message.interactionMode ?? thread.interactionMode),
     ),
   };
 }

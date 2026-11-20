@@ -453,6 +453,10 @@ export const LoadBalancingWeights = Schema.Record(
 export const ContextWindowSelector = Schema.Literals(["native", "better-t3"]);
 export type ContextWindowSelector = typeof ContextWindowSelector.Type;
 
+export const ReplyPresentation = Schema.Literals(["inline", "side-chat"]);
+export type ReplyPresentation = typeof ReplyPresentation.Type;
+export const DEFAULT_REPLY_PRESENTATION: ReplyPresentation = "inline";
+
 const ComposerLayout = Schema.Literals(["current", "classic"]);
 
 export const UsagePacingWorkdayHours = Schema.Literals([8, 24]);
@@ -493,6 +497,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
+  replyPresentation: ReplyPresentation.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_REPLY_PRESENTATION)),
+  ),
   composerUsageLimitsVisible: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -2103,6 +2110,9 @@ export const ServerSettings = Schema.Struct({
   parallelPlanReviewModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION)),
   ),
+  deepPlanReviewModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   branchNamingMode: BranchNamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("static" as const)),
@@ -2608,6 +2618,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.NullOr(ProjectIndexModelSelection),
   ),
   parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  deepPlanReviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
@@ -2753,6 +2764,7 @@ export const ClientSettingsPatch = Schema.Struct({
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
+  replyPresentation: Schema.optionalKey(ReplyPresentation),
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),

@@ -3,7 +3,6 @@ import {
   type ThreadLinkedPullRequest,
   type ThreadForkBoundary,
   type ThreadForkWorkspace,
-  type DeepPlanRunId,
   type MessageReplyReference,
   type SubagentId,
   CommandId,
@@ -174,7 +173,6 @@ interface StartThreadBootstrap {
 }
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
-  readonly deepPlanRunId?: DeepPlanRunId;
   readonly fetchMode?: "repository-exploration";
   readonly replyTo?: MessageReplyReference;
   readonly replyTopicId?: SubagentId;
@@ -675,7 +673,6 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   );
   const featureMetadata = {
     ...(input.fetchMode === undefined ? {} : { fetchMode: input.fetchMode }),
-    ...(input.deepPlanRunId === undefined ? {} : { deepPlanRunId: input.deepPlanRunId }),
     ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
     ...(input.replyTopicId === undefined ? {} : { replyTopicId: input.replyTopicId }),
     ...(input.idleGuard === undefined ? {} : { idleGuard: input.idleGuard }),

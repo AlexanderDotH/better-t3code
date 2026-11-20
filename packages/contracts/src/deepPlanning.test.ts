@@ -6,213 +6,156 @@ import {
   DeepPlanApproveMutation,
   DeepPlanDocument,
   DeepPlanRun,
-  DeepPlanSourceSnapshot,
-  DeepPlanStepState,
+  ThreadDeepPlanUpdateCommand,
 } from "./deepPlanning.ts";
-import {
-  DEEP_PLAN_MAX_ATTACHMENT_CHUNK_CHARS,
-  DEEP_PLAN_MAX_CHUNK_RECORDS,
-  DEEP_PLAN_MAX_CONTENT_CHUNK_CHARS,
-  DEEP_PLAN_MAX_RECORD_BYTES,
-} from "./deepPlanning.ts";
-import {
-  DeepPlanCatalogSourcesInput,
-  DeepPlanExportSourcesInput,
-  DeepPlanImportSourceChunkInput,
-  DeepPlanReadSourceChunkInput,
-  DeepPlanReadSourceChunkResult,
-  DeepPlanSourceAttachmentRecord,
-  DeepPlanSourceContentRecord,
-} from "./deepPlanningSources.ts";
 import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import { OrchestrationProposedPlan, OrchestrationThread } from "./legacyOrchestration.ts";
+import { OrchestrationV2Command } from "./orchestrationV2.ts";
 import { ProviderInteractionMode } from "./providerPolicy.ts";
-import { ThreadDeepPlanUpdateCommand } from "./deepPlanning.ts";
-import { OrchestrationV2Command, OrchestrationV2DomainEventJson } from "./orchestrationV2.ts";
 
-const now = "2026-10-16T10:00:00.000Z";
 const decodePlan = Schema.decodeUnknownSync(DeepPlanDocument);
 const decodeRun = Schema.decodeUnknownSync(DeepPlanRun);
 const decodeCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
-const decodeSource = Schema.decodeUnknownSync(DeepPlanSourceSnapshot);
 const decodeMode = Schema.decodeUnknownSync(ComposerMode);
 const decodeProviderMode = Schema.decodeUnknownSync(ProviderInteractionMode);
-const decodeThread = Schema.decodeSync(OrchestrationThread);
+const decodeThread = Schema.decodeUnknownSync(OrchestrationThread);
 const decodeProposedPlan = Schema.decodeSync(OrchestrationProposedPlan);
-const decodeTurnStart = Schema.decodeUnknownSync(OrchestrationV2Command);
-const decodeStep = Schema.decodeUnknownSync(DeepPlanStepState);
 const decodeApproval = Schema.decodeUnknownSync(DeepPlanApproveMutation);
 const decodeInternalUpdate = Schema.decodeUnknownSync(ThreadDeepPlanUpdateCommand);
-const decodeThreadEventJson = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
-const encodeThreadEventJson = Schema.encodeSync(OrchestrationV2DomainEventJson);
 const decodeClientCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
-const decodeCatalog = Schema.decodeSync(DeepPlanCatalogSourcesInput);
-const decodeExport = Schema.decodeSync(DeepPlanExportSourcesInput);
-const decodeImport = Schema.decodeUnknownSync(DeepPlanImportSourceChunkInput);
-const decodeSourceInput = Schema.decodeSync(DeepPlanReadSourceChunkInput);
-const decodeReadResult = Schema.decodeSync(DeepPlanReadSourceChunkResult);
-const decodeAttachment = Schema.decodeUnknownSync(DeepPlanSourceAttachmentRecord);
-const decodeContent = Schema.decodeUnknownSync(DeepPlanSourceContentRecord);
-
-function makePlan() {
-  return decodePlan({
-    schemaVersion: 1,
-    version: 1,
-    goal: "Keep source imports complete",
-    scope: ["Deep Planning source imports"],
-    decisions: [{ id: "decision-1", text: "Freeze source contents before transfer" }],
-    affectedAreas: ["contracts"],
-    steps: [
-      {
-        id: "step-1",
-        title: "Import source records",
-        description: "Transfer all frozen source records",
-        dependencies: [],
-        acceptanceCriteria: [
-          {
-            id: "criterion-1",
-            description: "Imported source matches the frozen manifest",
-            checkMethod: "Compare record counts and manifest hashes",
-          },
-        ],
-      },
-    ],
-    finalValidation: {
-      description: "Verify the completed workflow",
-      checkMethod: "Run the focused import acceptance tests",
-    },
-  });
-}
-
-function makeRun() {
-  return decodeRun({
-    id: "run-1",
-    threadId: "thread-1",
-    phase: "awaitingApproval",
-    revision: 1,
-    plan: makePlan(),
-    approval: null,
-    approvalKey: "approval-key",
-    sources: [],
-    sourceCoverage: [],
-    stepStates: [{ stepId: "step-1", status: "pending", evidence: [], updatedAt: now }],
-    finalValidation: {
-      status: "pending",
-      evidence: [],
-      updatedAt: null,
-      attempt: 0,
-      requestId: null,
-      turnId: null,
-    },
-    procedureAdjustments: [],
-    createdAt: now,
-    updatedAt: now,
-    pauseReason: null,
-  });
-}
-
-function makeSource() {
-  return decodeSource({
-    sourceId: "source-1",
-    origin: { environmentId: "environment-1", projectId: "project-1", threadId: "source-thread" },
-    projectTitle: "Project",
-    threadTitle: "Source chat",
-    archived: true,
-    capturedAt: now,
-    contentVersion: "version-1",
-    contentHash: "source-hash",
-    messageCount: 1,
-    activityCount: 0,
-    attachmentCount: 0,
-    recordCount: 1,
-    forkOrigin: null,
-  });
-}
-
-const evidence = [{ kind: "test" as const, summary: "Focused tests passed", createdAt: now }];
+const now = "2026-10-16T10:00:00.000Z";
 const implementation = { instanceId: "codex", model: "gpt-5.4" };
+
+const step = {
+  id: "step-1",
+  title: "Update the settings form",
+  description: "Show the saved review model",
+  dependencies: [],
+  acceptanceCriteria: [
+    {
+      id: "criterion-1",
+      description: "The selection survives reload",
+      checkMethod: "Reload the settings page",
+    },
+  ],
+};
+const plan = {
+  schemaVersion: 2,
+  version: 1,
+  goal: "Configure the reviewer",
+  scope: ["Settings"],
+  nonGoals: ["Changing the default implementation model"],
+  decisions: [{ id: "decision-1", text: "Save the agent model selection" }],
+  affectedAreas: ["settings"],
+  steps: [step],
+  finalValidation: { description: "Check the settings workflow", checkMethod: "Run focused tests" },
+};
+const stepState = {
+  stepId: "step-1",
+  status: "pending",
+  laneId: null,
+  baseTurnCount: null,
+  submission: null,
+  reviews: [],
+  roundLimit: 3,
+  unsubmittedTurns: 0,
+};
+const finalReview = {
+  status: "pending",
+  submission: null,
+  reviews: [],
+  roundLimit: 3,
+  unsubmittedTurns: 0,
+};
+const approval = {
+  planVersion: 1,
+  approvalKey: "approval-key",
+  approvedAt: now,
+  implementation,
+  reviewer: implementation,
+  parallelism: 1,
+  lanes: [{ laneId: "lane-1", threadId: "implementation-thread" }],
+  baseTurnCount: 0,
+};
+const run = {
+  schemaVersion: 2,
+  id: "run-1",
+  threadId: "thread-1",
+  phase: "implementing",
+  revision: 2,
+  plan,
+  approval,
+  approvalKey: "approval-key",
+  chats: [],
+  includeProjectChats: false,
+  steps: [stepState],
+  finalReview,
+  activeTurns: [],
+  operations: [],
+  createdAt: now,
+  updatedAt: now,
+  pause: null,
+};
+const approvedReview = {
+  round: 1,
+  reviewThreadId: "review-thread",
+  reviewer: implementation,
+  diff: null,
+  verdict: "approved",
+  summary: "The setting persists after reload",
+  findings: [],
+  retries: 0,
+  startedAt: now,
+  completedAt: now,
+};
+const verifiedStep = {
+  ...stepState,
+  status: "verified",
+  laneId: "lane-1",
+  reviews: [approvedReview],
+};
+const approveMutation = {
+  type: "approve",
+  planVersion: 1,
+  approvalKey: "approval-key",
+  implementation,
+  implementationThread: "new",
+  parallelism: 2,
+};
+const updateCommand = {
+  type: "thread.deep-plan.update",
+  commandId: "command-1",
+  threadId: "thread-1",
+  runId: "run-1",
+  expectedRevision: 1,
+  operationId: "operation-1",
+  createdAt: now,
+};
 
 describe("Deep Planning compatibility", () => {
   it("keeps Deep Planning separate from provider interaction modes", () => {
     expect(decodeMode("deep-plan")).toBe("deep-plan");
-    expect(composerModeToProviderInteractionMode("default")).toBe("default");
-    expect(composerModeToProviderInteractionMode("plan")).toBe("plan");
     expect(composerModeToProviderInteractionMode("deep-plan")).toBe("plan");
     expect(() => decodeProviderMode("deep-plan")).toThrow();
     expect(decodeMode("chat")).toBe("chat");
-    expect(decodeProviderMode("chat")).toBe("chat");
     expect(composerModeToProviderInteractionMode("chat")).toBe("chat");
+    expect(decodeProviderMode("chat")).toBe("chat");
   });
 
-  it("treats absent and unknown Deep Planning capabilities as unsupported", () => {
+  it("accepts the live-review capability and treats other versions as unsupported", () => {
     expect(decodeCapabilities({}).deepPlanning).toBeUndefined();
     expect(
-      decodeCapabilities({
-        deepPlanning: { version: 2, sourceExport: true, sourceImport: true },
-      }).deepPlanning,
+      decodeCapabilities({ deepPlanning: { version: 1, sourceExport: true, sourceImport: true } })
+        .deepPlanning,
     ).toBeUndefined();
-    expect(
-      decodeCapabilities({
-        deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
-      }).deepPlanning,
-    ).toEqual({ version: 1, sourceExport: true, sourceImport: true });
-  });
-
-  it("round-trips Deep Plan state and worker authority through persisted V2 thread events", () => {
-    const deepPlan = makeRun();
-    const deepPlanExecution = {
-      runId: "run-1",
-      runThreadId: "thread-1",
-      approvedPlanVersion: 1,
-      phase: "execution",
-      readOnly: true,
-      sourceAnalysis: { workerThreadId: "worker-1", sourceIds: ["source-1"] },
-      modelSelection: implementation,
-    };
-    const event = {
-      id: "event-1",
-      type: "thread.deep-plan-updated",
-      threadId: "thread-1",
-      occurredAt: now,
-      payload: {
-        id: "thread-1",
-        projectId: "project-1",
-        title: "Deep Planning",
-        providerInstanceId: "codex",
-        modelSelection: implementation,
-        runtimeMode: "full-access",
-        interactionMode: "plan",
-        branch: null,
-        worktreePath: null,
-        activeProviderThreadId: null,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
-        forkedFrom: null,
-        createdBy: "user",
-        creationSource: "web",
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        deletedAt: null,
-        deepPlan,
-        deepPlanExecution,
-        harnessSync: {
-          providerInstanceId: "codex",
-          providerLabel: "Codex",
-          activity: "idle",
-          sourceUpdatedAt: null,
-          lastSyncedAt: now,
-        },
-      },
-    };
-    const decoded = decodeThreadEventJson(event);
-    const encoded = encodeThreadEventJson(decoded);
-    expect(encoded).toMatchObject({
-      type: "thread.deep-plan-updated",
-      payload: { deepPlan, deepPlanExecution, harnessSync: event.payload.harnessSync },
+    expect(decodeCapabilities({ deepPlanning: { version: 2 } }).deepPlanning).toEqual({
+      version: 2,
     });
+    expect(decodeCapabilities({ deepPlanning: { version: 3 } }).deepPlanning).toBeUndefined();
   });
 
-  it("decodes older thread snapshots without a Deep Planning run", () => {
+  it("normalizes a legacy Deep Plan in the V1 thread snapshot", () => {
+    const { nonGoals: _nonGoals, ...legacyPlan } = plan;
     const thread = decodeThread({
       id: "thread-1",
       projectId: "project-1",
@@ -229,21 +172,74 @@ describe("Deep Planning compatibility", () => {
       activities: [],
       checkpoints: [],
       session: null,
+      deepPlan: {
+        id: "run-1",
+        threadId: "thread-1",
+        phase: "implementing",
+        revision: 2,
+        plan: { ...legacyPlan, schemaVersion: 1 },
+        approval: {
+          planVersion: 1,
+          approvalKey: "approval-key",
+          approvedAt: now,
+          approvedBy: "user",
+          implementation,
+          implementationThreadId: "implementation-thread",
+          implementerId: "implementation-thread",
+        },
+        approvalKey: "approval-key",
+        sources: [],
+        sourceCoverage: [],
+        stepStates: [{ stepId: "step-1", status: "implemented", evidence: [], updatedAt: now }],
+        finalValidation: {
+          status: "pending",
+          evidence: [],
+          updatedAt: null,
+          attempt: 0,
+          requestId: null,
+          turnId: null,
+        },
+        procedureAdjustments: [],
+        operations: [],
+        createdAt: now,
+        updatedAt: now,
+        pauseReason: null,
+      },
     });
     expect(thread.interactionMode).toBe("default");
-    expect(thread.deepPlan).toBeUndefined();
+    expect(thread.deepPlan).toEqual({
+      schemaVersion: 1,
+      kind: "legacy",
+      id: "run-1",
+      threadId: "thread-1",
+      goal: "Configure the reviewer",
+      finished: false,
+      updatedAt: now,
+    });
+    const finished = decodeThread({
+      ...thread,
+      deepPlan: {
+        id: "run-2",
+        threadId: "thread-1",
+        updatedAt: now,
+        plan: null,
+        stepStates: [],
+        finalValidation: { status: "passed" },
+      },
+    });
+    expect(finished.deepPlan).toMatchObject({ kind: "legacy", finished: true });
   });
 
   it("preserves versioned Deep Plan metadata on existing plan and turn schemas", () => {
-    const plan = decodeProposedPlan({
+    const proposedPlan = decodeProposedPlan({
       id: "plan-1",
       turnId: null,
-      planMarkdown: "Implement the source import",
+      planMarkdown: "Configure the reviewer",
       deepPlan: { runId: "run-1", planVersion: 2 },
       createdAt: now,
       updatedAt: now,
     });
-    const turn = decodeTurnStart({
+    const turn = decodeClientCommand({
       type: "message.dispatch",
       createdBy: "user",
       creationSource: "web",
@@ -255,8 +251,8 @@ describe("Deep Planning compatibility", () => {
       dispatchMode: { type: "start_immediately" },
       sourcePlanRef: {
         threadId: "thread-1",
-        planId: plan.id,
-        deepPlan: plan.deepPlan,
+        planId: proposedPlan.id,
+        deepPlan: proposedPlan.deepPlan,
       },
       createdAt: now,
     });
@@ -269,19 +265,17 @@ describe("Deep Planning compatibility", () => {
 
 describe("Deep Plan documents", () => {
   it("requires unique stable step and acceptance criterion IDs", () => {
-    const plan = makePlan();
-    expect(() => decodePlan({ ...plan, steps: [plan.steps[0], plan.steps[0]] })).toThrow();
+    expect(decodePlan(plan).nonGoals).toEqual(["Changing the default implementation model"]);
+    expect(() => decodePlan({ ...plan, steps: [step, step] })).toThrow();
     expect(() =>
       decodePlan({
         ...plan,
-        steps: [plan.steps[0], { ...plan.steps[0], id: "step-2", dependencies: ["step-1"] }],
+        steps: [step, { ...step, id: "step-2", dependencies: ["step-1"] }],
       }),
     ).toThrow();
   });
 
   it("rejects missing and cyclic dependencies", () => {
-    const plan = makePlan();
-    const step = plan.steps[0]!;
     expect(() =>
       decodePlan({ ...plan, steps: [{ ...step, dependencies: ["unknown-step"] }] }),
     ).toThrow();
@@ -289,339 +283,156 @@ describe("Deep Plan documents", () => {
   });
 
   it("requires per-step checks and a final validation requirement", () => {
-    const plan = makePlan();
-    expect(() =>
-      decodePlan({ ...plan, steps: [{ ...plan.steps[0], acceptanceCriteria: [] }] }),
-    ).toThrow();
+    expect(() => decodePlan({ ...plan, steps: [{ ...step, acceptanceCriteria: [] }] })).toThrow();
     expect(() => decodePlan({ ...plan, finalValidation: { description: "Check" } })).toThrow();
-  });
-
-  it("retains source record citations in plan decisions and criteria", () => {
-    const plan = makePlan();
-    const citations = [{ sourceId: "source-1", recordIds: ["record-1", "record-2"] }];
-    const parsed = decodePlan({
-      ...plan,
-      decisions: [{ ...plan.decisions[0], sources: citations }],
-      steps: [
-        {
-          ...plan.steps[0],
-          sources: citations,
-          acceptanceCriteria: [{ ...plan.steps[0]!.acceptanceCriteria[0], sources: citations }],
-        },
-      ],
-    });
-    expect(parsed.decisions[0]?.sources).toEqual(citations);
-    expect(parsed.steps[0]?.acceptanceCriteria[0]?.sources).toEqual(citations);
   });
 });
 
 describe("Deep Plan completion", () => {
-  it("requires evidence before a step becomes verified", () => {
-    expect(() =>
-      decodeStep({ stepId: "step-1", status: "verified", evidence: [], updatedAt: now }),
-    ).toThrow();
-    expect(
-      decodeStep({ stepId: "step-1", status: "verified", evidence, updatedAt: now }).status,
-    ).toBe("verified");
+  it("requires the latest review to approve from a thread outside the implementation lane", () => {
+    expect(decodeRun({ ...run, steps: [verifiedStep] }).steps[0]?.status).toBe("verified");
+    for (const reviews of [
+      [],
+      [{ ...approvedReview, reviewThreadId: "implementation-thread" }],
+      [approvedReview, { ...approvedReview, round: 2, verdict: "changesRequested" }],
+    ]) {
+      expect(() => decodeRun({ ...run, steps: [{ ...verifiedStep, reviews }] })).toThrow();
+    }
   });
 
-  it("rejects completion without approval, verified steps, or passed final validation", () => {
-    const run = makeRun();
-    expect(() => decodeRun({ ...run, phase: "completed" })).toThrow();
-    const approved = {
+  it("requires verified steps and a final approval outside the implementation lanes", () => {
+    const completed = {
       ...run,
-      approval: {
-        planVersion: 1,
-        approvalKey: "approval-key",
-        approvedAt: now,
-        approvedBy: "user",
-        implementation,
-        implementationThreadId: "thread-1",
-        implementerId: "thread:thread-1",
+      phase: "completed",
+      steps: [verifiedStep],
+      finalReview: {
+        ...finalReview,
+        status: "approved",
+        reviews: [{ ...approvedReview, reviewThreadId: "final-review-thread" }],
       },
     };
-    expect(() => decodeRun({ ...approved, phase: "completed" })).toThrow();
-    const verified = {
-      ...approved,
-      stepStates: [{ stepId: "step-1", status: "verified", evidence, updatedAt: now }],
-    };
-    expect(() => decodeRun({ ...verified, phase: "completed" })).toThrow();
-    expect(
-      decodeRun({
-        ...verified,
-        phase: "completed",
-        finalValidation: {
-          ...run.finalValidation,
-          status: "passed",
-          evidence,
-          updatedAt: now,
-          requestId: "validation-1",
-        },
-      }).phase,
-    ).toBe("completed");
-  });
-
-  it("rejects duplicate states for a checklist step", () => {
-    const run = makeRun();
-    expect(() =>
-      decodeRun({ ...run, stepStates: [run.stepStates[0], run.stepStates[0]] }),
-    ).toThrow();
-  });
-
-  it("requires approval for the current plan version", () => {
-    const run = makeRun();
+    expect(decodeRun(completed).phase).toBe("completed");
+    expect(() => decodeRun({ ...completed, steps: [stepState] })).toThrow();
+    expect(() => decodeRun({ ...completed, finalReview })).toThrow();
     expect(() =>
       decodeRun({
-        ...run,
-        phase: "completed",
-        approval: {
-          planVersion: 2,
-          approvalKey: "approval-key",
-          approvedAt: now,
-          approvedBy: "user",
-          implementation,
-          implementationThreadId: "thread-1",
-          implementerId: "thread:thread-1",
+        ...completed,
+        finalReview: {
+          ...completed.finalReview,
+          reviews: [
+            ...completed.finalReview.reviews,
+            { ...approvedReview, round: 2, verdict: "changesRequested" },
+          ],
         },
-        stepStates: [{ stepId: "step-1", status: "verified", evidence, updatedAt: now }],
-        finalValidation: { ...run.finalValidation, status: "passed", evidence, updatedAt: now },
       }),
     ).toThrow();
+    expect(() =>
+      decodeRun({
+        ...completed,
+        finalReview: {
+          ...completed.finalReview,
+          reviews: [{ ...approvedReview, reviewThreadId: "implementation-thread" }],
+        },
+      }),
+    ).toThrow();
+    expect(() => decodeRun({ ...completed, approval: { ...approval, planVersion: 2 } })).toThrow();
+    expect(() => decodeRun({ ...completed, steps: [verifiedStep, verifiedStep] })).toThrow();
   });
 
-  it("requires positive parallelism when requested", () => {
-    const mutation = {
-      type: "approve",
-      planVersion: 1,
-      approvalKey: "approval-key",
-      implementation,
-      implementationThreadId: "thread-1",
-      implementerId: "thread:thread-1",
-    };
-    expect(decodeApproval(mutation).requestedParallelism).toBeUndefined();
-    expect(decodeApproval({ ...mutation, requestedParallelism: 3 }).requestedParallelism).toBe(3);
-    expect(() => decodeApproval({ ...mutation, requestedParallelism: 0 })).toThrow();
+  it("caps the number of retained operations", () => {
+    const operations = Array.from({ length: 51 }, (_, revision) => ({
+      operationId: "operation-" + revision,
+      fingerprint: "fingerprint-" + revision,
+      revision,
+    }));
+    expect(decodeRun({ ...run, operations: operations.slice(1) }).operations).toHaveLength(50);
+    expect(() => decodeRun({ ...run, operations })).toThrow();
+  });
+
+  it("requires approval parallelism from one to four lanes", () => {
+    expect(decodeApproval(approveMutation).parallelism).toBe(2);
+    expect(() => decodeApproval({ ...approveMutation, parallelism: 0 })).toThrow();
+    expect(() => decodeApproval({ ...approveMutation, parallelism: 5 })).toThrow();
+    expect(() => decodeRun({ ...run, approval: { ...approval, parallelism: 2 } })).toThrow();
   });
 
   it("keeps planning and execution mutations behind the authenticated agent boundary", () => {
-    const actor = { implementerId: "thread:thread-1", model: implementation };
+    const target = { kind: "step", stepId: "step-1" };
+    const { schemaVersion: _schemaVersion, version: _version, ...draft } = plan;
     const mutations = [
-      { type: "publish-plan", plan: makePlan() },
-      { type: "step-update", stepId: "step-1", status: "verified", evidence, actor },
-      { type: "validation-start", requestId: "validation-1", actor },
-      { type: "validation-complete", requestId: "validation-1", status: "passed", evidence, actor },
-      {
-        type: "procedure-adjust",
-        reason: "Use the focused check",
-        changes: ["Run focused tests"],
-        actor,
-      },
+      { type: "publish-plan", plan: draft },
+      { type: "submit", target, summary: "Changed settings", changedFiles: ["settings.ts"] },
       { type: "block", reason: "The check environment is unavailable" },
+      {
+        type: "review-verdict",
+        target,
+        round: 1,
+        verdict: "approved",
+        summary: "Check passed",
+        findings: [],
+      },
     ];
     for (const mutation of mutations) {
-      const command = {
-        type: "thread.deep-plan.update",
-        commandId: "command-1",
-        threadId: "thread-1",
-        runId: "run-1",
-        expectedRevision: 1,
-        operationId: "operation-1",
+      const command = { ...updateCommand, byThreadId: "worker-thread", mutation };
+      expect(decodeInternalUpdate(command)).toMatchObject({
+        byThreadId: "worker-thread",
         mutation,
-        createdAt: now,
-      };
-      expect(decodeInternalUpdate(command).mutation.type).toBe(mutation.type);
+      });
+      expect(() => decodeInternalUpdate({ ...command, byThreadId: undefined })).toThrow();
       expect(() => decodeClientCommand(command)).toThrow();
     }
+    expect(() =>
+      decodeClientCommand({
+        ...updateCommand,
+        type: "thread.deep-plan.advance",
+        transition: { type: "settle-turn", turnCommandId: "turn-command" },
+      }),
+    ).toThrow();
   });
 
-  it("allows clients to approve, pause, and resume the run", () => {
-    const mutations = [
-      {
-        type: "approve",
-        planVersion: 1,
-        approvalKey: "approval-key",
-        implementation,
-        implementationThreadId: "thread-1",
-        implementerId: "thread:thread-1",
-      },
-      { type: "pause", reason: "Review the current implementation" },
+  it("allows clients to control a Deep Plan without setting server-only fields", () => {
+    for (const mutation of [
+      approveMutation,
+      { type: "pause" },
       { type: "resume" },
-    ];
-    for (const mutation of mutations) {
-      const parsed = decodeClientCommand({
-        type: "thread.deep-plan.update",
-        commandId: "command-1",
-        threadId: "thread-1",
-        runId: "run-1",
-        expectedRevision: 1,
-        operationId: "operation-1",
+      { type: "cancel" },
+    ]) {
+      expect(
+        decodeClientCommand({
+          ...updateCommand,
+          mutation,
+          byThreadId: "other-thread",
+          defaultReviewer: implementation,
+        }),
+      ).toEqual({
+        ...updateCommand,
         mutation,
-        createdAt: now,
       });
-      expect(parsed.type).toBe("thread.deep-plan.update");
     }
+    expect(
+      decodeInternalUpdate({
+        ...updateCommand,
+        mutation: approveMutation,
+        defaultReviewer: implementation,
+      }),
+    ).toMatchObject({ defaultReviewer: implementation });
   });
 
-  it("accepts source updates only through the internal command schema", () => {
-    const command = {
-      type: "thread.deep-plan.update",
-      commandId: "command-1",
+  it("accepts up to twenty explicit chat references when starting a run", () => {
+    const chats = Array.from({ length: 21 }, (_, index) => ({
+      environmentId: "environment-1",
+      projectId: "project-1",
+      threadId: "source-thread-" + index,
+    }));
+    const start = {
+      type: "thread.deep-plan.start",
+      commandId: "start-command",
       threadId: "thread-1",
-      runId: "run-1",
-      expectedRevision: 1,
-      operationId: "operation-1",
-      mutation: { type: "sources-set", sources: [] },
+      chats: chats.slice(1),
+      includeProjectChats: false,
       createdAt: now,
     };
-    expect(decodeInternalUpdate(command).mutation.type).toBe("sources-set");
-    expect(() => decodeClientCommand(command)).toThrow();
-  });
-});
-
-describe("Deep Plan source transport", () => {
-  it("includes archived chats by default while keeping the picker free of frozen bodies", () => {
-    const catalog = decodeCatalog({ projectId: "project-1" });
-    const exported = decodeExport({ projectId: "project-1" });
-    expect(catalog.includeArchived).toBe(true);
-    expect(exported.includeArchived).toBe(true);
-    expect(exported.exportId).toBeUndefined();
-    expect(() => decodeCatalog({ projectId: "project-1", limit: 201 })).toThrow();
-  });
-
-  it("bounds transfers and requires the source manifest and chunk digest", () => {
-    const input = {
-      threadId: "thread-1",
-      runId: "run-1",
-      snapshot: makeSource(),
-      chunkIndex: 0,
-      chunkHash: "chunk-hash",
-      records: [],
-      finalChunk: true,
-    };
-    expect(decodeImport(input).snapshot.origin.threadId).toBe("source-thread");
-    expect(() => decodeImport({ ...input, chunkHash: "" })).toThrow();
-    const record = {
-      kind: "content",
-      recordId: "record-1",
-      origin: { ...input.snapshot.origin, recordId: "origin-record-1" },
-      contentHash: "body-hash",
-      contentId: "content-1",
-      mediaType: "text/plain",
-      chunkIndex: 0,
-      totalChunks: 1,
-      data: "Source text",
-      requiredForAnalysis: true,
-    };
-    expect(decodeImport({ ...input, records: [record] }).records).toHaveLength(1);
-    expect(() =>
-      decodeImport({
-        ...input,
-        records: Array.from({ length: DEEP_PLAN_MAX_CHUNK_RECORDS + 1 }, () => ({ ...record })),
-      }),
-    ).toThrow();
-  });
-
-  it("rejects large message bodies that have not been externalized into content chunks", () => {
-    const message = {
-      kind: "message",
-      recordId: "record-1",
-      origin: { ...makeSource().origin, recordId: "origin-record-1" },
-      contentHash: "body-hash",
-      message: {
-        id: "message-1",
-        role: "user",
-        text: "Complete source text",
-        turnId: null,
-        streaming: false,
-        createdAt: now,
-        updatedAt: now,
-      },
-    };
-    const input = {
-      threadId: "thread-1",
-      runId: "run-1",
-      snapshot: makeSource(),
-      chunkIndex: 0,
-      chunkHash: "chunk-hash",
-      records: [message],
-      finalChunk: true,
-    };
-    expect(decodeImport(input).records).toHaveLength(1);
-    expect(() =>
-      decodeImport({
-        ...input,
-        records: [
-          {
-            ...message,
-            message: { ...message.message, text: "x".repeat(DEEP_PLAN_MAX_RECORD_BYTES) },
-          },
-        ],
-      }),
-    ).toThrow();
-  });
-
-  it("retains chunk references without loading optional source bodies", () => {
-    const input = decodeSourceInput({
-      threadId: "thread-1",
-      runId: "run-1",
-      sourceId: "source-1",
-    });
-    expect(input.includeBodies).toBe(false);
-    const result = decodeReadResult({
-      snapshot: makeSource(),
-      records: [
-        {
-          kind: "content-reference",
-          recordId: "record-1",
-          origin: { ...makeSource().origin, recordId: "origin-record-1" },
-          contentHash: "body-hash",
-          contentKind: "attachment",
-          contentId: "attachment-1",
-          chunkIndex: 0,
-          totalChunks: 1,
-          byteLength: 42,
-        },
-      ],
-      chunkHash: "chunk-hash",
-      nextCursor: null,
-    });
-    expect(result.records[0]?.kind).toBe("content-reference");
-  });
-
-  it("bounds attachment and text chunks and rejects impossible chunk indexes", () => {
-    const common = {
-      recordId: "record-1",
-      origin: { ...makeSource().origin, recordId: "origin-record-1" },
-      contentHash: "body-hash",
-      chunkIndex: 0,
-      totalChunks: 1,
-    };
-    const attachment = {
-      ...common,
-      kind: "attachment",
-      attachmentId: "attachment-1",
-      mimeType: "text/plain",
-      name: "notes.txt",
-      dataBase64: "YQ==",
-    };
-    const content = {
-      ...common,
-      kind: "content",
-      contentId: "content-1",
-      mediaType: "text/plain",
-      data: "Complete source text",
-      requiredForAnalysis: true,
-    };
-    expect(decodeContent(content).requiredForAnalysis).toBe(true);
-    expect(() => decodeAttachment({ ...attachment, chunkIndex: 1 })).toThrow();
-    expect(() =>
-      decodeAttachment({
-        ...attachment,
-        dataBase64: "a".repeat(DEEP_PLAN_MAX_ATTACHMENT_CHUNK_CHARS + 1),
-      }),
-    ).toThrow();
-    expect(() =>
-      decodeContent({ ...content, data: "a".repeat(DEEP_PLAN_MAX_CONTENT_CHUNK_CHARS + 1) }),
-    ).toThrow();
+    expect(decodeClientCommand(start)).toEqual(start);
+    expect(() => decodeClientCommand({ ...start, chats })).toThrow();
   });
 });

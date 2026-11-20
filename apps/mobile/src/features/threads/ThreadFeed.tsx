@@ -37,6 +37,7 @@ import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
 import { VisualizationMarkdownText } from "../visualizations/VisualizationMarkdownText";
 import { ThreadMessageReplyAction, ThreadMessageReplyGesture } from "./MessageReplyAction";
 import { MessageReplyPreview } from "./MessageReplyPreview";
+import { mergeReplyFeed } from "./inline-reply-feed";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -93,6 +94,8 @@ import {
   type ChatImageAttachment,
   type EnvironmentId,
   type MessageId,
+  type MessageReplyReference,
+  type OrchestrationV2MessageReply,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
   type ScheduledTaskId,
@@ -416,6 +419,12 @@ export interface ThreadFeedProps {
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
+  readonly inlineReplyFeed?: ReadonlyArray<ThreadFeedEntry> | undefined;
+  readonly currentReply?: OrchestrationV2MessageReply | undefined;
+  readonly onOpenReplySource?: (
+    reference: MessageReplyReference,
+    messageThreadId: ThreadId,
+  ) => void;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly latestRun: ThreadFeedLatestRun | null;
@@ -425,7 +434,7 @@ export interface ThreadFeedProps {
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
   /** A message to scroll to once it is in the feed; see `onJumpedToMessage`. */
-  readonly jumpToMessageId?: MessageId | null;
+  readonly jumpToEntryId?: string | null;
   readonly onJumpedToMessage?: () => void;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly keyboardOffset: number;
@@ -1912,7 +1921,10 @@ function renderFeedEntry(
     readonly findText: (entry: ThreadFeedEntry) => string;
     readonly onFindMatchLayout: (entryId: string, start: number, offset: number) => void;
     readonly activeFindMatch: ThreadFindMatch | null;
-    readonly replyTopics: ReadonlyMap<MessageId, ReplyTopicSummary>;
+    readonly replyTopics: ReadonlyMap<MessageId, ReadonlyArray<ReplyTopicSummary>>;
+    readonly inlineReplyMessageIds: ReadonlySet<string>;
+    readonly currentReply: OrchestrationV2MessageReply | undefined;
+    readonly onOpenReplySource: ThreadFeedProps["onOpenReplySource"];
     readonly pullRequestLinks: ReturnType<typeof useTimelinePullRequestLinks>;
     readonly onOpenPullRequest: (url: string) => Promise<boolean>;
     readonly onQuoteSelection: (
@@ -2162,6 +2174,18 @@ function renderFeedEntry(
 
   if (entry.type === "message") {
     const { message } = entry;
+    const isInlineReply = props.inlineReplyMessageIds.has(entry.id);
+    const replyTo = message.replyTo;
+    const replyPreview = replyTo ? (
+      <MessageReplyPreview
+        reference={replyTo}
+        onOpenSource={
+          props.onOpenReplySource
+            ? () => props.onOpenReplySource?.(replyTo, message.sourceThreadId)
+            : undefined
+        }
+      />
+    ) : null;
     const isUser = message.role === "user";
     const presentation = resolveUserMessagePresentation(message, {
       deepPlanContinuation: currentInterfaceTranslator().message("chat.deepPlan.continuing"),
@@ -2182,16 +2206,17 @@ function renderFeedEntry(
       message.runId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
+      (isInlineReply || props.terminalAssistantMessageIds.has(message.id)) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
     const showResponseMetrics =
       !isUser &&
+      !isInlineReply &&
       (props.terminalAssistantMessageIds.has(message.id) || message.streaming) &&
       message.runId !== null &&
       props.responseMetrics.has(message.runId);
 
-    if (isUser && props.workflowOpening?.messageId === message.id) {
+    if (isUser && !isInlineReply && props.workflowOpening?.messageId === message.id) {
       return (
         <ThreadWorkflowOpening
           environmentId={props.environmentId}
@@ -2200,7 +2225,7 @@ function renderFeedEntry(
         />
       );
     }
-    if (isCompactionCommandFeedEntry(entry)) {
+    if (!isInlineReply && isCompactionCommandFeedEntry(entry)) {
       // Stands in for the compaction item until the provider reports it.
       const active = props.unsettledTurnId !== null && message.runId === props.unsettledTurnId;
       const reason = idleCompactionOf(message);
@@ -2288,11 +2313,13 @@ function renderFeedEntry(
         fileCards === null &&
         (foldRowId !== null ||
           presentation.text.trim().length > 0 ||
-          visibleAttachments.length + pendingBubbleAttachments.length > 0);
+          visibleAttachments.length + pendingBubbleAttachments.length > 0 ||
+          replyPreview !== null);
       return (
         <ThreadMessageReplyGesture
           environmentId={props.environmentId}
           threadId={props.threadId}
+          currentReply={props.currentReply}
           message={message}
           disabled={entry.pendingMessage !== undefined}
         >
@@ -2300,6 +2327,7 @@ function renderFeedEntry(
             className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-5")}
             {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
           >
+            {!hasBubble ? replyPreview : null}
             {presentation.attribution === "t3code" ? (
               <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
                 {currentInterfaceTranslator().message("mobile.ui.sentByT3Code")}
@@ -2460,12 +2488,12 @@ function renderFeedEntry(
                         })}
                       </View>
                     ) : null}
-                    {message.replyTo ? <MessageReplyPreview reference={message.replyTo} /> : null}
+                    {replyPreview}
                     {presentation.text.trim().length > 0 ? (
                       <MarkdownImageAvailableWidthContext
                         value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                       >
-                        {props.messageActions.editing?.id === message.id ? (
+                        {!isInlineReply && props.messageActions.editing?.id === message.id ? (
                           <InlineMessageEditor
                             key={message.id}
                             initialText={extractVoiceFileContext(message.text).text}
@@ -2556,14 +2584,20 @@ function renderFeedEntry(
                   <ThreadMessageReplyAction
                     environmentId={props.environmentId}
                     threadId={props.threadId}
+                    currentReply={props.currentReply}
                     message={message}
                     tintColor={iconSubtleColor}
                   />
                 ) : null}
-                {!entry.pendingMessage && props.retryAction?.messageId === message.id ? (
+                {!entry.pendingMessage &&
+                !isInlineReply &&
+                props.retryAction?.messageId === message.id ? (
                   <RetryMessageButton action={props.retryAction} tintColor={iconSubtleColor} />
                 ) : null}
-                {!entry.pendingMessage && props.forkAction && message.visibility !== "local" ? (
+                {!entry.pendingMessage &&
+                !isInlineReply &&
+                props.forkAction &&
+                message.visibility !== "local" ? (
                   <ThreadForkButton
                     boundary={{ kind: "message", messageId: message.id }}
                     action={props.forkAction}
@@ -2595,10 +2629,16 @@ function renderFeedEntry(
               actions={props.pullRequestLinks}
               onOpen={props.onOpenPullRequest}
             />
-            <MessageReplyTopicStatus
-              environmentId={props.environmentId}
-              topic={props.replyTopics.get(message.id)}
-            />
+            {!isInlineReply &&
+              props.replyTopics
+                .get(message.id)
+                ?.map((topic) => (
+                  <MessageReplyTopicStatus
+                    key={topic.threadId}
+                    environmentId={props.environmentId}
+                    topic={topic}
+                  />
+                ))}
           </Animated.View>
         </ThreadMessageReplyGesture>
       );
@@ -2613,6 +2653,7 @@ function renderFeedEntry(
       <ThreadMessageReplyGesture
         environmentId={props.environmentId}
         threadId={props.threadId}
+        currentReply={props.currentReply}
         message={message}
       >
         <Animated.View
@@ -2645,13 +2686,13 @@ function renderFeedEntry(
               <ChatBubbleSurface color={props.assistantBubbleColor} />
             </ChatPresentationMotion>
           ) : null}
-          {message.replyTo ? <MessageReplyPreview reference={message.replyTo} /> : null}
+          {replyPreview}
           {message.reasoning?.length ? (
             <View className="mb-3">{renderWorkLog(message.reasoning, false)}</View>
           ) : null}
           {renderedText.trim().length > 0 ? (
             <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-              {props.messageActions.editing?.id === message.id ? (
+              {!isInlineReply && props.messageActions.editing?.id === message.id ? (
                 <InlineMessageEditor
                   key={message.id}
                   initialText={extractVoiceFileContext(message.text).text}
@@ -2709,6 +2750,7 @@ function renderFeedEntry(
                   <ThreadMessageReplyAction
                     environmentId={props.environmentId}
                     threadId={props.threadId}
+                    currentReply={props.currentReply}
                     message={message}
                     tintColor={iconSubtleColor}
                   />
@@ -2721,23 +2763,24 @@ function renderFeedEntry(
                     buttonSize={props.replyActionSize.button}
                     iconSize={props.replyActionSize.icon}
                   />
-                  {props.forkAction ? (
-                    <ThreadForkButton
-                      boundary={{ kind: "message", messageId: message.id }}
-                      action={props.forkAction}
-                      buttonSize={props.replyActionSize.button}
-                      iconSize={props.replyActionSize.icon}
-                    />
-                  ) : message.projectedItem ? (
-                    <AssistantForkButton
-                      environmentId={props.environmentId}
-                      iconColor={iconSubtleColor}
-                      buttonSize={props.replyActionSize.button}
-                      iconSize={props.replyActionSize.icon}
-                      projectedItem={message.projectedItem}
-                      sourceTitle={props.threadTitle}
-                    />
-                  ) : null}
+                  {!isInlineReply &&
+                    (props.forkAction ? (
+                      <ThreadForkButton
+                        boundary={{ kind: "message", messageId: message.id }}
+                        action={props.forkAction}
+                        buttonSize={props.replyActionSize.button}
+                        iconSize={props.replyActionSize.icon}
+                      />
+                    ) : message.projectedItem ? (
+                      <AssistantForkButton
+                        environmentId={props.environmentId}
+                        iconColor={iconSubtleColor}
+                        buttonSize={props.replyActionSize.button}
+                        iconSize={props.replyActionSize.icon}
+                        projectedItem={message.projectedItem}
+                        sourceTitle={props.threadTitle}
+                      />
+                    ) : null)}
                 </>
               ) : null}
               <ResponseMetricsDetails
@@ -2757,10 +2800,16 @@ function renderFeedEntry(
             actions={props.pullRequestLinks}
             onOpen={props.onOpenPullRequest}
           />
-          <MessageReplyTopicStatus
-            environmentId={props.environmentId}
-            topic={props.replyTopics.get(message.id)}
-          />
+          {!isInlineReply &&
+            props.replyTopics
+              .get(message.id)
+              ?.map((topic) => (
+                <MessageReplyTopicStatus
+                  key={topic.threadId}
+                  environmentId={props.environmentId}
+                  topic={topic}
+                />
+              ))}
         </Animated.View>
       </ThreadMessageReplyGesture>
     );
@@ -3119,6 +3168,14 @@ export const ThreadFeed = memo(function ThreadFeed({
   const { themeAppearance, chatPresentation } = useAppearancePreferences();
   const selectedProjection = useSelectedThreadProjection();
   const replyTopics = useTimelineReplyTopics(props.environmentId, props.threadId);
+  const inlineReplyMessageIds = useMemo(
+    () => new Set(props.inlineReplyFeed?.map((entry) => entry.id)),
+    [props.inlineReplyFeed],
+  );
+  const timelineFeed = useMemo(
+    () => mergeReplyFeed(props.feed, props.inlineReplyFeed),
+    [props.feed, props.inlineReplyFeed],
+  );
   const messageActions = useTimelineMessageActions({
     environmentId: props.environmentId,
     threadId: props.threadId,
@@ -3152,8 +3209,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   const [selectedFindMatch, setSelectedFindMatch] = useState<ThreadFindMatch | null>(null);
   const [findIndex] = useState(createThreadFindIndex);
   const findMatches = useMemo(
-    () => findIndex(props.feed, findOpen ? findQuery : ""),
-    [props.feed, findOpen, findQuery, findIndex],
+    () => findIndex(timelineFeed, findOpen ? findQuery : ""),
+    [timelineFeed, findOpen, findQuery, findIndex],
   );
   const activeFindIndex = reconcileFindMatchIndex(findMatches, selectedFindMatch);
   const activeFindMatch = findMatches[activeFindIndex] ?? null;
@@ -3164,7 +3221,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const [landedFindKey, setLandedFindKey] = useState<string | null>(null);
   const findLineOffsets = useRef(new Map<string, number>());
   const preciseFindKey = useRef<string | null>(null);
-  const [localJumpId, setLocalJumpId] = useState<MessageId | null>(null);
+  const [localJumpId, setLocalJumpId] = useState<string | null>(null);
   const [commentCitation, setCommentCitation] = useState<AssistantCitation | null>(null);
   const insertQuote = (citation: AssistantCitation) => {
     const key = scopedThreadKey(props.environmentId, props.threadId);
@@ -3181,7 +3238,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   ) => {
     const citation = buildAssistantQuote({
       environmentId: props.environmentId,
-      threadId: props.threadId,
+      threadId: message.sourceThreadId,
       messageId: message.id,
       markdown: message.text,
       text: selected.text,
@@ -3196,7 +3253,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     else insertQuote(citation);
   };
   const requestedFindHistory = useRef<string | null>(null);
-  const historyGrowthKey = `${findQuery}:${props.feed[0]?.id}:${props.feed.length}`;
+  const historyGrowthKey = `${findQuery}:${timelineFeed[0]?.id}:${timelineFeed.length}`;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pages the server history while searching so matches include rows outside the mounted window
   useEffect(() => {
     if (
@@ -3902,11 +3959,11 @@ export const ThreadFeed = memo(function ThreadFeed({
   // the jump unfolds a run hiding the message and stops following the end, so
   // the committed list holds the target row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
-  const jumpToMessageId =
+  const jumpToEntryId =
     findJumpKey !== null && findJumpKey !== landedFindKey
       ? activeFindMatch?.entryId
-      : (localJumpId ?? props.jumpToMessageId);
-  const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
+      : (localJumpId ?? props.jumpToEntryId);
+  const jumpReady = !!jumpToEntryId && loadedListKey === `${feedThreadKey}:filled`;
   const { feed: ownPresentedFeed, reasoningGroups } = useThreadFeedPresentation(
     props,
     expandedTurnIds,
@@ -3915,8 +3972,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   );
   const searchActive = findOpen && findQuery.length > 0;
   const searchedFeed = searchActive
-    ? appendPendingThreadMessages(props.feed, props.feed, props.queuedMessages)
-    : ownPresentedFeed;
+    ? appendPendingThreadMessages(timelineFeed, props.feed, props.queuedMessages)
+    : mergeReplyFeed(ownPresentedFeed, props.inlineReplyFeed);
   const presentedFeed = appendGuestPendingMessages(searchedFeed, guestShare);
   const changedFilesByMessage = new Map<string, ThreadCheckpointSummary>();
   if (betterChat) {
@@ -3975,8 +4032,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   });
   const jumpRunId =
     jumpReady &&
-    !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
-      ? messageFoldRunId(props.feed, jumpToMessageId)
+    !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToEntryId)
+      ? messageFoldRunId(props.feed, jumpToEntryId)
       : null;
   if (jumpRunId && !expandedTurnIds.has(jumpRunId)) {
     setInteractionState((current) => ({
@@ -3985,7 +4042,10 @@ export const ThreadFeed = memo(function ThreadFeed({
     }));
   }
   const setupAnchorIndex = presentedFeed.findIndex(
-    (entry) => entry.type === "message" && entry.message.role === "user",
+    (entry) =>
+      entry.type === "message" &&
+      entry.message.role === "user" &&
+      !inlineReplyMessageIds.has(entry.id),
   );
   const [groupFeed] = useState(createThreadFeedGrouping);
   const groupedFeed = groupFeed(presentedFeed, {
@@ -4005,7 +4065,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     if (list && bottom > 0) list.reportContentInset({ bottom });
   };
   const jumpIndex = jumpReady
-    ? presentedFeed.findIndex((entry) => entry.id === jumpToMessageId)
+    ? presentedFeed.findIndex((entry) => entry.id === jumpToEntryId)
     : null;
   const followsEnd = endFollowEnabled && !jumpReady;
   const landJump = useEffectEvent((index: number) => {
@@ -4029,7 +4089,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       setSelectedFindMatch(activeFindMatch);
     }
     if (localJumpId !== null) setLocalJumpId(null);
-    else if (jumpToMessageId === props.jumpToMessageId) props.onJumpedToMessage?.();
+    else if (jumpToEntryId === props.jumpToEntryId) props.onJumpedToMessage?.();
   });
   // Z: a native list scroll after the commit that rendered its target row. The
   // row is often already measured, so no LegendList callback fires for that
@@ -4039,7 +4099,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     // oxlint-disable-next-line react/set-state-in-effect -- Clears the one-shot jump after the native list scrolls to its committed row.
     if (jumpIndex !== null) landJump(jumpIndex);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
-  }, [jumpToMessageId, jumpIndex, findJumpKey]);
+  }, [jumpToEntryId, jumpIndex, findJumpKey]);
   const onFindMatchLayout = (entryId: string, start: number, offset: number) => {
     const key = JSON.stringify([findQuery, entryId, start]);
     findLineOffsets.current.set(key, offset);
@@ -4413,6 +4473,9 @@ export const ThreadFeed = memo(function ThreadFeed({
     onFindMatchLayout,
     activeFindMatch,
     replyTopics,
+    inlineReplyMessageIds,
+    currentReply: props.currentReply,
+    onOpenReplySource: props.onOpenReplySource,
     pullRequestLinks,
     onQuoteSelection,
   };
@@ -4424,11 +4487,16 @@ export const ThreadFeed = memo(function ThreadFeed({
       <MessageImageGalleryScope
         entry={info.item}
         environmentId={props.environmentId}
-        threadId={props.threadId}
+        threadId={
+          info.item.type === "message" && inlineReplyMessageIds.has(info.item.id)
+            ? info.item.message.sourceThreadId
+            : props.threadId
+        }
         workspaceRoot={props.workspaceRoot}
       >
         <ThreadMediaVisibility motionId={betterChat ? info.item.id : undefined}>
           {info.item.type === "message" &&
+          !inlineReplyMessageIds.has(info.item.id) &&
           !isCompactionCommandFeedEntry(info.item) &&
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.modelSwitch ? (
@@ -4446,6 +4514,9 @@ export const ThreadFeed = memo(function ThreadFeed({
             onFindMatchLayout,
             activeFindMatch,
             replyTopics,
+            inlineReplyMessageIds,
+            currentReply: props.currentReply,
+            onOpenReplySource: props.onOpenReplySource,
             pullRequestLinks,
             onOpenPullRequest: openPullRequest,
             onQuoteSelection,
@@ -4622,7 +4693,9 @@ export const ThreadFeed = memo(function ThreadFeed({
               keyExtractor={(entry) => entry.id}
               getItemType={(entry) => {
                 if (entry.type !== "message") return entry.type;
-                if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
+                if (!inlineReplyMessageIds.has(entry.id) && isCompactionCommandFeedEntry(entry)) {
+                  return "message:compaction";
+                }
                 const { attribution } = resolveUserMessagePresentation(entry.message);
                 return attribution === "automation" || attribution === "agent"
                   ? `message:${attribution}`
@@ -4715,7 +4788,7 @@ export const ThreadFeed = memo(function ThreadFeed({
           <VideoPreviewModal source={expandedVideo} onRequestClose={closeVideoPreview} />
           {jumpListOpen ? (
             <TimelineJumpList
-              feed={props.feed}
+              feed={timelineFeed}
               timestampFormat={timestampFormat}
               history={props.historyControls}
               onClose={() => setJumpListOpen(false)}

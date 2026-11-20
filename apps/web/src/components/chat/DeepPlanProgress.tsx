@@ -1,133 +1,72 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
-import type { DeepPlanRun, DeepPlanStepStatus, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { Link } from "@tanstack/react-router";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { selectDeepPlanSteps } from "@t3tools/client-runtime/deep-planning";
+import type { DeepPlanReview, DeepPlanRun, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import {
-  deepPlanCitationTitles,
-  deepPlanSourceTitle,
-  selectDeepPlanSourceAnalysis,
-  getDeepPlanComposerChecklistExpiresAt,
-  selectDeepPlanProgress,
-  selectDeepPlanSteps,
-} from "@t3tools/client-runtime/deep-planning";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  CircleCheckIcon,
-  ListChecksIcon,
-  SquareIcon,
-  SquareCheckIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, SquareCheckIcon, SquareIcon } from "lucide-react";
+import { useId } from "react";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
-import { ComposerBanner } from "./ComposerBanner";
 import { ChatSizeMotion } from "./ChatSizeMotion";
 
-function stepStatusMessage(status: DeepPlanStepStatus) {
-  switch (status) {
-    case "pending":
-      return "chat.deepPlan.status.open";
-    case "inProgress":
-      return "chat.deepPlan.status.inProgress";
-    case "implemented":
-      return "chat.deepPlan.status.implemented";
-    case "verified":
-      return "chat.deepPlan.status.verified";
-    case "failed":
-      return "chat.deepPlan.status.failed";
-    case "blocked":
-      return "chat.deepPlan.status.blocked";
-  }
+function DeepPlanReviewLink({
+  environmentId,
+  reviewThreadId,
+}: {
+  environmentId: EnvironmentId;
+  reviewThreadId: ThreadId;
+}) {
+  const translate = useInterfaceTranslator().message;
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      render={
+        <Link
+          to="/$environmentId/$threadId"
+          params={buildThreadRouteParams(scopeThreadRef(environmentId, reviewThreadId))}
+        />
+      }
+    >
+      {translate("chat.deepPlan.openReview")}
+    </Button>
+  );
 }
 
-const COLLECTING_CARD_DELAY_MS = 600;
-
-export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
-  const translator = useInterfaceTranslator();
-  const translate = translator.message;
-  const completed = selectDeepPlanProgress(run).summarizedSourceCount;
-  const collecting = run.phase === "collecting";
-  const [collectingCardDue, setCollectingCardDue] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hold the preparation card back so a capture that finishes at once never flashes it.
-  useEffect(() => {
-    if (!collecting) return;
-    const timer = setTimeout(() => setCollectingCardDue(true), COLLECTING_CARD_DELAY_MS);
-    return () => {
-      clearTimeout(timer);
-      setCollectingCardDue(false);
-    };
-  }, [collecting]);
-  const missing = run.sourceCoverage.filter(
-    (source) => source.status === "unavailable" || source.status === "failed",
-  );
-  const analysis = selectDeepPlanSourceAnalysis(run, translator);
-  if (collecting && !collectingCardDue) return null;
-  if (
-    run.phase !== "collecting" &&
-    (run.sources.length === 0 ||
-      (run.phase !== "planning" && missing.length === 0 && completed === run.sources.length))
-  )
-    return null;
+function ReviewFindings({ review }: { review: DeepPlanReview }) {
+  const translate = useInterfaceTranslator().message;
+  const findings = new Map(review.findings.map((finding) => [JSON.stringify(finding), finding]));
   return (
-    <ComposerBanner.Attachment>
-      <ComposerBanner.Root variant={missing.length > 0 ? "warning" : "default"}>
-        <div className="space-y-2 p-3" aria-live="polite">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <strong className="font-medium">{translate("chat.deepPlan.analysisTitle")}</strong>
-            <span className="text-muted-foreground">
-              {collecting
-                ? translate("chat.deepPlan.collecting")
-                : translate("chat.deepPlan.analysisProgress", {
-                    completed,
-                    total: run.sources.length,
-                  })}
-            </span>
-          </div>
-          {collecting ? (
-            <p className="text-xs text-muted-foreground">
-              {translate("chat.deepPlan.collectingHint")}
-            </p>
-          ) : (
-            <progress
-              className="h-1.5 w-full accent-primary"
-              value={completed}
-              max={Math.max(1, run.sources.length)}
-              aria-label={translate("chat.deepPlan.analysisTitle")}
-            />
-          )}
-          <ul className="max-h-36 overflow-y-auto overscroll-contain text-xs">
-            {analysis.map(({ source, failed, label }) => (
-              <li
-                key={source.sourceId}
-                className="flex min-w-0 items-start justify-between gap-3 py-1"
-              >
-                <span className="min-w-0 break-words">
-                  {deepPlanSourceTitle(source)}
-                  {source.archived ? (
-                    <span className="block text-muted-foreground">
-                      {translate("chat.deepPlan.archived")}
-                    </span>
-                  ) : null}
+    <div className="space-y-1">
+      {review.summary ? <p className="whitespace-pre-wrap break-words">{review.summary}</p> : null}
+      {findings.size > 0 ? (
+        <>
+          <p className="font-medium">{translate("chat.deepPlan.findings")}</p>
+          <ul className="space-y-2">
+            {[...findings].map(([key, finding]) => (
+              <li key={key} className="break-words">
+                <span className="font-medium">
+                  {translate(`chat.deepPlan.finding.${finding.severity}`)} · {finding.title}
                 </span>
-                <span
-                  className={failed ? "text-warning-foreground" : "shrink-0 text-muted-foreground"}
-                >
-                  {label}
-                </span>
+                {finding.file || finding.rule ? (
+                  <span className="block text-muted-foreground">
+                    {[
+                      finding.file && [finding.file, finding.line].filter(Boolean).join(":"),
+                      finding.rule,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
+                <p className="whitespace-pre-wrap text-muted-foreground">{finding.detail}</p>
               </li>
             ))}
           </ul>
-          {missing.length > 0 ? (
-            <p role="status" className="text-xs text-warning-foreground">
-              {translate("chat.deepPlan.missingSources", { count: missing.length })}.{" "}
-              {translate("chat.deepPlan.missingSourceHint")}
-            </p>
-          ) : null}
-        </div>
-      </ComposerBanner.Root>
-    </ComposerBanner.Attachment>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -136,77 +75,55 @@ export function DeepPlanChecklist({
   environmentId,
   threadId: requestedThreadId,
   placement = "composer",
-  actions,
-  notice,
 }: {
   run: DeepPlanRun;
   environmentId: EnvironmentId;
   threadId?: ThreadId;
   placement?: "composer" | "plan";
-  actions?: ReactNode;
-  notice?: ReactNode;
 }) {
   const threadId = requestedThreadId ?? run.threadId;
   const translate = useInterfaceTranslator().message;
   const [expanded, setExpanded] = useLocalStorage(
-    `t3code:deep-plan-checklist-expanded:${threadKey({ environmentId, threadId })}`,
+    `t3code:deep-plan-checklist-expanded:${scopedThreadKey(scopeThreadRef(environmentId, threadId))}`,
     true,
     Schema.Boolean,
   );
   const detailsId = useId();
-  const [now, setNow] = useState(() => Date.now());
-  const expiresAt = placement === "composer" ? getDeepPlanComposerChecklistExpiresAt(run) : null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Expire the mounted checklist when its persisted completion deadline arrives.
-  useEffect(() => {
-    if (expiresAt === null || expiresAt <= now) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, expiresAt - Date.now()));
-    return () => clearTimeout(timer);
-  }, [expiresAt, now]);
-  const expired = expiresAt !== null && expiresAt <= now;
+
   const plan = run.plan;
-  if (!plan || plan.steps.length === 0 || expired) return null;
+  if (!plan) return null;
   const steps = selectDeepPlanSteps(run);
-  const completed = selectDeepPlanProgress(run).verifiedSteps;
-  const current =
-    steps.find((entry) => entry.status === "inProgress")?.step ??
-    steps.find((entry) => entry.status !== "verified")?.step;
-  const validation = run.finalValidation;
-  const content = (
+  const verified = steps.filter(({ status }) => status === "verified").length;
+  const finalReview = run.finalReview.reviews.at(-1);
+  const finalVerdict = run.finalReview.reviews.findLast((review) => review.verdict !== null);
+  const laneNumbers = new Map(run.approval?.lanes.map(({ laneId }, index) => [laneId, index + 1]));
+  return (
     <div
-      className={placement === "plan" ? "min-w-0" : "min-w-0 p-3"}
+      className={placement === "plan" ? "min-w-0" : "min-w-0 px-2 pb-2"}
       data-deep-plan-checklist={run.id}
     >
       <ChatSizeMotion>
         <div className="flex min-w-0 items-center gap-2">
-          <ListChecksIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">{translate("chat.deepPlan.checklist")}</p>
-            <p className="text-xs text-muted-foreground" aria-live="polite">
-              {translate("chat.deepPlan.stepProgress", { completed, total: plan.steps.length })}
+            <p className="text-xs text-muted-foreground">
+              {translate("chat.deepPlan.stepProgress", {
+                completed: verified,
+                total: steps.length,
+              })}
             </p>
           </div>
-          {actions}
           <Button
             variant="ghost-muted"
             size="icon"
             aria-label={translate(expanded ? "chat.deepPlan.collapse" : "chat.deepPlan.expand")}
             aria-controls={detailsId}
             aria-expanded={expanded}
-            onClick={() => setExpanded((current) => !current)}
+            onClick={() => setExpanded((value) => !value)}
           >
-            {expanded ? (
-              <ChevronDownIcon aria-hidden="true" />
-            ) : (
-              <ChevronRightIcon aria-hidden="true" />
-            )}
+            {expanded ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
           </Button>
         </div>
-        {notice ? <div className="mt-2 space-y-2">{notice}</div> : null}
-        {current ? (
-          <p className="mt-2 break-words text-xs text-muted-foreground">
-            {translate("chat.deepPlan.currentStep", { title: current.title })}
-          </p>
-        ) : null}
         {expanded ? (
           <div
             id={detailsId}
@@ -217,12 +134,8 @@ export function DeepPlanChecklist({
             }
           >
             <ol className="space-y-1">
-              {steps.map(({ step, status, evidence }, index) => {
-                const sources = deepPlanCitationTitles(
-                  step.sources,
-                  run.sources,
-                  translate("chat.deepPlan.sourceUnavailable"),
-                );
+              {steps.map(({ step, status, laneId, review, verdict, roundLimit }, index) => {
+                const lane = laneId === null ? undefined : laneNumbers.get(laneId);
                 return (
                   <li key={step.id}>
                     <details className="rounded-md border border-border/70">
@@ -242,18 +155,27 @@ export function DeepPlanChecklist({
                           {index + 1}. {step.title}
                         </span>
                         <span className="ms-2 text-xs text-muted-foreground">
-                          {translate(stepStatusMessage(status))}
+                          {[
+                            translate(`chat.deepPlan.status.${status}`),
+                            lane === undefined ? null : translate("chat.deepPlan.lane", { lane }),
+                            review
+                              ? translate("chat.deepPlan.round", {
+                                  round: review.round,
+                                  limit: roundLimit,
+                                })
+                              : null,
+                            verdict?.verdict
+                              ? translate(`chat.deepPlan.verdict.${verdict.verdict}`)
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </span>
                       </summary>
                       <div className="space-y-2 px-3 pb-3 text-xs">
                         <p className="whitespace-pre-wrap text-muted-foreground">
                           {step.description}
                         </p>
-                        {sources.length > 0 ? (
-                          <p className="break-words text-muted-foreground">
-                            {translate("chat.deepPlan.sources")}: {sources.join("; ")}
-                          </p>
-                        ) : null}
                         {step.dependencies.length > 0 ? (
                           <p className="break-words text-muted-foreground">
                             {translate("chat.deepPlan.dependencies")}:{" "}
@@ -271,116 +193,55 @@ export function DeepPlanChecklist({
                             {translate("chat.deepPlan.requirements")}
                           </strong>
                           <ul className="mt-1 list-disc space-y-1 ps-4">
-                            {step.acceptanceCriteria.map((criterion) => {
-                              const titles = deepPlanCitationTitles(
-                                criterion.sources,
-                                run.sources,
-                                translate("chat.deepPlan.sourceUnavailable"),
-                              );
-                              return (
-                                <li key={criterion.id}>
-                                  {criterion.description}
-                                  <span className="block text-muted-foreground">
-                                    {criterion.checkMethod}
-                                  </span>
-                                  {titles.length > 0 ? (
-                                    <span className="block break-words text-muted-foreground">
-                                      {translate("chat.deepPlan.sources")}: {titles.join("; ")}
-                                    </span>
-                                  ) : null}
-                                </li>
-                              );
-                            })}
+                            {step.acceptanceCriteria.map((criterion) => (
+                              <li key={criterion.id}>
+                                {criterion.description}
+                                <span className="block text-muted-foreground">
+                                  {criterion.checkMethod}
+                                </span>
+                              </li>
+                            ))}
                           </ul>
                         </div>
-                        <div>
-                          <strong className="font-medium">
-                            {translate("chat.deepPlan.evidence")}
-                          </strong>
-                          {evidence.length ? (
-                            <ul className="mt-1 list-disc space-y-1 ps-4">
-                              {evidence.map((item) => (
-                                <li
-                                  key={`${item.createdAt}:${item.kind}:${item.summary}:${item.reference ?? ""}`}
-                                  className="break-words"
-                                >
-                                  {item.summary}
-                                  {item.reference ? (
-                                    <span className="block whitespace-pre-wrap text-muted-foreground">
-                                      {item.reference}
-                                    </span>
-                                  ) : null}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="mt-1 text-muted-foreground">
-                              {translate("chat.deepPlan.noEvidence")}
-                            </p>
-                          )}
-                        </div>
+                        {verdict ? <ReviewFindings review={verdict} /> : null}
+                        {review ? (
+                          <DeepPlanReviewLink
+                            environmentId={environmentId}
+                            reviewThreadId={review.reviewThreadId}
+                          />
+                        ) : null}
                       </div>
                     </details>
                   </li>
                 );
               })}
             </ol>
-            <div
-              className="mt-3 rounded-md border border-border bg-background/60 p-3"
-              data-deep-plan-final-validation="true"
-            >
-              <div className="flex items-center gap-2 text-sm font-medium">
-                {validation.status === "passed" ? (
-                  <CircleCheckIcon className="size-4" aria-hidden="true" />
-                ) : validation.status === "failed" ? (
-                  <TriangleAlertIcon className="size-4" aria-hidden="true" />
-                ) : null}
-                {translate("chat.deepPlan.finalValidation")}
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {plan.finalValidation.description}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {translate("chat.deepPlan.checkMethod")}: {plan.finalValidation.checkMethod}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {validation.status === "passed"
-                  ? translate("chat.deepPlan.status.verified")
-                  : validation.status === "failed"
-                    ? translate("chat.deepPlan.status.failed")
-                    : validation.status === "inProgress"
-                      ? translate("chat.deepPlan.status.inProgress")
-                      : translate("chat.deepPlan.validationPending")}
-              </p>
-              {validation.evidence.length ? (
-                <ul className="mt-2 list-disc space-y-1 ps-4 text-xs">
-                  {validation.evidence.map((item) => (
-                    <li
-                      key={`${item.createdAt}:${item.kind}:${item.summary}:${item.reference ?? ""}`}
-                      className="break-words"
-                    >
-                      {item.summary}
-                      {item.reference ? (
-                        <span className="block text-muted-foreground">{item.reference}</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
+            <div className="mt-3 space-y-1 rounded-md border border-border bg-background/60 p-3 text-xs">
+              <p className="text-sm font-medium">{translate("chat.deepPlan.finalReview")}</p>
+              <p className="text-muted-foreground">{plan.finalValidation.description}</p>
+              <p className="text-muted-foreground">{plan.finalValidation.checkMethod}</p>
+              {finalReview ? (
+                <p className="text-muted-foreground">
+                  {translate("chat.deepPlan.round", {
+                    round: finalReview.round,
+                    limit: run.finalReview.roundLimit,
+                  })}
+                  {finalVerdict?.verdict
+                    ? ` · ${translate(`chat.deepPlan.verdict.${finalVerdict.verdict}`)}`
+                    : null}
+                </p>
+              ) : null}
+              {finalVerdict ? <ReviewFindings review={finalVerdict} /> : null}
+              {finalReview ? (
+                <DeepPlanReviewLink
+                  environmentId={environmentId}
+                  reviewThreadId={finalReview.reviewThreadId}
+                />
               ) : null}
             </div>
           </div>
         ) : null}
       </ChatSizeMotion>
     </div>
-  );
-  if (placement === "plan") return content;
-  return (
-    <ComposerBanner.Attachment>
-      <ComposerBanner.Root
-        variant={run.phase === "blocked" || run.phase === "failed" ? "warning" : "default"}
-      >
-        {content}
-      </ComposerBanner.Root>
-    </ComposerBanner.Attachment>
   );
 }

@@ -1,29 +1,20 @@
-import type { DeepPlanningApi } from "@t3tools/client-runtime/deep-planning";
 import {
   CommandId,
-  PlanId,
-  DeepPlanExportId,
-  DeepPlanRun as DeepPlanRunSchema,
-  DeepPlanSourceError,
-  DeepPlanSourceId,
+  DeepPlanRunId,
   EnvironmentId,
   MessageId,
+  PlanId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  DeepPlanRunId,
   type DeepPlanRun,
-  type DeepPlanSourceCoverage,
-  type DeepPlanSourceRecord,
-  type DeepPlanSourceSnapshot,
   type ExecutionEnvironmentCapabilities,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { prepareQueuedDeepPlan } from "./deep-planning-delivery";
+import { buildQueuedDeepPlanStartCommand } from "./deep-planning-delivery";
 import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
@@ -32,17 +23,14 @@ import {
 } from "./thread-outbox-model";
 
 const environmentId = EnvironmentId.make("mobile-owner");
-const remoteId = EnvironmentId.make("mobile-source");
 const projectId = ProjectId.make("project-owner");
-const remoteProjectId = ProjectId.make("project-source");
 const threadId = ThreadId.make("new-deep-owner");
 const createdAt = "2026-10-16T10:00:00.000Z";
-const decodeDeepPlanRun = Schema.decodeUnknownSync(DeepPlanRunSchema);
 const modelSelection = { instanceId: ProviderInstanceId.make("provider"), model: "model" };
 const capabilities: ExecutionEnvironmentCapabilities = {
   repositoryIdentity: false,
   midChatProviderSwitching: false,
-  deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
+  deepPlanning: { version: 2 },
 };
 const provider: ServerProvider = {
   instanceId: modelSelection.instanceId,
@@ -58,35 +46,16 @@ const provider: ServerProvider = {
   skills: [],
   deepPlanning: { version: 1, structuredPlans: true, durableExecution: true },
 };
-
-function source(id: string, remote = false, archived = false): DeepPlanSourceSnapshot {
-  return {
-    sourceId: DeepPlanSourceId.make(id),
-    origin: {
-      environmentId: remote ? remoteId : environmentId,
-      projectId: remote ? remoteProjectId : projectId,
-      threadId: ThreadId.make(id),
-    },
-    projectTitle: remote ? "Other project" : "Current project",
-    threadTitle: id,
-    archived,
-    capturedAt: createdAt,
-    contentVersion: "1",
-    contentHash: `hash-${id}`,
-    messageCount: 1,
-    activityCount: 0,
-    attachmentCount: 0,
-    recordCount: 1,
-    forkOrigin: null,
-  };
-}
-
-const sources = [
-  source("active-chat"),
-  source("archived-chat", false, true),
-  source("remote-chat", true, true),
-];
-const remoteSource = sources[2]!;
+const remoteChat = {
+  environmentId: EnvironmentId.make("mobile-source"),
+  projectId: ProjectId.make("project-source"),
+  threadId: ThreadId.make("remote-chat"),
+};
+const legacyReference = {
+  threadId,
+  planId: PlanId.make("deep-plan-3"),
+  deepPlan: { runId: DeepPlanRunId.make("approved-run"), planVersion: 3 },
+};
 
 function queuedMessage(overrides?: Partial<QueuedThreadMessage>): QueuedThreadMessage {
   return {
@@ -94,13 +63,13 @@ function queuedMessage(overrides?: Partial<QueuedThreadMessage>): QueuedThreadMe
     threadId,
     messageId: MessageId.make("queued-deep-analysis"),
     commandId: CommandId.make("queued-deep-command"),
-    text: "Analyze the complete project history",
+    text: "Explore the project",
     attachments: [],
     modelSelection,
     runtimeMode: "full-access",
     interactionMode: "plan",
     composerMode: "deep-plan",
-    deepPlanSourceRefs: [remoteSource.origin],
+    deepPlanSourceRefs: [remoteChat],
     creation: { projectId, workspaceMode: "local", branch: null, worktreePath: null },
     createdAt,
     ...overrides,
@@ -111,306 +80,83 @@ function persistedMessage(message: QueuedThreadMessage): QueuedThreadMessage {
   return decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message))));
 }
 
-const creation = {
-  projectId,
-  title: "Analyze the complete project history",
-  modelSelection,
-  runtimeMode: "full-access",
-  interactionMode: "plan",
-  branch: null,
-  worktreePath: null,
-  createdAt,
-} satisfies NonNullable<Parameters<typeof prepareQueuedDeepPlan>[0]["creation"]>;
+describe("mobile Deep Planning outbox", () => {
+  it.each([undefined, false, true])(
+    "builds the same start command after an outbox restart with project chats set to %s",
+    (includeProjectChats) => {
+      const message = persistedMessage(
+        queuedMessage({ deepPlanIncludeProjectChats: includeProjectChats }),
+      );
+      const input = { message, capabilities, provider };
+      const start = buildQueuedDeepPlanStartCommand(input);
+      expect(start).toEqual({
+        type: "thread.deep-plan.start",
+        commandId: `${message.commandId}:deep-plan-start`,
+        threadId,
+        createdAt,
+        chats: [remoteChat],
+        includeProjectChats: includeProjectChats === true,
+      });
+      expect(start).toEqual(
+        buildQueuedDeepPlanStartCommand({ ...input, message: persistedMessage(message) }),
+      );
+    },
+  );
 
-function deliveryHarness(failedSourceId?: DeepPlanSourceSnapshot["sourceId"]) {
-  const threads = new Set<ThreadId>();
-  const acceptedCommands = new Set<CommandId>();
-  const exports = new Map<DeepPlanExportId, ReadonlyArray<DeepPlanSourceSnapshot>>();
-  const importedRecords = new Map<
-    DeepPlanSourceSnapshot["sourceId"],
-    ReadonlyArray<DeepPlanSourceRecord>
-  >();
-  const apis = new Map<EnvironmentId, DeepPlanningApi>();
-  let run: DeepPlanRun | null = null;
-  let identifier = 0;
-  let ownerCreations = 0;
-  let runStarts = 0;
-  const requireRun = (runId: DeepPlanRun["id"]): DeepPlanRun => {
-    if (!run || run.id !== runId) throw new Error("Unknown Deep Plan run");
-    return run;
-  };
-  const apiForEnvironment = (id: EnvironmentId): DeepPlanningApi => {
-    const cached = apis.get(id);
-    if (cached) return cached;
-    const api: DeepPlanningApi = {
-      catalogSources: async () => {
-        throw new Error("Delivery must freeze source exports");
+  it("uses the existing run for a planning follow-up", () => {
+    const currentRun: DeepPlanRun = {
+      schemaVersion: 2,
+      id: DeepPlanRunId.make("live-run"),
+      threadId,
+      phase: "awaitingApproval",
+      revision: 2,
+      plan: null,
+      approval: null,
+      approvalKey: null,
+      chats: [remoteChat],
+      includeProjectChats: false,
+      steps: [],
+      finalReview: {
+        status: "pending",
+        submission: null,
+        reviews: [],
+        roundLimit: 3,
+        unsubmittedTurns: 0,
       },
-      exportSources: async (input) => {
-        if (!threads.has(threadId)) throw new Error("Create the owner before exporting sources");
-        const selected = sources.filter(
-          (snapshot) =>
-            snapshot.origin.environmentId === id &&
-            snapshot.origin.projectId === input.projectId &&
-            (input.includeArchived || !snapshot.archived) &&
-            (!input.threadIds || input.threadIds.includes(snapshot.origin.threadId)),
-        );
-        const exportId = DeepPlanExportId.make(`export-${exports.size + 1}`);
-        exports.set(exportId, selected);
-        return { exportId, capturedAt: createdAt, sources: selected, nextCursor: null };
-      },
-      readExportChunk: async (input) => {
-        const snapshot = exports
-          .get(input.exportId)
-          ?.find(
-            (candidate) =>
-              candidate.sourceId === input.sourceId && candidate.origin.environmentId === id,
-          );
-        if (!snapshot) throw new Error("Unknown frozen source");
-        if (snapshot.sourceId === failedSourceId)
-          throw new DeepPlanSourceError({
-            code: "source-unavailable",
-            message: "The selected remote chat is unavailable",
-            sourceId: snapshot.sourceId,
-          });
-        const recordId = `record-${snapshot.sourceId}`;
-        const record: DeepPlanSourceRecord = {
-          kind: "message",
-          recordId,
-          origin: { ...snapshot.origin, recordId },
-          contentHash: `hash-${recordId}`,
-          message: {
-            id: MessageId.make(recordId),
-            role: "user",
-            text: `Complete history of ${snapshot.threadTitle}`,
-            turnId: null,
-            streaming: false,
-            createdAt,
-            updatedAt: createdAt,
-          },
-        };
-        return {
-          snapshot,
-          records: [record],
-          chunkHash: `chunk-${snapshot.sourceId}`,
-          nextCursor: null,
-        };
-      },
-      initializeSources: async (input) => {
-        const current = requireRun(input.runId);
-        importedRecords.clear();
-        const coverage: ReadonlyArray<DeepPlanSourceCoverage> = input.snapshots.map((snapshot) => ({
-          sourceId: snapshot.sourceId,
-          status: "pending",
-          importedRecordCount: 0,
-          readRecordCount: 0,
-          summary: null,
-          error: null,
-          updatedAt: createdAt,
-        }));
-        run = {
-          ...current,
-          sources: input.snapshots,
-          sourceCoverage: coverage,
-          revision: current.revision + 1,
-        };
-        return { runId: input.runId, sources: run.sources, coverage };
-      },
-      importSourceChunk: async (input) => {
-        const current = requireRun(input.runId);
-        const records = [...(importedRecords.get(input.snapshot.sourceId) ?? []), ...input.records];
-        importedRecords.set(input.snapshot.sourceId, records);
-        const coverage: DeepPlanSourceCoverage = {
-          sourceId: input.snapshot.sourceId,
-          status: input.finalChunk ? "ready" : "importing",
-          importedRecordCount: records.length,
-          readRecordCount: 0,
-          summary: null,
-          error: null,
-          updatedAt: createdAt,
-        };
-        const sourceCoverage = current.sourceCoverage.map((entry) =>
-          entry.sourceId === coverage.sourceId ? coverage : entry,
-        );
-        run = {
-          ...current,
-          sourceCoverage,
-          phase: sourceCoverage.every((entry) => entry.status === "ready")
-            ? "planning"
-            : "collecting",
-          revision: current.revision + 1,
-        };
-        return {
-          runId: input.runId,
-          sourceId: input.snapshot.sourceId,
-          importedRecordCount: records.length,
-          complete: input.finalChunk,
-          coverage,
-        };
-      },
-      getRun: async (input) =>
-        run?.threadId === input.threadId && (!input.runId || input.runId === run.id)
-          ? decodeDeepPlanRun(JSON.parse(JSON.stringify(run)))
-          : null,
-      dispatchCommand: async (command) => {
-        if (acceptedCommands.has(command.commandId)) return {};
-        acceptedCommands.add(command.commandId);
-        if (command.type === "thread.create") {
-          threads.add(command.threadId);
-          ownerCreations += 1;
-        } else if (command.type === "thread.deep-plan.start") {
-          if (!threads.has(command.threadId))
-            throw new Error("Deep Planning needs its owner thread");
-          runStarts += 1;
-          run = {
-            id: command.runId,
-            threadId: command.threadId,
-            phase: "collecting",
-            revision: 0,
-            plan: null,
-            approval: null,
-            approvalKey: null,
-            sources: [],
-            sourceCoverage: [],
-            stepStates: [],
-            finalValidation: {
-              status: "pending",
-              evidence: [],
-              updatedAt: null,
-              attempt: 0,
-              requestId: null,
-              turnId: null,
-            },
-            procedureAdjustments: [],
-            operations: [],
-            createdAt: command.createdAt,
-            updatedAt: command.createdAt,
-            pauseReason: null,
-          };
-        } else if (
-          command.type === "thread.deep-plan.update" &&
-          command.mutation.type === "pause"
-        ) {
-          const current = requireRun(command.runId);
-          if (command.expectedRevision !== current.revision)
-            throw new Error("Stale Deep Plan mutation");
-          run = {
-            ...current,
-            phase: "paused",
-            pauseReason: command.mutation.reason ?? null,
-            revision: current.revision + 1,
-          };
-        } else {
-          throw new Error(`Unexpected preparation command: ${command.type}`);
-        }
-        return {};
-      },
+      activeTurns: [],
+      pause: null,
+      operations: [],
+      createdAt,
+      updatedAt: createdAt,
     };
-    apis.set(id, api);
-    return api;
-  };
-  return {
-    prepare: (message = persistedMessage(queuedMessage())) =>
-      prepareQueuedDeepPlan({
-        message,
-        projectId,
-        creation,
+    expect(
+      buildQueuedDeepPlanStartCommand({
+        message: queuedMessage({ creation: undefined }),
         capabilities,
         provider,
-        apiForEnvironment,
-        createId: () => `delivery-id-${++identifier}`,
+        currentRun,
       }),
-    state: () => ({
-      threads: [...threads],
-      run,
-      ownerCreations,
-      runStarts,
-      exportCount: exports.size,
-      importedRecords: [...importedRecords.values()].flat(),
-    }),
-  };
-}
+    ).toBeUndefined();
+  });
 
-describe("mobile Deep Planning outbox", () => {
-  it("creates its empty owner before importing complete local, archived and remote histories", async () => {
-    const harness = deliveryHarness();
-    await harness.prepare();
-    const state = harness.state();
-    expect(state.threads).toEqual([threadId]);
-    expect(state.ownerCreations).toBe(1);
-    expect(state.run?.phase).toBe("planning");
-    expect(state.run?.sources).toEqual(sources);
-    expect(state.run?.sourceCoverage.every((entry) => entry.status === "ready")).toBe(true);
-    expect(state.importedRecords.map((record) => record.origin)).toEqual(
-      sources.map((snapshot) => ({ ...snapshot.origin, recordId: `record-${snapshot.sourceId}` })),
-    );
+  it("leaves ordinary messages on their normal path", () => {
     expect(
-      state.importedRecords.flatMap((record) =>
-        record.kind === "message" ? [record.message.text] : [],
-      ),
-    ).toEqual(sources.map((snapshot) => `Complete history of ${snapshot.threadTitle}`));
-  });
-
-  it("imports only the chosen chats when the queued message excludes project chats", async () => {
-    const harness = deliveryHarness();
-    await harness.prepare(persistedMessage(queuedMessage({ deepPlanIncludeProjectChats: false })));
-    expect(harness.state().run?.sources).toEqual([remoteSource]);
-    expect(harness.state().importedRecords).toHaveLength(1);
-  });
-
-  it("resumes delivery after owner creation without creating another run or recapturing complete sources", async () => {
-    const harness = deliveryHarness();
-    await harness.prepare();
-    const prepared = harness.state();
-    expect(
-      resolveThreadOutboxDeliveryAction({
-        isCreation: true,
-        threadExists: true,
-        deepPlanning: true,
-        threadHasTurn: false,
-        shellStatus: "live",
-        environmentConnected: true,
-        threadBusy: false,
-      }),
-    ).toBe("send");
-    await harness.prepare();
-    expect(harness.state()).toEqual(prepared);
-  });
-
-  it("rejects delivery without marking a source failure as a user pause", async () => {
-    const harness = deliveryHarness(remoteSource.sourceId);
-    await expect(harness.prepare()).rejects.toThrow("selected remote chat is unavailable");
-    const state = harness.state();
-    expect(state.run?.phase).toBe("collecting");
-    expect(state.run?.pauseReason).toBeNull();
-    expect(state.run?.sources).toEqual(sources);
-    expect(
-      state.run?.sourceCoverage.find((entry) => entry.sourceId === remoteSource.sourceId)?.status,
-    ).toBe("pending");
-    expect(state.importedRecords).toHaveLength(2);
-  });
-
-  it("leaves ordinary messages on their normal path without loading the native Deep Planning bridge", async () => {
-    await expect(
-      prepareQueuedDeepPlan({
+      buildQueuedDeepPlanStartCommand({
         message: queuedMessage({ composerMode: "plan" }),
-        projectId,
         capabilities: { repositoryIdentity: false, midChatProviderSwitching: false },
         provider: undefined,
       }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 
-  it("rejects an unsupported provider before creating an owner or copying sources", async () => {
-    await expect(
-      prepareQueuedDeepPlan({
+  it("rejects an unsupported provider before building a start command", () => {
+    expect(() =>
+      buildQueuedDeepPlanStartCommand({
         message: queuedMessage(),
-        projectId,
-        creation,
         capabilities,
         provider: { ...provider, deepPlanning: undefined },
       }),
-    ).rejects.toThrow("provider does not support DeepPlan");
+    ).toThrow("Deep Planning is unavailable for this provider");
   });
 
   it.each([
@@ -463,24 +209,21 @@ describe("mobile Deep Planning outbox", () => {
         threadHasTurn,
         shellStatus,
         environmentConnected: connected,
-        threadBusy: false,
       }),
     ).toBe(expected);
   });
 
-  it("persists Deep analysis choices and the exact approved version used for implementation", () => {
-    const analysis = queuedMessage();
+  it("decodes a queued legacy implementation without starting it as an ordinary turn", () => {
     const implementation = queuedMessage({
       composerMode: "default",
       interactionMode: "default",
       creation: undefined,
-      sourceProposedPlan: {
-        threadId,
-        planId: PlanId.make("deep-plan-3"),
-        deepPlan: { runId: DeepPlanRunId.make("approved-run"), planVersion: 3 },
-      },
+      sourceProposedPlan: legacyReference,
     });
-    for (const message of [analysis, implementation])
-      expect(persistedMessage(message)).toEqual(message);
+    const message = persistedMessage(implementation);
+    expect(message).toEqual(implementation);
+    expect(() => buildQueuedDeepPlanStartCommand({ message, capabilities, provider })).toThrow(
+      "started in an earlier version",
+    );
   });
 });

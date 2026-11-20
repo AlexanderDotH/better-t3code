@@ -1,4 +1,4 @@
-import { DeepPlanApplication } from "../deepPlanning/DeepPlanApplication.ts";
+import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -24,6 +24,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
+  DeepPlanError,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
@@ -3387,9 +3388,10 @@ describe("OrchestratorMcpService thread stop", () => {
   });
 
   it.effect.each([
-    { name: "a running turn", queued: false },
-    { name: "a running turn with a queued message", queued: true },
-  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued }) =>
+    { name: "a running turn", queued: false, pauseFails: false },
+    { name: "a running turn with a queued message", queued: true, pauseFails: false },
+    { name: "a turn whose Deep Plan cannot be paused", queued: false, pauseFails: true },
+  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, pauseFails }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("mcp-thread-stop");
@@ -3476,8 +3478,8 @@ describe("OrchestratorMcpService thread stop", () => {
             })
             .pipe(
               Effect.provide(
-                Layer.mock(DeepPlanApplication)({
-                  pauseForInterrupt: (ownerThreadId) =>
+                Layer.mock(DeepPlanWorkflow)({
+                  pauseForStop: (ownerThreadId) =>
                     Effect.gen(function* () {
                       const current = yield* orchestrator
                         .getThreadProjection(ownerThreadId)
@@ -3487,6 +3489,11 @@ describe("OrchestratorMcpService thread stop", () => {
                         "running",
                       );
                       paused.push(ownerThreadId);
+                      if (pauseFails)
+                        return yield* new DeepPlanError({
+                          code: "run-not-found",
+                          message: "The Deep Plan owner was archived.",
+                        });
                     }),
                 }),
               ),

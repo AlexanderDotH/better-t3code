@@ -1,7 +1,7 @@
 import * as AiEndpointDiscovery from "./provider/discovery/AiEndpointDiscovery.ts";
 import * as AssemblyAiDictation from "./speech/AssemblyAiDictation.ts";
 import * as AssemblyAiStreamingToken from "./speech/Layers/AssemblyAiStreamingToken.ts";
-import * as DeepPlanApplication from "./deepPlanning/DeepPlanApplication.ts";
+import * as DeepPlanWorkflow from "./deepPlanning/DeepPlanWorkflow.ts";
 import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as GitWorkbenchService from "./git-workbench/GitWorkbenchService.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
@@ -553,7 +553,7 @@ const layerUnusedForkRpcServices = Layer.mergeAll(
   Layer.mock(AiEndpointDiscovery.AiEndpointDiscovery)({}),
   Layer.mock(AssemblyAiDictation.AssemblyAiDictation)({}),
   Layer.mock(AssemblyAiStreamingToken.AssemblyAiStreamingToken)({}),
-  Layer.mock(DeepPlanApplication.DeepPlanApplication)({}),
+  Layer.mock(DeepPlanWorkflow.DeepPlanWorkflow)({}),
   Layer.mock(EventSink.EventSinkV2)({}),
   Layer.mock(GitWorkbenchService.GitWorkbenchService)({}),
   Layer.mock(HostPowerMonitor.HostPowerMonitor)({}),

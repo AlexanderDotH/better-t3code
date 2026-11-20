@@ -770,6 +770,7 @@ export const makeNativeProviderAdapter = Effect.fn("makeNativeProviderAdapter")(
                   definition.toolHarness.requiresApproval(
                     call.name,
                     request.runtimePolicy.runtimeMode,
+                    request.threadId,
                   )
                 ) {
                   const requestId = yield* ids.allocate

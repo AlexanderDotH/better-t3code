@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { DeepPlanRunId, ProviderInstanceId, ThreadId, type DeepPlanRun } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -306,12 +307,15 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         result.databasePath,
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          return yield* sql`SELECT json_extract(payload_json, '$.deepPlan.phase') AS phase,
-          json_extract(payload_json, '$.deepPlan.finalValidation.status') AS validation
+          return yield* sql`SELECT json_extract(payload_json, '$.deepPlan.schemaVersion') AS version,
+          json_extract(payload_json, '$.deepPlan.kind') AS kind,
+          json_extract(payload_json, '$.deepPlan.id') AS id
           FROM orchestration_v2_projection_threads WHERE thread_id = 'v1-thread'`;
         }),
       );
-      assert.deepStrictEqual(copiedRun, [{ phase: "paused", validation: "pending" }]);
+      assert.deepStrictEqual(copiedRun, [
+        { version: 1, kind: "legacy", id: "run:development-copy" },
+      ]);
       const originalRun = yield* withDatabase(
         source,
         Effect.gen(function* () {
@@ -322,6 +326,134 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         }),
       );
       assert.deepStrictEqual(originalRun, [{ phase: "validating", validation: "inProgress" }]);
+    }),
+  );
+
+  it.effect("pauses a copied approved Deep Plan before it can dispatch work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-deep-plan-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "migrate-dev-db-deep-plan-dest-",
+      });
+      const source = yield* createFixtureSource(sourceDir);
+      const threadId = ThreadId.make("stopped-thread");
+      const at = "2026-08-01T00:00:00.000Z";
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const modelSelection = { instanceId: providerInstanceId, model: "fixture" };
+      const run: DeepPlanRun = {
+        schemaVersion: 2,
+        id: DeepPlanRunId.make("deep-plan:development-copy"),
+        threadId,
+        phase: "implementing",
+        revision: 2,
+        chats: [],
+        includeProjectChats: false,
+        plan: {
+          schemaVersion: 2,
+          version: 1,
+          goal: "Implement one step",
+          scope: ["Fixture"],
+          nonGoals: [],
+          decisions: [],
+          affectedAreas: [],
+          steps: [
+            {
+              id: "step",
+              title: "One step",
+              description: "Change it",
+              dependencies: [],
+              acceptanceCriteria: [{ id: "check", description: "Works", checkMethod: "Run tests" }],
+            },
+          ],
+          finalValidation: { description: "Works as a whole", checkMethod: "Run tests" },
+        },
+        approvalKey: "approval",
+        approval: {
+          planVersion: 1,
+          approvalKey: "approval",
+          approvedAt: at,
+          implementation: modelSelection,
+          reviewer: modelSelection,
+          parallelism: 1,
+          lanes: [{ laneId: "lane", threadId }],
+          baseTurnCount: 1,
+        },
+        steps: [
+          {
+            stepId: "step",
+            status: "pending",
+            laneId: null,
+            baseTurnCount: null,
+            submission: null,
+            reviews: [],
+            roundLimit: 3,
+            unsubmittedTurns: 0,
+          },
+        ],
+        finalReview: {
+          status: "pending",
+          submission: null,
+          reviews: [],
+          roundLimit: 3,
+          unsubmittedTurns: 0,
+        },
+        activeTurns: [],
+        pause: null,
+        operations: [],
+        createdAt: at,
+        updatedAt: at,
+      };
+      const thread = {
+        id: threadId,
+        projectId: "project-kept",
+        title: "Stopped thread",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        forkedFrom: null,
+        archivedAt: null,
+        deletedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: at,
+        updatedAt: at,
+        deepPlan: run,
+      };
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${JSON.stringify(thread)}
+          WHERE thread_id = ${threadId}`;
+        }),
+      );
+
+      const copied = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      );
+      const readRun = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* sql`SELECT json_extract(payload_json, '$.deepPlan.phase') AS phase,
+          json_extract(payload_json, '$.deepPlan.pause.kind') AS pause,
+          json_extract(payload_json, '$.deepPlan.approval.planVersion') AS version
+          FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+      });
+      assert.deepStrictEqual(yield* withDatabase(copied.databasePath, readRun), [
+        { phase: "paused", pause: "user", version: 1 },
+      ]);
+      assert.deepStrictEqual(yield* withDatabase(source, readRun), [
+        { phase: "implementing", pause: null, version: 1 },
+      ]);
     }),
   );
 

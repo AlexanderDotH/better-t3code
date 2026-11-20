@@ -1,5 +1,8 @@
 import type { OpenAiSystemInstructionInput } from "./OpenAiAdapterTypes.ts";
-import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
+import {
+  nativeHarnessTurnGuidance,
+  nativeHarnessWorkspaceInstructions,
+} from "../nativeHarness/NativeHarnessPrompt.ts";
 
 export function buildOpenAiSystemInstructions(input: OpenAiSystemInstructionInput): string {
   if (input.interactionMode === "chat") return nativeHarnessWorkspaceInstructions(input);
@@ -17,8 +20,6 @@ export function buildOpenAiSystemInstructions(input: OpenAiSystemInstructionInpu
     `The trusted workspace root is ${input.cwd}.`,
     access,
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
-      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
-      : "Carry the request through focused verification and preserve unrelated work.",
+    nativeHarnessTurnGuidance(input),
   ].join("\n");
 }

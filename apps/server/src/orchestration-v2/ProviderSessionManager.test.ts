@@ -4,7 +4,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
+  CommandId,
   DeepPlanRunId,
+  EventId,
+  type DeepPlanRun,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -14,6 +17,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   type Project,
   ProjectId,
   ProviderDriverKind,
@@ -1700,7 +1704,7 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
 );
 
 it.effect(
-  "ProviderSessionManagerV2 issues MCP credentials before opening and revokes them on close",
+  "ProviderSessionManagerV2 issues MCP credentials without an obsolete Deep Plan grant and revokes them on close",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
@@ -1757,14 +1761,14 @@ it.effect(
             "pull-requests",
             "workspace",
             "coordination",
-            "deep-plan",
+            "workspace-write",
           ]),
         );
 
         const nativeConfig = NativeMcpProviderSession.readMcpProviderSession(threadId);
         assert.equal(nativeConfig?.authorizationHeader, captured?.authorizationHeader);
-        assert.deepEqual(nativeConfig?.deepPlan, grant);
-        assert.isFalse(nativeConfig?.capabilities.has("workspace-write"));
+        assert.isUndefined(nativeConfig?.deepPlan);
+        assert.isTrue(nativeConfig?.capabilities.has("workspace-write"));
         yield* manager.close(providerSessionId);
         assert.isUndefined(yield* mcpSessions.read(threadId));
         assert.isUndefined(NativeMcpProviderSession.readMcpProviderSession(threadId));
@@ -1785,7 +1789,7 @@ it.effect(
 
 it.effect.each([
   { scenario: "unsupported", reason: "unsupported-provider" },
-  { scenario: "mismatch", reason: "implementation-provider-mismatch" },
+  { scenario: "mismatch", reason: "provider-mismatch" },
   { scenario: "refresh", reason: null },
 ] as const)(
   "ProviderSessionManagerV2 refreshes MCP access each turn ($scenario)",
@@ -1827,33 +1831,173 @@ it.effect.each([
         );
         assert.isTrue((yield* registry.resolve(token))?.capabilities.has("workspace-write"));
 
-        const planningRun = {
+        const nowIso = DateTime.formatIso(now);
+        const planningRun: DeepPlanRun = {
+          schemaVersion: 2,
           id: DeepPlanRunId.make("refresh-plan"),
           threadId,
           phase: "planning",
+          revision: 0,
+          chats: [],
+          includeProjectChats: false,
           approval: null,
+          approvalKey: null,
           plan: null,
-        } as unknown as NonNullable<OrchestrationV2AppThread["deepPlan"]>;
-        const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
-        const turn = (
-          deepPlan: OrchestrationV2AppThread["deepPlan"],
-          policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-        ) =>
-          Effect.gen(function* () {
-            const rootNodeId = NodeId.make(`${threadId}-root`);
-            return yield* runtime.startTurn({
-              appThread: { ...appThread, deepPlan },
+          steps: [],
+          finalReview: {
+            status: "pending",
+            submission: null,
+            reviews: [],
+            roundLimit: 3,
+            unsubmittedTurns: 0,
+          },
+          activeTurns: [],
+          pause: null,
+          operations: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        const implementation = { instanceId: ProviderInstanceId.make("claude"), model: "other" };
+        const commandId = CommandId.make(`${threadId}-implementation`);
+        const approvedRun: DeepPlanRun = {
+          ...planningRun,
+          phase: "implementing",
+          plan: {
+            schemaVersion: 2,
+            version: 1,
+            goal: "A test change",
+            scope: ["fixture"],
+            nonGoals: [],
+            decisions: [],
+            affectedAreas: ["fixture"],
+            steps: [
+              {
+                id: "update-fixture",
+                title: "Update fixture",
+                description: "Record the update",
+                dependencies: [],
+                acceptanceCriteria: [
+                  {
+                    id: "changed",
+                    description: "Fixture is updated",
+                    checkMethod: "Read the fixture",
+                  },
+                ],
+              },
+            ],
+            finalValidation: { description: "Check the fixture", checkMethod: "Read the fixture" },
+          },
+          approvalKey: "test-approval",
+          approval: {
+            planVersion: 1,
+            approvalKey: "test-approval",
+            approvedAt: nowIso,
+            implementation,
+            reviewer: modelSelection,
+            parallelism: 1,
+            lanes: [{ laneId: "lane-1", threadId }],
+            baseTurnCount: 0,
+          },
+          activeTurns: [
+            {
+              kind: "implement",
               threadId,
-              runId: RunId.make(`${threadId}-run`),
-              runOrdinal: 1,
-              providerTurnOrdinal: 1,
-              attemptId: RunAttemptId.make(`${threadId}-attempt`),
+              commandId,
+              stepId: "update-fixture",
+              laneId: "lane-1",
+              round: 1,
+              attempt: 0,
+              startedAt: nowIso,
+            },
+          ],
+        };
+        const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+        let runOrdinal = 0;
+        let previous: OrchestrationV2Run | undefined;
+        const turn = (input: {
+          readonly deepPlan: DeepPlanRun;
+          readonly policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+          readonly stamped: boolean;
+        }) =>
+          Effect.gen(function* () {
+            const { deepPlan, policy, stamped } = input;
+            const ordinal = ++runOrdinal;
+            const rootNodeId = NodeId.make(`${threadId}-root-${ordinal}`);
+            const runId = RunId.make(`${threadId}-run-${ordinal}`);
+            const attemptId = RunAttemptId.make(`${threadId}-attempt-${ordinal}`);
+            const messageId = MessageId.make(
+              deepPlan.phase === "implementing" ? `${commandId}:message` : `${runId}:message`,
+            );
+            const providerThread = makeProviderThread({
+              idAllocator,
+              threadId,
+              providerSessionId,
+              now,
+            });
+            const activeThread = { ...appThread, deepPlan };
+            const run: OrchestrationV2Run = {
+              id: runId,
+              threadId,
+              ordinal,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: providerThread.id,
+              userMessageId: messageId,
               rootNodeId,
-              providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+              activeAttemptId: attemptId,
+              status: "starting",
+              requestedAt: now,
+              startedAt: null,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+              ...(stamped ? { deepPlanRunId: deepPlan.id } : {}),
+            };
+            yield* eventSink.write({
+              events: [
+                ...(previous === undefined
+                  ? []
+                  : [
+                      {
+                        id: EventId.make(`${previous.id}:completed`),
+                        type: "run.updated" as const,
+                        threadId,
+                        runId: previous.id,
+                        occurredAt: now,
+                        payload: { ...previous, status: "completed" as const, completedAt: now },
+                      },
+                    ]),
+                {
+                  id: EventId.make(`${runId}:plan-updated`),
+                  type: "thread.deep-plan-updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: activeThread,
+                },
+                {
+                  id: EventId.make(`${runId}:starting`),
+                  type: "run.created",
+                  threadId,
+                  runId,
+                  occurredAt: now,
+                  payload: run,
+                },
+              ],
+            });
+            previous = run;
+            return yield* runtime.startTurn({
+              appThread: activeThread,
+              threadId,
+              runId,
+              runOrdinal: ordinal,
+              providerTurnOrdinal: ordinal,
+              attemptId,
+              rootNodeId,
+              providerThread,
               message: {
                 createdBy: "user",
                 creationSource: "web",
-                messageId: MessageId.make(`${threadId}-message`),
+                messageId,
                 text: "hello",
                 attachments: [],
               },
@@ -1862,25 +2006,13 @@ it.effect.each([
             });
           });
 
+        const planningPolicy = { ...runtimePolicy, interactionMode: "plan" as const };
         if (reason !== null) {
-          const failed = yield* turn(
-            scenario === "mismatch"
-              ? ({
-                  ...planningRun,
-                  phase: "implementing",
-                  plan: { version: 1 },
-                  approval: {
-                    implementationThreadId: threadId,
-                    planVersion: 1,
-                    implementation: {
-                      instanceId: ProviderInstanceId.make("claude"),
-                      model: "other",
-                    },
-                  },
-                } as unknown as NonNullable<OrchestrationV2AppThread["deepPlan"]>)
-              : planningRun,
-            { ...runtimePolicy, interactionMode: "plan" },
-          ).pipe(Effect.flip);
+          const failed = yield* turn({
+            deepPlan: scenario === "mismatch" ? approvedRun : planningRun,
+            policy: scenario === "mismatch" ? runtimePolicy : planningPolicy,
+            stamped: true,
+          }).pipe(Effect.flip);
           assert.equal(failed._tag, "ProviderAdapterTurnStartError");
           const cause = (failed as { readonly cause?: { readonly reason?: unknown } }).cause;
           assert.equal(cause?.reason, reason);
@@ -1889,7 +2021,7 @@ it.effect.each([
           return;
         }
 
-        yield* turn(planningRun, { ...runtimePolicy, interactionMode: "plan" });
+        yield* turn({ deepPlan: planningRun, policy: planningPolicy, stamped: true });
         const planning = yield* registry.resolve(token);
         assert.isTrue(planning?.capabilities.has("deep-plan"));
         assert.equal(planning?.deepPlan?.phase, "planning");
@@ -1899,10 +2031,11 @@ it.effect.each([
           "planning",
         );
 
-        yield* turn(
-          { ...planningRun, phase: "completed" },
-          { ...runtimePolicy, projectMemoryMode: "off" },
-        );
+        yield* turn({
+          deepPlan: planningRun,
+          policy: { ...runtimePolicy, projectMemoryMode: "off" },
+          stamped: false,
+        });
         const finished = yield* registry.resolve(token);
         assert.isFalse(finished?.capabilities.has("deep-plan"));
         assert.isTrue(finished?.capabilities.has("deep-plan-tools"));

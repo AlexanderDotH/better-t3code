@@ -387,6 +387,18 @@ describe("thread outbox", () => {
         providers,
       ).interactionMode,
     ).toBe("plan");
+    expect(
+      resolveQueuedThreadSettings(
+        {
+          ...message,
+          modelSelection: codex,
+          composerMode: "deep-plan",
+          interactionMode: "default",
+        },
+        { modelSelection: codex, runtimeMode: "approval-required", interactionMode: "default" },
+        providers,
+      ).interactionMode,
+    ).toBe("plan");
   });
 
   it("holds the mutation queue while persisted messages are loading", async () => {

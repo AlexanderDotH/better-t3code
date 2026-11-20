@@ -43,7 +43,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 }));
 
 import { render } from "../../../test/render";
-import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { makeThreadFixture, makeThreadProjectionFixture } from "../../test-fixtures";
 import { ToastProvider } from "../ui/toast";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
@@ -146,37 +146,53 @@ it.each([
   }
 });
 
-it("opens an idle child from Lineage when its shell has not been loaded", async () => {
+it.each(["record", "lineage"])("opens an idle child from its %s", async (source) => {
   setup();
   const projection = makeThreadProjectionFixture();
   const childId = ThreadId.make("omitted-child");
   const environmentId = EnvironmentId.make("local");
-  state.projection = {
-    ...projection,
-    subagents: [
-      {
-        id: NodeId.make("agent"),
-        threadId: projection.thread.id,
-        runId: null,
-        parentNodeId: NodeId.make("parent"),
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: "codex",
-        providerInstanceId: projection.thread.providerInstanceId,
-        providerThreadId: null,
-        childThreadId: childId,
-        nativeTaskRef: null,
-        prompt: "Inspect the change",
+  state.projection = projection;
+  if (source === "lineage") {
+    state.relatedShells = [
+      makeThreadFixture({
+        id: childId,
+        environmentId,
         title: "Idle child",
-        model: null,
-        status: "completed",
-        result: null,
-        startedAt: null,
-        completedAt: projection.thread.updatedAt,
-        updatedAt: projection.thread.updatedAt,
-      },
-    ],
-  };
+        lineage: {
+          rootThreadId: projection.thread.id,
+          parentThreadId: projection.thread.id,
+          relationshipToParent: "subagent",
+        },
+      }).source,
+    ];
+  } else {
+    state.projection = {
+      ...projection,
+      subagents: [
+        {
+          id: NodeId.make("agent"),
+          threadId: projection.thread.id,
+          runId: null,
+          parentNodeId: NodeId.make("parent"),
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: "codex",
+          providerInstanceId: projection.thread.providerInstanceId,
+          providerThreadId: null,
+          childThreadId: childId,
+          nativeTaskRef: null,
+          prompt: "Inspect the change",
+          title: "Idle child",
+          model: null,
+          status: "completed",
+          result: null,
+          startedAt: null,
+          completedAt: projection.thread.updatedAt,
+          updatedAt: projection.thread.updatedAt,
+        },
+      ],
+    };
+  }
   await using screen = await render(
     <ThreadRelationshipsPanel
       environmentId={environmentId}

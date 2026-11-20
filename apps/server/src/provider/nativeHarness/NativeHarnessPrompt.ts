@@ -34,3 +34,14 @@ export function nativeHarnessWorkspaceInstructions(input: {
     .filter(Boolean)
     .join("\n");
 }
+
+export function nativeHarnessTurnGuidance(input: {
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
+}): string {
+  if (input.deepPlan?.phase === "review")
+    return "Review mode is active: inspect the submission and run the relevant checks with the available tools, but do not modify files. Finish with deep_plan_review_verdict.";
+  return input.interactionMode === "plan" || input.deepPlan?.readOnly === true
+    ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
+    : "Carry the request through focused verification and preserve unrelated work.";
+}

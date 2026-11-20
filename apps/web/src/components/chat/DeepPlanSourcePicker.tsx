@@ -1,14 +1,25 @@
 import { useState } from "react";
 import { deepPlanSourceRefKey } from "@t3tools/client-runtime/deep-planning";
-import type { DeepPlanSourceRef, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEEP_PLAN_MAX_CHATS,
+  isListedThreadLineage,
+  type DeepPlanExecutionContext,
+  type DeepPlanSourceRef,
+  type EnvironmentId,
+  type ProjectId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { MessageSquareIcon, PlusIcon, XIcon } from "lucide-react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { useProjects, useQuietThreadShells } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { Button } from "../ui/button";
 import { Dialog, DialogFooter, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Checkbox } from "../ui/checkbox";
-import { Switch } from "../ui/switch";
 import { ComposerBanner } from "./ComposerBanner";
 
 export interface DeepPlanSourceOption {
@@ -20,23 +31,119 @@ export interface DeepPlanSourceOption {
   readonly available: boolean;
 }
 
+type CurrentProject = { environmentId: EnvironmentId; projectId: ProjectId };
+type SourceSelection = {
+  selected: readonly DeepPlanSourceRef[];
+  includeProjectChats: boolean;
+  disabled?: boolean;
+  onChange: (sources: readonly DeepPlanSourceRef[], includeProjectChats: boolean) => void;
+};
+
+export function DeepPlanChatSourcePicker({
+  currentProject,
+  currentThreadId,
+  ...selection
+}: SourceSelection & { currentProject: CurrentProject; currentThreadId: ThreadId }) {
+  const [opened, setOpened] = useState(false);
+  const threadShells = useQuietThreadShells();
+  const projects = useProjects();
+  const { environments } = useEnvironments();
+  const linked = useLinkedEnvironments(currentProject.environmentId);
+  const eligibleEnvironments = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      (environment.environmentId === currentProject.environmentId ||
+        linked.has(environment.environmentId)),
+  );
+  const environmentsById = new Map(
+    eligibleEnvironments.map((environment) => [environment.environmentId, environment]),
+  );
+  const archived = useArchivedThreadSnapshots(
+    eligibleEnvironments.flatMap(({ environmentId }) =>
+      opened ||
+      (selection.includeProjectChats && environmentId === currentProject.environmentId) ||
+      selection.selected.some((source) => source.environmentId === environmentId)
+        ? [environmentId]
+        : [],
+    ),
+  );
+  const projectsByRef = new Map(
+    projects.map((project) => [JSON.stringify([project.environmentId, project.id]), project]),
+  );
+  const options = new Map<string, DeepPlanSourceOption>();
+  function addOption(
+    environmentId: EnvironmentId,
+    thread: Pick<(typeof threadShells)[number], "id" | "projectId" | "title" | "lineage"> & {
+      deepPlanExecution?: DeepPlanExecutionContext | undefined;
+    },
+    archived: boolean,
+  ) {
+    const environment = environmentsById.get(environmentId);
+    if (
+      !environment ||
+      (environmentId === currentProject.environmentId && thread.id === currentThreadId) ||
+      !isListedThreadLineage(thread.lineage) ||
+      thread.deepPlanExecution?.readOnly
+    )
+      return;
+    const ref = { environmentId, projectId: thread.projectId, threadId: thread.id };
+    const key = deepPlanSourceRefKey(ref);
+    if (options.has(key)) return;
+    options.set(key, {
+      ref,
+      title: thread.title,
+      projectTitle:
+        projectsByRef.get(JSON.stringify([environmentId, thread.projectId]))?.title ??
+        String(thread.projectId),
+      environmentLabel: environment.label,
+      archived,
+      available: true,
+    });
+  }
+  for (const thread of threadShells)
+    addOption(thread.environmentId, thread, thread.archivedAt !== null);
+  for (const { environmentId, snapshot } of archived.snapshots) {
+    for (const thread of snapshot.threads) addOption(environmentId, thread, true);
+  }
+  const allOptions = [...options.values()];
+  return (
+    <DeepPlanSourcePicker
+      {...selection}
+      currentProject={currentProject}
+      options={allOptions}
+      projectSourceCount={
+        archived.isLoading
+          ? null
+          : allOptions.filter(
+              ({ ref }) =>
+                ref.environmentId === currentProject.environmentId &&
+                ref.projectId === currentProject.projectId,
+            ).length
+      }
+      loading={archived.isLoading}
+      error={archived.error}
+      onOpen={() => setOpened(true)}
+    />
+  );
+}
+
 export function DeepPlanSourcePicker({
   currentProject,
   projectSourceCount,
   options,
   selected,
-  includeProjectChats = true,
+  includeProjectChats,
   loading,
   error,
   disabled = false,
   onOpen,
   onChange,
 }: {
-  currentProject: { environmentId: EnvironmentId; projectId: ProjectId } | null;
+  currentProject: CurrentProject | null;
   projectSourceCount: number | null;
   options: readonly DeepPlanSourceOption[];
   selected: readonly DeepPlanSourceRef[];
-  includeProjectChats?: boolean;
+  includeProjectChats: boolean;
   loading: boolean;
   error: string | null;
   disabled?: boolean;
@@ -75,6 +182,7 @@ export function DeepPlanSourcePicker({
     ref.projectId === currentProject.projectId;
   const extras = selected.filter((ref) => !belongsToCurrentProject(ref));
   const chosen = includeProjectChats ? extras : selected;
+  const limitReached = chosen.length >= DEEP_PLAN_MAX_CHATS;
   const chosenProjectCount = selected.length - extras.length;
   const toggleSource = (ref: DeepPlanSourceRef) => {
     const key = deepPlanSourceRefKey(ref);
@@ -178,15 +286,16 @@ export function DeepPlanSourcePicker({
               )}
             </p>
           </DialogHeader>
-          <label className="mx-5 mb-2 flex min-h-8 cursor-pointer items-center justify-between gap-3 text-xs/4 pointer-coarse:min-h-11">
-            <span>{translate("chat.deepPlan.includeProjectChats")}</span>
-            <Switch
-              size="sm"
+          <label className="mx-5 mb-2 flex min-h-8 cursor-pointer items-center gap-2 px-2 text-xs/4 pointer-coarse:min-h-11">
+            <Checkbox
               aria-label={translate("chat.deepPlan.includeProjectChats")}
               checked={includeProjectChats}
               disabled={disabled}
               onCheckedChange={(checked) => onChange(checked ? extras : selected, checked)}
             />
+            <span className="min-w-0 flex-1 break-words">
+              {translate("chat.deepPlan.includeProjectChats")}
+            </span>
           </label>
           <div className="px-5 pb-2">
             <Input
@@ -196,6 +305,11 @@ export function DeepPlanSourcePicker({
               aria-label={translate("chat.deepPlan.searchSources")}
               placeholder={translate("chat.deepPlan.searchSources")}
             />
+            {limitReached ? (
+              <p role="status" className="mt-1 text-xs text-muted-foreground">
+                {translate("chat.deepPlan.sourceLimit", { count: DEEP_PLAN_MAX_CHATS })}
+              </p>
+            ) : null}
           </div>
           <div
             className="max-h-[min(44dvh,20rem)] overflow-y-auto overscroll-contain px-5"
@@ -223,6 +337,7 @@ export function DeepPlanSourcePicker({
                 </legend>
                 {group.options.map((option) => {
                   const included = includeProjectChats && belongsToCurrentProject(option.ref);
+                  const selected = selectedKeys.has(deepPlanSourceRefKey(option.ref));
                   return (
                     <label
                       key={deepPlanSourceRefKey(option.ref)}
@@ -230,8 +345,10 @@ export function DeepPlanSourcePicker({
                     >
                       <Checkbox
                         aria-label={option.title}
-                        checked={included || selectedKeys.has(deepPlanSourceRefKey(option.ref))}
-                        disabled={disabled || included || !option.available}
+                        checked={included || selected}
+                        disabled={
+                          disabled || included || !option.available || (limitReached && !selected)
+                        }
                         onCheckedChange={() => toggleSource(option.ref)}
                       />
                       <span className="min-w-0 flex-1 break-words">{option.title}</span>

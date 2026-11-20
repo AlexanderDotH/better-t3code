@@ -135,6 +135,23 @@ export function MobileAgentModelSettings(props: {
             );
         }}
       />
+      {props.config.environment.capabilities.deepPlanning?.version === 2 ? (
+        <ModelSelectionSetting
+          config={props.config}
+          icon="sparkles"
+          label={translator.message("betterT3.agent.deepPlanReviewModel.label")}
+          purpose="agent"
+          selection={settings.deepPlanReviewModelSelection}
+          defaultLabel={translator.message("settings.betterT3.deepPlanReviewModel.default")}
+          disabled={disabledFor("deepPlanReviewModelSelection")}
+          onSelect={(selection) =>
+            void props.updateSettings(
+              { deepPlanReviewModelSelection: selection },
+              translator.message("betterT3.agent.deepPlanReviewModel.label"),
+            )
+          }
+        />
+      ) : null}
       <ModelSelectionSetting
         config={props.config}
         icon="mic"

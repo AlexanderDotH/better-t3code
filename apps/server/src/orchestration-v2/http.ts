@@ -1,5 +1,7 @@
 import {
   AuthOrchestrationReadScope,
+  DEEP_PLAN_VERSION_QUERY_PARAM,
+  DEEP_PLAN_VERSION_TEXT,
   EnvironmentHttpApi,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
@@ -33,7 +35,11 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import {
+  projectThreadProjectionForWire,
+  withoutDeepPlanFromProjection,
+  withoutDeepPlanFromShellRows,
+} from "./WireProjection.ts";
 
 const isThreadTranscriptTooLargeError = Schema.is(
   ThreadManagementService.ThreadTranscriptTooLargeError,
@@ -168,6 +174,11 @@ export const layer = HttpApiBuilder.group(
             omitIdleSubagents: args.query.omitIdleSubagents === "1",
             omitOlderSettled: args.query.omitOlderSettled === "1",
           }).pipe(
+            Effect.map((snapshot) =>
+              args.query[DEEP_PLAN_VERSION_QUERY_PARAM] === DEEP_PLAN_VERSION_TEXT
+                ? snapshot
+                : withoutDeepPlanFromShellRows(snapshot),
+            ),
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
@@ -186,7 +197,10 @@ export const layer = HttpApiBuilder.group(
           ).pipe(traceLocalHandlerWork);
           return {
             snapshotSequence: snapshot.snapshotSequence,
-            projection: snapshot.projection,
+            projection:
+              args.query[DEEP_PLAN_VERSION_QUERY_PARAM] === DEEP_PLAN_VERSION_TEXT
+                ? snapshot.projection
+                : withoutDeepPlanFromProjection(snapshot.projection),
           };
         }),
       )
@@ -227,7 +241,10 @@ export const layer = HttpApiBuilder.group(
             args.query.deferWork === "1",
           ).pipe(traceLocalHandlerWork);
           const bounded = buildBoundedThreadProjection({
-            projection: snapshot.projection,
+            projection:
+              args.query[DEEP_PLAN_VERSION_QUERY_PARAM] === DEEP_PLAN_VERSION_TEXT
+                ? snapshot.projection
+                : withoutDeepPlanFromProjection(snapshot.projection),
             snapshotSequence: snapshot.snapshotSequence,
           });
           return {

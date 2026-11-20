@@ -35,7 +35,7 @@ const subgroupDefinitions = [
   {
     id: "messages",
     categoryId: "chat",
-    featureIds: ["chat.messageEditing", "chat.messageReplies"],
+    featureIds: ["chat.messageEditing", "chat.messageReplies", "chat.replyPresentation"],
     targetIds: [],
   },
   {
@@ -135,6 +135,12 @@ const subgroupDefinitions = [
     id: "parallel-plan",
     categoryId: "agents",
     featureIds: ["agent.parallelPlanImplementation", "agent.parallelPlanReviewer"],
+    targetIds: [],
+  },
+  {
+    id: "deep-plan",
+    categoryId: "agents",
+    featureIds: ["agent.deepPlanReviewModel"],
     targetIds: [],
   },
   {

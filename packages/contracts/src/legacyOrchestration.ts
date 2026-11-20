@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { MessageReplyReference } from "./messageReplies.ts";
-import { DeepPlanRun, DeepPlanRunReference } from "./deepPlanning.ts";
+import { DeepPlanRunReference, StoredDeepPlanRun } from "./deepPlanning.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
   CheckpointRef,
@@ -438,7 +438,7 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
-  deepPlan: Schema.optional(Schema.NullOr(DeepPlanRun)),
+  deepPlan: Schema.optional(Schema.NullOr(StoredDeepPlanRun)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
