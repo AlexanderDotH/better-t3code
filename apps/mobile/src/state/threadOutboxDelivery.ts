@@ -1,5 +1,5 @@
 import { rememberMobileProjectChatSettings } from "./project-chat-settings";
-import { prepareQueuedDeepPlan } from "./deep-planning-delivery";
+import { buildQueuedDeepPlanStartCommand } from "./deep-planning-delivery";
 import { prepareQueuedPromptForDelivery } from "./thread-outbox-prompt-improvement";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Dialog from "../components/ui/Dialog";
@@ -23,6 +23,10 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type MessageId,
+  type ModelSelection,
+  type OrchestrationV2Command,
+  type ServerConfig,
+  type StoredDeepPlanRun,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
@@ -50,6 +54,7 @@ import {
   recordPendingThreadCreationOutcome,
 } from "./pending-thread-creation";
 import { environmentProjects } from "./projects";
+import { orchestrationEnvironment } from "./orchestration";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { gitEnvironment } from "./git";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
@@ -773,6 +778,65 @@ export function createThreadOutboxDelivery(): {
     return true;
   };
 
+  const sendQueuedDeepPlanStart = async (input: {
+    readonly message: QueuedThreadMessage;
+    readonly config: ServerConfig;
+    readonly modelSelection: ModelSelection;
+    readonly deliveryRevision: number;
+    readonly currentRun?: StoredDeepPlanRun | null | undefined;
+    readonly createThread?: OrchestrationV2Command & { readonly type: "thread.create" };
+  }): Promise<
+    | { readonly stage: "ready"; readonly createdOwner: boolean }
+    | { readonly stage: "stopped"; readonly settled: boolean }
+  > => {
+    const { message, config } = input;
+    let start;
+    try {
+      start = buildQueuedDeepPlanStartCommand({
+        message,
+        capabilities: config.environment.capabilities,
+        provider: config.providers.find(
+          (provider) => provider.instanceId === input.modelSelection.instanceId,
+        ),
+        currentRun: input.currentRun ?? null,
+      });
+    } catch (error) {
+      return {
+        stage: "stopped",
+        settled: await restoreQueuedMessage(
+          message,
+          error instanceof Error
+            ? error.message
+            : currentInterfaceTranslator().message("mobile.ui.deepPlanningCouldNotStart"),
+        ),
+      };
+    }
+    if (!start) return { stage: "ready", createdOwner: false };
+
+    for (const command of input.createThread ? [input.createThread, start] : [start]) {
+      const result = await runDeliveryCommand(orchestrationEnvironment.v2.dispatchCommand, {
+        environmentId: message.environmentId,
+        input: command,
+      });
+      if (
+        !readEnvironmentScope(message.environmentId, AuthOrchestrationOperateScope) ||
+        !isQueuedMessagePayloadCurrent(message, input.deliveryRevision) ||
+        appAtomRegistry.get(editingQueuedMessageIdsAtom)[message.messageId]
+      ) {
+        return { stage: "stopped", settled: true };
+      }
+      const failure = reportCommandFailure(message, result, "start-turn");
+      if (failure) {
+        return {
+          stage: "stopped",
+          settled:
+            failure.action === "restore" && (await restoreQueuedMessage(message, failure.message)),
+        };
+      }
+    }
+    return { stage: "ready", createdOwner: input.createThread !== undefined };
+  };
+
   const improveQueuedPrompt = async (
     message: QueuedThreadMessage,
     projectId: QueuedThreadCreation["projectId"],
@@ -915,25 +979,14 @@ export function createThreadOutboxDelivery(): {
       currentConfig.providers,
     );
     if (!hasAccess()) return true;
-    let deepPlan;
-    try {
-      deepPlan = await prepareQueuedDeepPlan({
-        message: persistedMessage,
-        projectId: thread.projectId,
-        capabilities: currentConfig.environment.capabilities,
-        provider: currentConfig.providers.find(
-          (provider) => provider.instanceId === sendSettings.modelSelection.instanceId,
-        ),
-      });
-    } catch (error) {
-      if (shouldRetryThreadOutboxDelivery(error)) return false;
-      return restoreQueuedMessage(
-        persistedMessage,
-        error instanceof Error
-          ? error.message
-          : currentInterfaceTranslator().message("mobile.ui.deepPlanningCouldNotStart"),
-      );
-    }
+    const deepPlan = await sendQueuedDeepPlanStart({
+      message: persistedMessage,
+      config: currentConfig,
+      modelSelection: sendSettings.modelSelection,
+      deliveryRevision,
+      currentRun: thread.deepPlan,
+    });
+    if (deepPlan.stage === "stopped") return deepPlan.settled;
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,
       input: {
@@ -954,7 +1007,6 @@ export function createThreadOutboxDelivery(): {
           attachments: prepared.attachments,
         },
         modelSelection: resolveQueuedThreadTurnModelSelection(queuedMessage, sendSettings),
-        deepPlanRunId: deepPlan?.id ?? queuedMessage.sourceProposedPlan?.deepPlan?.runId,
         titleSeed: deriveThreadTitleSeed({
           text: queuedMessage.text,
           attachments: queuedMessage.attachments,
@@ -1139,33 +1191,27 @@ export function createThreadOutboxDelivery(): {
       startFromOrigin: workspace.startFromOrigin ?? false,
       worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
     });
-    let deepPlan;
-    try {
-      deepPlan = await prepareQueuedDeepPlan({
-        message: persistedMessage,
-        projectId: creation.projectId,
-        creation: creationInput.bootstrap.createThread,
-        capabilities: currentConfig.environment.capabilities,
-        provider: currentConfig.providers.find(
-          (provider) => provider.instanceId === sendSettings.modelSelection.instanceId,
-        ),
-      });
-    } catch (error) {
-      if (shouldRetryThreadOutboxDelivery(error)) return false;
-      return restoreQueuedMessage(
-        persistedMessage,
-        error instanceof Error
-          ? error.message
-          : currentInterfaceTranslator().message("mobile.ui.deepPlanningCouldNotStart"),
-      );
-    }
-    const { createThread: _createdThread, ...remainingBootstrap } = creationInput.bootstrap;
+    const { createThread, ...remainingBootstrap } = creationInput.bootstrap;
+    const deepPlan = await sendQueuedDeepPlanStart({
+      message: persistedMessage,
+      config: currentConfig,
+      modelSelection: sendSettings.modelSelection,
+      deliveryRevision,
+      createThread: {
+        ...createThread,
+        type: "thread.create",
+        commandId: CommandId.make(`${queuedMessage.commandId}:deep-plan-owner`),
+        threadId: queuedMessage.threadId,
+        createdBy: "user",
+        creationSource: "mobile",
+      },
+    });
+    if (deepPlan.stage === "stopped") return deepPlan.settled;
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,
       input: {
         ...creationInput,
-        ...(deepPlan ? { bootstrap: remainingBootstrap } : {}),
-        deepPlanRunId: deepPlan?.id ?? queuedMessage.sourceProposedPlan?.deepPlan?.runId,
+        ...(deepPlan.createdOwner ? { bootstrap: remainingBootstrap } : {}),
         sourceProposedPlan: queuedMessage.sourceProposedPlan,
       },
     });

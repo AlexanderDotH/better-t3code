@@ -67,6 +67,10 @@ function threadDetailToShell(
   const pendingRequest =
     projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
   return presentThreadShell(environmentId, {
+    ...(thread.deepPlan === undefined ? {} : { deepPlan: thread.deepPlan }),
+    ...(thread.deepPlanExecution === undefined
+      ? {}
+      : { deepPlanExecution: thread.deepPlanExecution }),
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,

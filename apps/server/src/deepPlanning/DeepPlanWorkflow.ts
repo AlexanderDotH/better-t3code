@@ -1,14 +1,14 @@
-import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   CommandId,
   DeepPlanError,
-  DeepPlanSourceCoverage,
-  DeepPlanSourceSnapshot,
+  isDeepPlanRun,
   type DeepPlanGetRunInput,
+  type DeepPlanGetRunResult,
   type DeepPlanRun,
-  type DeepPlanRunId,
+  type ProviderInstanceId,
   type ThreadDeepPlanStartCommand,
   type ThreadDeepPlanUpdateCommand,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -18,18 +18,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 
-import { OrchestratorV2, type OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
-import { DeepPlanSources } from "./DeepPlanSources.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderAdapters from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as ChatReferences from "./DeepPlanChatReferences.ts";
+import { isRunningDeepPlan } from "./deepPlanNextAction.ts";
 
-export type DeepPlanStartInput = Omit<
-  ThreadDeepPlanStartCommand,
-  "type" | "commandId" | "createdAt"
->;
 export type DeepPlanUpdateInput = Omit<
   ThreadDeepPlanUpdateCommand,
-  "type" | "commandId" | "createdAt"
+  "type" | "commandId" | "createdAt" | "defaultReviewer"
 >;
 
 export class DeepPlanWorkflow extends Context.Service<
@@ -37,37 +36,18 @@ export class DeepPlanWorkflow extends Context.Service<
   {
     readonly getRun: (
       input: DeepPlanGetRunInput,
-    ) => Effect.Effect<DeepPlanRun | null, DeepPlanError>;
-    readonly start: (input: DeepPlanStartInput) => Effect.Effect<DeepPlanRun, DeepPlanError>;
+    ) => Effect.Effect<DeepPlanGetRunResult, DeepPlanError>;
     readonly update: (input: DeepPlanUpdateInput) => Effect.Effect<DeepPlanRun, DeepPlanError>;
-    readonly withRunLock: <A, E, R>(
-      runId: DeepPlanRunId,
-      effect: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E, R>;
+    readonly dispatch: (
+      command: ThreadDeepPlanStartCommand | ThreadDeepPlanUpdateCommand,
+    ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, DeepPlanError>;
+    readonly pauseForStop: (threadId: ThreadId) => Effect.Effect<void, DeepPlanError>;
   }
 >()("t3/deepPlanning/DeepPlanWorkflow") {}
 
-const sourceSnapshotsEqual = Schema.toEquivalence(Schema.Array(DeepPlanSourceSnapshot));
-const coverageEntryEqual = Schema.toEquivalence(DeepPlanSourceCoverage);
 const decodeErrorCode = Schema.decodeUnknownOption(DeepPlanError.fields.code);
 
-function coverageEqual(
-  left: ReadonlyArray<DeepPlanSourceCoverage>,
-  right: ReadonlyArray<DeepPlanSourceCoverage>,
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((entry) => {
-      const candidate = right.find((value) => value.sourceId === entry.sourceId);
-      return (
-        candidate !== undefined &&
-        coverageEntryEqual(entry, { ...candidate, updatedAt: entry.updatedAt })
-      );
-    })
-  );
-}
-
-function dispatchError(error: OrchestratorV2Error): DeepPlanError {
+function dispatchError(error: Orchestrator.OrchestratorV2Error): DeepPlanError {
   const cause = error._tag === "OrchestratorDispatchError" ? error.cause : error;
   if (Predicate.isObject(cause) && "context" in cause && "detail" in cause) {
     const context = cause.context;
@@ -84,10 +64,11 @@ function dispatchError(error: OrchestratorV2Error): DeepPlanError {
 }
 
 const make = Effect.gen(function* () {
-  const engine = yield* OrchestratorV2;
-  const adapters = yield* ProviderAdapterRegistryV2;
-  const sources = yield* DeepPlanSources;
-  const runLocks = new Map<DeepPlanRunId, Semaphore.Semaphore>();
+  const engine = yield* Orchestrator.OrchestratorV2;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const adapters = yield* ProviderAdapters.ProviderAdapterRegistryV2;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const chats = yield* ChatReferences.DeepPlanChatReferences;
   const crypto = yield* Crypto.Crypto;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const nextCommandId = crypto.randomUUIDv4().pipe(
@@ -102,27 +83,25 @@ const make = Effect.gen(function* () {
   );
 
   const getRun: DeepPlanWorkflow["Service"]["getRun"] = Effect.fn("DeepPlanWorkflow.getRun")(
-    function* (input) {
-      const row = yield* engine.getThreadShell(input.threadId);
+    function* ({ threadId, runId }) {
+      const row = yield* engine.getThreadShell(threadId);
       if (row === null || row.deletedAt !== null) return null;
-      if (row.deepPlan?.threadId === row.id)
-        return input.runId === undefined || input.runId === row.deepPlan.id ? row.deepPlan : null;
-      const ownerId = row.deepPlan?.threadId ?? row.deepPlanExecution?.runThreadId;
-      if (ownerId !== undefined) {
-        const owner = yield* engine.getThreadShell(ownerId);
-        const run = owner?.deepPlan;
-        const runId = row.deepPlan?.id ?? row.deepPlanExecution?.runId;
-        if (owner?.deletedAt === null && run?.threadId === owner.id && run.id === runId)
-          return input.runId === undefined || input.runId === run.id ? run : null;
+      if (row.deepPlan?.threadId === row.id) {
+        return runId === undefined || runId === row.deepPlan.id ? row.deepPlan : null;
       }
-      const snapshot = yield* engine.getShellSnapshot();
-      const run = snapshot.threads.find(
-        (thread) =>
-          thread.deletedAt === null &&
-          thread.deepPlan?.threadId === thread.id &&
-          thread.deepPlan?.approval?.implementationThreadId === input.threadId,
-      )?.deepPlan;
-      return run != null && (input.runId === undefined || input.runId === run.id) ? run : null;
+      const binding = row.deepPlanExecution;
+      const ownerId = binding?.runThreadId ?? row.deepPlan?.threadId;
+      if (ownerId === undefined) return null;
+      const owner = yield* engine.getThreadShell(ownerId);
+      const run = owner?.deepPlan;
+      if (
+        owner?.deletedAt !== null ||
+        run?.threadId !== owner.id ||
+        run.id !== (binding?.runId ?? row.deepPlan?.id) ||
+        (runId !== undefined && runId !== run.id)
+      )
+        return null;
+      return run;
     },
     Effect.mapError(dispatchError),
   );
@@ -136,136 +115,151 @@ const make = Effect.gen(function* () {
         code: "run-not-found",
         message: "The Deep Plan run was not found in this thread.",
       });
+    if (!isDeepPlanRun(run))
+      return yield* new DeepPlanError({
+        code: "invalid-transition",
+        message:
+          "This Deep Plan was started by an older version. Start a new Deep Plan to continue.",
+      });
     return run;
   });
 
   const requireProvider = Effect.fn("DeepPlanWorkflow.requireProvider")(function* (
-    instanceId: import("@t3tools/contracts").ProviderInstanceId,
+    instanceId: ProviderInstanceId,
   ) {
-    const adapter = yield* adapters
-      .get(instanceId)
-      .pipe(
-        Effect.mapError(
-          (cause) => new DeepPlanError({ code: "invalid-transition", message: cause.message }),
-        ),
-      );
-    const capabilities = yield* adapter
-      .getCapabilities()
-      .pipe(
-        Effect.mapError(
-          (cause) => new DeepPlanError({ code: "invalid-transition", message: cause.message }),
-        ),
-      );
+    const adapter = yield* adapters.get(instanceId).pipe(
+      Effect.mapError(
+        () =>
+          new DeepPlanError({
+            code: "target-unavailable",
+            message: `Deep Plan provider ${instanceId} is unavailable.`,
+          }),
+      ),
+    );
+    const capabilities = yield* adapter.getCapabilities().pipe(
+      Effect.mapError(
+        () =>
+          new DeepPlanError({
+            code: "target-unavailable",
+            message: `Could not check Deep Plan support for provider ${instanceId}.`,
+          }),
+      ),
+    );
     if (capabilities.deepPlan?.supported !== true)
       return yield* new DeepPlanError({
         code: "invalid-transition",
         message:
           capabilities.deepPlan?.supported === false
             ? capabilities.deepPlan.reason
-            : "This provider does not declare read-only planning with the Deep Plan toolkit.",
+            : `Provider ${instanceId} does not support Deep Plan.`,
       });
   });
-  const start: DeepPlanWorkflow["Service"]["start"] = Effect.fn("DeepPlanWorkflow.start")(
-    function* (input) {
-      const thread = yield* engine
-        .getThreadShell(input.threadId)
+
+  const dispatch: DeepPlanWorkflow["Service"]["dispatch"] = Effect.fn("DeepPlanWorkflow.dispatch")(
+    function* (command) {
+      if (yield* threads.hasReceipt(command.commandId)) {
+        return yield* engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+      }
+      if (command.type === "thread.deep-plan.start") {
+        const owner = yield* engine
+          .getThreadShell(command.threadId)
+          .pipe(Effect.mapError(dispatchError));
+        if (owner === null || owner.deletedAt !== null || owner.archivedAt !== null) {
+          return yield* new DeepPlanError({
+            code: "target-unavailable",
+            message: "The planning thread is unavailable.",
+          });
+        }
+        yield* chats.assertReadable(command.chats, owner.linkOrigin);
+        return yield* engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+      }
+      const mutation = command.mutation;
+      if (mutation.type !== "approve") {
+        return yield* engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+      }
+      const run = yield* getRun({ threadId: command.threadId, runId: command.runId });
+      if (
+        isDeepPlanRun(run) &&
+        run.operations.some((operation) => operation.operationId === command.operationId)
+      ) {
+        return yield* engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+      }
+      const defaultReviewer =
+        mutation.reviewer === undefined
+          ? (yield* settings.getSettings.pipe(
+              Effect.mapError(
+                () =>
+                  new DeepPlanError({
+                    code: "storage-failed",
+                    message: "Could not load the Deep Plan review model setting.",
+                  }),
+              ),
+            )).deepPlanReviewModelSelection
+          : null;
+      const reviewer = mutation.reviewer ?? defaultReviewer ?? mutation.implementation;
+      yield* requireProvider(mutation.implementation.instanceId);
+      if (reviewer.instanceId !== mutation.implementation.instanceId) {
+        yield* requireProvider(reviewer.instanceId);
+      }
+      return yield* engine
+        .dispatch(defaultReviewer === null ? command : { ...command, defaultReviewer })
         .pipe(Effect.mapError(dispatchError));
-      if (thread === null)
-        return yield* new DeepPlanError({
-          code: "run-not-found",
-          message: "The planning thread was not found.",
-        });
-      yield* requireProvider(thread.providerInstanceId);
-      yield* engine
-        .dispatch({
-          ...input,
-          type: "thread.deep-plan.start",
-          commandId: yield* nextCommandId,
-          createdAt: yield* nowIso,
-        })
-        .pipe(Effect.mapError(dispatchError));
-      return yield* requireRun({ threadId: input.threadId, runId: input.runId });
     },
   );
 
   const update: DeepPlanWorkflow["Service"]["update"] = Effect.fn("DeepPlanWorkflow.update")(
     function* (input) {
-      const run = yield* requireRun({ threadId: input.threadId, runId: input.runId });
-      if (input.mutation.type === "approve")
-        yield* requireProvider(input.mutation.implementation.instanceId);
-      if (input.mutation.type === "publish-plan" || input.mutation.type === "approve") {
-        const actual = yield* sources
-          .assertCompleteCoverage(run.id)
-          .pipe(
-            Effect.mapError(
-              (error) => new DeepPlanError({ code: "sources-incomplete", message: error.message }),
-            ),
-          );
-        if (
-          !sourceSnapshotsEqual(actual.sources, run.sources) ||
-          !coverageEqual(actual.coverage, run.sourceCoverage)
-        ) {
-          return yield* new DeepPlanError({
-            code: "sources-incomplete",
-            message:
-              "Deep Plan source coverage changed. Refresh it before publishing or approving.",
-          });
-        }
-        if (input.mutation.type === "publish-plan") {
-          yield* sources
-            .validatePlanCitations(run.id, input.mutation.plan)
-            .pipe(
-              Effect.mapError(
-                (error) =>
-                  new DeepPlanError({ code: "sources-incomplete", message: error.message }),
-              ),
-            );
-        }
-      } else if (
-        input.mutation.type === "sources-set" ||
-        input.mutation.type === "source-coverage"
-      ) {
-        const actual = yield* sources
-          .listSources({ threadId: run.threadId, runId: run.id })
-          .pipe(
-            Effect.mapError(
-              (error) => new DeepPlanError({ code: "sources-incomplete", message: error.message }),
-            ),
-          );
-        if (
-          input.mutation.type === "sources-set"
-            ? !sourceSnapshotsEqual(actual.sources, input.mutation.sources)
-            : !coverageEqual(actual.coverage, input.mutation.coverage)
-        ) {
-          return yield* new DeepPlanError({
-            code: "sources-incomplete",
-            message: "Deep Plan sources and coverage must match the frozen server snapshot.",
-          });
-        }
-      }
-      yield* engine
-        .dispatch({
-          ...input,
-          type: "thread.deep-plan.update",
-          commandId: yield* nextCommandId,
-          createdAt: yield* nowIso,
-        })
-        .pipe(Effect.mapError(dispatchError));
+      yield* dispatch({
+        ...input,
+        type: "thread.deep-plan.update",
+        commandId: yield* nextCommandId,
+        createdAt: yield* nowIso,
+      });
       return yield* requireRun({ threadId: input.threadId, runId: input.runId });
     },
   );
 
-  const withRunLock: DeepPlanWorkflow["Service"]["withRunLock"] = (runId, effect) =>
-    Effect.suspend(() => {
-      let lock = runLocks.get(runId);
-      if (lock === undefined) {
-        lock = Semaphore.makeUnsafe(1);
-        runLocks.set(runId, lock);
-      }
-      return lock.withPermit(effect);
-    });
+  const pauseForStop: DeepPlanWorkflow["Service"]["pauseForStop"] = Effect.fn(
+    "DeepPlanWorkflow.pauseForStop",
+  )(function* (threadId) {
+    const initial = yield* getRun({ threadId });
+    if (!isDeepPlanRun(initial)) return;
+    let run = initial;
+    while (true) {
+      if (
+        !isRunningDeepPlan(run) ||
+        (threadId !== run.threadId &&
+          !run.approval?.lanes.some((lane) => lane.threadId === threadId) &&
+          !run.activeTurns.some((turn) => turn.threadId === threadId))
+      )
+        return;
 
-  return DeepPlanWorkflow.of({ getRun, start, update, withRunLock });
+      const paused = yield* dispatch({
+        type: "thread.deep-plan.update",
+        commandId: yield* nextCommandId,
+        threadId: run.threadId,
+        runId: run.id,
+        expectedRevision: run.revision,
+        operationId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+        createdAt: yield* nowIso,
+        mutation: { type: "pause", reason: "Stopped by the user." },
+      }).pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          DeepPlanError: (error) =>
+            error.code === "stale-revision" || error.code === "run-not-found"
+              ? Effect.succeed(false)
+              : Effect.fail(error),
+        }),
+      );
+      if (paused) return;
+      const current = yield* getRun({ threadId, runId: initial.id });
+      if (!isDeepPlanRun(current)) return;
+      run = current;
+    }
+  });
+
+  return DeepPlanWorkflow.of({ getRun, update, dispatch, pauseForStop });
 });
 
 export const DeepPlanWorkflowLive = Layer.effect(DeepPlanWorkflow, make);

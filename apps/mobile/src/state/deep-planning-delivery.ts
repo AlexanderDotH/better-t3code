@@ -1,68 +1,58 @@
 import {
-  prepareDeepPlanForTurn,
+  buildDeepPlanStartCommand,
+  isDeepPlanLegacyRun,
   resolveDeepPlanningAvailability,
-  type DeepPlanningApi,
 } from "@t3tools/client-runtime/deep-planning";
 import {
   CommandId,
-  type OrchestrationV2Command,
-  type DeepPlanRun,
-  type EnvironmentId,
-  type ProjectId,
   type ExecutionEnvironmentCapabilities,
   type ServerProvider,
+  type StoredDeepPlanRun,
 } from "@t3tools/contracts";
-
+import { currentInterfaceTranslator } from "../localization/currentInterfaceTranslator";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
-type ThreadCreation = Omit<
-  Extract<OrchestrationV2Command, { type: "thread.create" }>,
-  "type" | "commandId" | "threadId" | "createdBy" | "creationSource"
-> & { readonly createdAt?: string };
-
-async function identifierFactory(injected: (() => string) | undefined): Promise<() => string> {
-  if (injected !== undefined) return injected;
-  const uuid = await import("../lib/uuid");
-  return () => uuid.randomHex(16);
-}
-
-export async function prepareQueuedDeepPlan(input: {
+export function buildQueuedDeepPlanStartCommand(input: {
   readonly message: QueuedThreadMessage;
-  readonly projectId: ProjectId;
-  readonly creation?: ThreadCreation;
   readonly capabilities: ExecutionEnvironmentCapabilities;
   readonly provider: ServerProvider | undefined;
-  readonly apiForEnvironment?: (environmentId: EnvironmentId) => DeepPlanningApi;
-  readonly createId?: () => string;
-}): Promise<DeepPlanRun | undefined> {
-  if (input.message.composerMode !== "deep-plan") return;
-  const availability = resolveDeepPlanningAvailability({
-    capabilities: input.capabilities,
-    provider: input.provider,
-  });
-  if (!availability.supported)
-    throw new Error(availability.reason ?? "Deep Planning is unavailable.");
-  const apiForEnvironment =
-    input.apiForEnvironment ?? (await import("./deep-planning")).getMobileDeepPlanningApi;
-  const createId = await identifierFactory(input.createId);
-  const api = apiForEnvironment(input.message.environmentId);
-  if (input.creation) {
-    await api.dispatchCommand({
-      ...input.creation,
-      type: "thread.create",
-      commandId: CommandId.make(input.message.commandId + ":deep-plan-owner"),
-      threadId: input.message.threadId,
-      createdBy: "user",
-      creationSource: "mobile",
-    });
+  readonly currentRun?: StoredDeepPlanRun | null;
+}) {
+  const { message, currentRun } = input;
+  if (message.sourceProposedPlan?.deepPlan) {
+    throw new Error(currentInterfaceTranslator().message("chat.deepPlan.status.legacy"));
   }
-  return prepareDeepPlanForTurn({
-    environmentId: input.message.environmentId,
-    projectId: input.projectId,
-    threadId: input.message.threadId,
-    additionalSourceRefs: input.message.deepPlanSourceRefs,
-    includeProjectChats: input.message.deepPlanIncludeProjectChats,
-    apiForEnvironment,
-    createId,
+  if (message.composerMode !== "deep-plan") return undefined;
+  const translator = currentInterfaceTranslator();
+  const availability = resolveDeepPlanningAvailability(input);
+  if (!availability.supported) {
+    throw new Error(
+      availability.reasonKey
+        ? translator.message(availability.reasonKey)
+        : translator.message("mobile.ui.deepPlanningCouldNotStart"),
+    );
+  }
+  if (currentRun && !isDeepPlanLegacyRun(currentRun)) {
+    if (
+      currentRun.threadId !== message.threadId ||
+      currentRun.phase === "implementing" ||
+      currentRun.phase === "finalReview"
+    ) {
+      throw new Error(translator.message("chat.deepPlan.finishActiveRun"));
+    }
+    if (
+      currentRun.phase === "planning" ||
+      currentRun.phase === "awaitingApproval" ||
+      currentRun.phase === "paused"
+    ) {
+      return undefined;
+    }
+  }
+  return buildDeepPlanStartCommand({
+    threadId: message.threadId,
+    commandId: CommandId.make(`${message.commandId}:deep-plan-start`),
+    createdAt: message.createdAt,
+    chats: message.deepPlanSourceRefs ?? [],
+    includeProjectChats: message.deepPlanIncludeProjectChats === true,
   });
 }

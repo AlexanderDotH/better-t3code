@@ -6,9 +6,15 @@ import {
   CONTEXT_REPLACEMENT_RATIO,
 } from "../contextCompaction/contextCompactionPolicy.ts";
 import * as Semaphore from "effect/Semaphore";
-import { startDeepPlanRun, updateDeepPlanRun } from "../deepPlanning/deepPlanDecision.ts";
-import { isDeepPlanContinuationPending } from "../deepPlanning/DeepPlanContinuation.ts";
+import {
+  advanceDeepPlanRun,
+  DeepPlanDecisionError,
+  invalidDeepPlanCommand,
+  startDeepPlanRun,
+  updateDeepPlanRun,
+} from "../deepPlanning/deepPlanDecision.ts";
 import { deepPlanMarkdown } from "../deepPlanning/deepPlanMarkdown.ts";
+import { deepPlanTurnMessageId, reviewTarget } from "../deepPlanning/deepPlanNextAction.ts";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -39,7 +45,11 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
+  deriveDeepPlanImplementationThreadId,
+  isDeepPlanRun,
+  type DeepPlanExecutionContext,
   type DeepPlanRun,
+  type ThreadDeepPlanAdvanceCommand,
   type DeepPlanRunId,
   NodeId,
   PlanId,
@@ -308,16 +318,7 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
 }
 
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
-
-function isDeepPlanContinuation(command: OrchestrationV2ServerCommand): boolean {
-  return (
-    command.type === "message.dispatch" &&
-    command.createdBy === "agent" &&
-    command.deepPlanRunId !== undefined &&
-    command.deepPlanContinuation === true &&
-    command.idleGuard !== undefined
-  );
-}
+const isDeepPlanDecisionError = Schema.is(DeepPlanDecisionError);
 
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
 function runtimePolicyCeilingCause(error: unknown) {
@@ -392,7 +393,14 @@ export interface OrchestratorV2DispatchResult {
   readonly replayed?: true;
 }
 
-export interface OrchestratorV2Shape {
+export interface OrchestratorV2Shape extends Pick<
+  ProjectionStoreV2["Service"],
+  | "getInlineReplyScope"
+  | "getInlineReplyPage"
+  | "listPendingInlineReplyTranscripts"
+  | "getInlineReplyRow"
+  | "listRemovedInlineReplyMessages"
+> {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
@@ -498,6 +506,7 @@ export interface OrchestratorV2Shape {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
     readonly eventType?: OrchestrationV2DomainEvent["type"];
+    readonly filter?: (event: OrchestrationV2DomainEvent) => boolean;
   }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamDomainEvents: Stream.Stream<OrchestrationV2DomainEvent, OrchestratorV2Error>;
 }
@@ -608,6 +617,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "message.reply.start":
     case "thread.deep-plan.start":
     case "thread.deep-plan.update":
+    case "thread.deep-plan.advance":
     case "message.retry":
     case "message.dispatch":
     case "notification.delivery.accept":
@@ -2834,6 +2844,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    deepPlanThread?: {
+      readonly execution: DeepPlanExecutionContext;
+      readonly parent?: OrchestrationV2AppThread;
+    },
   ) {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -2878,10 +2892,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? {}
         : { delegatedFrom: command.delegatedFrom }),
       lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: command.threadId,
+        parentThreadId: deepPlanThread?.parent?.id ?? null,
+        relationshipToParent: deepPlanThread?.parent === undefined ? null : "subagent",
+        rootThreadId: deepPlanThread?.parent?.lineage.rootThreadId ?? command.threadId,
       },
+      ...(deepPlanThread === undefined ? {} : { deepPlanExecution: deepPlanThread.execution }),
       forkedFrom: null,
       createdAt: now,
       updatedAt: now,
@@ -5682,30 +5697,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     retrying = false,
+    trustedDeepPlanRunId?: DeepPlanRunId,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     if (projection.thread.messageReply !== undefined)
       yield* assertReplySourceAvailable(projection.thread, findThread).pipe(
         mapDispatchError(command),
       );
-    if (isDeepPlanContinuation(command)) {
-      const owned = projection.thread.deepPlan;
-      const run =
-        owned?.threadId === command.threadId && owned.id === command.deepPlanRunId
-          ? owned
-          : (yield* projectionStore
-              .getShellSnapshot({ projectId: projection.thread.projectId })
-              .pipe(mapDispatchError(command))).threads.find(
-              (thread) =>
-                thread.deepPlan?.threadId === thread.id &&
-                thread.deepPlan.id === command.deepPlanRunId,
-            )?.deepPlan;
-      if (
-        run == null ||
-        (run.approval?.implementationThreadId ?? run.threadId) !== command.threadId ||
-        !isDeepPlanContinuationPending(run)
-      )
-        return;
+    const ownedDeepPlan = projection.thread.deepPlan;
+    const deepPlanRunId =
+      trustedDeepPlanRunId ??
+      (command.createdBy === "user" &&
+      !isNativeMaintenanceCommand(command) &&
+      (command.interactionMode ?? projection.thread.interactionMode) === "plan" &&
+      isDeepPlanRun(ownedDeepPlan) &&
+      ownedDeepPlan.threadId === command.threadId &&
+      (ownedDeepPlan.phase === "planning" ||
+        ownedDeepPlan.phase === "awaitingApproval" ||
+        ownedDeepPlan.phase === "paused")
+        ? ownedDeepPlan.id
+        : undefined);
+    if (
+      projection.thread.deepPlanExecution?.phase === "review" &&
+      trustedDeepPlanRunId === undefined
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Deep Plan review threads only accept turns scheduled by the Deep Plan.",
+      });
     }
     if (
       command.idleGuard !== undefined &&
@@ -5719,11 +5739,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (command.idleGuard.latestRunId !== undefined &&
           ranAfterIdleGuard(projection.runs, command.idleGuard.latestRunId)))
     ) {
-      if (isDeepPlanContinuation(command)) return;
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "The thread is no longer idle at the requested run.",
+        cause:
+          trustedDeepPlanRunId === undefined
+            ? "The thread is no longer idle at the requested run."
+            : invalidDeepPlanCommand(
+                command,
+                "The Deep Plan target thread is no longer idle.",
+                "target-busy",
+              ),
       });
     }
     const runtimeMode = command.runtimeMode ?? projection.thread.runtimeMode;
@@ -6216,19 +6242,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Proposed plan ${command.sourcePlanRef?.planId} belongs to a different project.`,
       });
     }
-    const sourceApproval = sourcePlanProjection?.thread.deepPlan?.approval;
-    // Approving a Deep Plan completes its plan before the implementation turn cites it.
-    const approvedDeepPlanSource =
-      sourcePlan?.deepPlan !== undefined &&
-      sourcePlanProjection?.thread.deepPlan?.id === sourcePlan.deepPlan.runId &&
-      sourceApproval?.planVersion === sourcePlan.deepPlan.planVersion &&
-      sourceApproval?.implementationThreadId === command.threadId;
-    if (
-      !retrying &&
-      sourcePlan !== null &&
-      sourcePlan.status !== "active" &&
-      !approvedDeepPlanSource
-    ) {
+    if (!retrying && sourcePlan !== null && sourcePlan.status !== "active") {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -6472,7 +6486,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: null,
         checkpointId: null,
         contextHandoffId: null,
-        ...(command.deepPlanRunId === undefined ? {} : { deepPlanRunId: command.deepPlanRunId }),
+        ...(deepPlanRunId === undefined ? {} : { deepPlanRunId }),
         ...(command.additionalContext === undefined
           ? {}
           : { additionalContext: command.additionalContext }),
@@ -6871,7 +6885,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: null,
         checkpointId: null,
         contextHandoffId: legacyImportHandoff?.id ?? null,
-        ...(command.deepPlanRunId === undefined ? {} : { deepPlanRunId: command.deepPlanRunId }),
+        ...(deepPlanRunId === undefined ? {} : { deepPlanRunId }),
         ...(command.additionalContext === undefined
           ? {}
           : { additionalContext: command.additionalContext }),
@@ -7678,7 +7692,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         mergeBackHandoff?.id ??
         legacyImportRecoveryHandoff?.id ??
         null,
-      ...(command.deepPlanRunId === undefined ? {} : { deepPlanRunId: command.deepPlanRunId }),
+      ...(deepPlanRunId === undefined ? {} : { deepPlanRunId }),
       ...(command.additionalContext === undefined
         ? {}
         : { additionalContext: command.additionalContext }),
@@ -8212,27 +8226,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      const grant = command.deepPlanExecution;
-      if (grant !== undefined) {
+      const explorationRunId = command.fetchWorker?.deepPlanRunId;
+      if (explorationRunId !== undefined) {
         const owner = parentProjection.thread.deepPlan;
         if (
-          !owner ||
-          owner.id !== grant.runId ||
-          owner.threadId !== grant.runThreadId ||
-          grant.modelSelection.instanceId !== command.modelSelection.instanceId ||
-          grant.modelSelection.model !== command.modelSelection.model ||
-          (grant.phase === "planning" && (!grant.readOnly || owner.approval !== null)) ||
-          (grant.phase !== "planning" &&
-            owner.approval?.planVersion !== grant.approvedPlanVersion) ||
-          grant.sourceAnalysis?.sourceIds.some(
-            (id) => !owner.sources.some((source) => source.sourceId === id),
-          )
+          !isDeepPlanRun(owner) ||
+          owner.id !== explorationRunId ||
+          owner.threadId !== command.parentThreadId ||
+          (owner.phase !== "planning" &&
+            owner.phase !== "awaitingApproval" &&
+            owner.phase !== "paused") ||
+          parentRun.deepPlanRunId !== explorationRunId ||
+          parentProjection.thread.archivedAt !== null ||
+          parentProjection.thread.deletedAt !== null ||
+          parentProjection.thread.interactionMode !== "plan" ||
+          command.interactionMode !== "plan" ||
+          command.runtimeMode !== "approval-required" ||
+          command.generalSubagent === true
         )
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause:
-              "The delegated Deep Plan grant does not match the durable owner, phase, model, or frozen source assignment.",
+            cause: "Deep Plan exploration requires an active planning turn and a read-only worker.",
           });
       }
       const targetAdapter = yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
@@ -8280,21 +8295,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
-        ...(command.deepPlanExecution === undefined
-          ? {}
-          : {
-              deepPlanExecution: {
-                ...command.deepPlanExecution,
-                ...(command.deepPlanExecution.sourceAnalysis === undefined
-                  ? {}
-                  : {
-                      sourceAnalysis: {
-                        ...command.deepPlanExecution.sourceAnalysis,
-                        workerThreadId: childThreadId,
-                      },
-                    }),
-              },
-            }),
+        deepPlanExecution: undefined,
         ...(command.fetchWorker === undefined ? {} : { fetchWorker: command.fetchWorker }),
         ...(command.generalSubagent === undefined
           ? {}
@@ -13576,6 +13577,338 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
 
+  const dispatchDeepPlanStartTurn = Effect.fn("Orchestrator.dispatchDeepPlanStartTurn")(function* (
+    command: ThreadDeepPlanAdvanceCommand,
+    transition: Extract<ThreadDeepPlanAdvanceCommand["transition"], { type: "start-turn" }>,
+    owner: OrchestrationV2AppThread,
+    approval: NonNullable<DeepPlanRun["approval"]>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const { turn } = transition;
+    const review = turn.kind === "review" || turn.kind === "finalReview";
+    const target = reviewTarget(turn);
+    const implementationThreadId = approval.lanes[0]!.threadId;
+    const parent =
+      implementationThreadId === owner.id ? owner : yield* findThread(implementationThreadId);
+    const unavailable = invalidDeepPlanCommand(
+      command,
+      "The Deep Plan target thread is unavailable.",
+      "target-unavailable",
+    );
+    if (parent === null || parent.archivedAt !== null || parent.deletedAt !== null)
+      return yield* mapDispatchError(command)(Effect.fail(unavailable));
+
+    const modelSelection = review ? approval.reviewer : approval.implementation;
+    const executionBase = {
+      runId: command.runId,
+      runThreadId: owner.id,
+      approvedPlanVersion: approval.planVersion,
+      modelSelection,
+    };
+    const execution: DeepPlanExecutionContext = review
+      ? { ...executionBase, phase: "review", readOnly: true, review: { target, round: turn.round } }
+      : {
+          ...executionBase,
+          phase: "execution",
+          ...(turn.laneId === null ? {} : { laneId: turn.laneId }),
+        };
+    const existing =
+      turn.threadId === owner.id
+        ? owner
+        : turn.threadId === implementationThreadId
+          ? parent
+          : yield* findThread(turn.threadId);
+    const runtimeMode = review
+      ? "approval-required"
+      : (existing?.runtimeMode ?? parent.runtimeMode);
+    // DelegatedWorkerGuards can only decline a reviewer's edits that arrive as approval requests.
+    // An unavailable provider keeps the default and fails when its turn starts.
+    const interactionMode =
+      review &&
+      !(yield* providerAdapters.get(modelSelection.instanceId).pipe(
+        Effect.flatMap((adapter) => adapter.getCapabilities()),
+        Effect.map((capabilities) => capabilities.approvals.supportsFileChangeApproval),
+        Effect.orElseSucceed(() => true),
+      ))
+        ? "plan"
+        : "default";
+    if (existing === null) {
+      const stepTitle = isDeepPlanRun(owner.deepPlan)
+        ? owner.deepPlan.plan?.steps.find((step) => step.id === turn.stepId)?.title
+        : undefined;
+      const title = review
+        ? turn.stepId === null
+          ? "Deep Plan final review"
+          : `Deep Plan review: ${stepTitle ?? turn.stepId}`
+        : `Deep Plan lane ${approval.lanes.findIndex((lane) => lane.laneId === turn.laneId) + 1}`;
+      yield* dispatchThreadCreate(
+        {
+          type: "thread.create",
+          commandId: command.commandId,
+          threadId: turn.threadId,
+          projectId: parent.projectId,
+          title,
+          modelSelection,
+          runtimeMode,
+          interactionMode,
+          branch: parent.branch,
+          worktreePath: parent.worktreePath,
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        events,
+        { execution, parent },
+      );
+    } else if (
+      existing.archivedAt !== null ||
+      existing.deletedAt !== null ||
+      existing.projectId !== parent.projectId ||
+      existing.worktreePath !== parent.worktreePath ||
+      existing.branch !== parent.branch ||
+      (existing.id !== owner.id &&
+        (existing.deepPlanExecution?.runId !== command.runId ||
+          existing.deepPlanExecution.runThreadId !== owner.id ||
+          existing.deepPlanExecution.approvedPlanVersion !== approval.planVersion ||
+          existing.deepPlanExecution.phase !== execution.phase))
+    ) {
+      return yield* mapDispatchError(command)(Effect.fail(unavailable));
+    }
+
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: turn.threadId,
+        messageId: deepPlanTurnMessageId(command.commandId),
+        text: transition.prompt,
+        attachments: [],
+        modelSelection,
+        runtimeMode,
+        interactionMode,
+        createdBy: "agent",
+        creationSource: "server",
+        idleGuard: { latestRunId: transition.latestRunId },
+        dispatchMode: { type: "start_immediately" },
+      },
+      events,
+      effects,
+      false,
+      command.runId,
+    );
+  });
+
+  const requireFinishedDeepPlanTurns = Effect.fn("Orchestrator.requireFinishedDeepPlanTurns")(
+    function* (command: OrchestrationV2ServerCommand, run: DeepPlanRun) {
+      for (const turn of run.activeTurns) {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(turn.threadId, ["runs"])
+          .pipe(mapDispatchError(command));
+        const providerRun = runs.find(
+          (candidate) => candidate.userMessageId === deepPlanTurnMessageId(turn.commandId),
+        );
+        if (
+          providerRun !== undefined &&
+          (isActiveRun(providerRun) || providerRun.status === "queued")
+        )
+          return yield* mapDispatchError(command)(
+            Effect.fail(
+              invalidDeepPlanCommand(
+                command,
+                "Wait for the active Deep Plan turns to finish before replacing this plan.",
+                "target-busy",
+              ),
+            ),
+          );
+      }
+    },
+  );
+
+  const dispatchDeepPlan = Effect.fn("Orchestrator.dispatchDeepPlan")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { type: `thread.deep-plan.${string}` }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const owner = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(mapDispatchError(command));
+    const unavailablePause =
+      command.type === "thread.deep-plan.advance" &&
+      command.transition.type === "pause" &&
+      command.transition.pause.kind === "unavailable";
+    if (owner.deletedAt !== null || (owner.archivedAt !== null && !unavailablePause))
+      return yield* mapDispatchError(command)(
+        Effect.fail(
+          invalidDeepPlanCommand(
+            command,
+            "The Deep Plan owner thread is unavailable.",
+            "target-unavailable",
+          ),
+        ),
+      );
+    const previous = isDeepPlanRun(owner.deepPlan) ? owner.deepPlan : null;
+    const approvalCommand =
+      command.type === "thread.deep-plan.update" && command.mutation.type === "approve"
+        ? command.mutation
+        : undefined;
+    const baseTurnCount =
+      approvalCommand?.implementationThread === "current"
+        ? nextRunOrdinal(
+            yield* projectionStore
+              .getThreadRecords(owner.id, ["runs"])
+              .pipe(mapDispatchError(command)),
+          ) - 1
+        : 0;
+    const run = yield* (
+      command.type === "thread.deep-plan.start"
+        ? startDeepPlanRun(command, owner.deepPlan)
+        : command.type === "thread.deep-plan.update"
+          ? updateDeepPlanRun(owner.deepPlan, command, baseTurnCount)
+          : advanceDeepPlanRun(owner.deepPlan, command)
+    ).pipe(mapDispatchError(command));
+    if (run === previous) return;
+
+    if (
+      previous !== null &&
+      (command.type === "thread.deep-plan.start" ||
+        (command.type === "thread.deep-plan.update" && command.mutation.type === "publish-plan"))
+    ) {
+      yield* requireFinishedDeepPlanTurns(command, previous);
+    }
+    if (command.type === "thread.deep-plan.start" && owner.deepPlanExecution !== undefined) {
+      const boundOwner = yield* findThread(owner.deepPlanExecution.runThreadId);
+      const bound = boundOwner?.deepPlan;
+      if (owner.deepPlanExecution.phase === "review")
+        return yield* mapDispatchError(command)(
+          Effect.fail(
+            invalidDeepPlanCommand(
+              command,
+              "Start the new Deep Plan in a planning or implementation thread.",
+              "target-unavailable",
+            ),
+          ),
+        );
+      if (
+        isDeepPlanRun(bound) &&
+        bound.id === owner.deepPlanExecution.runId &&
+        (bound.approval?.planVersion ?? null) === owner.deepPlanExecution.approvedPlanVersion
+      ) {
+        if (bound.phase !== "completed" && bound.phase !== "cancelled")
+          return yield* mapDispatchError(command)(
+            Effect.fail(
+              invalidDeepPlanCommand(
+                command,
+                "This thread already belongs to an active Deep Plan.",
+                "operation-conflict",
+              ),
+            ),
+          );
+        yield* requireFinishedDeepPlanTurns(command, bound);
+      }
+    }
+    if (
+      command.type === "thread.deep-plan.update" &&
+      "byThreadId" in command &&
+      command.byThreadId !== undefined &&
+      command.byThreadId !== owner.id
+    ) {
+      const actor = yield* findThread(command.byThreadId);
+      if (
+        actor === null ||
+        actor.deletedAt !== null ||
+        actor.archivedAt !== null ||
+        actor.deepPlanExecution?.runId !== run.id ||
+        actor.deepPlanExecution.runThreadId !== owner.id ||
+        actor.deepPlanExecution.approvedPlanVersion !== run.approval?.planVersion
+      )
+        return yield* mapDispatchError(command)(
+          Effect.fail(
+            invalidDeepPlanCommand(
+              command,
+              "The acting thread does not belong to this Deep Plan.",
+              "actor-mismatch",
+            ),
+          ),
+        );
+    }
+    if (approvalCommand?.implementationThread === "new" && run.approval !== null) {
+      const { threadId, laneId } = run.approval.lanes[0]!;
+      yield* dispatchThreadCreate(
+        {
+          type: "thread.create",
+          commandId: command.commandId,
+          threadId,
+          projectId: owner.projectId,
+          title: run.plan!.goal,
+          modelSelection: approvalCommand.implementation,
+          runtimeMode: owner.runtimeMode,
+          interactionMode: "default",
+          branch: owner.branch,
+          worktreePath: owner.worktreePath,
+          createdBy: "user",
+          creationSource: "server",
+        },
+        events,
+        {
+          execution: {
+            runId: run.id,
+            runThreadId: owner.id,
+            approvedPlanVersion: run.approval.planVersion,
+            modelSelection: run.approval.implementation,
+            phase: "execution",
+            laneId,
+          },
+        },
+      );
+    }
+    if (command.type === "thread.deep-plan.advance" && command.transition.type === "settle-turn") {
+      const { turnCommandId } = command.transition;
+      const activeTurn = previous?.activeTurns.find((turn) => turn.commandId === turnCommandId);
+      if (activeTurn !== undefined) {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(activeTurn.threadId, ["runs"])
+          .pipe(mapDispatchError(command));
+        if (
+          !runs.some(
+            (run) =>
+              run.userMessageId === deepPlanTurnMessageId(turnCommandId) &&
+              !isActiveRun(run) &&
+              run.status !== "queued",
+          )
+        )
+          return yield* mapDispatchError(command)(
+            Effect.fail(invalidDeepPlanCommand(command, "The Deep Plan turn has not finished.")),
+          );
+      }
+    }
+
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.deep-plan-updated",
+      threadId: owner.id,
+      occurredAt: now,
+      payload: { ...owner, deepPlan: run, updatedAt: now },
+    });
+    if (command.type === "thread.deep-plan.update")
+      yield* recordDeepPlanProposal({ command, events, threadId: owner.id, previous, run, now });
+    if (
+      command.type === "thread.deep-plan.advance" &&
+      command.transition.type === "start-turn" &&
+      run.approval !== null
+    )
+      yield* dispatchDeepPlanStartTurn(
+        command,
+        command.transition,
+        owner,
+        run.approval,
+        events,
+        effects,
+      );
+  });
+
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId>,
@@ -14005,88 +14338,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       }
       case "thread.deep-plan.start":
-      case "thread.deep-plan.update": {
-        const thread = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(mapDispatchError(command));
-        const now = yield* DateTime.now;
-        if (thread.deletedAt !== null || thread.archivedAt !== null)
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "The Deep Plan thread is unavailable.",
-          });
-        // Most updates cannot conflict with another plan; this read spans every thread.
-        const snapshot =
-          command.type === "thread.deep-plan.start" || command.mutation.type === "approve"
-            ? yield* projectionStore.getShellSnapshot().pipe(mapDispatchError(command))
-            : null;
-        const owners =
-          snapshot === null
-            ? []
-            : [...snapshot.threads, ...snapshot.archivedThreads].filter(
-                (candidate) => candidate.deepPlan?.threadId === candidate.id,
-              );
-        if (
-          command.type === "thread.deep-plan.start" &&
-          owners.some(
-            (candidate) => candidate.id !== thread.id && candidate.deepPlan?.id === command.runId,
-          )
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "The Deep Plan run ID already belongs to another thread.",
-          });
-        if (command.type === "thread.deep-plan.update" && command.mutation.type === "approve") {
-          const implementationThreadId = command.mutation.implementationThreadId;
-          const target = yield* projectionStore
-            .getThread(implementationThreadId)
-            .pipe(mapDispatchError(command));
-          if (
-            target.deletedAt !== null ||
-            target.archivedAt !== null ||
-            owners.some(
-              (candidate) =>
-                candidate.id !== thread.id &&
-                candidate.deepPlan?.approval?.implementationThreadId === implementationThreadId &&
-                candidate.deepPlan.phase !== "completed",
-            ) ||
-            (target.deepPlan &&
-              target.deepPlan.id !== command.runId &&
-              target.deepPlan.phase !== "completed")
-          )
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause:
-                "The implementation thread is unavailable or already belongs to another active Deep Plan.",
-            });
-        }
-        const run = yield* (
-          command.type === "thread.deep-plan.start"
-            ? startDeepPlanRun(command, thread.deepPlan)
-            : updateDeepPlanRun(thread.deepPlan, command)
-        ).pipe(mapDispatchError(command));
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "thread.deep-plan-updated",
-          threadId: thread.id,
-          occurredAt: now,
-          payload: { ...thread, deepPlan: run, updatedAt: now },
-        });
-        yield* recordDeepPlanProposal({
-          command,
-          events,
-          threadId: thread.id,
-          previous: thread.deepPlan,
-          run,
-          now,
-        });
+      case "thread.deep-plan.update":
+      case "thread.deep-plan.advance":
+        yield* dispatchDeepPlan(command, events, effects);
         break;
-      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
@@ -14286,9 +14541,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(sourceRun?.sourcePlanRef === undefined
             ? {}
             : { sourcePlanRef: sourceRun.sourcePlanRef }),
-          ...(sourceRun?.deepPlanRunId === undefined
-            ? {}
-            : { deepPlanRunId: sourceRun.deepPlanRunId }),
           ...(sourceRun?.additionalContext === undefined
             ? {}
             : { additionalContext: sourceRun.additionalContext }),
@@ -14662,7 +14914,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
-          isDeepPlanContinuation(command) ||
+          command.type === "thread.deep-plan.update" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
@@ -14679,6 +14931,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
             cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
+          ) {
+            return yield* cause;
+          }
+          if (
+            cause._tag === "OrchestratorDispatchError" &&
+            isDeepPlanDecisionError(cause.cause) &&
+            cause.cause.context.deepPlanCode === "target-busy"
           ) {
             return yield* cause;
           }
@@ -14834,8 +15093,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
     // fork or command never interleave. A fork from a side chat or onto an existing thread would
     // invert that order; dispatch rejects both, so they skip the source lock.
-    if (command.type === "thread.deep-plan.start" || command.type === "thread.deep-plan.update")
-      return yield* deepPlanCommands.withPermit(dispatch);
+    if (
+      command.type === "thread.deep-plan.start" ||
+      command.type === "thread.deep-plan.update" ||
+      command.type === "thread.deep-plan.advance"
+    ) {
+      return yield* deepPlanCommands.withPermit(
+        threadDispatch.withLock(
+          command.threadId,
+          Effect.gen(function* () {
+            let target: ThreadId | undefined;
+            if (command.type === "thread.deep-plan.advance") {
+              if (command.transition.type === "start-turn") {
+                target = command.transition.turn.threadId;
+              } else if (command.transition.type === "settle-turn") {
+                const owner = yield* findThread(command.threadId);
+                const { turnCommandId } = command.transition;
+                if (isDeepPlanRun(owner?.deepPlan)) {
+                  target = owner.deepPlan.activeTurns.find(
+                    (turn) => turn.commandId === turnCommandId,
+                  )?.threadId;
+                }
+              }
+            } else if (command.type === "thread.deep-plan.update") {
+              const mutation = command.mutation;
+              if (mutation.type === "approve" && mutation.implementationThread === "new") {
+                target = deriveDeepPlanImplementationThreadId(command.runId, mutation.planVersion);
+              } else if ("byThreadId" in command) {
+                target = command.byThreadId;
+              }
+            }
+            const apply = dispatchWithReceiptEffect(command);
+            return yield* target === undefined || target === command.threadId
+              ? apply
+              : threadDispatch.withLock(target, apply);
+          }),
+        ),
+      );
+    }
     if (command.type === "message.reply.start")
       return yield* threadDispatch.withLock(
         command.threadId,
@@ -15259,6 +15554,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getCheckpointContext(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
+    getInlineReplyScope: projectionStore.getInlineReplyScope,
+    getInlineReplyPage: projectionStore.getInlineReplyPage,
+    listPendingInlineReplyTranscripts: projectionStore.listPendingInlineReplyTranscripts,
+    getInlineReplyRow: projectionStore.getInlineReplyRow,
+    listRemovedInlineReplyMessages: projectionStore.listRemovedInlineReplyMessages,
     getThreadSnapshot: Effect.fn("OrchestratorV2.getThreadSnapshot")(function (threadId) {
       return projectionStore
         .getThreadSnapshot(threadId)

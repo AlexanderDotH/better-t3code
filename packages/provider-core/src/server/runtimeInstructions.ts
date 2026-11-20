@@ -32,7 +32,9 @@ export function buildRuntimeInstructions(runtime: {
   return [
     runtimeInfo,
     runtime.pullRequestLinking === false ? "" : PULL_REQUEST_LINKING_INSTRUCTIONS,
-    runtime.deepPlan === undefined ? "" : buildDeepPlanInstructions(runtime.deepPlan),
+    runtime.deepPlan === undefined
+      ? ""
+      : buildDeepPlanInstructions(runtime.deepPlan, runtime.interactionMode),
     buildChatModeInstructions(runtime.interactionMode),
   ]
     .filter(Boolean)

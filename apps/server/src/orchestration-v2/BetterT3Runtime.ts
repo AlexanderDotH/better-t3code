@@ -9,14 +9,10 @@ import { ThreadManagementService } from "./ThreadManagementService.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { DeepPlanApplicationLive } from "../deepPlanning/DeepPlanApplication.ts";
-import { DeepPlanSourcesLive } from "../deepPlanning/DeepPlanSources.ts";
+import * as DeepPlanChatReferences from "../deepPlanning/DeepPlanChatReferences.ts";
+import * as DeepPlanExploration from "../deepPlanning/DeepPlanExploration.ts";
 import { DeepPlanWorkflowLive } from "../deepPlanning/DeepPlanWorkflow.ts";
-import { DeepPlanValidationDispatcherLive } from "../deepPlanning/DeepPlanValidationDispatcher.ts";
-import {
-  DeepPlanValidationReactor,
-  DeepPlanValidationReactorLive,
-} from "../deepPlanning/DeepPlanValidationReactor.ts";
+import { DeepPlanConductor, DeepPlanConductorLive } from "../deepPlanning/DeepPlanConductor.ts";
 import * as DelegatedWorkerGuards from "../subagents/DelegatedWorkerGuards.ts";
 import { GeneralSubagentCoordinatorLive } from "../subagents/GeneralSubagentCoordinator.ts";
 import * as FetchPreparation from "../fetch/FetchPreparation.ts";
@@ -25,16 +21,12 @@ import { layer as planParallelismReviewLayer } from "../plan/PlanParallelismRevi
 import { ProjectAgentCoordinatorLive } from "../projectAgent/ProjectAgentCoordinator.ts";
 import { ProjectionProjectAgentCoordinationRepositoryLive } from "../persistence/Layers/ProjectionProjectAgentCoordination.ts";
 
-const workflow = DeepPlanWorkflowLive.pipe(Layer.provideMerge(DeepPlanSourcesLive));
-const application = DeepPlanApplicationLive.pipe(Layer.provideMerge(workflow));
-const dispatcher = DeepPlanValidationDispatcherLive.pipe(Layer.provideMerge(workflow));
-const reactor = DeepPlanValidationReactorLive.pipe(Layer.provideMerge(dispatcher));
-const continuation = Layer.effectDiscard(
+const conductor = Layer.effectDiscard(
   Effect.gen(function* () {
-    const worker = yield* DeepPlanValidationReactor;
+    const worker = yield* DeepPlanConductor;
     yield* worker.start();
   }),
-).pipe(Layer.provideMerge(reactor));
+).pipe(Layer.provideMerge(DeepPlanConductorLive));
 
 const workerGuards = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -43,14 +35,15 @@ const workerGuards = Layer.effectDiscard(
 ).pipe(Layer.provide(DelegatedWorkerGuards.layer));
 
 export const layer = Layer.mergeAll(
-  application,
+  DeepPlanWorkflowLive.pipe(Layer.provideMerge(DeepPlanChatReferences.layer)),
+  DeepPlanExploration.layer,
   workerGuards,
   Layer.merge(ContextCompactionRuntime.layer, AutoReasoningPreparation.layer).pipe(
     Layer.provideMerge(DecisionGeneration.layer),
   ),
-  continuation,
-  GeneralSubagentCoordinatorLive.pipe(Layer.provide(workflow)),
-  FetchPreparation.layer.pipe(Layer.provideMerge(FetchWorkerCoordinatorLive)),
+  conductor,
+  GeneralSubagentCoordinatorLive,
+  FetchPreparation.layer,
   ReplyThreadLifecycle.layer,
   planParallelismReviewLayer,
   ProjectAgentCoordinatorLive.pipe(
@@ -58,7 +51,7 @@ export const layer = Layer.mergeAll(
       Layer.merge(ProjectionProjectAgentCoordinationRepositoryLive, EffectOutbox.layer),
     ),
   ),
-);
+).pipe(Layer.provideMerge(FetchWorkerCoordinatorLive));
 
 export const compactThread = Effect.fn("BetterT3Runtime.compactThread")(function* (
   threadId: import("@t3tools/contracts").ThreadId,

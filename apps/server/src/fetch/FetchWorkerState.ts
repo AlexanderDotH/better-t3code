@@ -1,7 +1,10 @@
 import {
+  type DeepPlanRunId,
+  type DeepPlanSourceRef,
   type MessageId,
   type ModelSelection,
   type ProviderDriverKind,
+  type RunId,
   type RuntimeSessionId,
   type ServerProviderFetchWorkerCommandExecutionPolicy,
   type SubagentId,
@@ -51,6 +54,12 @@ export interface FetchRunInput extends FetchWorkerModel {
   readonly lunaFallback?: FetchWorkerModel;
   /** Only automatic Fetch may switch the workers to a faster model. */
   readonly ultrafastWorkers?: ReadonlyArray<FetchWorkerModel>;
+  readonly exploration?: {
+    readonly runId: DeepPlanRunId;
+    readonly parentRunId: RunId;
+    readonly assignments: ReadonlyArray<FetchWorkerAssignment>;
+    readonly chats: ReadonlyArray<DeepPlanSourceRef>;
+  };
 }
 
 export interface FetchRunResult {

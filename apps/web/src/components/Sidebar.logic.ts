@@ -1275,7 +1275,7 @@ export function resolveThreadStatusPill(input: {
     isLatestRunSettled(thread.latestRun, thread.runtime) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
-    return thread.deepPlan?.phase === "awaitingApproval"
+    return thread.deepPlan?.schemaVersion === 2 && thread.deepPlan.phase === "awaitingApproval"
       ? {
           label: "Deep Plan Ready",
           colorClass: "text-deep-plan",

@@ -1,19 +1,25 @@
 import {
+  CommandId,
+  DEEP_PLAN_MAX_CHATS,
   DeepPlanRunId,
-  DeepPlanSourceId,
+  deriveDeepPlanImplementationThreadId,
   EnvironmentId,
+  ExecutionEnvironmentCapabilities,
+  PlanId,
   ProjectId,
-  ProviderInstanceId,
   ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
   type ComposerMode,
+  type DeepPlanLegacyRun,
+  type DeepPlanReview,
   type DeepPlanRun,
-  type DeepPlanSourceCatalogEntry,
   type DeepPlanSourceRef,
 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
-import type { Preferences } from "../../persistence/mobile-preferences";
 import {
   cloneElement,
   createElement,
@@ -23,6 +29,8 @@ import {
 } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { Preferences } from "../../persistence/mobile-preferences";
+
 const fixture = vi.hoisted(() => ({
   preferences: {} as Preferences,
   states: [] as unknown[],
@@ -30,9 +38,16 @@ const fixture = vi.hoisted(() => ({
   platform: "ios",
   shortcut: null as (() => unknown) | null,
   effects: null as Array<() => void> | null,
+  dispatch: vi.fn(),
+  enqueue: vi.fn(),
+  updateDraft: vi.fn(),
+  navigate: vi.fn(),
+  confirm: vi.fn(),
+  shells: [] as unknown[],
+  environments: [] as unknown[],
+  archives: [] as unknown[],
+  links: new Map(),
 }));
-vi.mock("./ChatBubble", () => ({ useChatBubblePalette: () => ({ better: false }) }));
-
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
@@ -45,11 +60,11 @@ vi.mock("@effect/atom-react", () => ({
 }));
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
-  memo: (component: unknown) => component,
   useCallback: (callback: unknown) => callback,
   useEffect: (effect: () => void) => {
     fixture.effects?.push(effect);
   },
+  useMemo: (create: () => unknown) => create(),
   useRef: (initial: unknown) => {
     const index = fixture.cursor++;
     if (!(index in fixture.states)) fixture.states[index] = { current: initial };
@@ -73,7 +88,6 @@ vi.mock("react-native", () => ({
   Pressable: "pressable",
   ScrollView: "scroll-view",
   TextInput: "input",
-  ActivityIndicator: "progress",
   Platform: {
     get OS() {
       return fixture.platform;
@@ -81,8 +95,8 @@ vi.mock("react-native", () => ({
   },
   useWindowDimensions: () => ({ height: 800, width: 390 }),
   FlatList: (props: {
-    data: ReadonlyArray<DeepPlanSourceCatalogEntry>;
-    renderItem: (info: { item: DeepPlanSourceCatalogEntry }) => ReactNode;
+    data: ReadonlyArray<unknown>;
+    renderItem: (info: { item: unknown }) => ReactNode;
   }) =>
     createElement(
       "list",
@@ -90,12 +104,18 @@ vi.mock("react-native", () => ({
       props.data.map((item) => props.renderItem({ item })),
     ),
 }));
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ dispatch: vi.fn() }) }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34 }),
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "symbol" }));
 vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "switch" }));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; onPress: () => void; disabled: boolean }) =>
+    createElement("pressable", { onPress: props.onPress, disabled: props.disabled }, props.label),
+}));
+vi.mock("../../components/ui/Dialog", () => ({ confirm: fixture.confirm, alert: vi.fn() }));
 vi.mock("./ThreadDetailSheet", () => ({
   ThreadDetailSheet: (props: { children: ReactNode }) => createElement("sheet", {}, props.children),
 }));
@@ -114,14 +134,48 @@ vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [],
-  useServerConfigs: () => new Map(),
+  useThreadShells: () => fixture.shells,
+  useThreadShell: () => ({ id: ownerThreadId, projectId, modelSelection, runtime: null }),
+  useEnvironmentServerConfig: () => ({
+    environment: { capabilities: { deepPlanning: { version: 2 } } },
+    providers: [],
+    settings: { parallelPlanReviewModelSelection: null },
+  }),
 }));
-vi.mock("../../state/workspace", () => ({ useWorkspaceState: () => ({ environments: [] }) }));
-vi.mock("../../state/deep-planning", () => ({ getMobileDeepPlanningApi: vi.fn() }));
+vi.mock("../../state/workspace", () => ({ useWorkspaceEnvironments: () => fixture.environments }));
+vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => fixture.links }));
+vi.mock("../archive/useArchivedThreadSnapshots", () => ({
+  useArchivedThreadSnapshots: () => ({ snapshots: fixture.archives }),
+}));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => fixture.dispatch }));
+vi.mock("../../state/orchestration", () => ({
+  orchestrationEnvironment: { v2: { dispatchCommand: { permissionAtom: () => ({}) } } },
+}));
+vi.mock("../../state/projects", () => ({
+  projectEnvironment: { writeFile: { permissionAtom: () => ({}) } },
+}));
+vi.mock("../../state/use-thread-detail", () => ({ useSelectedThreadProjection: () => null }));
+vi.mock("../../state/thread-outbox", () => ({ enqueueThreadOutboxMessage: fixture.enqueue }));
+vi.mock("../../state/use-composer-drafts", () => ({
+  useComposerDraftSettings: () => ({}),
+  updateComposerDraftSettings: fixture.updateDraft,
+}));
+vi.mock("../../state/composer-library", () => ({}));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "test-id" }));
+vi.mock("./use-plan-parallelism-review", () => ({
+  useMobilePlanParallelismReview: () => ({ status: "idle", reviewedSubagentCount: null }),
+}));
+vi.mock("./CopyTextButton", () => ({ CopyTextButton: () => null }));
+vi.mock("./ThreadForkButton", () => ({ ThreadForkButton: () => null }));
+vi.mock("./use-thread-fork-action", () => ({ useThreadForkAction: () => null }));
+vi.mock("./useOpenLinkedThread", () => ({ useOpenLinkedThread: () => fixture.navigate }));
+vi.mock("./share-plan-markdown", () => ({}));
 
 import { ComposerModeControl } from "./ComposerModeControl";
 import { DeepPlanChecklist } from "./DeepPlanChecklist";
-import { DeepPlanSourceSheet } from "./DeepPlanSources";
+import { DeepPlanSources, DeepPlanSourceSheet } from "./DeepPlanSources";
+import { ProposedPlanCard } from "./ProposedPlanCard";
 import { composerModeAvailability, nextAvailableComposerMode } from "./composer-mode-availability";
 
 type NativeProps = {
@@ -167,34 +221,51 @@ function render(component: () => ReactNode) {
 const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("current-project");
 const now = "2026-10-16T12:00:00.000Z";
-function source(
-  index: number,
-  overrides: Partial<DeepPlanSourceCatalogEntry> = {},
-): DeepPlanSourceCatalogEntry {
+const ownerThreadId = ThreadId.make("owner-chat");
+const reviewThreadId = ThreadId.make("review-chat");
+const remoteEnvironmentId = EnvironmentId.make("linked");
+const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "model" };
+const decodeCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
+const review: DeepPlanReview = {
+  round: 1,
+  reviewThreadId,
+  reviewer: modelSelection,
+  diff: null,
+  verdict: "changesRequested",
+  summary: "Handle the reconnect path before proceeding.",
+  findings: [
+    {
+      severity: "major",
+      title: "Restore selected chats on reconnect",
+      detail: "The saved IDs were rewritten on reconnect.",
+      file: "src/store.ts",
+      line: 18,
+      rule: "Preserve persisted data.",
+    },
+  ],
+  retries: 0,
+  startedAt: now,
+  completedAt: now,
+};
+
+function source(index: number, remote = false) {
   return {
-    origin: { environmentId, projectId, threadId: ThreadId.make(`chat-${index}`) },
+    origin: {
+      environmentId: remote ? remoteEnvironmentId : environmentId,
+      projectId,
+      threadId: ThreadId.make(`chat-${index}`),
+    },
     threadTitle: `Chat ${index}`,
-    projectTitle: "T3 Code",
-    archived: index % 2 === 0,
-    messageCount: 1,
-    activityCount: 0,
-    forkOrigin: null,
-    ...overrides,
+    projectTitle: remote ? "Linked project" : "T3 Code",
+    archived: remote,
   };
 }
-function runFixture(): DeepPlanRun {
-  const sources = Array.from({ length: 28 }, (_, index) => ({
-    ...source(index),
-    sourceId: DeepPlanSourceId.make(`source-${index}`),
-    capturedAt: now,
-    contentVersion: "1",
-    contentHash: `hash-${index}`,
-    attachmentCount: 0,
-    recordCount: 1,
-  }));
+
+function runFixture(overrides?: Partial<DeepPlanRun>): DeepPlanRun {
   return {
+    schemaVersion: 2,
     id: DeepPlanRunId.make("deep-run"),
-    threadId: ThreadId.make("owner-chat"),
+    threadId: ownerThreadId,
     phase: "implementing",
     revision: 3,
     approvalKey: "approval-key",
@@ -202,43 +273,41 @@ function runFixture(): DeepPlanRun {
       planVersion: 1,
       approvalKey: "approval-key",
       approvedAt: now,
-      approvedBy: "user",
-      implementation: { instanceId: ProviderInstanceId.make("codex"), model: "model" },
-      implementationThreadId: ThreadId.make("owner-chat"),
-      implementerId: "same-agent",
+      implementation: modelSelection,
+      reviewer: modelSelection,
+      parallelism: 1,
+      lanes: [{ laneId: "lane-1", threadId: ownerThreadId }],
+      baseTurnCount: 0,
     },
     plan: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       version: 1,
       goal: "Add Deep Planning",
       scope: ["Native app"],
+      nonGoals: [],
       affectedAreas: ["Composer"],
       decisions: [],
       steps: [
         {
-          id: "source-picker",
-          title: "Choose sources",
-          description: "Build the source picker",
+          id: "picker",
+          title: "Choose chats",
+          description: "Build the chat picker",
           dependencies: [],
           acceptanceCriteria: [
             {
-              id: "source-selection",
+              id: "selection",
               description: "Selections survive reconnect",
               checkMethod: "Reconnect and reopen the picker",
             },
           ],
         },
         {
-          id: "checklist",
-          title: "Show checklist",
+          id: "run",
+          title: "Show progress",
           description: "Render durable progress",
-          dependencies: ["source-picker"],
+          dependencies: ["picker"],
           acceptanceCriteria: [
-            {
-              id: "durable-progress",
-              description: "Show durable step evidence",
-              checkMethod: "Read the latest snapshot",
-            },
+            { id: "progress", description: "Show progress", checkMethod: "Check the snapshot" },
           ],
         },
       ],
@@ -247,40 +316,44 @@ function runFixture(): DeepPlanRun {
         checkMethod: "Run focused native interaction tests",
       },
     },
-    sources,
-    sourceCoverage: sources.map((item, index) => ({
-      sourceId: item.sourceId,
-      status: index < 12 ? "summarized" : "pending",
-      importedRecordCount: 1,
-      readRecordCount: index < 12 ? 1 : 0,
-      summary:
-        index < 12
-          ? {
-              requirements: [],
-              decisions: [],
-              openIssues: [],
-              conflicts: [],
-              rejectedApproaches: [],
-              citedRecordIds: ["record"],
-            }
-          : null,
-      error: null,
-      updatedAt: now,
-    })),
-    stepStates: [{ stepId: "source-picker", status: "inProgress", evidence: [], updatedAt: now }],
-    finalValidation: {
+    chats: [],
+    includeProjectChats: false,
+    steps: [
+      {
+        stepId: "picker",
+        status: "changesRequested",
+        laneId: "lane-1",
+        baseTurnCount: 0,
+        submission: null,
+        reviews: [review],
+        roundLimit: 3,
+        unsubmittedTurns: 0,
+      },
+    ],
+    finalReview: {
       status: "pending",
-      evidence: [],
-      updatedAt: null,
-      attempt: 0,
-      requestId: null,
-      turnId: null,
+      submission: null,
+      reviews: [],
+      roundLimit: 3,
+      unsubmittedTurns: 0,
     },
-    procedureAdjustments: [],
+    activeTurns: [
+      {
+        kind: "fix",
+        threadId: ownerThreadId,
+        commandId: CommandId.make("fix-turn"),
+        stepId: "picker",
+        laneId: "lane-1",
+        round: 1,
+        attempt: 1,
+        startedAt: now,
+      },
+    ],
+    pause: null,
     operations: [],
     createdAt: now,
     updatedAt: now,
-    pauseReason: null,
+    ...overrides,
   };
 }
 
@@ -290,6 +363,16 @@ beforeEach(() => {
   fixture.cursor = 0;
   fixture.platform = "ios";
   fixture.shortcut = null;
+  fixture.effects = null;
+  fixture.dispatch.mockReset();
+  fixture.enqueue.mockReset();
+  fixture.updateDraft.mockReset();
+  fixture.navigate.mockReset();
+  fixture.confirm.mockReset();
+  fixture.shells = [];
+  fixture.environments = [];
+  fixture.archives = [];
+  fixture.links = new Map();
 });
 
 describe("native Deep Planning", () => {
@@ -319,7 +402,7 @@ describe("native Deep Planning", () => {
     expect(mode).toBe("default");
   });
 
-  it("disables unsupported planning modes before selection and skips them on the keyboard", () => {
+  it("only enables Deep Plan with a v2 environment and a supported provider", () => {
     const translator = createInterfaceTranslator({ language: "en", locale: "en-US" });
     const unavailable = composerModeAvailability(
       { provider: null, capabilities: null, planningEnabled: false },
@@ -331,7 +414,7 @@ describe("native Deep Planning", () => {
     expect(unavailable["deep-plan"]).toBeTruthy();
     expect(nextAvailableComposerMode("default", unavailable)).toBe("chat");
     const provider = {
-      instanceId: ProviderInstanceId.make("codex"),
+      instanceId: modelSelection.instanceId,
       driver: ProviderDriverKind.make("codex"),
       displayName: "Codex",
       enabled: true,
@@ -346,12 +429,22 @@ describe("native Deep Planning", () => {
       skills: [],
       deepPlanning: { version: 1 as const, structuredPlans: true, durableExecution: true },
     };
+    const capabilities = { repositoryIdentity: false, midChatProviderSwitching: false };
+    expect(
+      composerModeAvailability(
+        {
+          provider,
+          capabilities: decodeCapabilities({
+            ...capabilities,
+            deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
+          }),
+        },
+        translator,
+      )["deep-plan"],
+    ).toBeTruthy();
     const supported = {
       provider,
-      capabilities: {
-        repositoryIdentity: false,
-        deepPlanning: { version: 1 as const, sourceImport: true, sourceExport: true },
-      },
+      capabilities: { ...capabilities, deepPlanning: { version: 2 as const } },
     };
     expect(composerModeAvailability(supported, translator)["deep-plan"]).toBeNull();
     expect(
@@ -360,70 +453,161 @@ describe("native Deep Planning", () => {
     expect(
       composerModeAvailability({ ...supported, multipleModels: true }, translator)["deep-plan"],
     ).toBeTruthy();
-    const onChange = vi.fn();
-    press(
-      render(() => ComposerModeControl({ mode: "default", unavailable, onChange })),
-      "Build",
-    );
-    const control = render(() => ComposerModeControl({ mode: "default", unavailable, onChange }));
-    expect(
-      hosts(control, "pressable").find((button) => button.props.accessibilityLabel === "Deep Plan")
-        ?.props.disabled,
-    ).toBe(true);
-    fixture.shortcut?.();
-    expect(onChange).toHaveBeenCalledWith("chat");
   });
 
-  it("offers explicit final validation only after every step has verification evidence", async () => {
-    const initial = runFixture();
-    const evidence = [{ kind: "test" as const, summary: "Checks passed", createdAt: now }];
-    let run = {
-      ...initial,
-      stepStates: initial.plan!.steps.map((step) => ({
-        stepId: step.id,
-        status: "verified" as const,
-        evidence,
-        updatedAt: now,
-      })),
-    };
-    const validate = vi.fn(async () => {});
-    const resume = vi.fn(async () => {});
+  it("dispatches only explicit Deep Plan controls", async () => {
+    const changes: string[] = [];
+    let run = runFixture();
     const checklist = () =>
       render(() =>
         DeepPlanChecklist({
           environmentId,
           run,
-          onResume: resume,
-          onFinalValidation: validate,
-          canContinue: true,
+          onControl: async (action) => {
+            changes.push(action);
+          },
         }),
       );
-    await press(checklist(), "Run final validation");
-    expect(validate).toHaveBeenCalledTimes(1);
-    expect(resume).not.toHaveBeenCalled();
+    fixture.effects = [];
+    const initial = checklist();
+    for (const effect of fixture.effects) effect();
+    fixture.effects = null;
+    expect(text(initial)).toContain("Addressing findings for step 1");
+    expect(changes).toEqual([]);
+    await press(checklist(), "Pause");
+    expect(changes).toEqual(["pause"]);
     run = {
       ...run,
-      stepStates: [{ ...run.stepStates[0]!, evidence: [] }, ...run.stepStates.slice(1)],
+      phase: "paused",
+      pause: { kind: "user", reason: "Paused by the user.", at: now },
     };
-    expect(text(checklist())).not.toContain("Run final validation");
+    expect(text(checklist())).toContain("Paused by you");
+    await press(checklist(), "Resume");
+    expect(changes).toEqual(["pause", "resume"]);
+    press(checklist(), "Cancel");
+    expect(changes).toEqual(["pause", "resume"]);
+    fixture.confirm.mock.lastCall?.[0].onConfirm();
+    expect(changes).toEqual(["pause", "resume", "cancel"]);
   });
 
+  it("shows the review verdict, findings, and direct link to the hidden review thread", () => {
+    const open = vi.fn();
+    const run = runFixture();
+    const checklist = () =>
+      render(() => DeepPlanChecklist({ environmentId, run, onOpenThread: open }));
+    expect(text(checklist())).toContain("Lane 1");
+    expect(text(checklist())).toContain("Round 1/3");
+    expect(text(checklist())).toContain("Changes requested");
+    press(checklist(), "Choose chats");
+    expect(text(checklist())).toContain("Selections survive reconnect");
+    expect(text(checklist())).toContain("Restore selected chats on reconnect");
+    expect(text(checklist())).toContain("src/store.ts:18");
+    press(checklist(), "Open review");
+    expect(open).toHaveBeenCalledWith(reviewThreadId);
+  });
+
+  it("suggests a fresh Deep Plan only for unfinished legacy runs that can start one", () => {
+    const run: DeepPlanLegacyRun = {
+      schemaVersion: 1,
+      kind: "legacy",
+      id: DeepPlanRunId.make("legacy"),
+      threadId: ownerThreadId,
+      goal: "Earlier plan",
+      finished: false,
+      updatedAt: now,
+    };
+    const checklist = (value: DeepPlanLegacyRun, deepPlanSupported: boolean) =>
+      render(() =>
+        DeepPlanChecklist({ environmentId, run: value, deepPlanSupported, onControl: vi.fn() }),
+      );
+    const unfinished = checklist(run, true);
+    expect(text(unfinished)).toContain("Earlier plan");
+    expect(text(unfinished)).toContain("started in an earlier version");
+    expect(hosts(unfinished, "pressable")).toHaveLength(0);
+    expect(checklist({ ...run, finished: true }, true)).toBeNull();
+    expect(checklist(run, false)).toBeNull();
+  });
+
+  it.each(["current", "new"] as const)(
+    "approves the plan's parallel lanes in one dispatch for a %s thread",
+    async (target) => {
+      const pending = runFixture({
+        phase: "awaitingApproval",
+        approval: null,
+        steps: [],
+        activeTurns: [],
+      });
+      const plan = pending.plan!;
+      const run: DeepPlanRun = {
+        ...pending,
+        plan: { ...plan, steps: plan.steps.map((step) => ({ ...step, dependencies: [] })) },
+      };
+      const completed = Promise.withResolvers<void>();
+      fixture.dispatch.mockResolvedValue(AsyncResult.success({ sequence: 4 }));
+      const card = () =>
+        render(() =>
+          ProposedPlanCard({
+            environmentId,
+            workspaceRoot: "/project",
+            markdown: "# Add Deep Planning",
+            deepPlan: run,
+            plan: {
+              threadId: ownerThreadId,
+              planId: PlanId.make("proposal"),
+              updatedAt: DateTime.makeUnsafe(now),
+              deepPlan: { runId: run.id, planVersion: 1 },
+            },
+            onActionComplete: () => completed.resolve(),
+            renderMarkdown: (markdown) => markdown,
+          }),
+        );
+      const label =
+        target === "new" ? "Implement with 2 lanes in a new thread" : "Implement with 2 lanes";
+      const ready = card();
+      press(ready, label);
+      press(ready, label);
+      await completed.promise;
+      expect(fixture.dispatch).toHaveBeenCalledTimes(1);
+      expect(fixture.dispatch).toHaveBeenCalledWith({
+        environmentId,
+        input: expect.objectContaining({
+          type: "thread.deep-plan.update",
+          threadId: ownerThreadId,
+          runId: run.id,
+          expectedRevision: run.revision,
+          mutation: {
+            type: "approve",
+            planVersion: 1,
+            approvalKey: "approval-key",
+            implementation: modelSelection,
+            implementationThread: target,
+            parallelism: 2,
+          },
+        }),
+      });
+      expect(fixture.updateDraft).toHaveBeenCalledWith(`${environmentId}:${ownerThreadId}`, {
+        composerMode: "default",
+        interactionMode: "default",
+      });
+      expect(fixture.enqueue).not.toHaveBeenCalled();
+      if (target === "new") {
+        expect(fixture.navigate).toHaveBeenCalledWith({
+          environmentId,
+          threadId: deriveDeepPlanImplementationThreadId(run.id, 1),
+        });
+      } else {
+        expect(fixture.navigate).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it.each(["ios", "android"])(
-    "keeps project chats included and edits additional archived sources on %s",
+    "keeps project chats opt-in when selecting chats on %s",
     (platform) => {
       fixture.platform = platform;
-      const additional = source(1, {
-        origin: {
-          environmentId: EnvironmentId.make("remote"),
-          projectId: ProjectId.make("other-project"),
-          threadId: ThreadId.make("chat-other"),
-        },
-        projectTitle: "Mobile project",
-        threadTitle: "Archived design decisions",
-        archived: true,
-      });
+      const additional = source(1, true);
       let selected: ReadonlyArray<DeepPlanSourceRef> = [];
-      let includeProjectChats = true;
+      let includeProjectChats = false;
       const sheet = () =>
         render(() =>
           DeepPlanSourceSheet({
@@ -432,281 +616,108 @@ describe("native Deep Planning", () => {
             sources: [source(0), additional],
             selected,
             includeProjectChats,
-            loading: false,
-            error: null,
             onChange: (next, include) => {
               selected = next;
               includeProjectChats = include;
             },
-            onRetry: vi.fn(),
             onClose: vi.fn(),
           }),
         );
-      const initial = sheet();
-      const base = hosts(initial, "pressable").find(
+      press(sheet(), "Chat 0");
+      expect(selected).toEqual([source(0).origin]);
+      hosts(sheet(), "switch")[0]?.props.onValueChange?.(true);
+      const included = sheet();
+      expect(includeProjectChats).toBe(true);
+      expect(selected).toEqual([]);
+      const base = hosts(included, "pressable").find(
         (item) => item.props.accessibilityRole === "checkbox" && item.props.disabled,
       );
       expect(base?.props.accessibilityState?.checked).toBe(true);
-      press(initial, "Archived design decisions");
-      expect(selected).toEqual([additional.origin]);
-      const search = hosts(sheet(), "input")[0];
-      search?.props.onChangeText?.("Mobile project");
+      hosts(sheet(), "input")[0]?.props.onChangeText?.("Linked project");
       const filtered = sheet();
       expect(text(filtered)).not.toContain("Chat 0");
-      expect(text(filtered)).toContain("Archived design decisions");
-      press(filtered, "Archived design decisions");
-      expect(selected).toEqual([]);
-
-      hosts(sheet(), "input")[0]?.props.onChangeText?.("");
-      hosts(sheet(), "switch")[0]?.props.onValueChange?.(false);
-      const manual = sheet();
-      expect(includeProjectChats).toBe(false);
-      expect(text(manual)).toContain("Only the chats you select are used");
-      press(manual, "Chat 0");
-      expect(selected).toEqual([source(0).origin]);
-      hosts(sheet(), "switch")[0]?.props.onValueChange?.(true);
-      expect(includeProjectChats).toBe(true);
-      expect(selected).toEqual([]);
+      press(filtered, "Chat 1");
+      expect(selected).toEqual([additional.origin]);
     },
   );
 
-  it("expands step requirements and shows updated evidence without losing the open step", () => {
-    let run = runFixture();
-    const checklist = () => render(() => DeepPlanChecklist({ environmentId, run }));
-    expect(text(checklist())).toContain("12 of 28 sources analyzed");
-    expect(text(checklist())).not.toContain("Selections survive reconnect");
-    press(checklist(), "Choose sources");
-    expect(text(checklist())).toContain("Selections survive reconnect");
-    expect(text(checklist())).toContain("No evidence recorded");
-    run = {
-      ...run,
-      stepStates: [
-        {
-          stepId: "source-picker",
-          status: "verified",
-          evidence: [{ kind: "test", summary: "Reconnect test passed", createdAt: now }],
-          updatedAt: now,
-        },
-      ],
-    };
-    const updated = checklist();
-    expect(text(updated)).toContain("Reconnect test passed");
-    expect(text(updated)).toContain("1 of 2 verified");
-    press(updated, "Collapse checklist");
-    expect(text(checklist())).not.toContain("Choose sources");
-    press(checklist(), "Expand checklist");
-    expect(text(checklist())).toContain("Reconnect test passed");
-  });
-
-  it("shows partial read progress and keeps a fully read chat pending until its summary is saved", () => {
-    const base = runFixture();
-    const source = { ...base.sources[0]!, recordCount: 100 };
-    let run: DeepPlanRun = {
-      ...base,
-      phase: "planning",
-      plan: null,
-      approval: null,
-      sources: [source],
-      sourceCoverage: [
-        {
-          ...base.sourceCoverage[0]!,
-          status: "ready",
-          summary: null,
-          importedRecordCount: 100,
-          readRecordCount: 37,
-        },
-      ],
-    };
-    const checklist = () => render(() => DeepPlanChecklist({ environmentId, run }));
-    expect(text(checklist())).toContain(source.threadTitle);
-    expect(text(checklist())).toContain("Reading · 37%");
-    expect(text(checklist())).toContain("0 of 1 sources analyzed");
-    run = { ...run, sourceCoverage: [{ ...run.sourceCoverage[0]!, readRecordCount: 100 }] };
-    expect(text(checklist())).toContain("Read · summary pending");
-    expect(text(checklist())).toContain("0 of 1 sources analyzed");
-    run = {
-      ...run,
-      sourceCoverage: [
-        {
-          ...run.sourceCoverage[0]!,
-          status: "summarized",
-          summary: base.sourceCoverage[0]!.summary,
-        },
-      ],
-    };
-    expect(text(checklist())).toContain("1 of 1 sources analyzed");
-    expect(text(checklist())).not.toContain("Read · summary pending");
-  });
-
-  it("shows source failures and final validation evidence as separate progress", () => {
-    const original = runFixture();
-    const run: DeepPlanRun = {
-      ...original,
-      phase: "blocked",
-      pauseReason: "Source collection failed",
-      sourceCoverage: [
-        {
-          ...original.sourceCoverage[0]!,
-          status: "unavailable",
-          error: "Remote source disconnected",
-        },
-      ],
-      finalValidation: {
-        ...original.finalValidation,
-        status: "failed",
-        evidence: [
-          { kind: "test", summary: "Final validation found a regression", createdAt: now },
-        ],
-      },
-    };
-    const result = render(() => DeepPlanChecklist({ environmentId, run }));
-    expect(text(result)).toContain("Source collection failed");
-    expect(text(result)).toContain("Remote source disconnected");
-    expect(text(result)).toContain("Final validation found a regression");
-    expect(text(result)).toContain("0 of 2 verified");
-  });
-
-  it("keeps a blocked run visible when Resume fails and makes retry available", async () => {
-    let run: DeepPlanRun = {
-      ...runFixture(),
-      phase: "blocked" as const,
-      pauseReason: "Validation needs another check",
-    };
-    const resume = vi.fn(async () => {
-      throw new Error("Reconnect to resume this run");
+  it("lists linked archived and local chats without exposing hidden or unlinked threads", () => {
+    const unlinked = EnvironmentId.make("unlinked");
+    fixture.environments = [environmentId, remoteEnvironmentId, unlinked].map((id) => ({
+      environmentId: id,
+      environmentLabel: id,
+      connectionState: "connected",
+    }));
+    fixture.links.set(remoteEnvironmentId, "Linked");
+    const thread = (id: ThreadId, title: string, env: EnvironmentId) => ({
+      id,
+      title,
+      projectId,
+      environmentId: env,
+      archivedAt: null,
+      deletedAt: null,
+      lineage: { parentThreadId: null, relationshipToParent: null },
     });
-    const checklist = () =>
-      render(() => DeepPlanChecklist({ environmentId, run, onResume: resume }));
-    await press(checklist(), "Resume");
-    const failed = checklist();
-    expect(text(failed)).toContain("Validation needs another check");
-    expect(text(failed)).toContain("Reconnect to resume this run");
-    expect(
-      hosts(failed, "pressable").find((button) => text(button) === "Resume")?.props.disabled,
-    ).toBe(false);
-    run = { ...run, revision: run.revision + 1, phase: "implementing", pauseReason: null };
-    expect(text(checklist())).not.toContain("Reconnect to resume this run");
+    fixture.shells = [
+      thread(ownerThreadId, "Owner chat", environmentId),
+      thread(ThreadId.make("local"), "Local chat", environmentId),
+      thread(ThreadId.make("unlinked"), "Unlinked chat", unlinked),
+      {
+        ...thread(reviewThreadId, "Hidden review", environmentId),
+        lineage: { parentThreadId: ownerThreadId, relationshipToParent: "subagent" },
+      },
+    ];
+    fixture.archives = [
+      {
+        environmentId: remoteEnvironmentId,
+        snapshot: {
+          projects: [{ id: projectId, title: "Linked project" }],
+          threads: [
+            {
+              ...thread(ThreadId.make("archived"), "Archived linked chat", remoteEnvironmentId),
+              archivedAt: now,
+            },
+          ],
+        },
+      },
+    ];
+    const picker = () =>
+      render(() =>
+        DeepPlanSources({
+          environmentId,
+          projectId,
+          threadId: ownerThreadId,
+          selected: [],
+          includeProjectChats: false,
+          onChange: vi.fn(),
+        }),
+      );
+    press(picker(), "Add chats");
+    const list = text(picker());
+    expect(list).toContain("Local chat");
+    expect(list).toContain("Archived linked chat");
+    expect(list).not.toContain("Owner chat");
+    expect(list).not.toContain("Unlinked chat");
+    expect(list).not.toContain("Hidden review");
   });
-});
 
-it("automatically continues idle work once and waits while the provider is busy", async () => {
-  const run = runFixture();
-  const resume = vi.fn(async () => {});
-  const effects: Array<() => void> = [];
-  fixture.effects = effects;
-  const checklist = (canContinue: boolean) => {
-    effects.length = 0;
-    const result = render(() =>
-      DeepPlanChecklist({ environmentId, run, canContinue, onResume: resume }),
-    );
-    for (const effect of effects) effect();
-    return result;
-  };
-  try {
-    checklist(false);
-    expect(resume).not.toHaveBeenCalled();
-    const idle = checklist(true);
-    await resume.mock.results[0]?.value;
-    expect(resume).toHaveBeenCalledExactlyOnceWith(true);
-    expect(hosts(idle, "pressable").some((button) => text(button) === "Resume")).toBe(true);
-    checklist(true);
-    expect(resume).toHaveBeenCalledTimes(1);
-  } finally {
-    fixture.effects = null;
-  }
-});
-
-it("shows named source references and dependencies in the embedded checklist", async () => {
-  const initial = runFixture();
-  const sourceId = initial.sources[0]!.sourceId;
-  const run = {
-    ...initial,
-    plan: {
-      ...initial.plan!,
-      steps: initial.plan!.steps.map((step) => ({
-        ...step,
-        sources: [{ sourceId, recordIds: ["internal-message-reference"] }],
-        acceptanceCriteria: step.acceptanceCriteria.map((criterion) => ({
-          ...criterion,
-          sources: [{ sourceId, recordIds: ["internal-message-reference"] }],
-        })),
-      })),
-    },
-  };
-  const checklist = () => render(() => DeepPlanChecklist({ environmentId, run, embedded: true }));
-  await press(checklist(), "Show checklist");
-  const result = checklist();
-  expect(text(result)).toContain("Depends on");
-  expect(text(result)).toContain("Choose sources");
-  expect(text(result)).toContain("T3 Code / Chat 0");
-  expect(text(result)).toContain("Show durable step evidence");
-  expect(text(result)).toContain("Run focused native interaction tests");
-  expect(text(result)).not.toContain("internal-message-reference");
-  expect(text(result)).not.toContain(sourceId);
-});
-
-it("does not automatically repeat a manual Resume as the run becomes active", async () => {
-  let run: DeepPlanRun = { ...runFixture(), phase: "paused" };
-  const resume = vi.fn(async () => {});
-  const effects: Array<() => void> = [];
-  fixture.effects = effects;
-  const checklist = (canContinue = true) => {
-    effects.length = 0;
-    const result = render(() =>
-      DeepPlanChecklist({
+  it("keeps chosen chats removable at the selection limit", () => {
+    const sources = Array.from({ length: DEEP_PLAN_MAX_CHATS + 1 }, (_, index) => source(index));
+    const sheet = render(() =>
+      DeepPlanSourceSheet({
         environmentId,
-        run,
-        canContinue,
-        resumeDisabled: !canContinue,
-        onResume: resume,
+        projectId,
+        sources,
+        selected: sources.slice(0, DEEP_PLAN_MAX_CHATS).map((item) => item.origin),
+        includeProjectChats: false,
+        onChange: vi.fn(),
+        onClose: vi.fn(),
       }),
     );
-    for (const effect of effects) effect();
-    return result;
-  };
-  try {
-    await press(checklist(), "Resume");
-    await resume.mock.results[0]?.value;
-    run = { ...run, phase: "implementing", revision: run.revision + 1 };
-    checklist(false);
-    checklist();
-    expect(resume).toHaveBeenCalledTimes(1);
-  } finally {
-    fixture.effects = null;
-  }
-});
-
-it.each([false, true])(
-  "retains native checklist expansion %s across remounts and chat switches",
-  (expanded) => {
-    const run = runFixture();
-    const implementationThreadId = ThreadId.make("implementation");
-    const checklist = (currentEnvironmentId = environmentId, threadId = implementationThreadId) =>
-      render(() => DeepPlanChecklist({ run, environmentId: currentEnvironmentId, threadId }));
-    press(checklist(), "Collapse checklist");
-    if (expanded) press(checklist(), "Expand checklist");
-
-    fixture.states = [];
-    expect(hosts(checklist(), "scroll-view").length > 0).toBe(expanded);
-    expect(hosts(checklist(environmentId, run.threadId), "scroll-view").length).toBeGreaterThan(0);
-    expect(hosts(checklist(EnvironmentId.make("remote")), "scroll-view").length).toBeGreaterThan(0);
-    expect(hosts(checklist(), "scroll-view").length > 0).toBe(expanded);
-  },
-);
-
-it("keeps native Resume and retry errors available with a collapsed checklist", async () => {
-  const run = { ...runFixture(), phase: "paused" as const, pauseReason: "Reconnect to continue." };
-  const resume = vi.fn(async () => {
-    throw new Error("Connection is still unavailable.");
+    const chats = hosts(sheet, "pressable").filter(
+      (item) => item.props.accessibilityRole === "checkbox",
+    );
+    expect(chats[0]?.props.disabled).toBe(false);
+    expect(chats.at(-1)?.props.disabled).toBe(true);
   });
-  const checklist = () => render(() => DeepPlanChecklist({ environmentId, run, onResume: resume }));
-  press(checklist(), "Collapse checklist");
-  expect(hosts(checklist(), "scroll-view")).toHaveLength(0);
-  await press(checklist(), "Resume");
-  expect(resume).toHaveBeenCalledTimes(1);
-  expect(text(checklist())).toContain("Connection is still unavailable.");
-  expect(text(checklist())).toContain("Reconnect to continue.");
-  expect(
-    hosts(checklist(), "pressable").find((entry) => text(entry) === "Resume")?.props.disabled,
-  ).toBe(false);
 });

@@ -32,27 +32,31 @@ describe("Deep Planning interface catalog", () => {
     }
   });
 
-  it("interpolates progress, accessible source actions, and revision counts", () => {
+  it("interpolates review rounds, accessible chat actions, and verified step counts", () => {
     expect(
-      translateInterfaceMessage("de", "chat.deepPlan.analysisProgress", { completed: 3, total: 5 }),
-    ).toBe("3 von 5 Quellen analysiert");
+      translateInterfaceMessage("de", "chat.deepPlan.status.completed", { completed: 5, total: 5 }),
+    ).toBe("Fertig · 5/5 verifiziert");
     expect(
       translateInterfaceMessage("fr", "chat.deepPlan.removeSource", { title: "Recherche" }),
     ).toBe("Retirer Recherche");
     expect(
-      translateInterfaceMessage("de", "chat.deepPlan.sourceVersion", { count: 2, version: 4 }),
-    ).toBe("2 Quellen · Version 4");
+      translateInterfaceMessage("fr", "chat.deepPlan.status.reviewStep", {
+        step: 3,
+        round: 2,
+        limit: 6,
+      }),
+    ).toBe("Vérification de l’étape 3 (passage 2/6)");
   });
 
-  it("uses singular source labels for one source", () => {
+  it("uses singular labels for one chat or lane", () => {
     expect(translateInterfaceMessage("en", "chat.deepPlan.projectSources", { count: 1 })).toBe(
       "1 project chat",
     );
     expect(translateInterfaceMessage("de", "chat.deepPlan.sourceCount", { count: 1 })).toBe(
       "1 Chat",
     );
-    expect(translateInterfaceMessage("fr", "chat.deepPlan.missingSources", { count: 1 })).toBe(
-      "1 source n’a pas pu être analysée",
+    expect(translateInterfaceMessage("fr", "chat.deepPlan.laneCount", { count: 1 })).toBe(
+      "1 piste",
     );
   });
 });

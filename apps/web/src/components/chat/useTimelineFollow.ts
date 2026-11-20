@@ -335,18 +335,16 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     // list lands short of the real end.
     requestAnimationFrame(() => {
       const list = legendListRef.current;
-      if (!list) return;
+      const scrollSuperseded = () =>
+        visitScrollRef.current?.visit !== visit ||
+        readCurrentFollow().mode !== "following" ||
+        legendListRef.current !== list;
+      if (!list || scrollSuperseded()) return;
       void Promise.resolve(
         list.scrollToEnd?.({
           animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
         }),
-      ).then(() =>
-        settleListScroll(
-          list,
-          measuredEndOffset,
-          () => readCurrentFollow().mode !== "following" || legendListRef.current !== list,
-        ),
-      );
+      ).then(() => settleListScroll(list, measuredEndOffset, scrollSuperseded));
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);

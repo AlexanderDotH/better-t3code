@@ -8,11 +8,17 @@ import { buildOpenAiSystemInstructions } from "./openai/OpenAiAdapterSystemPromp
 import { buildOpenRouterSystemInstructions } from "./openrouter/OpenRouterAdapter.ts";
 
 describe("Deep Plan provider instructions", () => {
+  it("requires a separate reviewer after implementation submits its changes", () => {
+    const text = buildDeepPlanInstructions({ phase: "execution" });
+    expect(text).toContain("deep_plan_submit");
+    expect(text).not.toContain("do not request an independent reviewer");
+    expect(text).not.toContain("deep_plan_step_update");
+  });
+
   it("explicitly ends obsolete Deep Plan requirements for an unbound turn", () => {
     const text = buildDeepPlanInstructions(undefined);
     expect(text).toContain("Deep Plan is inactive for this turn");
-    expect(text).toContain("source-collection errors");
-    expect(text).toContain("do not require Deep Plan tools or registration");
+    expect(text).toContain("Previous Deep Plan requirements have expired");
     expect(text).not.toContain("Start with deep_plan_state");
     for (const mode of ["default", "plan"] as const) {
       const context = buildCodexAdditionalContext(
@@ -35,71 +41,36 @@ describe("Deep Plan provider instructions", () => {
     }
   });
 
-  it("requires bounded parallel analysis and inherits composer permissions", () => {
+  it("requires planners to explore, read selected chats and resolve decisions before proposing", () => {
     const text = buildDeepPlanInstructions({ phase: "planning" });
-    expect(text).toContain("deep_plan_analyze_sources");
-    expect(text).toContain("Keep calling it until complete");
-    expect(text).toContain("Never silently fall back to sequential analysis");
-    expect(text).toContain("composer's permission mode governs other tools");
+    expect(text).toContain("deep_plan_explore");
+    expect(text).toContain("t3_thread_read");
+    expect(text).toContain("historical evidence");
+    expect(text).toContain("ask the user to resolve any material conflict or open decision");
+    expect(text).toContain("checkMethod");
+    expect(text).toContain("Wait for the user to approve");
+    expect(text.indexOf("deep_plan_explore")).toBeLessThan(text.indexOf("t3_thread_read"));
   });
 
-  it("gives source workers a narrow analysis contract instead of plan publication", () => {
-    const text = buildDeepPlanInstructions({
-      phase: "planning",
-      sourceAnalysis: { sourceIds: ["source-a", "source-b"] },
+  it("gives reviewers an independent context and requires scoped findings and a verdict", () => {
+    const text = buildDeepPlanInstructions({ phase: "review", readOnly: true });
+    expect(text).toContain("Start with deep_plan_review_context");
+    expect(text).toContain("check every criterion yourself");
+    expect(text).toContain("Search for reusable helpers and services");
+    expect(text).toContain("Cite the violated rule");
+    expect(text).toContain("Keep workspace files unchanged");
+    expect(text).toContain("deep_plan_review_verdict");
+    expect(text).not.toContain("deep_plan_submit");
+    expect(text).toContain("Run the relevant checks");
+    const readOnlyReview = buildRuntimeInstructions({
+      harness: "Cursor",
+      interactionMode: "plan",
+      deepPlan: { phase: "review", readOnly: true },
     });
-    expect(text).toContain('["source-a","source-b"]');
-    expect(text).toContain("read-only");
-    expect(text).toContain("Do not edit");
-    expect(text).not.toContain("Publish a structured");
-    expect(text).not.toContain("deep_plan_analyze_sources");
+    expect(readOnlyReview).toContain("commands and checks are unavailable");
+    expect(readOnlyReview).toContain("check results reported in the submission");
+    expect(readOnlyReview).not.toContain("Run the relevant checks");
   });
-
-  it.each(["execution", "validation"] as const)(
-    "keeps an explicitly readonly %s turn focused on review",
-    (phase) => {
-      const text = buildDeepPlanInstructions({ phase, readOnly: true });
-      expect(text).toContain("read-only review of the approved plan");
-      expect(text).toContain(
-        "without implementing steps, editing workspace files, or running mutating commands",
-      );
-      expect(text).toContain("Deep Plan tools may persist review findings");
-      expect(text).toContain("Continue implementation only in a later execution turn");
-      expect(text).not.toContain("Implement only the approved plan version");
-      expect(text).not.toContain("Validate the complete approved outcome automatically");
-    },
-  );
-
-  it("requires frozen full-chat coverage, current-task precedence, and explicit user approval", () => {
-    const text = buildDeepPlanInstructions({ phase: "planning" });
-    expect(text).toContain("read every page");
-    expect(text).toContain(
-      "requirements, decisions, open issues, rejected approaches, and conflicts",
-    );
-    expect(text).toContain("The current task wins over history");
-    expect(text).toContain(
-      "Do not carry resolved, superseded, or unrelated blockers into the current task",
-    );
-    expect(text).toContain("ask the user about meaningful unresolved conflicts");
-    expect(text).toContain("Every step needs an acceptance criterion and a concrete check");
-    expect(text).toContain("Wait for the user to approve its exact version");
-    expect(text).toContain("Planning is read-only");
-    expect(text).toContain("Deep Plan tools may persist");
-  });
-
-  it.each(["execution", "validation"] as const)(
-    "requires the implementing agent to validate %s",
-    (phase) => {
-      const text = buildDeepPlanInstructions({ phase });
-      expect(text).toContain("automatically");
-      expect(text).toContain("same agent and model");
-      expect(text).toContain("do not request an independent reviewer");
-      expect(text).toContain(
-        "Only recorded passing evidence and final validation complete this run",
-      );
-      expect(text).toContain("deep_plan_adjust_procedure");
-    },
-  );
 
   it("retains Codex policy in application context independently of mode catalog text", () => {
     const context = buildCodexAdditionalContext(
@@ -125,7 +96,7 @@ describe("Deep Plan provider instructions", () => {
     expect(context.t3_code_deep_plan?.kind).toBe("application");
     expect(
       buildRuntimeInstructions({ harness: "Claude", deepPlan: { phase: "execution" } }),
-    ).toContain("deep_plan_step_update");
+    ).toContain("deep_plan_submit");
     expect(buildRuntimeInstructions({ harness: "Claude" })).not.toContain("<deep_plan>");
   });
 
@@ -144,19 +115,21 @@ describe("Deep Plan provider instructions", () => {
     },
   );
   it.each([buildOpenAiSystemInstructions, buildOpenRouterSystemInstructions])(
-    "honors readonly execution bindings in native instructions",
+    "honors read-only review bindings in native instructions",
     (build) => {
       const text = build({
         cwd: "/workspace",
         sandboxMode: "danger-full-access",
         interactionMode: "default",
         fetchWorker: false,
-        deepPlan: { phase: "execution", readOnly: true },
+        deepPlan: { phase: "review", readOnly: true },
       });
       expect(text).toContain(
         "Read-only: inspect the workspace but do not modify files or run mutating commands",
       );
-      expect(text).toContain("read-only review of the approved plan");
+      expect(text).toContain("independent Deep Plan reviewer");
+      expect(text).toContain("run the relevant checks with the available tools");
+      expect(text).not.toContain("decision-complete plan");
       expect(text).not.toContain("Prefer workspace_edit");
       expect(text).not.toContain("Implement only the approved plan version");
     },

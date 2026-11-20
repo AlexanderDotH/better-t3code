@@ -6,11 +6,15 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
   ProjectionRecords,
+  ProjectionStoreV2Error,
   ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import {
   type ChatAttachment,
   CommandId,
+  type InlineReplyPage,
+  type InlineReplyStreamItem,
+  type OrchestrationV2DomainEvent,
   isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
@@ -53,6 +57,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -62,6 +67,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { coalesceThreadLiveStream } from "./ThreadLiveEventCoalescer.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -359,6 +365,19 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly getInlineReplyPage: (input: {
+    readonly threadId: ThreadId;
+    readonly before?: string;
+  }) => Effect.Effect<
+    InlineReplyPage,
+    ProjectionStoreV2Error | Orchestrator.OrchestratorProjectionError
+  >;
+  readonly subscribeInlineReplies: (input: {
+    readonly threadId: ThreadId;
+  }) => Stream.Stream<
+    InlineReplyStreamItem,
+    ProjectionStoreV2Error | Orchestrator.OrchestratorV2Error
+  >;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, Orchestrator.OrchestratorV2Error>;
@@ -636,6 +655,163 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+
+  const hydrateInlineReplyTranscripts = Effect.fn(
+    "ThreadManagementService.hydrateInlineReplyTranscripts",
+  )(function* (threadId: ThreadId) {
+    let after: ThreadId | undefined;
+    for (;;) {
+      const pending = yield* orchestrator.listPendingInlineReplyTranscripts({
+        threadId,
+        ...(after === undefined ? {} : { after }),
+      });
+      after = pending.at(-1);
+      if (after === undefined) return;
+      yield* Effect.forEach(pending, ensureProjectionTranscript, { discard: true });
+    }
+  });
+
+  const getInlineReplyPage: ThreadManagementServiceShape["getInlineReplyPage"] = Effect.fn(
+    "ThreadManagementService.getInlineReplyPage",
+  )(function* (input) {
+    yield* hydrateInlineReplyTranscripts(input.threadId);
+    return yield* orchestrator.getInlineReplyPage(input);
+  });
+
+  const streamRemovedInlineReplyMessages = (input: {
+    readonly threadId: ThreadId;
+    readonly childThreadId: ThreadId;
+    readonly sequence: number;
+    readonly runId?: RunId;
+  }) =>
+    Stream.paginate<MessageId | undefined, InlineReplyStreamItem, ProjectionStoreV2Error>(
+      undefined,
+      (after) =>
+        orchestrator
+          .listRemovedInlineReplyMessages({
+            threadId: input.threadId,
+            childThreadId: input.childThreadId,
+            ...(input.runId === undefined ? {} : { runId: input.runId }),
+            ...(after === undefined ? {} : { after }),
+          })
+          .pipe(
+            Effect.map((messageIds) => {
+              const last = messageIds.at(-1);
+              return last === undefined
+                ? [[], Option.none()]
+                : [
+                    [
+                      {
+                        kind: "remove",
+                        sequence: input.sequence,
+                        threadId: input.childThreadId,
+                        messageIds,
+                      },
+                    ],
+                    Option.some(last),
+                  ];
+            }),
+          ),
+    );
+
+  const subscribeInlineReplies: ThreadManagementServiceShape["subscribeInlineReplies"] = ({
+    threadId,
+  }) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const initialScope = yield* orchestrator.getInlineReplyScope(threadId);
+        const page = yield* getInlineReplyPage({ threadId });
+        const scope = yield* orchestrator.getInlineReplyScope(threadId);
+        if (initialScope?.projectId !== scope?.projectId) return Stream.empty;
+        const snapshot = Stream.succeed<InlineReplyStreamItem>({ kind: "snapshot", page });
+        if (scope === null) return Stream.concat(snapshot, Stream.never);
+
+        const children = new Set(scope.childThreadIds);
+        const parentChangedProject = (event: OrchestrationV2DomainEvent) =>
+          event.type === "thread.metadata-updated" &&
+          event.threadId === threadId &&
+          event.payload.projectId !== scope.projectId;
+        // Replay bridges a topic created after the membership query.
+        const live = orchestrator
+          .streamStoredEventsFrom({
+            afterSequence: page.snapshotSequence,
+            filter: (event) => {
+              if (parentChangedProject(event)) return true;
+              if (event.type === "thread.created" || event.type === "thread.deleted") {
+                const linked =
+                  event.payload.projectId === scope.projectId &&
+                  event.payload.messageReply?.sourceThreadId === threadId;
+                if (linked && event.type === "thread.created" && event.payload.deletedAt === null) {
+                  children.add(event.threadId);
+                }
+                return (
+                  linked &&
+                  (event.type === "thread.deleted" || event.payload.historyOrigin === "v1_import")
+                );
+              }
+              if (!children.has(event.threadId)) return false;
+              return (
+                (event.type === "turn-item.updated" &&
+                  (event.payload.type === "user_message" ||
+                    event.payload.type === "assistant_message")) ||
+                (event.type === "run.updated" &&
+                  (event.payload.status === "rolled_back" || event.payload.status === "cancelled"))
+              );
+            },
+          })
+          .pipe(
+            Stream.takeWhile(({ event }) => !parentChangedProject(event)),
+            Stream.map(({ sequence, event }) => ({ kind: "event" as const, sequence, event })),
+            coalesceThreadLiveStream,
+            Stream.catchTags({
+              LiveStreamBufferError: (cause) =>
+                Stream.fail(new Orchestrator.OrchestratorDomainEventStreamError({ cause })),
+            }),
+            Stream.flatMap(
+              (
+                input,
+              ): Stream.Stream<
+                InlineReplyStreamItem,
+                ProjectionStoreV2Error | Orchestrator.OrchestratorProjectionError
+              > => {
+                if (input.kind !== "event") return Stream.empty;
+                const { event, sequence } = input;
+                if (event.type === "turn-item.updated") {
+                  return Stream.fromEffect(
+                    orchestrator.getInlineReplyRow({
+                      threadId,
+                      childThreadId: event.threadId,
+                      itemId: event.payload.id,
+                    }),
+                  ).pipe(
+                    Stream.filterMap((row) =>
+                      row === null
+                        ? Result.fail(undefined)
+                        : Result.succeed({ kind: "upsert", sequence, rows: [row] } as const),
+                    ),
+                  );
+                }
+                if (event.type === "thread.created") {
+                  return Stream.fromEffect(hydrateInlineReplyTranscripts(threadId)).pipe(
+                    Stream.drain,
+                  );
+                }
+                if (event.type === "thread.deleted" || event.type === "run.updated") {
+                  if (event.type === "thread.deleted") children.delete(event.threadId);
+                  return streamRemovedInlineReplyMessages({
+                    threadId,
+                    childThreadId: event.threadId,
+                    sequence,
+                    ...(event.type === "run.updated" ? { runId: event.payload.id } : {}),
+                  });
+                }
+                return Stream.empty;
+              },
+            ),
+          );
+        return Stream.concat(snapshot, live);
+      }),
+    ).pipe(Stream.forever);
 
   const ensureCommandTranscripts = Effect.fn(
     "orchestrationV2.threadManagement.ensureCommandTranscripts",
@@ -1476,6 +1652,8 @@ const make = Effect.gen(function* () {
 
   return ThreadManagementService.of({
     ensureLegacyTranscript,
+    getInlineReplyPage,
+    subscribeInlineReplies,
     searchThreadStream: (input) =>
       Stream.unwrap(
         ensureProjectionTranscript(input.threadId).pipe(

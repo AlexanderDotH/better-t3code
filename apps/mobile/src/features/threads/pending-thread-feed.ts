@@ -76,13 +76,17 @@ export function createThreadFeedGrouping() {
     };
     return feed.map((entry, index) => {
       const message = groupingMessage(index);
+      const adjacentInTopic = (offset: -1 | 1) => {
+        const adjacent = groupingMessage(index + offset);
+        return adjacent?.replyTopicId === message?.replyTopicId ? adjacent : undefined;
+      };
       const grouping =
         message === undefined
           ? ungrouped
           : resolveUserMessageGrouping(
               message,
-              index - 1 === options.setupAnchorIndex ? undefined : groupingMessage(index - 1),
-              index === options.setupAnchorIndex ? undefined : groupingMessage(index + 1),
+              index - 1 === options.setupAnchorIndex ? undefined : adjacentInTopic(-1),
+              index === options.setupAnchorIndex ? undefined : adjacentInTopic(1),
             );
       const previous = rows.get(entry);
       if (

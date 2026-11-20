@@ -2,6 +2,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  DeepPlanRunId,
   MessageId,
   ContextHandoffId,
   ProviderThreadId,
@@ -28,6 +29,8 @@ import {
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
+  withoutDeepPlanFromShellStream,
+  withoutDeepPlanFromThreadStream,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
@@ -101,7 +104,7 @@ describe("orchestration V2 wire projection", () => {
     expect(item.output.data).toBe("private-image-data");
   });
 
-  it("keeps transcript bodies out of shell rows", () => {
+  it("keeps transcript bodies and legacy-incompatible Deep Plan state out of shell rows", () => {
     const now = DateTime.makeUnsafe("2026-08-13T00:00:00.000Z");
     const threadId = ThreadId.make("thread-shell-budget");
     const projection = {
@@ -154,6 +157,41 @@ describe("orchestration V2 wire projection", () => {
 
     expect(shell.latestVisibleMessage).toBeNull();
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
+
+    const deepPlan = {
+      schemaVersion: 1,
+      kind: "legacy",
+      id: DeepPlanRunId.make("legacy-plan"),
+      threadId,
+      goal: "Earlier plan",
+      updatedAt: DateTime.formatIso(now),
+    } as const;
+    const shellUpdate = {
+      kind: "thread.updated",
+      location: "active",
+      sequence: 1,
+      thread: { ...shell, deepPlan },
+    } as const;
+    const event = {
+      kind: "event",
+      sequence: 2,
+      event: {
+        id: EventId.make("legacy-plan-event"),
+        type: "thread.deep-plan-updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...projection.thread, deepPlan },
+      },
+    } as const;
+    expect(withoutDeepPlanFromShellStream(shellUpdate)).toMatchObject({
+      sequence: 1,
+      thread: { id: threadId, deepPlan: null },
+    });
+    expect(withoutDeepPlanFromThreadStream(event)).toMatchObject({
+      sequence: 2,
+      event: { payload: { id: threadId, deepPlan: null } },
+    });
+    expect(shellUpdate.thread.deepPlan).toEqual(deepPlan);
   });
 
   it("omits even small dynamic tool results while retaining input", () => {

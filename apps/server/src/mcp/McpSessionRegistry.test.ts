@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DeepPlanRunId,
-  DeepPlanSourceId,
+  RunId,
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
@@ -241,24 +241,25 @@ it.effect.each(["provider-session", "thread", "all"] as const)(
     }),
 );
 
-it.effect("keeps source-worker grants bound to their owner and planning thread", () =>
+it.effect("keeps reviewer grants scoped to their thread and denies workspace writes", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
-    const workerThreadId = ThreadId.make("source-worker");
+    const workerThreadId = ThreadId.make("plan-reviewer");
     const runThreadId = ThreadId.make("plan-owner");
     const binding = {
       runId: DeepPlanRunId.make("plan-run"),
       runThreadId,
-      approvedPlanVersion: null,
-      phase: "planning" as const,
-      readOnly: true,
-      sourceAnalysis: { workerThreadId, sourceIds: [DeepPlanSourceId.make("frozen-source")] },
+      approvedPlanVersion: 1,
+      phase: "review" as const,
+      readOnly: true as const,
+      turnId: RunId.make("review-turn"),
+      review: { target: { kind: "final" as const }, round: 1 },
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "synthetic-model" },
     };
     const issued = yield* registry.issue({
       threadId: workerThreadId,
       providerInstanceId: binding.modelSelection.instanceId,
-      workspaceContextThreadId: runThreadId,
+      workspaceContextThreadId: workerThreadId,
       deepPlan: binding,
       workspaceWriteEnabled: true,
       projectMemoryEnabled: false,
@@ -267,7 +268,7 @@ it.effect("keeps source-worker grants bound to their owner and planning thread",
     const scope = yield* registry.resolve(token);
     expect(scope).toMatchObject({
       ownerThreadId: workerThreadId,
-      workspaceContextThreadId: runThreadId,
+      workspaceContextThreadId: workerThreadId,
       thread: { threadId: workerThreadId },
       deepPlan: binding,
       projectMemoryEnabled: false,
@@ -275,7 +276,7 @@ it.effect("keeps source-worker grants bound to their owner and planning thread",
     const read = yield* Invocation.requireWorkspaceMcpCapability().pipe(
       Effect.provideService(Invocation.McpInvocationContext, scope!),
     );
-    expect(read.threadId).toBe(runThreadId);
+    expect(read.threadId).toBe(workerThreadId);
     const denied = yield* Invocation.requireWorkspaceWriteMcpCapability().pipe(
       Effect.provideService(Invocation.McpInvocationContext, scope!),
       Effect.flip,

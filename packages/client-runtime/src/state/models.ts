@@ -2,7 +2,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
-  DeepPlanRun,
+  StoredDeepPlanRun,
   DeepPlanExecutionContext,
   OrchestrationHarnessSyncState,
   OrchestrationV2MessageReply,
@@ -143,7 +143,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 }
 
 export interface EnvironmentThreadShell {
-  readonly deepPlan?: DeepPlanRun | null;
+  readonly deepPlan?: StoredDeepPlanRun | null;
   readonly deepPlanExecution?: DeepPlanExecutionContext;
   readonly harnessSync?: OrchestrationHarnessSyncState | null;
   readonly messageReply?: OrchestrationV2MessageReply;

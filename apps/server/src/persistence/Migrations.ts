@@ -11,6 +11,7 @@ import ForkMigration0067 from "./Migrations/067_DeepPlanSources.ts";
 import ForkMigration0068, {
   ensureFrozenMessageEditLookupIndex,
 } from "./Migrations/068_LegacyV1RecoveryArchive.ts";
+import ForkMigration0069 from "./Migrations/069_DropDeepPlanSources.ts";
 import { migrationManifest as legacyForkManifest } from "./Migrations/LegacyForkMigrations.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -233,6 +234,7 @@ const forkMigrationEntries = [
   [66, "ProjectionThreadDeepPlan", ForkMigration0066],
   [67, "DeepPlanSources", ForkMigration0067],
   [68, "LegacyV1RecoveryArchive", ForkMigration0068],
+  [69, "DropDeepPlanSources", ForkMigration0069],
 ] as const;
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
 

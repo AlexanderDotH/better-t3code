@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
     readonly dispose: () => void;
   } | null,
   start: vi.fn(),
+  dispatchDeepPlan: vi.fn(),
   metadata: vi.fn(),
   runtime: vi.fn(),
   interaction: vi.fn(),
@@ -41,8 +42,17 @@ const state = vi.hoisted(() => ({
   },
   config: {
     shellThreadFamilies: false,
-    providers: [{ instanceId: "codex", driver: "codex" }],
-    environment: { capabilities: {} },
+    providers: [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        enabled: true,
+        installed: true,
+        showInteractionModeToggle: true,
+        deepPlanning: { version: 1, structuredPlans: true, durableExecution: true },
+      },
+    ],
+    environment: { capabilities: { deepPlanning: { version: 2 } } },
   },
 }));
 vi.mock("./project-chat-settings", () => ({ rememberMobileProjectChatSettings: vi.fn() }));
@@ -105,6 +115,9 @@ vi.mock("./threads", async () => {
   };
 });
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
+vi.mock("./orchestration", () => ({
+  orchestrationEnvironment: { v2: { dispatchCommand: state.dispatchDeepPlan } },
+}));
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
@@ -222,6 +235,7 @@ beforeEach(() => {
     state.runtime,
     state.interaction,
     state.checkout,
+    state.dispatchDeepPlan,
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
@@ -232,6 +246,63 @@ beforeEach(() => {
     draftAttachments: attachments,
     pendingAttachmentIds: [],
   }));
+});
+
+it("waits for Deep Plan start before delivering the new task's normal planning turn", async () => {
+  setOperateGrant("secondary", true);
+  const projectId = ProjectId.make("project");
+  const threadId = ThreadId.make("new-deep-thread");
+  const chats = [
+    {
+      environmentId: EnvironmentId.make("secondary"),
+      projectId,
+      threadId: ThreadId.make("existing-chat"),
+    },
+  ];
+  await state.manager.enqueue(
+    message({
+      threadId,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      composerMode: "deep-plan",
+      interactionMode: "plan",
+      deepPlanSourceRefs: chats,
+      creation: {
+        projectId,
+        projectCwd: "/repo",
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    }),
+  );
+  const started = Promise.withResolvers<void>();
+  const acceptStart = Promise.withResolvers<AsyncResult.AsyncResult<{ sequence: number }, Error>>();
+  state.dispatchDeepPlan.mockResolvedValueOnce(AsyncResult.success({ sequence: 1 }));
+  state.dispatchDeepPlan.mockImplementationOnce(() => {
+    started.resolve();
+    return acceptStart.promise;
+  });
+  const drained = runDrain();
+  await started.promise;
+  expect(state.start).not.toHaveBeenCalled();
+  expect(state.dispatchDeepPlan.mock.calls.map(([request]) => request.input)).toMatchObject([
+    { type: "thread.create", threadId, commandId: "command:deep-plan-owner" },
+    {
+      type: "thread.deep-plan.start",
+      threadId,
+      commandId: "command:deep-plan-start",
+      chats,
+      includeProjectChats: false,
+    },
+  ]);
+  acceptStart.resolve(AsyncResult.success({ sequence: 2 }));
+  await drained;
+  expect(state.start).toHaveBeenCalledOnce();
+  const turn = state.start.mock.calls[0]?.[0].input;
+  expect(turn).toMatchObject({ threadId, interactionMode: "plan" });
+  expect(turn).not.toHaveProperty("deepPlanRunId");
+  expect(turn.bootstrap).not.toHaveProperty("createThread");
+  expect(remaining()).toEqual([]);
 });
 
 describe("queued PR checkout", () => {

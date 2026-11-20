@@ -58,7 +58,11 @@ describe("clientPersistenceStorage", () => {
 
   it("preserves saved settings across a transient read failure", async () => {
     const testWindow = getTestWindow();
-    const settings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+    const settings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      replyPresentation: "side-chat" as const,
+      timestampFormat: "12-hour" as const,
+    };
     testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify(settings));
     const write = vi.spyOn(testWindow.localStorage, "setItem");
     const failure = new Error("storage unavailable");

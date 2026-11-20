@@ -148,6 +148,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const planActions = buildPlanImplementationActionPresentation({
     compact,
     suggestion: planImplementationSuggestion,
+    deepPlan: planTone === "deep-plan",
     translate,
   });
   const planReview = resolvePlanImplementationReviewPresentation(

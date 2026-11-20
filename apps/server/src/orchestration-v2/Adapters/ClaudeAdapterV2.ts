@@ -207,6 +207,11 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
+  deepPlanToolNamesForPhase,
+  isDeepPlanToolForPhase,
+  isDeepPlanToolName,
+} from "../../mcp/toolkits/deep-plan/toolNames.ts";
+import {
   mcpToolPresentation,
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -501,6 +506,8 @@ export interface ClaudeAgentSdkQueryPresetTools {
 export type ClaudeAgentSdkQueryTools = ClaudeAgentSdkQueryToolList | ClaudeAgentSdkQueryPresetTools;
 
 export const CLAUDE_READ_ONLY_ALLOWED_TOOLS = ["Read", "Glob", "Grep"] as const;
+// Deny rules beat allow rules from the user's settings, which would skip canUseTool.
+const CLAUDE_FILE_EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 
 function claudeAgentSdkQueryToolsForSdk(
   tools: ClaudeAgentSdkQueryTools,
@@ -1824,8 +1831,22 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const chatRead =
+    input.readOnlySandbox &&
+    (session.capabilities?.has("deep-plan-chat-read") || session.deepPlan?.phase === "planning")
+      ? ["mcp__t3-code__t3_thread_read"]
+      : [];
+  const deepPlanTools =
+    input.readOnlySandbox && session.deepPlan !== undefined
+      ? Array.from(
+          deepPlanToolNamesForPhase(session.deepPlan.phase),
+          (tool) => `mcp__t3-code__${tool}`,
+        )
+      : [];
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    allowedTools: Array.from(
+      new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...chatRead, ...deepPlanTools]),
+    ),
     mcpServers: {
       "t3-code": {
         type: "http",
@@ -2900,10 +2921,6 @@ function classifyClaudeNativeTool(toolName: string): ClaudeToolClassification {
         normalizedName,
         ...known,
       };
-}
-
-function providerRequestKindFromClaudeTool(toolName: string): ProviderRequestKind {
-  return classifyClaudeNativeTool(toolName).requestKind;
 }
 
 function isClaudeWebSearchOutput(output: unknown): output is WebSearchOutput {
@@ -10043,6 +10060,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const chatRead = toolName === "mcp__t3-code__t3_thread_read";
+          if (
+            callbackOptions.matchedAskRule === undefined &&
+            toolName.startsWith("mcp__t3-code__") &&
+            (chatRead || isDeepPlanToolName(toolName))
+          ) {
+            const session = yield* mcpSessions.read(context.input.threadId);
+            const grant = session?.deepPlan;
+            const boundTool =
+              grant?.turnId === context.input.runId &&
+              (isDeepPlanToolForPhase(grant.phase, toolName) ||
+                (chatRead && grant.phase === "planning"));
+            const explorerChatRead =
+              chatRead &&
+              context.input.appThread.fetchWorker?.deepPlanRunId !== undefined &&
+              session?.capabilities?.has("deep-plan-chat-read") === true;
+            if (
+              session?.providerInstanceId === adapterOptions.instanceId &&
+              (boundTool || explorerChatRead)
+            ) {
+              return {
+                behavior: "allow",
+                updatedInput: toolInput,
+                toolUseID: callbackOptions.toolUseID,
+              } satisfies PermissionResult;
+            }
+          }
+
+          const classification = classifyClaudeNativeTool(toolName);
+          // The approval guard accepts every command request from a reviewer.
+          if (
+            context.input.appThread.deepPlanExecution?.phase === "review" &&
+            classification.requestKind === "command" &&
+            classification.itemType !== "command_execution"
+          ) {
+            return {
+              behavior: "deny",
+              message: "Deep Plan reviewers can only read files and run shell checks.",
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           if (
             context.input.runtimePolicy.interactionMode === "plan" &&
             context.input.runtimePolicy.approvalPolicy === "never"
@@ -10084,7 +10143,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
-          const requestKind = providerRequestKindFromClaudeTool(toolName);
+          const requestKind = classification.requestKind;
           // The user approves the command itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
           const prompt =
@@ -10581,6 +10640,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.allowedTools === undefined
               ? {}
               : { allowedTools: mcpOverrides.allowedTools }),
+            ...(turnInput.appThread.deepPlanExecution?.phase === "review"
+              ? { disallowedTools: CLAUDE_FILE_EDIT_TOOLS }
+              : {}),
             ...(turnInput.runtimePolicy.interactionMode === "chat"
               ? { mcpServers: {} }
               : mcpOverrides.mcpServers === undefined

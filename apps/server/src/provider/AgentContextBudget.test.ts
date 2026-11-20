@@ -1,4 +1,5 @@
-import { DeepPlanSources } from "../deepPlanning/DeepPlanSources.ts";
+import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
+import { DeepPlanExploration } from "../deepPlanning/DeepPlanExploration.ts";
 import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import { GeneralSubagentCoordinator } from "../subagents/GeneralSubagentCoordinator.ts";
 import { KnowledgeGraphRuntime } from "../knowledge-graph/runtime/KnowledgeGraphRuntimeService.ts";
@@ -7,8 +8,10 @@ import { ProjectContextQuery } from "../projectIndexing/query/ProjectContextQuer
 import { ProjectMemoryPolicy } from "../projectMemory/ProjectMemoryPolicy.ts";
 import { ProjectMemoryStore } from "../projectMemory/ProjectMemoryStore.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { WorkspaceContext } from "../workspace/WorkspaceContext.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
+import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -57,7 +60,8 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
-  Layer.mock(DeepPlanSources)({}),
+  Layer.mock(CheckpointDiffQuery)({}),
+  Layer.mock(DeepPlanExploration)({}),
   Layer.mock(DeepPlanWorkflow)({}),
   Layer.mock(GeneralSubagentCoordinator)({}),
   Layer.mock(KnowledgeGraphRuntime)({}),
@@ -66,8 +70,10 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ProjectMemoryPolicy)({}),
   Layer.mock(ProjectMemoryStore)({}),
   Layer.mock(ProjectStoreV2)({}),
+  Layer.mock(ProjectionStoreV2)({}),
   Layer.mock(WorkspaceContext)({}),
   Layer.mock(WorkspaceFileSystem)({}),
+  Layer.mock(WorkspacePaths)({}),
 
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),

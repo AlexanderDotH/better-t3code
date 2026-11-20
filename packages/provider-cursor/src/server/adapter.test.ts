@@ -268,7 +268,7 @@ describe("CursorAdapterV2", () => {
           assert.equal(sentText.split(`<${tag}>`).length - 1, 1);
         assert.include(
           sentText,
-          deepPlan && mode !== "chat" ? "Planning is read-only" : "Deep Plan is inactive",
+          deepPlan && mode !== "chat" ? "You are the Deep Plan planner" : "Deep Plan is inactive",
         );
         assert.include(sentText, mode === "chat" ? "Chat mode is active" : "Chat mode is inactive");
         const rows = events.filter((event) => event.type === "subagent.updated");
@@ -1820,6 +1820,32 @@ describe("CursorAdapterV2", () => {
       platform: "linux",
     });
     assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
+    assert.isUndefined(options.tools);
+    const modelSelection = { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" };
+    const reviewer = makeCursorAgentOptions({
+      modelSelection,
+      runtimePolicy: {
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+        cwd: "/workspace",
+      },
+      threadId,
+      mcpSession: {
+        ...mcpSession,
+        deepPlan: {
+          phase: "review",
+          runId: DeepPlanRunId.make("cursor-review-plan"),
+          runThreadId: threadId,
+          approvedPlanVersion: 1,
+          modelSelection,
+          readOnly: true,
+          review: { target: { kind: "final" }, round: 1 },
+        },
+      },
+      platform: "linux",
+    });
+    assert.equal(reviewer.mode, "plan");
+    assert.deepEqual(reviewer.tools, ["read", "glob", "grep", "ls", "mcp"]);
 
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");

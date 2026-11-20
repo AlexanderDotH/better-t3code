@@ -23,6 +23,12 @@ const fixture = vi.hoisted(() => ({
   }>,
   alert: vi.fn(),
   prepare: vi.fn(),
+  openReplyThread: vi.fn(),
+  sourceActive: true,
+  inlineRows: [] as ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly replyTopicId: SubagentId;
+  }>,
 }));
 vi.mock("react-native", () => ({ Alert: { alert: fixture.alert } }));
 vi.mock("../localization/useMobileInterfaceTranslator", () => ({
@@ -53,9 +59,15 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => {
 });
 vi.mock("./threads", () => ({
   threadEnvironment: { startReply: "startReply", startTurn: "startTurn" },
-  environmentThreadShells: { threadShellsAtom: "threadShells" },
+  environmentThreadShells: { replyTopicsAtom: () => "replyTopics" },
+  inlineReplyTimeline: { stateAtom: () => "inlineReplies" },
 }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: { get: () => fixture.shells } }));
+vi.mock("./atom-registry", () => ({
+  appAtomRegistry: {
+    get: (name: string) =>
+      name === "inlineReplies" ? { rows: fixture.inlineRows } : fixture.shells,
+  },
+}));
 vi.mock("./use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "startTurn" ? fixture.startTurn : fixture.dispatch,
@@ -76,11 +88,13 @@ import { useThreadMessageReplies } from "./use-thread-message-replies";
 const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("thread");
 const config = {
-  environment: { capabilities: { messageReplies: true, inlineMessageContext: true } },
+  environment: { capabilities: { messageReplies: true, inlineMessageReplies: true } },
 } as unknown as ServerConfig;
 
 async function replies(
   thread: { readonly id?: ThreadId; readonly messageReply?: OrchestrationV2MessageReply } = {},
+  presentation: "inline" | "side-chat" = "inline",
+  serverConfig = config,
 ) {
   let result: ReturnType<typeof useThreadMessageReplies> | undefined;
   function Probe() {
@@ -94,7 +108,10 @@ async function replies(
         ...thread,
       },
       connected: true,
-      serverConfig: config,
+      serverConfig,
+      presentation,
+      captureSourceNavigation: () => () => fixture.sourceActive,
+      onOpenReplyThread: fixture.openReplyThread,
     });
     useLayoutEffect(() => {
       result = actions;
@@ -125,6 +142,7 @@ beforeEach(() => {
   fixture.startTurn.mockReset();
   fixture.startTurn.mockResolvedValue({ _tag: "Success" });
   fixture.shells = [];
+  fixture.inlineRows = [];
   fixture.prepare.mockReset();
   fixture.prepare.mockResolvedValue({
     status: "ready",
@@ -133,6 +151,8 @@ beforeEach(() => {
     pendingAttachmentIds: [],
   });
   fixture.alert.mockReset();
+  fixture.openReplyThread.mockReset();
+  fixture.sourceActive = true;
 });
 
 describe("mobile reply submission", () => {
@@ -212,18 +232,36 @@ describe("mobile reply submission", () => {
       },
     });
     expect(fixture.draft).toEqual({ text: "", attachments: [] });
+    expect(fixture.openReplyThread).not.toHaveBeenCalled();
   });
+  it.each([
+    ["side-chat", config],
+    ["inline", { environment: { capabilities: { messageReplies: true } } } as ServerConfig],
+  ] as const)(
+    "opens the accepted child when %s uses side-chat presentation",
+    async (mode, config) => {
+      const actions = await replies({}, mode, config);
+      fixture.dispatch.mockResolvedValueOnce({ _tag: "Failure" });
+      expect(await actions.sendReply(fixture.draft)).toBeNull();
+      expect(fixture.openReplyThread).not.toHaveBeenCalled();
+      expect(await actions.sendReply(fixture.draft)).toBe("sent");
+      expect(fixture.openReplyThread).toHaveBeenCalledWith("reply:topic");
+    },
+  );
   it("continues a topic inside its reply thread instead of starting a nested one", async () => {
     const topic = SubagentId.make("topic");
     const replyThreadId = ThreadId.make("reply:topic");
-    const actions = await replies({
-      id: replyThreadId,
-      messageReply: {
-        replyTopicId: topic,
-        sourceThreadId: threadId,
-        messageId: MessageId.make("source"),
+    const actions = await replies(
+      {
+        id: replyThreadId,
+        messageReply: {
+          replyTopicId: topic,
+          sourceThreadId: threadId,
+          messageId: MessageId.make("source"),
+        },
       },
-    });
+      "side-chat",
+    );
     actions.selectReply({
       id: MessageId.make("topic-answer"),
       role: "assistant",
@@ -252,6 +290,7 @@ describe("mobile reply submission", () => {
         replyTopicId: topic,
       },
     });
+    expect(fixture.openReplyThread).not.toHaveBeenCalled();
   });
   it("continues a topic another client started and refuses one whose thread is missing", async () => {
     const topic = SubagentId.make("web-topic");
@@ -267,7 +306,7 @@ describe("mobile reply submission", () => {
         replyTopicId: topic,
       },
     };
-    const actions = await replies();
+    const actions = await replies({}, "side-chat");
     expect(await actions.sendReply(fixture.draft)).toBeNull();
     expect(fixture.alert).toHaveBeenCalledWith("chat.reply.sendFailed", "chat.reply.unavailable");
     fixture.shells = [
@@ -288,6 +327,7 @@ describe("mobile reply submission", () => {
         input: expect.objectContaining({ threadId: "web-child", replyTopicId: topic }),
       }),
     );
+    expect(fixture.openReplyThread).toHaveBeenCalledWith("web-child");
   });
   it("preserves replacement sources and prevents duplicate sends while acceptance is pending", async () => {
     let release!: () => void;
@@ -303,7 +343,7 @@ describe("mobile reply submission", () => {
       await pending;
       return { _tag: "Success" };
     });
-    const actions = await replies();
+    const actions = await replies({}, "side-chat");
     const sending = actions.sendReply(fixture.draft);
     await dispatched;
     expect(await actions.sendReply(fixture.draft)).toBeNull();
@@ -315,10 +355,31 @@ describe("mobile reply submission", () => {
         replyTopicId: SubagentId.make("replacement-topic"),
       },
     };
+    fixture.sourceActive = false;
     release();
     await sending;
     expect(fixture.draft.text).toBe("New draft");
     expect(fixture.draft.messageReply?.replyTopicId).toBe("replacement-topic");
     expect(fixture.dispatch).toHaveBeenCalledTimes(1);
+    expect(fixture.openReplyThread).not.toHaveBeenCalled();
+  });
+  it("continues an inline topic whose message arrived before its thread shell", async () => {
+    const topic = SubagentId.make("visible-topic");
+    const child = ThreadId.make("visible-child");
+    fixture.inlineRows = [{ threadId: child, replyTopicId: topic }];
+    const actions = await replies();
+    actions.selectReply({
+      id: MessageId.make("child-answer"),
+      role: "assistant",
+      text: "Answer",
+      replyTopicId: topic,
+    });
+    expect(await actions.sendReply(fixture.draft)).toBe("sent");
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(fixture.startTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ threadId: child, replyTopicId: topic }),
+      }),
+    );
   });
 });

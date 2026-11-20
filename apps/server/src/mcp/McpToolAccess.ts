@@ -124,6 +124,11 @@ export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>)
     () => Effect.void,
   );
 
+export const readsChecked = <P, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+  check: RemoteCheck<P>,
+) => declare((params: P) => Effect.andThen(check(params), handle(params)), check);
+
 export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))), undefined);
 
@@ -400,7 +405,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
-        yield* (remote as RemoteCheck<typeof params>)(params);
+        yield* (remote as RemoteCheck<typeof params>)({ ...params, environmentId });
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
         return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });
       });

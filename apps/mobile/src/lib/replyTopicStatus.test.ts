@@ -17,7 +17,7 @@ const thread = (id: string, status: string, createdAt = "2026-01-01"): ReplyTopi
 });
 
 describe("reply topic summaries", () => {
-  it("counts replies per source and reports the newest topic with pending input taking precedence", () => {
+  it("keeps every topic for a source and orders the newest first", () => {
     const topics = deriveReplyTopics(
       [
         thread("new", "running", "2026-02-01"),
@@ -29,23 +29,21 @@ describe("reply topic summaries", () => {
       ],
       source,
     );
-    expect(topics.get(prompt)).toMatchObject({
-      threadId: "new",
-      count: 2,
-      status: "running",
-      retry: null,
-    });
+    expect(topics.get(prompt)).toMatchObject([
+      { threadId: "new", status: "running", retry: null },
+      { threadId: "old", status: "completed", retry: null },
+    ]);
     expect(
       deriveReplyTopics(
         [{ ...thread("waiting", "running"), hasPendingApprovals: true }],
         source,
-      ).get(prompt)?.status,
+      ).get(prompt)?.[0]?.status,
     ).toBe("waiting");
   });
   it("offers retry only for a failed or stopped topic with an unanswered user prompt", () => {
     for (const status of ["failed", "interrupted", "cancelled"]) {
       const topic = thread("topic", status);
-      expect(deriveReplyTopics([topic], source).get(prompt)?.retry).toEqual({
+      expect(deriveReplyTopics([topic], source).get(prompt)?.[0]?.retry).toEqual({
         messageId: "retry",
         runId: "run-topic",
       });
@@ -58,9 +56,11 @@ describe("reply topic summaries", () => {
             },
           ],
           source,
-        ).get(prompt)?.retry,
+        ).get(prompt)?.[0]?.retry,
       ).toBeNull();
     }
-    expect(deriveReplyTopics([thread("done", "completed")], source).get(prompt)?.retry).toBeNull();
+    expect(
+      deriveReplyTopics([thread("done", "completed")], source).get(prompt)?.[0]?.retry,
+    ).toBeNull();
   });
 });

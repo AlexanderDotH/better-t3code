@@ -84,10 +84,12 @@ const make = Effect.gen(function* () {
     request: OrchestrationV2RuntimeRequest,
   ) {
     if (request.status !== "pending") return;
-    const action = delegatedWorkerRequestAction(request.kind);
-    if (action === "ignore") return;
+    const workerAction = delegatedWorkerRequestAction(request.kind);
+    if (workerAction === "ignore") return;
     const thread = yield* projections.getThread(threadId);
-    if (thread.fetchWorker === undefined && thread.generalSubagent !== true) return;
+    const reviewer = thread.deepPlanExecution?.phase === "review";
+    if (!reviewer && thread.fetchWorker === undefined && thread.generalSubagent !== true) return;
+    const action = reviewer && request.kind === "command" ? "accept" : workerAction;
     const commandId = `delegated-worker-policy:${request.id}`;
     if (action === "fail-agent") {
       yield* stopWorker(threadId, commandId, "Delegated workers cannot ask the user questions.");
@@ -118,6 +120,14 @@ const make = Effect.gen(function* () {
       )
         continue;
       const child = yield* projections.getThread(task.childThreadId);
+      if (child.fetchWorker?.deepPlanRunId !== undefined) {
+        yield* stopWorker(
+          child.id,
+          `delegated-worker-turn-ended:${task.id}`,
+          "The planning turn ended before the explorer.",
+        );
+        continue;
+      }
       if (child.generalSubagent !== true) continue;
       yield* engine.dispatch({
         type: "delegated_task.completion-delivery.dispose",
@@ -161,7 +171,7 @@ const make = Effect.gen(function* () {
       !isRuntimeReconcileCommandId(stored.commandId)
     ) {
       yield* stopWorkersOfEndedRun(event.threadId, event.payload.id).pipe(
-        logFailure("Stopping general agents with their parent turn failed"),
+        logFailure("Stopping delegated workers with their parent turn failed"),
       );
     }
   });
@@ -173,7 +183,7 @@ const make = Effect.gen(function* () {
         if (shell.activeRunId === null || shell.lineage.relationshipToParent !== "subagent")
           continue;
         const thread = yield* projections.getThread(shell.id);
-        if (thread.generalSubagent !== true || thread.deepPlanExecution?.sourceAnalysis) continue;
+        if (thread.generalSubagent !== true || thread.fetchWorker !== undefined) continue;
         yield* stopWorker(
           thread.id,
           `general-subagents-disabled:${shell.activeRunId}`,

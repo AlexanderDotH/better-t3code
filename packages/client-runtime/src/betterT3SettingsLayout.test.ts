@@ -13,7 +13,9 @@ import {
 describe("Better T3 settings layout", () => {
   it("resolves deep-link targets to the category page that shows them", () => {
     expect(resolveBetterT3SettingsCategoryForTarget("chat.classicSidebar")).toBe("sidebar");
+    expect(resolveBetterT3SettingsCategoryForTarget("chat.replyPresentation")).toBe("chat");
     expect(resolveBetterT3SettingsCategoryForTarget("voice-cleanup-model")).toBe("voice");
+    expect(resolveBetterT3SettingsCategoryForTarget("agent.deepPlanReviewModel")).toBe("agents");
     expect(resolveBetterT3SettingsCategoryForTarget("better-t3-group-usage")).toBe("usage");
     expect(resolveBetterT3SettingsCategoryForTarget("better-t3-group-missing")).toBeNull();
     expect(resolveBetterT3SettingsCategoryForTarget("")).toBeNull();
@@ -87,6 +89,7 @@ describe("Better T3 settings layout", () => {
     expect(getBetterT3SettingsSubgroups("agents").map((group) => group.id)).toEqual([
       "fetch",
       "parallel-plan",
+      "deep-plan",
       "context-compaction",
       "auto-reasoning",
       "agent-workflow",

@@ -10,6 +10,12 @@ export function deepPlanMarkdown(plan: DeepPlanDocument): string {
       `## Decisions\n${plan.decisions.map((decision) => `- ${decision.text}${decision.rationale ? `: ${decision.rationale}` : ""}`).join("\n")}`,
     );
   }
+  if (plan.nonGoals.length > 0) {
+    sections.push(`## Non-goals\n${plan.nonGoals.map((item) => `- ${item}`).join("\n")}`);
+  }
+  if (plan.affectedAreas.length > 0) {
+    sections.push(`## Affected areas\n${plan.affectedAreas.map((item) => `- ${item}`).join("\n")}`);
+  }
   for (const [index, step] of plan.steps.entries()) {
     sections.push(
       [

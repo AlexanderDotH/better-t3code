@@ -8,6 +8,7 @@ import {
   ThreadId,
   type ModelSelection,
   type RuntimeMode,
+  type ReplyPresentation,
   type ProviderInteractionMode,
   type ServerConfig,
   type BetterT3SettingsV1,
@@ -27,7 +28,7 @@ import { serializeComposerMessageForServer, uploadedComposerContext } from "../l
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { uuidv4 } from "../lib/uuid";
 import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
-import { mobileMessageRepliesEnabled } from "../lib/message-replies";
+import { mobileMessageRepliesEnabled, mobileReplyPresentation } from "../lib/message-replies";
 import { messageReplyDraftCompletion } from "./message-reply-draft";
 import {
   clearComposerDraftContent,
@@ -37,7 +38,7 @@ import {
   type ComposerDraft,
 } from "./use-composer-drafts";
 import { appAtomRegistry } from "./atom-registry";
-import { environmentThreadShells, threadEnvironment } from "./threads";
+import { environmentThreadShells, inlineReplyTimeline, threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 
 export function useThreadMessageReplies(input: {
@@ -52,6 +53,10 @@ export function useThreadMessageReplies(input: {
   readonly serverConfig: ServerConfig | null;
   readonly connected: boolean;
   readonly deviceSettings?: BetterT3SettingsV1;
+  readonly presentation?: ReplyPresentation;
+  readonly captureSourceNavigation: () => () => boolean;
+  readonly onOpenReplyThread: (threadId: ThreadId) => void;
+  readonly onSentInTimeline?: () => void;
 }) {
   const translator = useMobileInterfaceTranslator();
   const startReply = useAtomCommand(threadEnvironment.startReply, { reportFailure: false });
@@ -96,6 +101,11 @@ export function useThreadMessageReplies(input: {
       return null;
     const thread = input.thread;
     const reply = draft.messageReply;
+    const sourceIsCurrent = input.captureSourceNavigation();
+    const presentation = mobileReplyPresentation(
+      input.serverConfig?.environment.capabilities,
+      input.presentation,
+    );
     inFlight.current.add(threadKey);
     setSendingKeys(new Set(inFlight.current));
     const completed = await settlePromise(async () => {
@@ -113,15 +123,23 @@ export function useThreadMessageReplies(input: {
       });
       if (prepared.status !== "ready" || getComposerDraftSnapshot(threadKey).messageReply !== reply)
         return null;
-      const dispatch = resolveMessageReplyDispatch({
+      const sourceRef = {
+        environmentId: thread.environmentId,
+        threadId: thread.messageReply?.sourceThreadId ?? thread.id,
+      };
+      let dispatch = resolveMessageReplyDispatch({
         threadId: thread.id,
         currentReply: thread.messageReply,
         replyTo: reply.replyTo,
         replyTopicId: reply.replyTopicId,
-        threads: appAtomRegistry
-          .get(environmentThreadShells.threadShellsAtom)
-          .filter((shell) => shell.environmentId === thread.environmentId),
+        threads: appAtomRegistry.get(environmentThreadShells.replyTopicsAtom(sourceRef)),
       });
+      if (dispatch.kind === "unavailable" && presentation === "inline") {
+        const visibleReply = appAtomRegistry
+          .get(inlineReplyTimeline.stateAtom(sourceRef))
+          .rows.find((row) => row.replyTopicId === reply.replyTopicId);
+        if (visibleReply) dispatch = { kind: "continue", threadId: visibleReply.threadId };
+      }
       if (dispatch.kind === "unavailable")
         throw new Error(translator.message("chat.reply.unavailable"));
       const metadata = makeQueuedMessageMetadata();
@@ -136,6 +154,10 @@ export function useThreadMessageReplies(input: {
         interactionMode: draft.interactionMode ?? thread.interactionMode,
       };
       const commandId = CommandId.make(metadata.commandId);
+      const targetThreadId =
+        dispatch.kind === "continue"
+          ? dispatch.threadId
+          : ThreadId.make(`reply:${reply.replyTopicId}`);
       const result =
         dispatch.kind === "continue"
           ? await startTurn({
@@ -161,7 +183,7 @@ export function useThreadMessageReplies(input: {
                 replyTopicId: reply.replyTopicId,
                 replyTo: reply.replyTo,
                 commandId,
-                targetThreadId: ThreadId.make(`reply:${reply.replyTopicId}`),
+                targetThreadId,
                 messageId,
                 ...settings,
                 ...message,
@@ -173,7 +195,7 @@ export function useThreadMessageReplies(input: {
       const completion = messageReplyDraftCompletion(getComposerDraftSnapshot(threadKey), draft);
       if (completion === "clear") clearComposerDraftContent(threadKey);
       else if (completion === "cancel-reply") setComposerDraftMessageReply(threadKey, undefined);
-      return messageId;
+      return { messageId, targetThreadId };
     });
     inFlight.current.delete(threadKey);
     setSendingKeys(new Set(inFlight.current));
@@ -185,7 +207,15 @@ export function useThreadMessageReplies(input: {
       );
       return null;
     }
-    return completed.value;
+    const submitted = completed.value;
+    if (submitted !== null && sourceIsCurrent()) {
+      if (presentation === "side-chat" && submitted.targetThreadId !== thread.id) {
+        input.onOpenReplyThread(submitted.targetThreadId);
+      } else {
+        input.onSentInTimeline?.();
+      }
+    }
+    return submitted?.messageId ?? null;
   };
   return {
     enabled,

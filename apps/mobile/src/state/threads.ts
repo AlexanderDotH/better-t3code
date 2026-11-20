@@ -4,6 +4,7 @@ import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
   createEnvironmentThreadStateAtoms,
+  createInlineReplyTimelineAtoms,
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
   createOlderSettledThreadAtoms,
@@ -38,6 +39,7 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
   threadFamilies.snapshotAtom,
 );
 export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
+export const inlineReplyTimeline = createInlineReplyTimelineAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );

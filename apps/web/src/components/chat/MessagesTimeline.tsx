@@ -18,7 +18,8 @@ import { MessageReplyGesture } from "./MessageReplyGesture";
 import { ChatStatusSurface, type ChatStatusTone } from "./ChatStatusSurface";
 import { timelineMessageCanReply } from "./TimelineMessageActions";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { useChildThreadInputs, useQuietThreadShell } from "../../state/entities";
+import { useQuietThreadShell } from "../../state/entities";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadEnvironment } from "../../state/threads";
@@ -43,10 +44,12 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type MessageReplyReference,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ServerProviderSkill,
   type RunId,
+  type SubagentId,
   CommandId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -127,6 +130,8 @@ import {
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
   deriveTimelineReplyTopics,
+  insertInlineReplyMessageRows,
+  timelineMessageMatchesReplySource,
   resolveForkDividerAfterRowId,
   type MessagesTimelineRow,
   type TimelineReplyTopicSummary,
@@ -249,6 +254,8 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+const EMPTY_INLINE_REPLY_ENTRIES: ReadonlyArray<TimelineEntry> = [];
+const EMPTY_REPLY_TOPIC_THREADS: ReadonlyArray<EnvironmentThreadShell> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
   ...TIMELINE_MAINTAIN_SCROLL_AT_END,
   animated: true,
@@ -263,6 +270,8 @@ export interface MessagesTimelineHistoryControls {
   readonly onLoadEarlier: (throughEntryId?: string) => void;
 }
 
+type ReplySource = Pick<MessageReplyReference, "messageId" | "replyTopicId">;
+
 interface MessagesTimelineProps {
   /** The composer already shows the working status, so the timeline omits its own row. */
   composerWorkingStatusVisible?: boolean;
@@ -275,7 +284,11 @@ interface MessagesTimelineProps {
   composerOverflowInset?: number;
   onContentOverflowChange?: ((overflows: boolean) => void) | undefined;
   deepPlanReview?: TimelineRowSharedState["deepPlanReview"];
-  replySourceThreadId?: ThreadId | undefined;
+  replyTopicId?: SubagentId | undefined;
+  replyTopicThreads?: ReadonlyArray<EnvironmentThreadShell>;
+  replySourceJump?: { readonly source: ReplySource; readonly key: string } | undefined;
+  onJumpToParentReplySource?: ((source: ReplySource) => boolean) | undefined;
+  inlineReplyEntries?: ReadonlyArray<TimelineEntry>;
   onForkBoundary?: TimelineRowSharedState["onForkBoundary"];
   forkAvailable?: boolean;
   forkPendingBoundary?: TimelineRowSharedState["forkPendingBoundary"];
@@ -384,6 +397,7 @@ interface MessagesTimelineProps {
   emptyPlaceholderInset: number;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
+  inlineHistoryControls?: MessagesTimelineHistoryControls | undefined;
   findExpanded?: boolean;
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
@@ -413,7 +427,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   forkPendingBoundary = null,
   onOpenAgents,
   retryAction = null,
-  replySourceThreadId,
+  replyTopicId,
+  replyTopicThreads = EMPTY_REPLY_TOPIC_THREADS,
+  replySourceJump,
+  onJumpToParentReplySource,
+  inlineReplyEntries = EMPTY_INLINE_REPLY_ENTRIES,
   messageEditingEnabled = false,
   responseMetrics,
   composerOverflowInset,
@@ -496,6 +514,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   emptyPlaceholderInset,
   topFadeEnabled = false,
   historyControls,
+  inlineHistoryControls,
 }: MessagesTimelineProps) {
   const chatVisualMode = useChatVisualMode();
   const presentationMotionPreference = useBetterT3DeviceFeature("chat.presentationMotion");
@@ -848,7 +867,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const pendingApprovalRequestIds = new Set(
     pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
-  const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
+  const parentRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     chatVisualMode,
     nativeSubagentDisplay,
     showReasoning,
@@ -877,6 +896,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     availableRevertTurnCounts,
     worktreeSetup,
   });
+  const rawRows = insertInlineReplyMessageRows(parentRows, inlineReplyEntries);
+  const historyLoading =
+    historyControls?.loading === true || inlineHistoryControls?.loading === true;
   const rowMotion = useChatRowPresence(
     rawRows,
     listIdentityKey,
@@ -913,6 +935,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     !isWorking &&
     parentThreadLink === null &&
     historyControls === undefined &&
+    !inlineHistoryControls?.hasMoreHistory &&
+    !inlineHistoryControls?.error &&
     footer === null;
   const [listOpening, setListOpening] = useState<TimelineListOpening>(() =>
     nextListOpening({ mounted: false }, !showsEmptyState, listIdentityKey),
@@ -963,7 +987,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     enabled: presentationMotion,
     textMotion: characterStreamingMotion && !prefersReducedMotion,
     // Text that arrives while history loads or the reader is scrolled away is not new to them.
-    connected: presentationConnected && historyControls?.loading !== true && liveFollowEnabled,
+    connected: presentationConnected && !historyLoading && liveFollowEnabled,
     entries: timelineEntries,
     rows,
     viewport: timelineViewportElement,
@@ -1267,37 +1291,57 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const forkSourceShell = useQuietThreadShell(
     forkedFrom ? scopeThreadRef(activeThreadEnvironmentId, forkedFrom.threadId) : null,
   );
-  const childThreads = useChildThreadInputs(citationThreadRef);
   const translate = useInterfaceTranslator().message;
-  // A reply's source can sit in a closed turn or in history not loaded yet.
   const [replySourceRequest, setReplySourceRequest] = useState<{
     readonly identity: string;
-    readonly messageId: MessageId;
+    readonly source: ReplySource;
     readonly loadedThroughCount: number | null;
   } | null>(null);
+  const [handledReplySourceJump, setHandledReplySourceJump] = useState<string | null>(null);
+  if (replySourceJump && replySourceJump.key !== handledReplySourceJump) {
+    setHandledReplySourceJump(replySourceJump.key);
+    setReplySourceRequest({
+      identity: listIdentityKey,
+      source: replySourceJump.source,
+      loadedThroughCount: null,
+    });
+  }
   const scrollToReplySource = (
-    messageId: MessageId,
+    source: ReplySource,
     timelineRows: ReadonlyArray<MessagesTimelineRow>,
   ) => {
     const index = timelineRows.findIndex(
-      (row) => row.kind === "message" && row.message.id === messageId,
+      (row) =>
+        row.kind === "message" &&
+        timelineMessageMatchesReplySource(row.message, source, replyTopicId),
     );
-    if (index < 0) return false;
+    const list = listRef.current;
+    if (index < 0 || list === null) return false;
     navigateTimeline();
-    void listRef.current?.scrollToIndex({
+    void list.scrollToIndex({
       index,
       animated: !prefersReducedMotion,
       viewPosition: 0.25,
     });
     return true;
   };
-  const onJumpToReplySource = useStableCallback((messageId: MessageId) => {
-    if (scrollToReplySource(messageId, rows)) return true;
-    const loaded = timelineEntries.some(
-      (entry) => entry.kind === "message" && entry.message.id === messageId,
+  const replySourceHistory = (source: ReplySource) =>
+    source.replyTopicId === replyTopicId
+      ? { entries: timelineEntries, controls: historyControls }
+      : { entries: inlineReplyEntries, controls: inlineHistoryControls };
+  const onJumpToReplySource = useStableCallback((source: ReplySource) => {
+    if (scrollToReplySource(source, rows)) return true;
+    if (replyTopicId !== undefined && source.replyTopicId !== replyTopicId) {
+      return onJumpToParentReplySource?.(source) ?? false;
+    }
+    const { entries, controls } = replySourceHistory(source);
+    const loaded = entries.some(
+      (entry) =>
+        entry.kind === "message" &&
+        timelineMessageMatchesReplySource(entry.message, source, replyTopicId),
     );
-    if (!loaded && historyControls?.hasMoreHistory !== true) return false;
-    setReplySourceRequest({ identity: listIdentityKey, messageId, loadedThroughCount: null });
+    if (!loaded && controls?.hasMoreHistory !== true && controls?.loading !== true) return false;
+    setReplySourceRequest({ identity: listIdentityKey, source, loadedThroughCount: null });
     return true;
   });
   const pendingReplySource =
@@ -1307,16 +1351,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
       request: NonNullable<typeof replySourceRequest>,
       timelineRows: ReadonlyArray<MessagesTimelineRow>,
       entries: ReadonlyArray<TimelineEntry>,
-      historyLoading: boolean,
+      controls: MessagesTimelineHistoryControls | undefined,
     ) => {
       const finish = (found: boolean) => {
         setReplySourceRequest(null);
         if (!found)
           toastManager.add({ type: "info", title: translate("chat.reply.sourceUnavailable") });
       };
-      if (scrollToReplySource(request.messageId, timelineRows)) return finish(true);
+      if (scrollToReplySource(request.source, timelineRows)) return finish(true);
       const entry = entries.find(
-        (candidate) => candidate.kind === "message" && candidate.message.id === request.messageId,
+        (candidate) =>
+          candidate.kind === "message" &&
+          timelineMessageMatchesReplySource(candidate.message, request.source, replyTopicId),
       );
       if (entry) {
         const runId = timelineTurnFoldRunIdsByEntryId({
@@ -1332,25 +1378,37 @@ const ConversationTimeline = memo(function ConversationTimeline({
           setExpandedRunIds((previous) => new Set(previous).add(runId));
           return;
         }
+        if (entry.attempt?.status === "superseded" && !expandedAttemptIds.has(entry.attempt.id)) {
+          const attemptId = entry.attempt.id;
+          setExpandedAttemptIds((previous) => new Set(previous).add(attemptId));
+          return;
+        }
         return finish(false);
       }
-      if (historyLoading) return;
-      // One page per growth of the history, so a failed load cannot loop.
-      if (historyControls?.hasMoreHistory && request.loadedThroughCount !== entries.length) {
+      if (controls?.loading) return;
+      if (
+        controls?.hasMoreHistory &&
+        !controls.error &&
+        request.loadedThroughCount !== entries.length
+      ) {
         setReplySourceRequest({ ...request, loadedThroughCount: entries.length });
-        historyControls.onLoadEarlier();
+        controls.onLoadEarlier();
         return;
       }
       finish(false);
     },
   );
-  const historyLoading = historyControls?.loading === true;
+  const pendingReplyHistory = pendingReplySource
+    ? replySourceHistory(pendingReplySource.source)
+    : null;
+  const pendingReplyEntries = pendingReplyHistory?.entries;
+  const pendingReplyControls = pendingReplyHistory?.controls;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the source's turn or pages history until the requested reply source mounts, then scrolls the list to it
   useEffect(() => {
-    if (!pendingReplySource) return;
+    if (!pendingReplySource || !pendingReplyEntries || (!findListReady && rows.length > 0)) return;
     // oxlint-disable-next-line react/set-state-in-effect -- the request ends once the list scrolled to its source or history ran out
-    advanceReplySource(pendingReplySource, rows, timelineEntries, historyLoading);
-  }, [pendingReplySource, rows, timelineEntries, historyLoading]);
+    advanceReplySource(pendingReplySource, rows, pendingReplyEntries, pendingReplyControls);
+  }, [pendingReplySource, findListReady, rows, pendingReplyEntries, pendingReplyControls]);
 
   // Built from props after the last hook so the compiler can memoize the row context; a map
   // made before a hook would rebuild it, and re-render every row, on each streamed update.
@@ -1360,11 +1418,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .map((approval) => [approval.requestId, approval]),
   );
   const forkDividerAfterRowId = forkedFrom ? resolveForkDividerAfterRowId(rows) : null;
-  // Shell updates stream in; the rows re-render only when a summary changes.
-  const replyTopicsKey = JSON.stringify(
-    deriveTimelineReplyTopics(childThreads, citationThreadRef?.threadId),
+  const replyTopicsByMessageId = groupReplyTopics(
+    deriveTimelineReplyTopics(replyTopicThreads, citationThreadRef?.threadId),
   );
-  const replyTopicsByMessageId = replyTopicsFromKey(replyTopicsKey);
   const editAvailable =
     messageEditingEnabled && canOperateThread && presentationConnected && !isWorking;
   const sharedState: TimelineRowSharedState = {
@@ -1388,7 +1444,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     forkPendingBoundary,
     onOpenAgents,
     retryAction,
-    replySourceThreadId,
     editAvailable,
     onEditMessage:
       messageEditingEnabled && canOperateThread
@@ -1546,7 +1601,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const listHeader = (
     <>
       {parentThreadLink === null ? listHeaderLeadingContent : null}
-      {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
+      {historyControls || inlineHistoryControls ? (
+        <TimelineHistoryControl
+          hasMoreHistory={Boolean(
+            historyControls?.hasMoreHistory || inlineHistoryControls?.hasMoreHistory,
+          )}
+          loading={historyLoading}
+          error={historyControls?.error ?? inlineHistoryControls?.error ?? null}
+          onLoadEarlier={() => {
+            if (historyControls?.hasMoreHistory) historyControls.onLoadEarlier();
+            if (inlineHistoryControls?.hasMoreHistory) inlineHistoryControls.onLoadEarlier();
+          }}
+        />
+      ) : null}
       {parentThreadLink !== null ? listHeaderLeadingContent : null}
       {forkSourceThreadId ? (
         <div className="messages-timeline-row-frame" data-fork-provenance="true">
@@ -1664,7 +1731,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   });
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
-    <TimelineRowCtx value={sharedState}>
+    <TimelineMessageOwner
+      state={sharedState}
+      replyThreadId={item.kind === "message" ? item.inlineReplyThreadId : undefined}
+    >
       <div
         className="messages-timeline-row-frame"
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
@@ -1678,14 +1748,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
             <ChatRowMotionContext value={rowMotion}>
-              <ChatTimelineRowMotion id={item.id} className="min-w-0">
+              <ChatTimelineRowMotion
+                id={item.id}
+                className={cn(
+                  "min-w-0",
+                  item.kind === "message" &&
+                    item.inlineReplyThreadId !== undefined &&
+                    "border-s border-border ps-3",
+                )}
+              >
                 <TimelineRowContent row={item} />
               </ChatTimelineRowMotion>
             </ChatRowMotionContext>
           </AudioPreviewUnmountContext>
         </div>
       </div>
-    </TimelineRowCtx>
+    </TimelineMessageOwner>
   );
   const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
   const timelineListFooter = (
@@ -1880,9 +1958,41 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
   );
 }
 
-function replyTopicsFromKey(key: string) {
-  const topics: ReturnType<typeof deriveTimelineReplyTopics> = JSON.parse(key);
-  return new Map(topics.map((topic) => [topic.messageId, topic]));
+function groupReplyTopics(topics: ReadonlyArray<TimelineReplyTopicSummary>) {
+  const grouped = new Map<MessageId, TimelineReplyTopicSummary[]>();
+  for (const topic of topics) {
+    const siblings = grouped.get(topic.messageId);
+    if (siblings) siblings.push(topic);
+    else grouped.set(topic.messageId, [topic]);
+  }
+  return grouped;
+}
+
+function TimelineMessageOwner({
+  state,
+  replyThreadId,
+  children,
+}: {
+  state: TimelineRowSharedState;
+  replyThreadId: ThreadId | undefined;
+  children: ReactNode;
+}) {
+  const rowState =
+    replyThreadId === undefined
+      ? state
+      : ({
+          ...state,
+          threadRef: scopeThreadRef(state.activeThreadEnvironmentId, replyThreadId),
+          inlineReply: true,
+          retryAction: null,
+          onEditMessage: undefined,
+          editingMessage: null,
+          onForkBoundary: undefined,
+          onForkFromRun: undefined,
+          onOpenTurnDiff: undefined,
+          responseMetrics: null,
+        } satisfies TimelineRowSharedState);
+  return <TimelineRowCtx value={rowState}>{children}</TimelineRowCtx>;
 }
 
 function isMessageRow(row: MessagesTimelineRow) {
@@ -1947,8 +2057,11 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.kind === "message" && timelineMessageCanReply(ctx, row.message)
       ? () => ctx.onReplyMessage?.(row.message)
       : undefined;
-  const replyTopic =
-    row.kind === "message" ? ctx.replyTopicsByMessageId?.get(row.message.id) : undefined;
+  const replyTopics =
+    row.kind === "message" && row.inlineReplyThreadId === undefined
+      ? ctx.replyTopicsByMessageId?.get(row.message.id)
+      : undefined;
+  const openReplyTopic = ctx.onOpenReplyTopic;
   const messageContent =
     row.kind !== "message" ? null : row.message.role === "user" ? (
       <UserMessageRow row={row} />
@@ -2070,13 +2183,16 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           messageContent
         )
       ) : null}
-      {replyTopic && ctx.onOpenReplyTopic ? (
-        <ReplyTopicChip
-          topic={replyTopic}
-          align={row.kind === "message" && row.message.role === "user" ? "end" : "start"}
-          onOpen={ctx.onOpenReplyTopic}
-        />
-      ) : null}
+      {openReplyTopic
+        ? replyTopics?.map((topic) => (
+            <ReplyTopicChip
+              key={topic.threadId}
+              topic={topic}
+              align={row.kind === "message" && row.message.role === "user" ? "end" : "start"}
+              onOpen={openReplyTopic}
+            />
+          ))
+        : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
@@ -2137,8 +2253,8 @@ function ReplyTopicChip({
     setBusy(false);
   };
   const { status, retry } = topic;
-  const count = translate("chat.reply.count", { count: topic.count });
-  const label = status === null ? count : `${count} · ${translate(`chat.reply.status.${status}`)}`;
+  const title = topic.title ?? translate("chat.reply.topic");
+  const label = status === null ? title : `${title} · ${translate(`chat.reply.status.${status}`)}`;
   const active = status === "pending" || status === "running" || status === "waiting";
   const alert = error ?? topic.statusMessage;
   return (
@@ -2157,7 +2273,7 @@ function ReplyTopicChip({
           onClick={() => onOpen(topic.threadId)}
         >
           <MessagesSquareIcon />
-          {label}
+          <span className="max-w-[min(22rem,65vw)] truncate">{label}</span>
           <ChevronRightIcon />
         </Button>
         {active ? (

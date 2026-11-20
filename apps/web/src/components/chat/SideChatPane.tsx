@@ -19,9 +19,12 @@ import { useClientSettings } from "../../hooks/useSettings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
-import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
+import {
+  useQuietThreadProjection,
+  useQuietThreadShell,
+  useThreadStatus,
+} from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
-import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatView from "../ChatView";
@@ -46,8 +49,8 @@ export default function SideChatPane(props: {
   );
   const shell = useQuietThreadShell(threadRef);
   const parent = useQuietThreadShell(parentRef);
-  const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);
-  const projection = useQuietThreadProjection(shell === null ? null : threadRef)?.projection;
+  const status = useThreadStatus(shell === null ? threadRef : null);
+  const projection = useQuietThreadProjection(threadRef)?.projection;
   const canOperate = useEnvironmentScope(parentRef.environmentId, AuthOrchestrationOperateScope);
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
@@ -126,7 +129,7 @@ export default function SideChatPane(props: {
     <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
-          {shell?.title ?? "Side chat"}
+          {shell?.title ?? projection?.thread.title ?? "Side chat"}
         </span>
         <Tooltip>
           <TooltipTrigger
@@ -158,10 +161,8 @@ export default function SideChatPane(props: {
           <XIcon />
         </Button>
       </div>
-      {shell === null ? (
-        snapshotLoaded ? (
-          <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>
-        ) : null
+      {status === "deleted" ? (
+        <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>
       ) : (
         <BackgroundThreadContext value>
           <ComposerHandleContext value={null}>

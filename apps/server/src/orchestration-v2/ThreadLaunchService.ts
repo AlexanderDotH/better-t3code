@@ -72,7 +72,6 @@ export interface ThreadLaunchInitialMessage {
   readonly messageId?: MessageId | undefined;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
-  readonly deepPlanRunId?: import("@t3tools/contracts").DeepPlanRunId | undefined;
   readonly replyTo?: import("@t3tools/contracts").MessageReplyReference | undefined;
   readonly replyTopicId?: import("@t3tools/contracts").SubagentId | undefined;
   readonly fetchMode?: "repository-exploration" | undefined;
@@ -976,9 +975,6 @@ const make = Effect.gen(function* () {
               threadId,
               messageId,
               text: input.initialMessage.text,
-              ...(input.initialMessage.deepPlanRunId === undefined
-                ? {}
-                : { deepPlanRunId: input.initialMessage.deepPlanRunId }),
               ...(input.initialMessage.replyTo === undefined
                 ? {}
                 : { replyTo: input.initialMessage.replyTo }),

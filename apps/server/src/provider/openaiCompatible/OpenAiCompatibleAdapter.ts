@@ -18,7 +18,10 @@ import { ProviderAdapterRequestError, ProviderAdapterValidationError } from "../
 import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
 import type { DeepPlanInstructionContext } from "../DeepPlanInstructions.ts";
-import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
+import {
+  nativeHarnessTurnGuidance,
+  nativeHarnessWorkspaceInstructions,
+} from "../nativeHarness/NativeHarnessPrompt.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
@@ -238,9 +241,7 @@ function systemInstructions(input: {
       ? "Read-only: inspect the workspace but do not modify files or run mutating commands."
       : "Use only tools exposed by T3 and respect every approval boundary.",
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
-      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
-      : "Carry the request through focused verification and preserve unrelated work.",
+    nativeHarnessTurnGuidance(input),
   ].join("\n");
 }
 

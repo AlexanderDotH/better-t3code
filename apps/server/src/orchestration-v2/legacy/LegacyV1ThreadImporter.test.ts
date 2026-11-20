@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   ComposerContextId,
-  DeepPlanRun,
+  DeepPlanRunId,
   MessageReplyReference,
   OrchestrationHarnessSyncState,
   SubagentId,
@@ -27,7 +27,6 @@ import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 
-const decodeDeepPlanFixture = Schema.decodeUnknownSync(DeepPlanRun);
 const decodeHarnessFixture = Schema.decodeUnknownSync(OrchestrationHarnessSyncState);
 const decodeReplyFixture = Schema.decodeUnknownSync(MessageReplyReference);
 
@@ -738,7 +737,7 @@ it.effect("preserves DeepPlan, harness state and reply transcripts through impor
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const now = "2026-01-01T00:00:00.000Z";
     const threadId = ThreadId.make("thread:fork-metadata");
-    const deepPlan = decodeDeepPlanFixture({
+    const deepPlan = {
       id: "deep-plan:preserved",
       threadId,
       phase: "paused",
@@ -762,7 +761,7 @@ it.effect("preserves DeepPlan, harness state and reply transcripts through impor
       createdAt: now,
       updatedAt: now,
       pauseReason: "Continue later",
-    });
+    };
     const harness = decodeHarnessFixture({
       providerInstanceId: "codex",
       providerLabel: "Codex",
@@ -810,10 +809,39 @@ it.effect("preserves DeepPlan, harness state and reply transcripts through impor
     const childId = ThreadId.make(
       `migration:v1:subagent:${encodeURIComponent(threadId)}:reply-topic`,
     );
+    assert.deepStrictEqual(yield* projections.listPendingInlineReplyTranscripts({ threadId }), [
+      childId,
+    ]);
     yield* importer.ensureTranscript(childId);
+    assert.deepStrictEqual(yield* projections.listPendingInlineReplyTranscripts({ threadId }), []);
+    const inline = yield* projections.getInlineReplyPage({ threadId });
+    assert.deepStrictEqual(
+      inline.rows.map(({ threadId: childThreadId, replyTopicId, createdAt, row }) => ({
+        childThreadId,
+        replyTopicId,
+        createdAt,
+        text: row.item.text,
+      })),
+      [
+        {
+          childThreadId: childId,
+          replyTopicId: "reply-topic",
+          createdAt: now,
+          text: "Saved follow-up",
+        },
+      ],
+    );
     const parent = yield* projections.getThreadProjection(threadId);
     const child = yield* projections.getThreadProjection(childId);
-    assert.deepStrictEqual(parent.thread.deepPlan, deepPlan);
+    assert.deepStrictEqual(parent.thread.deepPlan, {
+      schemaVersion: 1,
+      kind: "legacy",
+      id: DeepPlanRunId.make(deepPlan.id),
+      threadId,
+      goal: null,
+      finished: false,
+      updatedAt: now,
+    });
     assert.deepStrictEqual(parent.thread.harnessSync, harness);
     assert.strictEqual(parent.thread.modelSelection.model, "custom");
     assert.deepStrictEqual(child.thread.lineage, {

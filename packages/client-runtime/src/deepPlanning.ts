@@ -5,7 +5,6 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 
-export * from "./deepPlanningSources.ts";
 export * from "./deepPlanningRun.ts";
 export * from "./deepPlanningTurn.ts";
 export * from "./deepPlanningPresentation.ts";
@@ -59,7 +58,7 @@ export function resolveDeepPlanningAvailability(input: {
     };
   }
   const capability = input.capabilities?.deepPlanning;
-  if (capability?.version !== 1 || !capability.sourceExport || !capability.sourceImport) {
+  if (capability?.version !== 2) {
     return {
       supported: false,
       reason: "This environment does not support DeepPlan.",

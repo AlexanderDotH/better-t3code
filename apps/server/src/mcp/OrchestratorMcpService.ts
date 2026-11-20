@@ -1,4 +1,4 @@
-import { DeepPlanApplication } from "../deepPlanning/DeepPlanApplication.ts";
+import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import {
   CommandId,
   type RunId,
@@ -3170,15 +3170,16 @@ const make = Effect.gen(function* () {
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
       const key = yield* requestKey(input.clientRequestId);
-      const deepPlan = yield* Effect.serviceOption(DeepPlanApplication);
+      const deepPlan = yield* Effect.serviceOption(DeepPlanWorkflow);
       if (Option.isSome(deepPlan)) {
-        yield* deepPlan.value
-          .pauseForInterrupt(target.thread.deepPlanExecution?.runThreadId ?? input.threadId)
-          .pipe(
-            Effect.mapError(() =>
-              failure("orchestration_error", "The active Deep Plan could not be paused."),
-            ),
-          );
+        yield* deepPlan.value.pauseForStop(input.threadId).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("orchestrator-mcp.deep-plan-pause-failed", {
+              threadId: input.threadId,
+              error: error.message,
+            }),
+          ),
+        );
       }
       // A peer from before `stop` drops it when decoding, so it interrupts
       // the run instead, as this call did then.

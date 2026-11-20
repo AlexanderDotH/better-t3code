@@ -1,468 +1,328 @@
-import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
-  DeepPlanError,
-  type DeepPlanMutation,
+  DeepPlanReviewTarget,
+  type AgentDeepPlanMutation,
+  type DeepPlanExecutionContext,
   type DeepPlanRun,
   type DeepPlanRunId,
-  type DeepPlanSourceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
-import { GeneralSubagentCoordinator } from "../../../subagents/GeneralSubagentCoordinator.ts";
-import { GeneralSubagentError } from "../../../subagents/GeneralSubagentProtocol.ts";
+import { CheckpointDiffQuery } from "../../../checkpointing/CheckpointDiffQuery.ts";
+import { DeepPlanExploration } from "../../../deepPlanning/DeepPlanExploration.ts";
 import {
-  DEEP_PLAN_SOURCE_BATCH_SIZE,
-  DEEP_PLAN_PARALLEL_SOURCE_BATCHES,
-} from "../../../deepPlanning/DeepPlanSourceBatches.ts";
-
-import { DeepPlanSources } from "../../../deepPlanning/DeepPlanSources.ts";
+  deepPlanGrantMatches,
+  resolveLiveDeepPlan,
+} from "../../../deepPlanning/DeepPlanProviderContext.ts";
 import { DeepPlanWorkflow } from "../../../deepPlanning/DeepPlanWorkflow.ts";
-import { finalValidationRequestId } from "../../../deepPlanning/DeepPlanValidationReactor.ts";
-import { McpInvocationContext, workspaceThreadScope } from "../../McpInvocationContext.ts";
+import { reviewTarget } from "../../../deepPlanning/deepPlanNextAction.ts";
+import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
+import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { resolveWorkspaceMcpScope } from "../../WorkspaceMcpScope.ts";
 import {
   DeepPlanToolkit,
   DeepPlanToolScopeError,
-  type DeepPlanAdjustProcedureInput,
-  type DeepPlanAnalyzeSourcesInput,
+  type DeepPlanBlockInput,
+  type DeepPlanExploreInput,
   type DeepPlanPublishInput,
-  type DeepPlanReadSourceInput,
-  type DeepPlanStepUpdateInput,
-  type DeepPlanSummarizeInput,
-  type DeepPlanValidationInput,
+  type DeepPlanReviewVerdictInput,
+  type DeepPlanSubmitInput,
 } from "./tools.ts";
+
+const sameTarget = Schema.toEquivalence(DeepPlanReviewTarget);
 
 const loadBoundRun = Effect.fn("DeepPlanToolkit.loadBoundRun")(function* (
   expectedRunId?: DeepPlanRunId,
 ) {
-  const scope = yield* McpInvocationContext;
-  if (scope.thread === undefined)
+  const { thread, ownerThreadId, messageReply, capabilities, deepPlan } =
+    yield* McpInvocationContext;
+  if (
+    thread === undefined ||
+    !capabilities.has("deep-plan") ||
+    deepPlan === undefined ||
+    deepPlan.turnId === undefined
+  ) {
     return yield* new DeepPlanToolScopeError({
       reason: "credential-not-authorized",
-      detail: "Deep Plan requires an authenticated thread.",
-    });
-  const invocation = workspaceThreadScope({ ...scope, thread: scope.thread });
-  const binding = invocation.deepPlan;
-  if (!invocation.capabilities.has("deep-plan") || !binding) {
-    return yield* new DeepPlanToolScopeError({
-      reason: "credential-not-authorized",
-      detail:
-        "This session is not bound to an active Deep Plan run. Resume the Deep Plan in T3 before using its tools.",
+      detail: "This credential has no active Deep Plan turn grant.",
     });
   }
-  const sourceAnalysis = binding.sourceAnalysis;
-  const authorizedOwner = sourceAnalysis
-    ? invocation.ownerThreadId === sourceAnalysis.workerThreadId &&
-      invocation.threadId === binding.runThreadId &&
-      binding.phase === "planning" &&
-      binding.approvedPlanVersion === null
-    : invocation.ownerThreadId === invocation.threadId;
-  if (!authorizedOwner || invocation.messageReply) {
+  if (ownerThreadId !== thread.threadId || messageReply !== undefined) {
     return yield* new DeepPlanToolScopeError({
       reason: "owner-mismatch",
-      detail:
-        "Deep Plan tools require the authenticated owner agent, not a delegated thread or reply topic.",
+      detail: "Deep Plan tools require the authenticated thread assigned to the turn.",
     });
   }
-  if (expectedRunId !== undefined && expectedRunId !== binding.runId) {
+  if (expectedRunId !== undefined && expectedRunId !== deepPlan.runId) {
     return yield* new DeepPlanToolScopeError({
       reason: "stale-run",
-      detail:
-        "The tool call belongs to an earlier or different Deep Plan run. Refresh deep_plan_state.",
+      detail: "The request names a different Deep Plan run. Refresh the bound context.",
     });
   }
-  const workflow = yield* DeepPlanWorkflow;
-  const run = yield* workflow.getRun({ threadId: binding.runThreadId, runId: binding.runId });
-  if (!run || run.id !== binding.runId || run.threadId !== binding.runThreadId) {
-    return yield* new DeepPlanToolScopeError({
-      reason: "stale-run",
-      detail: "The credential's Deep Plan run is no longer current.",
-    });
-  }
-  if (binding.approvedPlanVersion === null) {
-    if (run.threadId !== invocation.threadId || run.approval !== null) {
-      return yield* new DeepPlanToolScopeError({
-        reason: "owner-mismatch",
-        detail: "This planning credential does not own the current run.",
-      });
-    }
-  } else if (
-    run.approval?.planVersion !== binding.approvedPlanVersion ||
-    run.plan?.version !== binding.approvedPlanVersion ||
-    run.approval.implementationThreadId !== invocation.threadId
-  ) {
+  if (thread.providerInstanceId !== deepPlan.modelSelection.instanceId) {
     return yield* new DeepPlanToolScopeError({
       reason: "stale-plan",
-      detail: "This credential is not bound to the current approved plan and implementing thread.",
+      detail: "The provider does not match the Deep Plan turn grant.",
     });
   }
-  return { invocation, binding, workflow, run };
+
+  const live = yield* resolveLiveDeepPlan({
+    threadId: thread.threadId,
+    turnId: deepPlan.turnId,
+    modelSelection: deepPlan.modelSelection,
+    interactionMode: deepPlan.phase === "planning" ? "plan" : "default",
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new DeepPlanToolScopeError({
+          reason: "stale-run",
+          detail: "The bound Deep Plan turn is unavailable.",
+        }),
+    ),
+  );
+  if (live === undefined || !deepPlanGrantMatches(live.grant, deepPlan)) {
+    return yield* new DeepPlanToolScopeError({
+      reason: "stale-plan",
+      detail: "The grant no longer matches the active Deep Plan turn.",
+    });
+  }
+
+  return { ...live, actorId: thread.threadId };
 });
 
-const requirePlanningRun = Effect.fn("DeepPlanToolkit.requirePlanningRun")(function* (
-  expectedRunId: DeepPlanRunId,
-  allowSourceAnalysis = false,
+type BoundRun = Effect.Success<ReturnType<typeof loadBoundRun>>;
+type Phase = DeepPlanExecutionContext["phase"];
+
+const requireRole = Effect.fn("DeepPlanToolkit.requireRole")(function* <Role extends Phase>(
+  roles: readonly Role[],
+  expectedRunId?: DeepPlanRunId,
 ) {
   const bound = yield* loadBoundRun(expectedRunId);
-  if (bound.binding.sourceAnalysis && !allowSourceAnalysis) {
-    return yield* new DeepPlanToolScopeError({
-      reason: "owner-mismatch",
-      detail: "Source-analysis workers may only read and summarize their assigned sources.",
-    });
-  }
-  if (
-    bound.binding.phase !== "planning" ||
-    bound.binding.approvedPlanVersion !== null ||
-    !["collecting", "planning", "awaitingApproval"].includes(bound.run.phase)
-  ) {
+  if (!roles.some((role) => bound.grant.phase === role)) {
     return yield* new DeepPlanToolScopeError({
       reason: "phase-mismatch",
-      detail:
-        "Source summaries and proposed plans can only be changed during planning, before user approval.",
+      detail: "This tool is unavailable to the role assigned to this Deep Plan turn.",
     });
   }
-  return bound;
+  return { ...bound, grant: bound.grant as DeepPlanExecutionContext & { readonly phase: Role } };
 });
 
-const requireImplementationRun = Effect.fn("DeepPlanToolkit.requireImplementationRun")(function* (
-  expectedRunId: DeepPlanRunId,
-) {
-  const bound = yield* loadBoundRun(expectedRunId);
-  if (bound.binding.phase === "planning" || bound.binding.approvedPlanVersion === null) {
-    return yield* new DeepPlanToolScopeError({
-      reason: "phase-mismatch",
-      detail: "Execution evidence requires the user's approval of this exact plan version.",
-    });
-  }
-  if (bound.binding.modelSelection.instanceId !== bound.invocation.providerInstanceId) {
-    return yield* new DeepPlanError({
-      code: "actor-mismatch",
-      message: "The current provider does not match this run's bound implementing model.",
-    });
-  }
-  return {
-    ...bound,
-    actor: {
-      implementerId: `thread:${bound.invocation.threadId}`,
-      model: bound.binding.modelSelection,
-    },
-  };
-});
-
-type WorkflowUpdate = { readonly expectedRevision: number; readonly operationId: string };
-
-const updateRun = (
-  bound: Effect.Success<ReturnType<typeof loadBoundRun>>,
-  input: WorkflowUpdate,
-  mutation: DeepPlanMutation,
-) =>
-  bound.workflow.update({
-    threadId: bound.binding.runThreadId,
-    runId: bound.binding.runId,
-    expectedRevision: input.expectedRevision,
-    operationId: input.operationId,
-    mutation,
-  });
-
-const withBoundRunLock = Effect.fn("DeepPlanToolkit.withRunLock")(function* <A, E, R>(
-  expectedRunId: DeepPlanRunId,
-  effect: Effect.Effect<A, E, R>,
-) {
-  const { workflow, binding } = yield* loadBoundRun(expectedRunId);
-  return yield* workflow.withRunLock(binding.runId, effect);
+const reviewerState = (
+  run: DeepPlanRun,
+  grant: Extract<DeepPlanExecutionContext, { readonly phase: "review" }>,
+) => ({
+  id: run.id,
+  revision: run.revision,
+  phase: run.phase,
+  planVersion: grant.approvedPlanVersion!,
+  ...grant.review,
 });
 
 export const invokeDeepPlanState = Effect.fn("DeepPlanToolkit.state")(function* () {
-  const { binding, run } = yield* loadBoundRun();
-  const grant = binding.sourceAnalysis;
-  return grant
-    ? {
+  const { run, grant, assignment } = yield* loadBoundRun();
+  return grant.phase === "review"
+    ? reviewerState(run, grant)
+    : {
         ...run,
-        sources: run.sources.filter((source) => grant.sourceIds.includes(source.sourceId)),
-        sourceCoverage: run.sourceCoverage.filter((coverage) =>
-          grant.sourceIds.includes(coverage.sourceId),
-        ),
-      }
-    : run;
-});
-
-export const invokeDeepPlanSources = Effect.fn("DeepPlanToolkit.sources")(function* () {
-  const { binding } = yield* loadBoundRun();
-  const sources = yield* DeepPlanSources;
-  const result = yield* sources.listSources({
-    threadId: binding.runThreadId,
-    runId: binding.runId,
-  });
-  const grant = binding.sourceAnalysis;
-  return grant
-    ? {
-        ...result,
-        sources: result.sources.filter((source) => grant.sourceIds.includes(source.sourceId)),
-        coverage: result.coverage.filter((coverage) => grant.sourceIds.includes(coverage.sourceId)),
-      }
-    : result;
-});
-
-const requireGrantedSource = (
-  binding: import("../../McpInvocationContext.ts").McpDeepPlanContext,
-  sourceId: DeepPlanSourceId,
-) =>
-  binding.sourceAnalysis && !binding.sourceAnalysis.sourceIds.includes(sourceId)
-    ? Effect.fail(
-        new DeepPlanToolScopeError({
-          reason: "owner-mismatch",
-          detail: "This source is outside the worker's assigned batch.",
-        }),
-      )
-    : Effect.void;
-
-export const invokeDeepPlanAnalyzeSources = Effect.fn("DeepPlanToolkit.analyzeSources")(function* (
-  input: DeepPlanAnalyzeSourcesInput,
-) {
-  const { workflow, binding, invocation } = yield* requirePlanningRun(input.expectedRunId);
-  const optionalCoordinator = yield* Effect.serviceOption(GeneralSubagentCoordinator);
-  if (Option.isNone(optionalCoordinator)) {
-    return yield* new GeneralSubagentError({
-      reason: "operation-failed",
-      detail: "Parallel source analysis is unavailable on this server.",
-    });
-  }
-  const coordinator = optionalCoordinator.value;
-  const sources = yield* DeepPlanSources;
-  const caller = {
-    parentThreadId: binding.runThreadId,
-    callerProviderInstanceId: invocation.providerInstanceId,
-  };
-  const agents = yield* workflow.withRunLock(
-    binding.runId,
-    Effect.gen(function* () {
-      yield* requirePlanningRun(input.expectedRunId);
-      const frozen = yield* sources.listSources({
-        threadId: binding.runThreadId,
-        runId: binding.runId,
-      });
-      const ready = frozen.sources.filter((source) =>
-        frozen.coverage.some(
-          (coverage) => coverage.sourceId === source.sourceId && coverage.status === "ready",
-        ),
-      );
-      if (ready.length === 0) return [];
-      return yield* coordinator.analyzeDeepPlanSources({ ...caller, binding, sources: ready });
-    }),
-  );
-  // Workers need this same run lock to save summaries while the parent waits.
-  const waited =
-    agents.length > 0 && (input.waitSeconds ?? 30) > 0
-      ? yield* coordinator.wait({
-          ...caller,
-          agentIds: agents.map((agent) => agent.agentId),
-          timeoutSeconds: input.waitSeconds ?? 30,
-        })
-      : null;
-  const frozen = yield* workflow.withRunLock(
-    binding.runId,
-    Effect.gen(function* () {
-      const bound = yield* requirePlanningRun(input.expectedRunId);
-      const frozen = yield* sources.listSources({
-        threadId: binding.runThreadId,
-        runId: binding.runId,
-      });
-      const previousCoverage = new Map(
-        bound.run.sourceCoverage.map((entry) => [entry.sourceId, entry]),
-      );
-      const readProgressChanged = frozen.coverage.some(
-        (entry) => entry.readRecordCount !== previousCoverage.get(entry.sourceId)?.readRecordCount,
-      );
-      if (bound.run.plan === null && readProgressChanged) {
-        yield* updateRun(
-          bound,
-          {
-            expectedRevision: bound.run.revision,
-            operationId: `source-read-progress:${bound.run.revision}`,
-          },
-          { type: "source-coverage", coverage: frozen.coverage },
-        );
-      }
-      return frozen;
-    }),
-  );
-  const remainingSourceCount = frozen.sources.filter(
-    (source) =>
-      !frozen.coverage.some(
-        (coverage) => coverage.sourceId === source.sourceId && coverage.status === "summarized",
-      ),
-  ).length;
-  return {
-    runId: binding.runId,
-    batchSize: DEEP_PLAN_SOURCE_BATCH_SIZE,
-    maxParallelBatches: DEEP_PLAN_PARALLEL_SOURCE_BATCHES,
-    agents: agents.map((agent) => {
-      const observed = waited?.agents.find((entry) => entry.agentId === agent.agentId);
-      return {
-        agentId: agent.agentId,
-        status: observed?.status ?? agent.status,
-        sourceIds: agent.sourceIds,
-        outcome: observed?.result?.outcome ?? null,
+        target: assignment === undefined ? null : reviewTarget(assignment),
+        round: assignment?.round ?? null,
       };
-    }),
-    remainingSourceCount,
-    complete: remainingSourceCount === 0 && (agents.length === 0 || waited?.allTerminal === true),
+});
+
+const updateRun = Effect.fn("DeepPlanToolkit.updateRun")(function* (
+  bound: BoundRun,
+  input: { readonly expectedRevision: number; readonly operationId: string },
+  mutation: AgentDeepPlanMutation,
+) {
+  const workflow = yield* DeepPlanWorkflow;
+  const updated = yield* workflow.update({
+    threadId: bound.run.threadId,
+    runId: bound.run.id,
+    expectedRevision: input.expectedRevision,
+    operationId: input.operationId,
+    byThreadId: bound.actorId,
+    ...(bound.assignment === undefined ? {} : { byTurnCommandId: bound.assignment.commandId }),
+    mutation,
+  });
+  return {
+    runId: updated.id,
+    revision: updated.revision,
+    phase: updated.phase,
+    planVersion: updated.plan?.version ?? null,
   };
 });
 
-const readSource = Effect.fn("DeepPlanToolkit.readSource")(function* (
-  input: DeepPlanReadSourceInput,
+export const invokeDeepPlanPublish = Effect.fn("DeepPlanToolkit.publish")(function* (
+  input: DeepPlanPublishInput,
 ) {
-  const { binding, run } = yield* loadBoundRun(input.expectedRunId);
-  yield* requireGrantedSource(binding, input.sourceId);
-  if (run.phase === "paused" || run.phase === "blocked" || run.phase === "failed") {
-    return yield* new DeepPlanToolScopeError({
-      reason: "phase-mismatch",
-      detail: "Resume this Deep Plan run before reading more source pages.",
-    });
-  }
-  const sources = yield* DeepPlanSources;
-  return yield* sources.readSourceChunk({
-    threadId: binding.runThreadId,
-    runId: binding.runId,
-    sourceId: input.sourceId,
-    includeBodies: input.includeBodies ?? false,
-    ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-    ...(input.limit === undefined ? {} : { limit: input.limit }),
-  });
-});
-
-const summarizeSource = Effect.fn("DeepPlanToolkit.summarizeSource")(function* (
-  input: DeepPlanSummarizeInput,
-) {
-  const bound = yield* requirePlanningRun(input.expectedRunId, true);
-  yield* requireGrantedSource(bound.binding, input.sourceId);
-  if (
-    !bound.binding.sourceAnalysis &&
-    bound.run.revision !== input.expectedRevision &&
-    !bound.run.operations.some((operation) => operation.operationId === input.operationId)
-  ) {
-    return yield* new DeepPlanError({
-      code: "stale-revision",
-      message: "Refresh deep_plan_state before summarizing this source.",
-    });
-  }
-  const sources = yield* DeepPlanSources;
-  const coverage = yield* sources.summarizeSource({
-    threadId: bound.binding.runThreadId,
-    runId: bound.binding.runId,
-    sourceId: input.sourceId,
-    expectedContentHash: input.expectedContentHash,
-    summary: input.summary,
-  });
-  const allSources = yield* sources.listSources({
-    threadId: bound.binding.runThreadId,
-    runId: bound.binding.runId,
-  });
-  yield* updateRun(
-    bound,
-    {
-      ...input,
-      expectedRevision: bound.binding.sourceAnalysis ? bound.run.revision : input.expectedRevision,
-    },
-    { type: "source-coverage", coverage: allSources.coverage },
-  );
-  return coverage;
-});
-
-const publish = Effect.fn("DeepPlanToolkit.publish")(function* (input: DeepPlanPublishInput) {
-  const { deepPlan } = yield* McpInvocationContext;
-  const bound = yield* deepPlan?.approvedPlanVersion == null
-    ? requirePlanningRun(input.expectedRunId)
-    : requireImplementationRun(input.expectedRunId);
-  const sources = yield* DeepPlanSources;
-  yield* sources.assertCompleteCoverage(bound.binding.runId);
+  const bound = yield* requireRole(["planning"], input.expectedRunId);
   return yield* updateRun(bound, input, { type: "publish-plan", plan: input.plan });
 });
 
-const stepUpdate = Effect.fn("DeepPlanToolkit.stepUpdate")(function* (
-  input: DeepPlanStepUpdateInput,
+const invokeDeepPlanExplore = Effect.fn("DeepPlanToolkit.explore")(function* (
+  input: DeepPlanExploreInput,
 ) {
-  const bound = yield* requireImplementationRun(input.expectedRunId);
-  return yield* updateRun(bound, input, {
-    type: "step-update",
-    stepId: input.stepId,
-    status: input.status,
-    evidence: input.evidence,
-    actor: bound.actor,
-  });
+  const { actorId, run } = yield* requireRole(["planning"], input.expectedRunId);
+  const exploration = yield* DeepPlanExploration;
+  return yield* exploration.explore({ threadId: actorId, run, assignments: input.assignments });
 });
 
-const adjustProcedure = Effect.fn("DeepPlanToolkit.adjustProcedure")(function* (
-  input: DeepPlanAdjustProcedureInput,
+export const invokeDeepPlanSubmit = Effect.fn("DeepPlanToolkit.submit")(function* (
+  input: DeepPlanSubmitInput,
 ) {
-  const bound = yield* requireImplementationRun(input.expectedRunId);
-  return yield* updateRun(bound, input, {
-    type: "procedure-adjust",
-    reason: input.reason,
-    changes: input.changes,
-    actor: bound.actor,
-  });
-});
-
-const validation = Effect.fn("DeepPlanToolkit.validation")(function* (
-  input: DeepPlanValidationInput,
-) {
-  const bound = yield* requireImplementationRun(input.expectedRunId);
-  const requestId = finalValidationRequestId(bound.run);
-  if (input.type === "start" && input.requestId !== undefined && input.requestId !== requestId) {
-    return yield* new DeepPlanError({
-      code: "validation-required",
-      message:
-        "Use the server-scheduled validation request. Omit requestId when starting validation.",
+  const bound = yield* requireRole(["execution"], input.expectedRunId);
+  const { target, summary, changedFiles } = input;
+  if (bound.assignment === undefined || !sameTarget(target, reviewTarget(bound.assignment))) {
+    return yield* new DeepPlanToolScopeError({
+      reason: "target-mismatch",
+      detail: "Submit the target assigned to this implementation turn.",
     });
   }
-  return yield* updateRun(
-    bound,
-    input,
-    input.type === "start"
-      ? { type: "validation-start", requestId, actor: bound.actor }
-      : {
-          type: "validation-complete",
-          requestId: input.requestId,
-          status: input.status,
-          evidence: input.evidence,
-          actor: bound.actor,
-        },
+  return yield* updateRun(bound, input, { type: "submit", target, summary, changedFiles });
+});
+
+const invokeDeepPlanBlock = Effect.fn("DeepPlanToolkit.block")(function* (
+  input: DeepPlanBlockInput,
+) {
+  const bound = yield* requireRole(["planning", "execution"], input.expectedRunId);
+  return yield* updateRun(bound, input, { type: "block", reason: input.reason });
+});
+
+const instructionPathsForFiles = Effect.fn("DeepPlanToolkit.instructionPathsForFiles")(function* (
+  threadId: BoundRun["actorId"],
+  files: ReadonlyArray<string>,
+) {
+  const { workspaceRoot } = yield* resolveWorkspaceMcpScope(threadId);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const paths = yield* WorkspacePaths;
+  const path = yield* Path.Path;
+  const folders = new Set(["."]);
+  for (const relativePath of files) {
+    const resolved = yield* paths
+      .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (resolved === undefined) continue;
+    let directory = path.dirname(resolved.relativePath);
+    while (!folders.has(directory)) {
+      folders.add(directory);
+      directory = path.dirname(directory);
+    }
+  }
+  const candidates = [...folders].flatMap((directory) =>
+    ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"].map((file) => path.join(directory, file)),
+  );
+  return yield* Effect.filter(
+    candidates,
+    (candidate) =>
+      fileSystem.stat(path.join(workspaceRoot, candidate)).pipe(
+        Effect.map((stat) => stat.type === "File"),
+        Effect.orElseSucceed(() => false),
+      ),
+    { concurrency: 8 },
   );
 });
 
-export const invokeDeepPlanReadSource = (input: DeepPlanReadSourceInput) =>
-  withBoundRunLock(input.expectedRunId, readSource(input));
-export const invokeDeepPlanSummarizeSource = (input: DeepPlanSummarizeInput) =>
-  withBoundRunLock(input.expectedRunId, summarizeSource(input));
-
-const updateReceipt = (run: DeepPlanRun) => ({
-  runId: run.id,
-  revision: run.revision,
-  phase: run.phase,
-  planVersion: run.plan?.version ?? null,
-  approvedPlanVersion: run.approval?.planVersion ?? null,
-  finalValidation: run.finalValidation,
+export const invokeDeepPlanReviewContext = Effect.fn("DeepPlanToolkit.reviewContext")(function* () {
+  const { actorId, run, grant } = yield* requireRole(["review"]);
+  const { target, round } = grant.review;
+  const state =
+    target.kind === "step"
+      ? run.steps.find((step) => step.stepId === target.stepId)
+      : run.finalReview;
+  const plan = run.plan;
+  const step =
+    target.kind === "step" ? plan?.steps.find((step) => step.id === target.stepId) : null;
+  const review = state?.reviews.find(
+    (entry) => entry.round === round && entry.reviewThreadId === actorId,
+  );
+  if (!plan || !state || review === undefined || step === undefined) {
+    return yield* new DeepPlanToolScopeError({
+      reason: "target-mismatch",
+      detail: "The submission assigned to this review is unavailable.",
+    });
+  }
+  const submission =
+    target.kind === "step"
+      ? state.submission
+      : {
+          summary:
+            state.submission?.summary ??
+            "Review the combined changes for all steps against the final acceptance criteria.",
+          changedFiles: Array.from(
+            new Set([
+              ...run.steps.flatMap((state) => state.submission?.changedFiles ?? []),
+              ...(state.submission?.changedFiles ?? []),
+            ]),
+          ),
+        };
+  if (submission === null) {
+    return yield* new DeepPlanToolScopeError({
+      reason: "target-mismatch",
+      detail: "The submission assigned to this review is unavailable.",
+    });
+  }
+  const diffQuery = yield* CheckpointDiffQuery;
+  const diff =
+    review.diff === null
+      ? null
+      : yield* diffQuery.getReviewDiff(
+          review.diff,
+          target.kind === "step" && (run.approval?.parallelism ?? 1) > 1
+            ? submission.changedFiles
+            : undefined,
+        );
+  const changedPaths = [
+    ...submission.changedFiles,
+    ...(diff?.files.flatMap((file) =>
+      file.previousPath === undefined ? [file.path] : [file.previousPath, file.path],
+    ) ?? []),
+  ];
+  return {
+    ...reviewerState(run, grant),
+    goal: plan.goal,
+    scope: plan.scope,
+    step,
+    finalCriteria: target.kind === "final" ? plan.finalValidation : null,
+    submission,
+    priorFindings: state.reviews
+      .filter((entry) => entry.round < round)
+      .flatMap((entry) => entry.findings),
+    instructionPaths: yield* instructionPathsForFiles(actorId, changedPaths),
+    diff,
+  };
 });
 
-export const invokeDeepPlanPublish = (input: DeepPlanPublishInput) =>
-  withBoundRunLock(input.expectedRunId, publish(input)).pipe(Effect.map(updateReceipt));
-export const invokeDeepPlanStepUpdate = (input: DeepPlanStepUpdateInput) =>
-  withBoundRunLock(input.expectedRunId, stepUpdate(input)).pipe(Effect.map(updateReceipt));
-const invokeDeepPlanAdjustProcedure = (input: DeepPlanAdjustProcedureInput) =>
-  withBoundRunLock(input.expectedRunId, adjustProcedure(input)).pipe(Effect.map(updateReceipt));
-export const invokeDeepPlanValidation = (input: DeepPlanValidationInput) =>
-  withBoundRunLock(input.expectedRunId, validation(input)).pipe(Effect.map(updateReceipt));
+export const invokeDeepPlanReviewVerdict = Effect.fn("DeepPlanToolkit.reviewVerdict")(function* (
+  input: DeepPlanReviewVerdictInput,
+) {
+  const bound = yield* requireRole(["review"], input.expectedRunId);
+  const { target, round, verdict, summary, findings } = input;
+  const review = bound.grant.review;
+  if (round !== review.round || !sameTarget(target, review.target)) {
+    return yield* new DeepPlanToolScopeError({
+      reason: "target-mismatch",
+      detail: "Record a verdict for the target and round assigned to this review.",
+    });
+  }
+  return yield* updateRun(bound, input, {
+    type: "review-verdict",
+    target,
+    round,
+    verdict,
+    summary,
+    findings,
+  });
+});
 
 export const DeepPlanToolkitHandlersLive = McpToolAccess.toLayer(DeepPlanToolkit, {
   deep_plan_state: McpToolAccess.readsAsCaller(invokeDeepPlanState),
-  deep_plan_sources: McpToolAccess.readsAsCaller(invokeDeepPlanSources),
-  deep_plan_analyze_sources: McpToolAccess.actsAsCaller(invokeDeepPlanAnalyzeSources),
-  deep_plan_read_source: McpToolAccess.readsAsCaller(invokeDeepPlanReadSource),
-  deep_plan_summarize_source: McpToolAccess.actsAsCaller(invokeDeepPlanSummarizeSource),
   deep_plan_publish: McpToolAccess.actsAsCaller(invokeDeepPlanPublish),
-  deep_plan_step_update: McpToolAccess.actsAsCaller(invokeDeepPlanStepUpdate),
-  deep_plan_adjust_procedure: McpToolAccess.actsAsCaller(invokeDeepPlanAdjustProcedure),
-  deep_plan_validation: McpToolAccess.actsAsCaller(invokeDeepPlanValidation),
+  deep_plan_explore: McpToolAccess.actsAsCaller(invokeDeepPlanExplore),
+  deep_plan_submit: McpToolAccess.actsAsCaller(invokeDeepPlanSubmit),
+  deep_plan_block: McpToolAccess.actsAsCaller(invokeDeepPlanBlock),
+  deep_plan_review_context: McpToolAccess.readsAsCaller(invokeDeepPlanReviewContext),
+  deep_plan_review_verdict: McpToolAccess.actsAsCaller(invokeDeepPlanReviewVerdict),
 });

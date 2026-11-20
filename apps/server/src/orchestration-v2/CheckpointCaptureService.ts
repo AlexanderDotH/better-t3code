@@ -34,6 +34,10 @@ export class CheckpointCaptureExecutionError extends Schema.TaggedError<Checkpoi
 
 const isCheckpointCaptureExecutionError = Schema.is(CheckpointCaptureExecutionError);
 
+export function checkpointCaptureCommandId(runId: RunId): CommandId {
+  return CommandId.make(`command:effect:checkpoint.capture:${runId}`);
+}
+
 export interface CheckpointCaptureServiceV2Shape {
   readonly execute: (input: {
     readonly threadId: ThreadId;
@@ -67,8 +71,15 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const { run, rootNode, scope, providerThread, readyCheckpointOrdinals, sideChat } =
-        yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const {
+        run,
+        rootNode,
+        scope,
+        providerThread,
+        readyCheckpointOrdinals,
+        sideChat,
+        deepPlanReview,
+      } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
 
@@ -112,6 +123,7 @@ export const layer: Layer.Layer<
             Effect.mapError((cause) => new CheckpointCaptureExecutionError({ ...input, cause })),
           );
       const capturedAt = yield* DateTime.now;
+      const forceMissing = sideChat || deepPlanReview || checkpointsDisabled;
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
@@ -121,14 +133,14 @@ export const layer: Layer.Layer<
           : yield* checkpoints.materializeBaselineCheckpoint({
               scope,
               ordinalWithinScope: 0,
-              forceMissing: sideChat || checkpointsDisabled,
+              forceMissing,
             });
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
         : yield* checkpoints.materializeBaselineCheckpoint({
             scope,
             ordinalWithinScope: baselineOrdinalWithinScope,
-            forceMissing: sideChat || checkpointsDisabled,
+            forceMissing,
           });
       const checkpoint = yield* checkpoints.capture({
         scope,
@@ -137,11 +149,11 @@ export const layer: Layer.Layer<
         ordinalWithinScope: run.ordinal,
         appRunOrdinal: run.ordinal,
         capturedAt,
-        forceMissing: sideChat || checkpointsDisabled,
+        forceMissing,
       });
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
-      const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
+      const commandId = checkpointCaptureCommandId(run.id);
       yield* eventSink.commitCommand({
         commandId,
         threadId: input.threadId,

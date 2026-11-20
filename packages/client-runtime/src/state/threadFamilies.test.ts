@@ -1,7 +1,9 @@
 import {
   EnvironmentId,
+  MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2GetShellSnapshotError,
+  SubagentId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadFamily,
@@ -199,7 +201,10 @@ describe("createThreadFamilyAtoms", () => {
           Effect.tap(() => Effect.yieldNow),
         );
         registry.mount(families.snapshotAtom(TARGET.environmentId));
-        families.mount(registry, TARGET.environmentId, parent.id);
+        families.mountReplyTopics(registry, {
+          environmentId: TARGET.environmentId,
+          threadId: parent.id,
+        });
 
         // A cached shell from before this session's first snapshot reads nothing.
         expect(threadFamilyRead(registry.get(family))).toBe("pending");
@@ -230,6 +235,42 @@ describe("createThreadFamilyAtoms", () => {
         yield* settle;
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
+
+        const reply = {
+          ...row("reply"),
+          messageReply: {
+            sourceThreadId: parent.id,
+            messageId: MessageId.make("quoted"),
+            replyTopicId: SubagentId.make("reply"),
+          },
+        };
+        registry.set(
+          shellState,
+          AsyncResult.success({
+            ...shellAt(2),
+            snapshot: Option.some({
+              ...shellSnapshot,
+              snapshotSequence: 5,
+              threads: [parent, reply],
+            }),
+          }),
+        );
+        expect(mergedIds()).toEqual(["parent", "reply", "idle-child"]);
+        registry.set(
+          shellState,
+          AsyncResult.success({
+            ...shellAt(2),
+            snapshot: Option.some({ ...shellSnapshot, snapshotSequence: 6 }),
+            removedAt: new Map([[reply.id, 6]]),
+          }),
+        );
+        expect(threadFamilyRead(registry.get(family))).toBe("pending");
+        yield* Queue.offer(
+          replies,
+          Effect.succeed({ snapshotSequence: 6, threads: [child, reply] }),
+        );
+        yield* settle;
+        expect(mergedIds()).toEqual(["parent", "idle-child", "reply"]);
       }),
     ),
   );

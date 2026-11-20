@@ -4857,7 +4857,7 @@ describe("fork and reply timeline markers", () => {
     expect(resolveForkDividerAfterRowId(rows(fixture.visibleTurnItems))).toBeNull();
   });
 
-  it("summarizes side chats per source message and opens the newest", () => {
+  it("keeps each side chat available from its source message", () => {
     const source = ThreadId.make("source");
     const reply = (id: string, messageId: string, createdAt: string, status: string | null) => ({
       id: ThreadId.make(id),
@@ -4884,15 +4884,20 @@ describe("fork and reply timeline markers", () => {
       {
         messageId: MessageId.make("a"),
         threadId: ThreadId.make("newer"),
-        count: 2,
         status: "running",
+        statusMessage: null,
+        retry: null,
+      },
+      {
+        messageId: MessageId.make("a"),
+        threadId: ThreadId.make("older"),
+        status: "completed",
         statusMessage: null,
         retry: null,
       },
       {
         messageId: MessageId.make("b"),
         threadId: ThreadId.make("other"),
-        count: 1,
         status: null,
         statusMessage: null,
         retry: null,

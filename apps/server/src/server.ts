@@ -597,6 +597,11 @@ const layerOrchestrationApplication = Layer.merge(
   NativeChildWorkQuery.layer,
 ).pipe(Layer.provideMerge(layerCheckpointStore), Layer.provideMerge(layerOrchestrationV2Runtime));
 
+const layerPeerEnvironments = PeerForwarding.layer.pipe(
+  Layer.provideMerge(PeerMcpClient.layer),
+  Layer.provideMerge(PeerLinks.layer),
+);
+
 const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));
@@ -691,6 +696,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
+  Layer.provideMerge(layerPeerEnvironments),
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -852,13 +858,6 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
-  Layer.provide(
-    PeerForwarding.layer.pipe(
-      Layer.provideMerge(PeerMcpClient.layer),
-      Layer.provideMerge(PeerLinks.layer),
-    ),
-  ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

@@ -1,4 +1,5 @@
 import {
+  type DeepPlanSourceRef,
   type EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
@@ -61,6 +62,9 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadReadInput,
     ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
+    readonly assertReadableThread: (
+      ref: DeepPlanSourceRef,
+    ) => Effect.Effect<void, OrchestratorMcpFailure>;
     /** `t3_thread_interrupt` there. */
     readonly interruptThread: (
       scope: Scope,
@@ -217,6 +221,26 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
+  const assertReadableThread: PeerForwarding["Service"]["assertReadableThread"] = Effect.fn(
+    "PeerForwarding.assertReadableThread",
+  )(function* ({ environmentId, threadId, projectId }) {
+    yield* requireEnabled;
+    // The start preflight needs the thread identity, so skip the message page.
+    const { thread } = yield* peers.call({
+      environmentId,
+      tool: "t3_thread_read",
+      arguments: { threadId, afterPosition: Number.MAX_SAFE_INTEGER, limit: 1, runLimit: 1 },
+      limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+      success: OrchestratorMcpThreadReadResult,
+    });
+    if (thread.threadId !== threadId || thread.projectId !== projectId) {
+      return yield* new OrchestratorMcpFailure({
+        code: "thread_not_found",
+        message: "The selected chat was not found in its project.",
+      });
+    }
+  });
+
   const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
@@ -266,6 +290,7 @@ const make = Effect.gen(function* () {
   return PeerForwarding.of({
     call,
     readThread,
+    assertReadableThread,
     interruptThread,
     waitForThread,
     links: listLinks,

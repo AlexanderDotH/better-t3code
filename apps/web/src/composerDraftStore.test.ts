@@ -728,9 +728,11 @@ describe("composerDraftStore Deep Plan sources", () => {
 
   beforeEach(resetComposerDraftStore);
 
-  it("keeps a choice without project chats through persistence until they are included again", () => {
+  it("leaves project chats out by default and persists an opt-in until it is cleared", () => {
     const store = useComposerDraftStore.getState();
-    store.setDeepPlanSourceRefs(threadRef, [], false);
+    store.setDeepPlanSourceRefs(threadRef, []);
+    expect(draftFor(threadRef.threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+    store.setDeepPlanSourceRefs(threadRef, [], true);
     const merge = useComposerDraftStore.persist.getOptions().merge!;
     const hydrated = merge(
       JSON.parse(
@@ -740,9 +742,9 @@ describe("composerDraftStore Deep Plan sources", () => {
     );
     expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]).toMatchObject({
       deepPlanSourceRefs: [],
-      deepPlanIncludeProjectChats: false,
+      deepPlanIncludeProjectChats: true,
     });
-    store.setDeepPlanSourceRefs(threadRef, []);
+    store.setDeepPlanSourceRefs(threadRef, [], false);
     expect(draftFor(threadRef.threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 });

@@ -132,6 +132,9 @@ it("opens a completion link in the parent inspector", () => {
       inspector: { type: "thread", environmentId: screen.source.environmentId, threadId: "child" },
     },
   });
+  const showingChild = screen.state;
+  screen.openLinked("child");
+  expect(screen.state).toBe(showingChild);
 });
 
 it("switches between subagents and devices in the same parent route", () => {

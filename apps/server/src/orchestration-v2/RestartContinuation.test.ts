@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  DeepPlanRunId,
   MessageId,
   NodeId,
   ProjectId,
@@ -237,14 +238,17 @@ it.effect.each(["completed", "waiting", "cancelled"] as const)(
 );
 
 it.effect.each([
-  [false, undefined],
-  [true, undefined],
-  [false, true],
-  [true, false],
+  [false, undefined, false],
+  [true, undefined, false],
+  [false, true, false],
+  [true, false, false],
+  [true, undefined, true],
 ] as const)(
-  "atomically records restart intent with cancellation when opt-in is %s and project override is %s",
-  ([enabled, projectOverride]) =>
+  "records restart intent with opt-in %s, project override %s, and Deep Plan binding %s",
+  ([enabled, projectOverride, deepPlan]) =>
     Effect.gen(function* () {
+      const projection = makeProjection();
+      const source = projection.runs[0]!;
       let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
         Effect.provide(
@@ -262,7 +266,15 @@ it.effect.each([
             }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getRecoveryThreadIds: () => Effect.succeed([threadId]),
-              getRuntimeRecoveryProjection: () => Effect.succeed(makeProjection()),
+              getRuntimeRecoveryProjection: () =>
+                Effect.succeed({
+                  ...projection,
+                  runs: [
+                    deepPlan
+                      ? { ...source, deepPlanRunId: DeepPlanRunId.make("deep-plan:restart") }
+                      : source,
+                  ],
+                }),
             }),
             Layer.mock(EventSink.EventSinkV2)({
               commitCommand: (input) => {
@@ -287,8 +299,9 @@ it.effect.each([
           (event) => event.type === "run.updated" && event.payload.status === "cancelled",
         ),
       );
-      assert.lengthOf(committed!.effects, (projectOverride ?? enabled) ? 1 : 0);
-      if (projectOverride ?? enabled)
+      const shouldContinue = (projectOverride ?? enabled) && !deepPlan;
+      assert.lengthOf(committed!.effects, shouldContinue ? 1 : 0);
+      if (shouldContinue)
         assert.deepEqual(committed!.effects[0]?.request, {
           type: "provider-runtime.continue",
           sourceRunId: runId,

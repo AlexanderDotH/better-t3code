@@ -5,6 +5,7 @@ import {
   buildPlanImplementationPrompt,
   estimatePlanImplementationWorkUnits,
   formatPlanExecutionDuration,
+  resolvePlanImplementationSuggestion,
 } from "./planImplementation.ts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
@@ -30,6 +31,28 @@ describe("shared plan presentation", () => {
       "First\nSecond",
     );
     expect(normalizePlanMarkdownForExport(plan)).toContain("Third");
+  });
+
+  const step = (id: string, ...dependencies: string[]) => ({ id, dependencies });
+  it.each([
+    ["one step", [step("a")], null],
+    ["a dependency chain", [step("a"), step("b", "a"), step("c", "b")], null],
+    ["two independent steps", [step("a"), step("b")], 2],
+    ["a diamond", [step("a"), step("b", "a"), step("c", "a"), step("d", "b", "c")], 2],
+    ["a fan-out after a root", [step("a"), step("b", "a"), step("c", "a"), step("d", "a")], 3],
+    ["more independent steps than lanes", ["a", "b", "c", "d", "e", "f"].map((id) => step(id)), 4],
+  ])("suggests server-managed lanes for %s", (_name, steps, count) => {
+    const suggestion = resolvePlanImplementationSuggestion({
+      featureEnabled: false,
+      planMarkdown: "",
+      provider: null,
+      deepPlanSteps: steps,
+    });
+    expect(suggestion).toEqual(
+      count === null
+        ? null
+        : { strategy: { kind: "subagents", count }, supportedCounts: [2, 3, 4] },
+    );
   });
 });
 

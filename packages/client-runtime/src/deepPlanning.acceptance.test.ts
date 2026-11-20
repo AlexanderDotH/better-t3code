@@ -1,9 +1,10 @@
 import {
+  ExecutionEnvironmentCapabilities,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ExecutionEnvironmentCapabilities,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -13,10 +14,12 @@ import {
   resolveDeepPlanningAvailability,
 } from "./deepPlanning.ts";
 
+const decodeCapabilities = Schema.decodeSync(ExecutionEnvironmentCapabilities);
+
 const capabilities = {
   repositoryIdentity: false,
   midChatProviderSwitching: false,
-  deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
+  deepPlanning: { version: 2 },
 } satisfies ExecutionEnvironmentCapabilities;
 
 const provider = {
@@ -86,22 +89,12 @@ describe("Deep Planning client acceptance", () => {
     },
     { name: "a missing server snapshot", input: { capabilities: null, provider } },
     {
-      name: "a server without source import",
+      name: "a v1 server",
       input: {
-        capabilities: {
+        capabilities: decodeCapabilities({
           ...capabilities,
-          deepPlanning: { ...capabilities.deepPlanning, sourceImport: false },
-        },
-        provider,
-      },
-    },
-    {
-      name: "a server without source export",
-      input: {
-        capabilities: {
-          ...capabilities,
-          deepPlanning: { ...capabilities.deepPlanning, sourceExport: false },
-        },
+          deepPlanning: { version: 1, sourceImport: true, sourceExport: true },
+        }),
         provider,
       },
     },

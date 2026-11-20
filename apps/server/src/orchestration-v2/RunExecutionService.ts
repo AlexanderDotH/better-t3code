@@ -44,6 +44,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { checkpointCaptureCommandId } from "./CheckpointCaptureService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -564,6 +565,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly checkpointScope: OrchestrationV2CheckpointScope;
+  readonly checkpointBaselinePrepared?: true;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
@@ -585,6 +587,9 @@ export interface RunExecutionServiceV2StartRootRunInput {
 }
 
 export interface RunExecutionServiceV2Shape {
+  readonly prepareCheckpointBaseline: (
+    input: Pick<RunExecutionServiceV2StartRootRunInput, "appThread" | "checkpointScope" | "run">,
+  ) => Effect.Effect<void>;
   readonly startRootRun: (
     input: RunExecutionServiceV2StartRootRunInput,
   ) => Effect.Effect<void, RunExecutionServiceV2Error>;
@@ -620,6 +625,31 @@ export const layer: Layer.Layer<
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
+
+    const prepareCheckpointBaseline: RunExecutionServiceV2Shape["prepareCheckpointBaseline"] =
+      Effect.fn("RunExecutionService.prepareCheckpointBaseline")(function* (input) {
+        // Read-only side chats and reviews share a worktree they do not own.
+        if (
+          input.appThread.lineage.sideChat === true ||
+          input.appThread.deepPlanExecution?.phase === "review"
+        )
+          return;
+        yield* checkpointService
+          .captureBaseline({
+            scope: input.checkpointScope,
+            ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.interrupt
+                : Effect.logWarning(
+                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                    { runId: input.run.id },
+                  ),
+            ),
+          );
+      });
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -738,9 +768,6 @@ export const layer: Layer.Layer<
         const runEventId = yield* allocateEventId();
         const nodeEventId = yield* allocateEventId();
         const providerThreadEventId = yield* allocateEventId();
-        const checkpointCaptureCommandId = CommandId.make(
-          `command:effect:checkpoint.capture:${input.run.id}`,
-        );
         // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
         const finalization = {
           effects:
@@ -750,7 +777,7 @@ export const layer: Layer.Layer<
               ? [
                   {
                     id: `effect:checkpoint.capture:${input.run.id}`,
-                    commandId: checkpointCaptureCommandId,
+                    commandId: checkpointCaptureCommandId(input.run.id),
                     threadId: input.run.threadId,
                     request: {
                       type: "checkpoint.capture" as const,
@@ -887,6 +914,7 @@ export const layer: Layer.Layer<
     );
 
     return RunExecutionServiceV2.of({
+      prepareCheckpointBaseline,
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {
         const rootTurnOrigin: ProviderUsageAnalytics.ProviderTurnOrigin = {
           createdBy: input.message.createdBy,
@@ -932,24 +960,7 @@ export const layer: Layer.Layer<
                 resolveProjectSettings(settings, input.appThread.projectId ?? null).settings,
             ),
           );
-          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
-          yield* (
-            input.appThread.lineage.sideChat === true
-              ? Effect.void
-              : checkpointService.captureBaseline({
-                  scope: input.checkpointScope,
-                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-                })
-          ).pipe(
-            Effect.catchCauseIf(
-              (cause) => !Cause.hasInterruptsOnly(cause),
-              (_cause) =>
-                Effect.logWarning(
-                  "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                  { runId: input.run.id },
-                ),
-            ),
-          );
+          if (input.checkpointBaselinePrepared !== true) yield* prepareCheckpointBaseline(input);
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())

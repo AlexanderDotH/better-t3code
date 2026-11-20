@@ -47,6 +47,12 @@ import { buildCodexAdditionalContext } from "../../apps/server/src/provider/Code
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
+import { DeepPlanToolkit } from "../../apps/server/src/mcp/toolkits/deep-plan/tools.ts";
+import {
+  isDeepPlanToolForPhase,
+  isDeepPlanToolName,
+} from "../../apps/server/src/mcp/toolkits/deep-plan/toolNames.ts";
+import type { DeepPlanInstructionContext } from "../../apps/server/src/provider/DeepPlanInstructions.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -60,6 +66,10 @@ import {
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
+import {
+  WorkspaceEditToolkit,
+  WorkspaceToolkit,
+} from "../../apps/server/src/mcp/toolkits/workspace/tools.ts";
 import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
@@ -242,6 +252,12 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    deepPlan: Schema.optional(
+      Schema.Struct({
+        phase: Schema.Literals(["planning", "execution", "review"]),
+        readOnly: Schema.optional(Schema.Boolean),
+      }),
+    ),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -378,6 +394,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   OrchestratorToolkit,
   ThreadToolkit,
   AttachmentToolkit,
+  DeepPlanToolkit,
   ProjectToolkit,
   EnvironmentToolkit,
   PreviewControlsToolkit,
@@ -386,6 +403,8 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  WorkspaceToolkit,
+  WorkspaceEditToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -413,10 +432,23 @@ const enabledWhen = (predicate: () => boolean) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+const workspaceToolNames = new Set(
+  [WorkspaceToolkit, WorkspaceEditToolkit].flatMap((toolkit) =>
+    Object.keys(toolkit.tools).map((name) => `${T3_PREFIX}${name}`),
+  ),
+);
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
+}) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (!isDeepPlanToolName(tool.name) ||
+        (options.deepPlan !== undefined &&
+          isDeepPlanToolForPhase(options.deepPlan.phase, tool.name))) &&
+      (options.deepPlan !== undefined || !workspaceToolNames.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -424,7 +456,7 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
  * whether the thread holds the `device` capability, as agent device access decides.
  */
-const claudeQueryOptions = (model: Model, device = true) => {
+const claudeQueryOptions = (model: Model, device = true, deepPlan?: DeepPlanInstructionContext) => {
   // Refs whose device text follows the capability read deviceToolsAvailable; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -435,13 +467,18 @@ const claudeQueryOptions = (model: Model, device = true) => {
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
+    ...(deepPlan === undefined ? {} : { deepPlan }),
   };
   return makeClaudeQueryOptions(input);
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device);
+export const t3SystemAppend = (
+  model: Model,
+  device = true,
+  deepPlan?: DeepPlanInstructionContext,
+) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, deepPlan);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -528,6 +565,7 @@ export const buildBase = (
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    readonly deepPlan?: DeepPlanInstructionContext | undefined;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -546,7 +584,9 @@ export const buildBase = (
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
   const names = [...nativeDeferred, ...t3.map((tool) => tool.name)].toSorted().join("\n");
   const { model } = options;
-  const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
+  const append = options.nativeSubagent
+    ? ""
+    : t3SystemAppend(model, options.deviceAccess, options.deepPlan);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -610,6 +650,7 @@ const buildCodexBase = (
     readonly links?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    readonly deepPlan?: DeepPlanInstructionContext | undefined;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -645,7 +686,11 @@ const buildCodexBase = (
   });
   const context = buildCodexAdditionalContext(
     { model: options.model, reasoningEffort: effort },
-    { browser: true, device: options.deviceAccess ?? true },
+    {
+      browser: true,
+      device: options.deviceAccess ?? true,
+      ...(options.deepPlan === undefined ? {} : { deepPlan: options.deepPlan }),
+    },
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
@@ -2053,6 +2098,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     links: boolean,
+    deepPlan?: McpToolUseCase["setup"]["deepPlan"],
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2064,6 +2110,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               links,
               deviceAccess,
+              deepPlan,
             }),
           ),
         )
@@ -2076,6 +2123,7 @@ const main = Effect.gen(function* () {
               nativeSubagent: role === "native-subagent",
               links,
               deviceAccess,
+              deepPlan,
             });
             return role === "native-subagent"
               ? Effect.promise(() => t3SubagentContext(flags.model, deviceAccess)).pipe(
@@ -2086,18 +2134,22 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.deepPlan?.phase ?? ""}:${setup.deepPlan?.readOnly === true}`;
   const base = yield* buildFor("top", true, false);
-  const bases = new Map<string, Base>([["top:true:false", base]]);
+  const bases = new Map<string, Base>([["top:true:false::false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", access, links] = key.split(":") as [
-      McpToolUseCase["setup"]["role"],
-      string,
-      string,
-    ];
-    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+    const { role, world, linkedEnvironments, deepPlan } = testCase.setup;
+    bases.set(
+      key,
+      yield* buildFor(
+        codex && role === "native-subagent" ? "top" : role,
+        world?.deviceAgentAccess !== false,
+        linkedEnvironments === true,
+        deepPlan,
+      ),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

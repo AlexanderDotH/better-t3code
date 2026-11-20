@@ -1,8 +1,5 @@
 import { DeepPlanChecklist } from "./DeepPlanProgress";
-import {
-  deepPlanSourceTitle,
-  formatDeepPlanForDisplay,
-} from "@t3tools/client-runtime/deep-planning";
+import { formatDeepPlanForDisplay } from "@t3tools/client-runtime/deep-planning";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { DeepPlanRun } from "@t3tools/contracts";
 import { useChatVisualMode } from "../../chatVisualModeSync";
@@ -247,26 +244,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             </Menu>
           </div>
         </div>
-        {deepPlan ? (
-          <details className="mt-3 rounded-lg border border-border/70 px-3 text-xs">
-            <summary className="min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-              {translator.message("chat.deepPlan.sources")} ·{" "}
-              {translator.message("chat.deepPlan.sourceCount", { count: deepPlan.sources.length })}
-            </summary>
-            <ul className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pb-3">
-              {deepPlan.sources.map((source) => (
-                <li key={source.sourceId} className="break-words">
-                  <span className="font-medium">{deepPlanSourceTitle(source)}</span>
-                  {source.archived ? (
-                    <span className="block text-muted-foreground">
-                      {translator.message("chat.deepPlan.archived")}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
         <div className="mt-4">
           <div
             ref={revealRef}

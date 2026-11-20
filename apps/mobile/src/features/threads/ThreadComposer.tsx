@@ -13,14 +13,18 @@ import {
   shouldOfferResumeCompaction,
   shouldCompactBeforeSend,
 } from "@t3tools/client-runtime/context-window";
-import { resolveDeepPlanningAvailability } from "@t3tools/client-runtime/deep-planning";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
-import { resumeMobileDeepPlan } from "../../state/deep-planning";
-import { DeepPlanChecklist } from "./DeepPlanChecklist";
+import { DeepPlanChecklist, type DeepPlanControl } from "./DeepPlanChecklist";
+import { orchestrationEnvironment } from "../../state/orchestration";
+import { makeQueuedMessageMetadata } from "../../lib/commandMetadata";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { ThreadContextMeter } from "./ThreadContextMeter";
 import { ThreadReplyTopicStatus } from "./ThreadReplyTopicStatus";
 import {
+  formatDeepPlanForDisplay,
   getProviderInteractionMode,
+  isDeepPlanLegacyRun,
+  resolveDeepPlanningAvailability,
   resolveComposerMode,
   selectDurableDeepPlan,
 } from "@t3tools/client-runtime/deep-planning";
@@ -53,11 +57,13 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
+  CommandId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ChatAttachment,
   type EnvironmentId,
   type MessageId,
+  type MessageReplyReference,
   type ModelSelection,
   type ProviderInteractionMode,
   type ServerConfig as T3ServerConfig,
@@ -112,6 +118,7 @@ import {
   sameComposerDraftState,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { threadFamilies } from "../../state/threads";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells, useThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
@@ -182,7 +189,6 @@ import { DeepPlanReviewCard } from "./DeepPlanReviewCard";
 import { ComposerPlanBanner } from "./ComposerPlanBanner";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
-import { formatDeepPlanForDisplay } from "@t3tools/client-runtime/deep-planning";
 import { ComposerContextWindowPicker } from "./ComposerContextWindowPicker";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
@@ -305,6 +311,8 @@ export interface ThreadComposerProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly onOpenReplySource?: (reference: MessageReplyReference) => void;
+  readonly onReplySentInTimeline?: () => void;
   /** Present while the thread's queue is held. */
   readonly onResumeQueue: (() => Promise<void>) | null;
   /** `stillSendable` reports whether the draft is unchanged after any wait before sending. */
@@ -547,6 +555,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const contextSnapshot = projection ? deriveLatestContextWindowSnapshot(projection) : null;
   const threadShells = useThreadShells();
   const projectedThread = projection?.thread;
+  const deepPlanOwnerId = (projectedThread ?? props.selectedThread).deepPlanExecution?.runThreadId;
+  const supportsThreadFamilies = props.serverConfig?.shellThreadFamilies === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the plan owner's shell available when its implementation opens in another thread.
+  useEffect(() => {
+    if (!supportsThreadFamilies || !deepPlanOwnerId || deepPlanOwnerId === props.selectedThread.id)
+      return;
+    return threadFamilies.mount(appAtomRegistry, props.environmentId, deepPlanOwnerId);
+  }, [supportsThreadFamilies, deepPlanOwnerId, props.environmentId, props.selectedThread.id]);
   const deepPlan = useMemo(
     () =>
       selectDurableDeepPlan(
@@ -557,6 +573,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ),
     [projectedThread, props.selectedThread, props.environmentId, threadShells],
   );
+  const currentDeepPlan = deepPlan && !isDeepPlanLegacyRun(deepPlan) ? deepPlan : null;
+  const deepPlanThreadShells = useMemo(
+    () => threadShells.filter((shell) => shell.environmentId === props.environmentId),
+    [threadShells, props.environmentId],
+  );
+  const dispatchDeepPlanCommand = useAtomCommand(orchestrationEnvironment.v2.dispatchCommand, {
+    reportFailure: false,
+  });
+  const canDispatchDeepPlan = useAtomValue(
+    orchestrationEnvironment.v2.dispatchCommand.permissionAtom(props.environmentId),
+  );
+  const openLinkedThread = useOpenLinkedThread();
   const [reviewRunId, setReviewRunId] = useState<string | null>(null);
   const closeDeepPlanReview = useCallback(() => setReviewRunId(null), [setReviewRunId]);
   const translator = useMobileInterfaceTranslator();
@@ -590,6 +618,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   };
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const sourceFocused = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      sourceFocused.current = true;
+      return () => {
+        sourceFocused.current = false;
+      };
+    }, []),
+  );
   const replies = useThreadMessageReplies({
     thread: props.isDraft ? null : { ...props.selectedThread, environmentId: props.environmentId },
     connected: props.connectionState === "connected",
@@ -597,6 +634,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     deviceSettings: AsyncResult.isSuccess(preferencesResult)
       ? preferencesResult.value.betterT3Device
       : undefined,
+    presentation: AsyncResult.isSuccess(preferencesResult)
+      ? preferencesResult.value.replyPresentation
+      : undefined,
+    captureSourceNavigation: () => {
+      const sourceState = navigation.getState();
+      return () =>
+        sourceFocused.current && navigation.isFocused() && navigation.getState() === sourceState;
+    },
+    onOpenReplyThread: (threadId) =>
+      openLinkedThread({ environmentId: props.environmentId, threadId }),
+    onSentInTimeline: props.onReplySentInTimeline,
   });
   const composerMode = resolveComposerMode(
     draft.composerMode,
@@ -1120,39 +1168,37 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     (plan) =>
       plan.kind === "proposed_plan" && (plan.status === "active" || plan.status === "draft"),
   );
+  const awaitingDeepPlanApproval = currentDeepPlan?.phase === "awaitingApproval";
   const readyPlanMarkdown = useMemo(
     () =>
-      deepPlan?.phase === "awaitingApproval" && deepPlan.plan
-        ? formatDeepPlanForDisplay(deepPlan, translator)
+      awaitingDeepPlanApproval
+        ? formatDeepPlanForDisplay(currentDeepPlan, translator)
         : composerMode === "plan" && proposedPlan?.kind === "proposed_plan"
           ? proposedPlan.markdown
           : null,
-    [deepPlan, translator, composerMode, proposedPlan],
+    [awaitingDeepPlanApproval, currentDeepPlan, translator, composerMode, proposedPlan],
   );
-  const ownsDeepPlanContinuation =
-    !deepPlan?.approval || deepPlan.approval.implementationThreadId === props.selectedThread.id;
-  const resumeDeepPlan = async (automatic = false) => {
-    if (
-      !deepPlan ||
-      !props.canOperateThread ||
-      !ownsDeepPlanContinuation ||
-      props.activeThreadBusy ||
-      props.connectionState !== "connected"
-    )
-      return;
-    await resumeMobileDeepPlan(props.environmentId, deepPlan, {
-      automatic,
-      projectId: props.selectedThread.projectId,
-      threadId: props.selectedThread.id,
-      fallbackModelSelection: currentModelSelection,
-      runtimeMode: props.selectedThread.runtimeMode,
-      providers: props.serverConfig?.providers,
-      idleGuard: {
-        latestRunId: projection?.runs.at(-1)?.id ?? null,
-        latestUserMessageId:
-          projection?.messages.findLast((message) => message.role === "user")?.id ?? null,
+  const canControlDeepPlan =
+    currentDeepPlan &&
+    (currentDeepPlan.threadId === props.selectedThread.id ||
+      currentDeepPlan.approval?.lanes[0]?.threadId === props.selectedThread.id);
+  const controlDeepPlan = async (action: DeepPlanControl) => {
+    if (!currentDeepPlan || !canDispatchDeepPlan || props.connectionState !== "connected") return;
+    const metadata = makeQueuedMessageMetadata();
+    const result = await dispatchDeepPlanCommand({
+      environmentId: props.environmentId,
+      input: {
+        type: "thread.deep-plan.update",
+        commandId: CommandId.make(metadata.commandId),
+        threadId: currentDeepPlan.threadId,
+        runId: currentDeepPlan.id,
+        expectedRevision: currentDeepPlan.revision,
+        operationId: metadata.commandId,
+        createdAt: metadata.createdAt,
+        mutation: { type: action },
       },
     });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   };
   const openSettings = () => {
     settingsSheetPresentation.open();
@@ -1418,30 +1464,21 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
         {deepPlan ? (
           <DeepPlanChecklist
-            latestRunId={projection?.runs.at(-1)?.id ?? null}
             run={deepPlan}
             environmentId={props.environmentId}
             threadId={props.selectedThread.id}
-            connected={props.connectionState === "connected"}
-            canContinue={!props.activeThreadBusy && ownsDeepPlanContinuation}
-            resumeDisabled={
-              props.connectionState !== "connected" ||
-              props.activeThreadBusy ||
-              !props.canOperateThread ||
-              !ownsDeepPlanContinuation
+            threadShells={deepPlanThreadShells}
+            controlsDisabled={!canDispatchDeepPlan || props.connectionState !== "connected"}
+            deepPlanSupported={
+              resolveDeepPlanningAvailability({
+                capabilities: props.serverConfig?.environment.capabilities,
+                provider: selectedProviderStatus,
+                connected: props.connectionState === "connected",
+              }).supported
             }
-            onResume={resumeDeepPlan}
-            onFinalValidation={() => resumeDeepPlan()}
-            onOpenImplementation={
-              deepPlan.approval && !ownsDeepPlanContinuation
-                ? () =>
-                    navigation.dispatch(
-                      StackActions.push("Thread", {
-                        environmentId: String(props.environmentId),
-                        threadId: String(deepPlan.approval!.implementationThreadId),
-                      }),
-                    )
-                : undefined
+            onControl={canControlDeepPlan ? controlDeepPlan : undefined}
+            onOpenThread={(threadId) =>
+              openLinkedThread({ environmentId: props.environmentId, threadId })
             }
           />
         ) : null}
@@ -1449,11 +1486,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           <ComposerPlanBanner
             markdown={readyPlanMarkdown}
             title={
-              deepPlan?.phase === "awaitingApproval"
-                ? (deepPlan.plan?.goal ?? null)
+              awaitingDeepPlanApproval
+                ? (currentDeepPlan?.plan?.goal ?? null)
                 : proposedPlanTitle(readyPlanMarkdown)
             }
-            deepPlan={deepPlan?.phase === "awaitingApproval"}
+            deepPlan={awaitingDeepPlanApproval}
             modelSelection={currentModelSelection}
             descriptors={resolveProviderOptionDescriptors({
               capabilities: currentModelOption?.capabilities,
@@ -1465,22 +1502,22 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             )}
           />
         ) : null}
-        {deepPlan?.plan ? (
+        {currentDeepPlan?.plan ? (
           <View className="px-3 pb-2">
             <Button
               label={translator.message("mobile.composer.reviewDeepPlan")}
               tone="deep-plan"
-              onPress={() => setReviewRunId(deepPlan.id)}
+              onPress={() => setReviewRunId(currentDeepPlan.id)}
             />
           </View>
         ) : null}
-        {deepPlan?.plan && reviewRunId === deepPlan.id ? (
+        {currentDeepPlan?.plan && reviewRunId === currentDeepPlan.id ? (
           <ThreadDetailSheet
             title={translator.message("chat.deepPlan.label")}
             onClose={closeDeepPlanReview}
           >
             <DeepPlanReviewCard
-              run={deepPlan}
+              run={currentDeepPlan}
               environmentId={props.environmentId}
               workspaceRoot={props.projectCwd}
               onActionComplete={closeDeepPlanReview}
@@ -1490,22 +1527,30 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         {draft.messageReply ? (
           <MessageReplyPreview
             reference={draft.messageReply.replyTo}
+            onOpenSource={
+              props.onOpenReplySource
+                ? () => props.onOpenReplySource?.(draft.messageReply!.replyTo)
+                : undefined
+            }
             onCancel={replies.cancelReply}
           />
         ) : null}
         {composerMode === "deep-plan" &&
         !draft.messageReply &&
-        (!deepPlan || deepPlan.phase === "completed") ? (
+        (!currentDeepPlan ||
+          currentDeepPlan.phase === "completed" ||
+          currentDeepPlan.phase === "cancelled") ? (
           <DeepPlanSources
             environmentId={props.environmentId}
             projectId={props.selectedThread.projectId}
+            threadId={props.selectedThread.id}
             selected={draft.deepPlanSourceRefs ?? []}
-            includeProjectChats={draft.deepPlanIncludeProjectChats !== false}
+            includeProjectChats={draft.deepPlanIncludeProjectChats === true}
             disabled={isSubmissionLocked}
             onChange={(deepPlanSourceRefs, include) =>
               updateComposerDraftSettings(composerDraftKey, {
                 deepPlanSourceRefs,
-                deepPlanIncludeProjectChats: include ? undefined : false,
+                deepPlanIncludeProjectChats: include ? true : undefined,
               })
             }
           />

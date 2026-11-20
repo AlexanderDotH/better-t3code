@@ -185,6 +185,7 @@ export interface EventSinkV2Shape {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
     readonly eventType?: OrchestrationV2DomainEvent["type"];
+    readonly filter?: (event: OrchestrationV2DomainEvent) => boolean;
     /** Bound RPC subscribers; internal workers must not drop their subscription under load. */
     readonly bounded?: boolean;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
@@ -835,7 +836,8 @@ const layerBase: Layer.Layer<
       const afterSequence = input?.afterSequence ?? 0;
       const matches = (stored: OrchestrationV2StoredEvent) =>
         (input?.threadId === undefined || stored.event.threadId === input.threadId) &&
-        (input?.eventType === undefined || stored.event.type === input.eventType);
+        (input?.eventType === undefined || stored.event.type === input.eventType) &&
+        (input?.filter === undefined || input.filter(stored.event));
       const replay = (throughSequence: number) =>
         catchUp({
           afterSequence,

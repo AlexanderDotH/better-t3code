@@ -4,7 +4,12 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { createMessageReplyReference } from "@t3tools/client-runtime/messageReplies";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { SubagentId, type ScopedThreadRef, type RuntimeMode } from "@t3tools/contracts";
+import {
+  SubagentId,
+  type ReplyPresentation,
+  type ScopedThreadRef,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useComposerDraftStore, type ComposerThreadDraftState } from "../../composerDraftStore";
@@ -19,7 +24,7 @@ import { buildMessageContext } from "../../lib/composerContextRecords";
 import { newMessageId, newThreadId, randomUUID } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { threadEnvironment } from "../../state/threads";
+import { inlineReplyTimeline, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { readFileAsDataUrl } from "../ChatView.logic";
@@ -60,6 +65,7 @@ export function useMessageReplies({
   threadRef,
   composerRef,
   enabled,
+  replyPresentation,
   blocked,
   onSent,
   runtimeMode,
@@ -68,8 +74,9 @@ export function useMessageReplies({
   threadRef: ScopedThreadRef;
   composerRef: RefObject<ReplyComposer | null>;
   enabled: boolean;
+  replyPresentation: ReplyPresentation;
   blocked: boolean;
-  onSent: () => void;
+  onSent: (presentation: ReplyPresentation) => void;
   runtimeMode: RuntimeMode;
   messageReply?: import("@t3tools/contracts").OrchestrationV2MessageReply | undefined;
 }) {
@@ -81,6 +88,12 @@ export function useMessageReplies({
   const [error, setError] = useState<{ threadKey: string; message: string } | null>(null);
   const threadKey = scopedThreadKey(threadRef);
   const currentThreadKeyRef = useRef(threadKey);
+  const shouldOpenSideChat = useStableCallback(
+    (environmentId: ScopedThreadRef["environmentId"]) =>
+      replyPresentation === "side-chat" ||
+      appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+        .inlineMessageReplies !== true,
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep async upload completion tied to the currently displayed thread.
   useLayoutEffect(() => {
     currentThreadKeyRef.current = threadKey;
@@ -117,18 +130,10 @@ export function useMessageReplies({
       return;
     }
     const currentReply = messageReply ?? readThreadShell(threadRef)?.messageReply;
-    const continuesTopic = replyTarget.replyTo.replyTopicId === replyTarget.replyTopicId;
-    const existingChild = !continuesTopic
-      ? null
-      : currentReply?.replyTopicId === replyTarget.replyTopicId
-        ? { id: threadRef.threadId }
-        : (readThreadShells().find(
-            (shell) =>
-              shell.environmentId === threadRef.environmentId &&
-              shell.messageReply?.replyTopicId === replyTarget.replyTopicId &&
-              shell.messageReply.sourceThreadId ===
-                (currentReply?.sourceThreadId ?? threadRef.threadId),
-          ) ?? null);
+    const rootThreadRef = {
+      environmentId: threadRef.environmentId,
+      threadId: currentReply?.sourceThreadId ?? threadRef.threadId,
+    };
     const readCapabilities = () =>
       appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)?.environment
         .capabilities;
@@ -136,6 +141,23 @@ export function useMessageReplies({
       setError({ threadKey, message: translate("chat.reply.unavailable") });
       return;
     }
+    const continuesTopic = replyTarget.replyTo.replyTopicId === replyTarget.replyTopicId;
+    const existingChildId = (() => {
+      if (!continuesTopic) return undefined;
+      if (currentReply?.replyTopicId === replyTarget.replyTopicId) return threadRef.threadId;
+      const child = readThreadShells().find(
+        (shell) =>
+          shell.environmentId === rootThreadRef.environmentId &&
+          shell.messageReply?.replyTopicId === replyTarget.replyTopicId &&
+          shell.messageReply.sourceThreadId === rootThreadRef.threadId,
+      );
+      if (child !== undefined) return child.id;
+      if (replyPresentation !== "inline" || readCapabilities()?.inlineMessageReplies !== true)
+        return undefined;
+      return appAtomRegistry
+        .get(inlineReplyTimeline.stateAtom(rootThreadRef))
+        .rows.find((row) => row.replyTopicId === replyTarget.replyTopicId)?.threadId;
+    })();
     const attachments = [...send.images, ...send.files];
     if (
       !send.prompt.trim() &&
@@ -207,57 +229,57 @@ export function useMessageReplies({
           attachmentId: outgoingAttachments[index]?.id ?? attachment.id,
         })),
       });
-      if (continuesTopic && existingChild === null)
+      if (continuesTopic && existingChildId === undefined)
         throw new Error(translate("chat.reply.unavailable"));
-      const targetThreadId = existingChild?.id ?? newThreadId();
+      const targetThreadId = existingChildId ?? newThreadId();
       const messageId = newMessageId();
-      const result = existingChild
-        ? await startTurn({
-            environmentId: threadRef.environmentId,
-            input: {
-              threadId: targetThreadId,
-              message: {
+      const result =
+        existingChildId !== undefined
+          ? await startTurn({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: targetThreadId,
+                message: {
+                  messageId,
+                  role: "user",
+                  text,
+                  attachments: outgoingAttachments,
+                  ...(context ? { context } : {}),
+                },
+                modelSelection: sendContext.selectedModelSelection,
+                runtimeMode,
+                interactionMode: sendContext.interactionMode,
+                replyTo: replyTarget.replyTo,
+                replyTopicId: replyTarget.replyTopicId,
+              },
+            })
+          : await startReply({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: rootThreadRef.threadId,
+                ...replyTarget,
                 messageId,
-                role: "user",
+                targetThreadId,
                 text,
                 attachments: outgoingAttachments,
                 ...(context ? { context } : {}),
+                modelSelection: sendContext.selectedModelSelection,
+                runtimeMode,
+                interactionMode: sendContext.interactionMode,
               },
-              modelSelection: sendContext.selectedModelSelection,
-              runtimeMode,
-              interactionMode: sendContext.interactionMode,
-              replyTo: replyTarget.replyTo,
-              replyTopicId: replyTarget.replyTopicId,
-            },
-          })
-        : await startReply({
-            environmentId: threadRef.environmentId,
-            input: {
-              threadId: currentReply?.sourceThreadId ?? threadRef.threadId,
-              ...replyTarget,
-              messageId,
-              targetThreadId,
-              text,
-              attachments: outgoingAttachments,
-              ...(context ? { context } : {}),
-              modelSelection: sendContext.selectedModelSelection,
-              runtimeMode,
-              interactionMode: sendContext.interactionMode,
-            },
-          });
+            });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const rootThreadRef = {
-        environmentId: threadRef.environmentId,
-        threadId: currentReply?.sourceThreadId ?? threadRef.threadId,
-      };
-      useRightPanelStore.getState().openSideChat(rootThreadRef, targetThreadId);
+      const presentation = shouldOpenSideChat(rootThreadRef.environmentId) ? "side-chat" : "inline";
+      if (presentation === "side-chat") {
+        useRightPanelStore.getState().openSideChat(rootThreadRef, targetThreadId);
+      }
       const store = useComposerDraftStore.getState();
       if (replyDraftMatchesSentContent(store.getComposerDraft(threadRef), draft)) {
         store.clearComposerContent(threadRef);
         if (currentThreadKeyRef.current === threadKey) composerRef.current?.resetCursorState();
         releaseDraftAttachments(attachments);
       }
-      if (currentThreadKeyRef.current === threadKey) onSent();
+      if (currentThreadKeyRef.current === threadKey) onSent(presentation);
     })()
       .catch((cause) => {
         setError({

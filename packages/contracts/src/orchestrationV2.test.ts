@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2Command,
+  OrchestrationV2DomainEventJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -39,6 +41,130 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("replays legacy Deep Plan events without restoring the old worker authority", () => {
+    const codec = Schema.toCodecJson(OrchestrationV2DomainEventJson);
+    const decodeEvent = Schema.decodeUnknownSync(codec);
+    const encodeEvent = Schema.encodeSync(codec);
+    const at = DateTime.formatIso(now);
+    const modelSelection = { instanceId: "codex", model: "gpt-5.4" };
+    const legacyExecution = {
+      runId: "run-1",
+      runThreadId: "thread-1",
+      approvedPlanVersion: 1,
+      phase: "validation",
+      sourceAnalysis: { workerThreadId: "worker-1", sourceIds: ["source-1"] },
+      modelSelection,
+      readOnly: true,
+    };
+    const legacyRun = {
+      id: "run-1",
+      threadId: "thread-1",
+      phase: "paused",
+      revision: 1,
+      plan: null,
+      approval: null,
+      approvalKey: null,
+      sources: [],
+      sourceCoverage: [],
+      stepStates: [],
+      finalValidation: {
+        status: "pending",
+        evidence: [],
+        updatedAt: null,
+        attempt: 0,
+        requestId: null,
+        turnId: null,
+      },
+      procedureAdjustments: [],
+      operations: [],
+      createdAt: at,
+      updatedAt: at,
+      pauseReason: "Paused",
+    };
+    const event = {
+      id: "event-1",
+      type: "thread.deep-plan-updated",
+      threadId: "thread-1",
+      occurredAt: at,
+      payload: {
+        id: "thread-1",
+        projectId: "project-1",
+        title: "Deep Planning",
+        providerInstanceId: "codex",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+        forkedFrom: null,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: at,
+        updatedAt: at,
+        archivedAt: null,
+        deletedAt: null,
+        deepPlan: legacyRun,
+        deepPlanExecution: legacyExecution,
+      },
+    };
+    const decoded = decodeEvent(event);
+    expect(decoded).toMatchObject({
+      payload: {
+        deepPlan: {
+          schemaVersion: 1,
+          kind: "legacy",
+          id: "run-1",
+          threadId: "thread-1",
+          goal: null,
+          updatedAt: at,
+        },
+      },
+    });
+    expect(decoded).not.toMatchObject({ payload: { deepPlanExecution: legacyExecution } });
+    expect(decodeEvent(encodeEvent(decoded))).toEqual(decoded);
+
+    const inProgress = { ...legacyExecution, phase: "planning" };
+    expect(
+      decodeEvent({ ...event, payload: { ...event.payload, deepPlanExecution: inProgress } }),
+    ).toMatchObject({ payload: { deepPlanExecution: undefined } });
+
+    const malformedV2 = { ...legacyRun, schemaVersion: 2 };
+    expect(() =>
+      decodeEvent({ ...event, payload: { ...event.payload, deepPlan: malformedV2 } }),
+    ).toThrow();
+
+    const { sourceAnalysis: _sourceAnalysis, ...execution } = legacyExecution;
+    const review = {
+      ...execution,
+      phase: "review",
+      review: { target: { kind: "step", stepId: "step-1" }, round: 1 },
+    };
+    const reviewEvent = { ...event, payload: { ...event.payload, deepPlanExecution: review } };
+    expect(encodeEvent(decodeEvent(reviewEvent))).toMatchObject({
+      payload: { deepPlanExecution: review },
+    });
+
+    const command = {
+      type: "delegated_task.request",
+      createdBy: "agent",
+      creationSource: "server",
+      commandId: "command-1",
+      parentThreadId: "thread-1",
+      parentRunId: "run-1",
+      parentNodeId: "node-1",
+      task: "Inspect the settings",
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+    };
+    const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+    for (const deepPlanExecution of [review, legacyExecution, inProgress]) {
+      expect(decodeCommand({ ...command, deepPlanExecution })).toEqual(command);
+    }
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

@@ -1,4 +1,6 @@
 import {
+  DEEP_PLAN_VERSION_QUERY_PARAM,
+  DEEP_PLAN_VERSION_TEXT,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
   type ExecutionEnvironmentDescriptor,
@@ -37,5 +39,6 @@ function canSelfUpdate(descriptor: ExecutionEnvironmentDescriptor): boolean {
 export function appendOrchestrationProtocol(socketUrl: string): string {
   const url = new URL(socketUrl);
   url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, String(ORCHESTRATION_PROTOCOL_VERSION));
+  url.searchParams.set(DEEP_PLAN_VERSION_QUERY_PARAM, DEEP_PLAN_VERSION_TEXT);
   return url.toString();
 }

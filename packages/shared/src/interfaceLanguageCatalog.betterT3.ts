@@ -121,6 +121,7 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Parallele Planung",
     "Planification parallèle",
   ],
+  "settings.betterT3.subgroup.deep-plan": ["Deep Plan", "Deep Plan", "Deep Plan"],
   "settings.betterT3.subgroup.context-compaction": [
     "Context compaction",
     "Kontextkompaktierung",
@@ -744,6 +745,11 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   ],
   "settings.betterT3.value.automatic": ["Automatic", "Automatisch", "Automatique"],
   "settings.betterT3.value.chooseModel": ["Choose model", "Modell auswählen", "Choisir un modèle"],
+  "settings.betterT3.deepPlanReviewModel.default": [
+    "Same as implementation",
+    "Wie bei der Umsetzung",
+    "Même modèle que pour l’implémentation",
+  ],
   "settings.betterT3.value.projectIndexDecisionOff": [
     "Off: always use found context",
     "Aus – gefundenen Kontext immer verwenden",
@@ -753,6 +759,12 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   "chat.model.decision.prompted": ["Prompted", "Prompt-basiert", "Guidé par prompt"],
   "settings.betterT3.value.unavailable": ["Unavailable", "Nicht verfügbar", "Indisponible"],
   "settings.betterT3.value.current": ["Current", "Aktuell", "Actuel"],
+  "settings.betterT3.replyPresentation.inline": ["In chat", "Im Chat", "Dans le chat"],
+  "settings.betterT3.replyPresentation.side-chat": [
+    "In side chat",
+    "Im Side-Chat",
+    "Dans un chat annexe",
+  ],
   "settings.betterT3.value.native": ["Native T3 Code", "Natives T3 Code", "T3 Code natif"],
   "settings.betterT3.value.better-t3": ["Better T3", "Better T3", "Better T3"],
   "settings.betterT3.value.classic": ["Classic", "Klassisch", "Classique"],
@@ -999,6 +1011,11 @@ const featureLabels = {
     "Prüfmodell für parallele Pläne",
     "Réviseur du plan parallèle",
   ],
+  "agent.deepPlanReviewModel": [
+    "Deep Plan review model",
+    "Review-Modell für Deep Plan",
+    "Modèle de vérification pour Deep Plan",
+  ],
   "agent.autoReasoningModel": [
     "Auto Reasoning evaluation model",
     "Auswertungsmodell für Auto Reasoning",
@@ -1042,6 +1059,7 @@ const featureLabels = {
     "Auf Chatnachrichten antworten",
     "Répondre aux messages",
   ],
+  "chat.replyPresentation": ["Show replies", "Antworten anzeigen", "Afficher les réponses"],
   "agent.generalSubagents": ["General subagents", "Allgemeine Subagents", "Sous-agents généraux"],
   "agent.nativeSubagentDisplay": [
     "Native T3 Code subagent display",
@@ -1194,6 +1212,11 @@ const featureLabels = {
 } as const satisfies Readonly<Record<BetterT3FeatureId, FeatureLabel>>;
 
 const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabel>> = {
+  "agent.deepPlanReviewModel": [
+    "Model used for independent step reviews and the final review in Deep Plan.",
+    "Modell für unabhängige Schritt-Reviews und das Abschlussreview in Deep Plan.",
+    "Modèle utilisé pour les vérifications indépendantes de chaque étape et la vérification finale de Deep Plan.",
+  ],
   "agent.promptImprovement": [
     "Improve wording, grammar, and clarity before sending your prompt. Preserve its language and requirements.",
     "Verbessert Formulierung, Grammatik und Klarheit vor dem Senden. Sprache und Anforderungen bleiben erhalten.",
@@ -1280,6 +1303,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Reply to a message in a separate topic while the main conversation continues. Reply topics use the same workspace.",
     "In einem eigenen Thema auf eine Nachricht antworten, während die Hauptunterhaltung weiterläuft. Antwortthemen nutzen denselben Workspace.",
     "Répondez à un message dans un sujet distinct pendant que la conversation principale continue. Les sujets partagent le même espace de travail.",
+  ],
+  "chat.replyPresentation": [
+    "Choose where reply topics appear on this device.",
+    "Wähle, wo Antwortthemen auf diesem Gerät angezeigt werden.",
+    "Choisissez où afficher les sujets de réponse sur cet appareil.",
   ],
   "chat.sidebarPosition": [
     "Move project navigation and its controls to the left or right side.",

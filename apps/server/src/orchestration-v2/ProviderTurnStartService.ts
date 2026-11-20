@@ -1457,6 +1457,18 @@ export const layer: Layer.Layer<
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
       }
+      // The conductor uses the running event to release other lanes into the shared worktree.
+      const checkpointBaselinePrepared =
+        run.deepPlanRunId !== undefined &&
+        message.createdBy === "agent" &&
+        message.creationSource === "server";
+      if (checkpointBaselinePrepared) {
+        yield* runExecution.prepareCheckpointBaseline({
+          appThread: projection.thread,
+          checkpointScope,
+          run,
+        });
+      }
       const now = yield* DateTime.now;
       const handoffContext = resumedHandoffContext ?? handoffContextForThread(loadedProviderThread);
       const { nativeThreadHasTurns, handoffUsage, deliveredItemIds, budget } = handoffContext;
@@ -1720,6 +1732,7 @@ export const layer: Layer.Layer<
         run: runningRun,
         rootNode: runningRootNode,
         checkpointScope,
+        ...(checkpointBaselinePrepared ? { checkpointBaselinePrepared: true } : {}),
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,

@@ -13,6 +13,7 @@ export interface ReplyTopicThread {
   readonly hasPendingApprovals?: boolean;
   readonly hasPendingUserInput?: boolean;
   readonly source?: {
+    readonly replyRetryMessageId?: MessageId | undefined;
     readonly latestVisibleMessage: { readonly id: MessageId; readonly role: string } | null;
     readonly lastError?: string | null;
   };
@@ -29,7 +30,6 @@ export interface ReplyTopicSummary {
   readonly messageId: MessageId;
   readonly threadId: ThreadId;
   readonly title: string;
-  readonly count: number;
   readonly status: ReplyTopicStatus | null;
   readonly error: string | null;
   readonly runId: RunId | null;
@@ -63,38 +63,34 @@ export function deriveReplyTopics(
   threads: ReadonlyArray<ReplyTopicThread>,
   sourceThreadId: ThreadId,
 ) {
-  const topics = new Map<MessageId, ReplyTopicSummary & { readonly createdAt: string }>();
-  for (const thread of threads) {
+  const topics = new Map<MessageId, ReplyTopicSummary[]>();
+  for (const thread of [...threads].sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  )) {
     if (thread.messageReply?.sourceThreadId !== sourceThreadId) continue;
     const messageId = thread.messageReply.messageId;
-    const previous = topics.get(messageId);
-    const count = (previous?.count ?? 0) + 1;
-    if (previous && previous.createdAt > thread.createdAt) {
-      topics.set(messageId, { ...previous, count });
-      continue;
-    }
     const status = topicStatus(thread);
     const prompt = thread.source?.latestVisibleMessage;
+    const retryMessageId =
+      thread.source?.replyRetryMessageId ?? (prompt?.role === "user" ? prompt.id : undefined);
     const runId = thread.latestRun?.runId ?? null;
-    topics.set(messageId, {
+    const messageTopics = topics.get(messageId) ?? [];
+    messageTopics.push({
       messageId,
       threadId: thread.id,
       title: thread.title,
-      count,
       status,
       runId,
-      createdAt: thread.createdAt,
       error: status === "failed" ? (thread.source?.lastError ?? null) : null,
       retry:
         (status === "failed" || status === "interrupted") &&
         !thread.latestRun?.assistantMessageId &&
-        prompt?.role === "user" &&
+        retryMessageId !== undefined &&
         runId !== null
-          ? { messageId: prompt.id, runId }
+          ? { messageId: retryMessageId, runId }
           : null,
     });
+    topics.set(messageId, messageTopics);
   }
-  return new Map<MessageId, ReplyTopicSummary>(
-    [...topics].map(([id, { createdAt: _createdAt, ...topic }]) => [id, topic]),
-  );
+  return topics;
 }

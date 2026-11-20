@@ -1,5 +1,6 @@
 import {
   OrchestrationGetTurnDiffResult,
+  type DeepPlanReviewDiff,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffInput,
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -29,13 +31,37 @@ import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
 const DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
+const REVIEW_PATCH_MAX_BYTES = 32_000;
+const REVIEW_MAX_FILES = 200;
 
-function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
+function filePathsOf(file: TurnDiffFileSummary): ReadonlyArray<string> {
+  return file.previousPath === undefined ? [file.path] : [file.previousPath, file.path];
+}
+
+// Agents submit absolute, "./"-prefixed or directory paths; git reports paths relative to the root.
+function reviewPathspecs(cwd: string, changedFiles: ReadonlyArray<string>): ReadonlyArray<string> {
+  const root = cwd.replaceAll("\\", "/").replace(/\/+$/, "");
+  const pathspecs = changedFiles.flatMap((changed) => {
+    const path = changed.trim().replaceAll("\\", "/");
+    const relative = path.startsWith(`${root}/`)
+      ? path.slice(root.length + 1)
+      : path.startsWith("/") || /^[A-Za-z]:\//.test(path)
+        ? ""
+        : path;
+    const pathspec = relative.replace(/^(?:\.\/)+/, "").replace(/\/+$/, "");
+    return pathspec === "" || pathspec === "." ? [] : [pathspec];
+  });
+  return Array.from(new Set(pathspecs));
+}
+
+const isWithinPathspec = (path: string, pathspec: string) =>
+  path === pathspec || path.startsWith(`${pathspec}/`);
+
+function batchFilePaths(pathGroups: ReadonlyArray<ReadonlyArray<string>>) {
   const batches: string[][] = [];
   let batch: string[] = [];
   let length = 0;
-  for (const file of files) {
-    const paths = file.previousPath === undefined ? [file.path] : [file.previousPath, file.path];
+  for (const paths of pathGroups) {
     const size = paths.reduce((total, path) => total + path.length + 16, 0);
     if (batch.length > 0 && length + size > MAX_PATHSPEC_CHARS) {
       batches.push(batch);
@@ -59,6 +85,16 @@ export class CheckpointDiffQuery extends Context.Service<
     readonly getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Effect.Effect<OrchestrationGetFullThreadDiffResult, CheckpointServiceError>;
+
+    readonly hasReviewDiff: (range: DeepPlanReviewDiff) => Effect.Effect<boolean>;
+
+    readonly getReviewDiff: (
+      range: DeepPlanReviewDiff,
+      changedFiles?: ReadonlyArray<string>,
+    ) => Effect.Effect<{
+      readonly files: ReadonlyArray<TurnDiffFileSummary>;
+      readonly patch: string;
+    } | null>;
   }
 >()("t3/checkpointing/CheckpointDiffQuery") {}
 
@@ -80,11 +116,146 @@ function buildTurnDiffResult(
   };
 }
 
+function rootCheckpointAt(
+  projection: ProjectionCheckpointContext,
+  turnCount: number,
+  allowBaseline: boolean,
+) {
+  const roots = new Map(
+    projection.checkpointScopes
+      .filter((scope) => scope.kind === "root_run")
+      .map((scope) => [scope.id, scope]),
+  );
+  const checkpoint = projection.checkpoints.find(
+    (checkpoint) =>
+      checkpoint.status === "ready" &&
+      roots.has(checkpoint.scopeId) &&
+      (checkpoint.appRunOrdinal === turnCount ||
+        (allowBaseline &&
+          checkpoint.runId === null &&
+          checkpoint.ordinalWithinScope === turnCount)),
+  );
+  const cwd = checkpoint === undefined ? undefined : roots.get(checkpoint.scopeId)?.cwd;
+  return checkpoint !== undefined && cwd !== undefined ? { ref: checkpoint.ref, cwd } : null;
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const crypto = yield* Crypto.Crypto;
+
+  const resolveReviewComparison = Effect.fn("CheckpointDiffQuery.resolveReviewComparison")(
+    function* (range: DeepPlanReviewDiff) {
+      const from = yield* threads
+        .getCheckpointContext(range.threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (from === null) return null;
+      const to =
+        range.toThreadId === undefined || range.toThreadId === range.threadId
+          ? from
+          : yield* threads
+              .getCheckpointContext(range.toThreadId)
+              .pipe(Effect.orElseSucceed(() => null));
+      if (
+        to === null ||
+        !to.runs.some((run) => run.ordinal === range.toTurnCount && run.status === "completed")
+      )
+        return null;
+      const start = rootCheckpointAt(from, range.fromTurnCount, true);
+      const end = rootCheckpointAt(to, range.toTurnCount, false);
+      if (start === null || end === null || start.cwd !== end.cwd) return null;
+      return {
+        cwd: end.cwd,
+        fromCheckpointRef: start.ref,
+        toCheckpointRef: end.ref,
+        fallbackFromToHead: false,
+        ignoreWhitespace: false,
+      };
+    },
+  );
+
+  const readPatch = Effect.fn("CheckpointDiffQuery.readPatch")(function* (
+    comparison: CheckpointStore.DiffCheckpointsInput,
+    pathBatches: ReadonlyArray<ReadonlyArray<string> | undefined>,
+    maxBytes: number,
+  ) {
+    let diff = "";
+    let remainingBytes = maxBytes;
+    for (const filePaths of pathBatches) {
+      const patch = yield* checkpointStore
+        .diffCheckpoints({
+          ...comparison,
+          ...(filePaths === undefined ? {} : { filePaths }),
+          // One extra byte distinguishes an exact fit from a truncated patch.
+          maxOutputBytes: remainingBytes + 1,
+        })
+        .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+      const patchBytes = Buffer.byteLength(patch);
+      diff += patch;
+      if (patchBytes > remainingBytes) {
+        return (
+          new TextDecoder().decode(
+            Buffer.from(diff).subarray(0, maxBytes - Buffer.byteLength(DIFF_TRUNCATED_MARKER)),
+            { stream: true },
+          ) + DIFF_TRUNCATED_MARKER
+        );
+      }
+      remainingBytes -= patchBytes;
+    }
+    return diff;
+  });
+
+  const getReviewDiff = Effect.fn("CheckpointDiffQuery.getReviewDiff")(
+    function* (range: DeepPlanReviewDiff, changedFiles?: ReadonlyArray<string>) {
+      const comparison = yield* resolveReviewComparison(range);
+      if (comparison === null) return null;
+      const listFiles = Effect.fnUntraced(function* (pathspecs?: ReadonlyArray<string>) {
+        const files: TurnDiffFileSummary[] = [];
+        const batches =
+          pathspecs === undefined ? [undefined] : batchFilePaths(pathspecs.map((path) => [path]));
+        for (const filePaths of batches) {
+          const numstat = yield* checkpointStore.diffCheckpoints({
+            ...comparison,
+            ...(filePaths === undefined ? {} : { filePaths }),
+            format: "numstat",
+          });
+          files.push(...parseTurnDiffFilesFromNumstat(numstat));
+        }
+        return files;
+      });
+      const pathspecs =
+        changedFiles === undefined ? [] : reviewPathspecs(comparison.cwd, changedFiles);
+      const scoped =
+        pathspecs.length === 0
+          ? []
+          : (yield* listFiles(pathspecs)).filter((file) =>
+              filePathsOf(file).some((path) =>
+                pathspecs.some((pathspec) => isWithinPathspec(path, pathspec)),
+              ),
+            );
+      // Lanes share one worktree, so an unmatched submission still shows the whole diff.
+      const files = scoped.length > 0 ? scoped : yield* listFiles();
+      const authoredPaths = yield* checkpointStore
+        .listAuthoredPaths(comparison)
+        .pipe(Effect.orElseSucceed(() => null));
+      const retained = files.filter((file) => !isGitImport(file, authoredPaths));
+      const listed = retained.slice(0, REVIEW_MAX_FILES);
+      const patch = yield* readPatch(
+        comparison,
+        scoped.length === 0 && listed.length === files.length
+          ? [undefined]
+          : batchFilePaths(listed.map(filePathsOf)),
+        REVIEW_PATCH_MAX_BYTES,
+      );
+      const omitted = retained.length - listed.length;
+      return {
+        files: listed,
+        patch: omitted === 0 ? patch : `${patch}\n\n[${omitted} more changed files are not listed]`,
+      };
+    },
+    Effect.orElseSucceed(() => null),
+  );
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -222,35 +393,10 @@ export const make = Effect.gen(function* () {
       const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
       // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
       const pathBatches =
-        retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
-      let diff = "";
-      let remainingBytes = CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
-      for (const filePaths of pathBatches) {
-        const patch = yield* checkpointStore
-          .diffCheckpoints({
-            ...comparison,
-            ...(filePaths === undefined ? {} : { filePaths }),
-            // One extra byte distinguishes an exact fit from a truncated patch.
-            maxOutputBytes: remainingBytes + 1,
-          })
-          .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
-        const patchBytes = Buffer.byteLength(patch);
-        diff += patch;
-        if (patchBytes > remainingBytes) {
-          // Reserve marker space only on overflow, which may trim an earlier batch.
-          // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
-          diff =
-            new TextDecoder().decode(
-              Buffer.from(diff).subarray(
-                0,
-                CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
-              ),
-              { stream: true },
-            ) + DIFF_TRUNCATED_MARKER;
-          break;
-        }
-        remainingBytes -= patchBytes;
-      }
+        retainedFiles.length === files.length
+          ? [undefined]
+          : batchFilePaths(retainedFiles.map(filePathsOf));
+      const diff = yield* readPatch(comparison, pathBatches, CHECKPOINT_DIFF_MAX_OUTPUT_BYTES);
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {
@@ -314,6 +460,10 @@ export const make = Effect.gen(function* () {
   return CheckpointDiffQuery.of({
     getTurnDiff,
     getFullThreadDiff,
+    getReviewDiff,
+    hasReviewDiff: Effect.fn("CheckpointDiffQuery.hasReviewDiff")((range) =>
+      resolveReviewComparison(range).pipe(Effect.map((comparison) => comparison !== null)),
+    ),
   });
 });
 

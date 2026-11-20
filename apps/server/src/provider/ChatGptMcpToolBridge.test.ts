@@ -71,7 +71,8 @@ describe("ChatGptMcpToolBridge", () => {
                   listTools: async () => ({
                     tools: [
                       { name: "deep_plan_publish", inputSchema: { type: "object" } },
-                      { name: "deep_plan_adjust_procedure", inputSchema: { type: "object" } },
+                      { name: "deep_plan_review_verdict", inputSchema: { type: "object" } },
+                      { name: "t3_thread_read", inputSchema: { type: "object" } },
                       { name: "ordinary_write", inputSchema: { type: "object" } },
                       { name: "workspace_edit", inputSchema: { type: "object" } },
                     ],
@@ -125,25 +126,36 @@ describe("ChatGptMcpToolBridge", () => {
             deepPlan: {
               runId: DeepPlanRunId.make("run-1"),
               runThreadId: threadId,
-              phase: "execution",
+              phase: "review",
               approvedPlanVersion: 1,
               readOnly: true,
+              review: { target: { kind: "step", stepId: "normalize" }, round: 1 },
               modelSelection: { instanceId, model: "gpt-5.6" },
             },
           });
           const review = yield* bridge.extensionForThread({ threadId, cwd: "/workspace" });
           const reviewCatalog = yield* buildNativeHarnessToolCatalog({
-            interactionMode: "plan",
-            sandboxMode: "read-only",
+            interactionMode: "default",
+            sandboxMode: "workspace-write",
+            deepPlan: { phase: "review", readOnly: true },
             extensions: [review],
           });
-          expect(reviewCatalog.map((tool) => tool.name)).toContain("deep_plan_adjust_procedure");
-          expect(reviewCatalog.map((tool) => tool.name)).toContain("ordinary_write");
-          expect(reviewCatalog.map((tool) => tool.name)).not.toContain("workspace_edit");
-          expect(reviewCatalog.map((tool) => tool.name)).toContain(
-            "mcp__docs__deep_plan_adjust_procedure",
-          );
-          expect(connections).toBe(6);
+          const reviewTools = reviewCatalog.map((tool) => tool.name);
+          expect(reviewTools).toContain("deep_plan_review_verdict");
+          expect(reviewTools).toContain("exec_command");
+          expect(reviewTools).not.toContain("t3_thread_read");
+          expect(reviewTools).not.toContain("ordinary_write");
+          expect(reviewTools).not.toContain("workspace_edit");
+          expect(reviewTools.some((tool) => tool.startsWith("mcp__docs__"))).toBe(false);
+          expect(connections).toBe(5);
+
+          const explorer = yield* bridge.extensionForThread({
+            threadId,
+            cwd: "/workspace",
+            deepPlanChatReadOnly: true,
+          });
+          expect(explorer.declarations.map((tool) => tool.name)).toEqual(["t3_thread_read"]);
+          expect(explorer.declarations[0]?.requiresApproval).toBe(false);
         }),
       ),
   );

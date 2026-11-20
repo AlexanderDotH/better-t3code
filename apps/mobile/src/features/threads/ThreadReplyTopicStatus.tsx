@@ -1,4 +1,3 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   AuthOrchestrationOperateScope,
   CommandId,
@@ -9,12 +8,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
-import { useThreadShells } from "../../state/entities";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { deriveReplyTopics, type ReplyTopicSummary } from "../../lib/replyTopicStatus";
+import { mobileReplyTopicActionsEnabled } from "../../lib/message-replies";
 import { useEnvironmentScope } from "../../state/session";
 import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   squashAtomCommandFailure,
@@ -22,30 +21,18 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { uuidv4 } from "../../lib/uuid";
 import * as Dialog from "../../components/ui/Dialog";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 export function useTimelineReplyTopics(environmentId: EnvironmentId, threadId: ThreadId) {
-  const shells = useThreadShells();
-  const key = useMemo(
-    () =>
-      JSON.stringify([
-        ...deriveReplyTopics(
-          shells.filter((thread) => thread.environmentId === environmentId),
-          threadId,
-        ),
-      ]),
-    [shells, environmentId, threadId],
-  );
-  return useMemo(
-    () => new Map(JSON.parse(key) as Array<[ReplyTopicSummary["messageId"], ReplyTopicSummary]>),
-    [key],
-  );
+  const shells = useAtomValue(environmentThreadShells.replyTopicsAtom({ environmentId, threadId }));
+  return useMemo(() => deriveReplyTopics(shells, threadId), [shells, threadId]);
 }
 
 export function MessageReplyTopicStatus(props: {
   readonly environmentId: EnvironmentId;
-  readonly topic: ReplyTopicSummary | undefined;
+  readonly topic: ReplyTopicSummary;
 }) {
-  const navigation = useNavigation();
+  const openLinkedThread = useOpenLinkedThread();
   const translator = useMobileInterfaceTranslator();
   const runtime = useRemoteEnvironmentRuntime(props.environmentId);
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
@@ -55,12 +42,13 @@ export function MessageReplyTopicStatus(props: {
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const topic = props.topic;
-  if (!topic) return null;
   const available =
     canOperate &&
-    runtime?.connectionState === "connected" &&
     !pending &&
-    runtime.serverConfig?.environment.capabilities.messageReplies === true;
+    mobileReplyTopicActionsEnabled(
+      runtime?.serverConfig?.environment.capabilities,
+      runtime?.connectionState === "connected",
+    );
   const active =
     topic.status === "running" || topic.status === "waiting" || topic.status === "pending";
   const run = async (action: "stop" | "retry") => {
@@ -110,16 +98,11 @@ export function MessageReplyTopicStatus(props: {
         accessibilityHint={topic.error ?? undefined}
         className="min-h-11 min-w-0 flex-1 justify-center"
         onPress={() =>
-          navigation.dispatch(
-            StackActions.push("Thread", {
-              environmentId: String(props.environmentId),
-              threadId: String(topic.threadId),
-            }),
-          )
+          openLinkedThread({ environmentId: props.environmentId, threadId: topic.threadId })
         }
       >
         <Text className="text-xs text-foreground-secondary" numberOfLines={1}>
-          {translator.message("mobile.timeline.replies", { count: topic.count })}
+          {translator.message("chat.reply.topic")}
           {topic.status ? ` · ${translator.message(`mobile.timeline.${topic.status}`)}` : ""} ·{" "}
           {topic.title}
         </Text>
@@ -133,7 +116,7 @@ export function MessageReplyTopicStatus(props: {
         <Pressable
           accessibilityRole="button"
           disabled={!available || (!active && !canRetry)}
-          accessibilityState={{ disabled: !available }}
+          accessibilityState={{ disabled: !available || (!active && !canRetry) }}
           className="min-h-11 justify-center px-2 disabled:opacity-40"
           onPress={() => void run(active ? "stop" : "retry")}
         >
@@ -150,13 +133,9 @@ export function ThreadReplyTopicStatus(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const navigation = useNavigation();
+  const openLinkedThread = useOpenLinkedThread();
   const translator = useMobileInterfaceTranslator();
-  const topics = useThreadShells().filter(
-    (thread) =>
-      thread.environmentId === props.environmentId &&
-      thread.messageReply?.sourceThreadId === props.threadId,
-  );
+  const topics = useAtomValue(environmentThreadShells.replyTopicsAtom(props));
   if (topics.length === 0) return null;
   return (
     <View className="gap-1 px-3 py-1">
@@ -166,12 +145,7 @@ export function ThreadReplyTopicStatus(props: {
           accessibilityRole="button"
           className="min-h-11 justify-center"
           onPress={() =>
-            navigation.dispatch(
-              StackActions.push("Thread", {
-                environmentId: String(props.environmentId),
-                threadId: String(topic.id),
-              }),
-            )
+            openLinkedThread({ environmentId: props.environmentId, threadId: topic.id })
           }
         >
           <Text className="text-sm text-foreground" numberOfLines={1}>

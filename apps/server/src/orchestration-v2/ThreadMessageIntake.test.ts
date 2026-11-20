@@ -7,6 +7,7 @@ import { expect, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
   CommandId,
+  DeepPlanError,
   EventId,
   GuestMessageId,
   MessageId,
@@ -27,6 +28,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
@@ -424,5 +426,26 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toHaveLength(1);
     // The guest's file, which is already the thread's.
     expect(command.attachments).toEqual([guestFile]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("stops the thread even when its Deep Plan cannot be paused", () =>
+  Effect.gen(function* () {
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const unpausable = Layer.mock(DeepPlanWorkflow)({
+      pauseForStop: () =>
+        Effect.fail(
+          new DeepPlanError({
+            code: "target-unavailable",
+            message: "The Deep Plan owner thread is unavailable.",
+          }),
+        ),
+    });
+    yield* dispatchCommand({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-lane"),
+      threadId: ThreadId.make("thread-lane"),
+    }).pipe(Effect.provide(Layer.merge(layerFailingDispatch(captured), unpausable)), Effect.result);
+    expect(captured.map((command) => command.type)).toEqual(["thread.stop"]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

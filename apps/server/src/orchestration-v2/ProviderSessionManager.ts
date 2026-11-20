@@ -1,5 +1,5 @@
 import { setMcpProviderSession, clearMcpProviderSession } from "../mcp/McpProviderSession.ts";
-import { deepPlanProviderContext } from "../deepPlanning/DeepPlanProviderContext.ts";
+import { resolveLiveDeepPlan } from "../deepPlanning/DeepPlanProviderContext.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   type ProviderInteractionMode,
   ProviderSessionId,
+  type RunId,
   ThreadId,
   type ProviderThreadId,
 } from "@t3tools/contracts";
@@ -151,13 +152,13 @@ class DeepPlanProviderBindingError extends Schema.TaggedError<DeepPlanProviderBi
   "DeepPlanProviderBindingError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported-provider", "implementation-provider-mismatch"]),
+    reason: Schema.Literals(["unsupported-provider", "provider-mismatch"]),
   },
 ) {
   override get message(): string {
     return this.reason === "unsupported-provider"
       ? "This provider does not support read-only Deep Planning and its run-bound tools."
-      : "The approved Deep Plan must continue with its implementing provider.";
+      : "This Deep Plan turn is bound to a different provider.";
   }
 }
 
@@ -468,34 +469,27 @@ export const layerWithOptions = (
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
-      // Deep Plan approval picks the implementation thread inside the planning thread's project.
       const resolveDeepPlanBinding = Effect.fn("ProviderSessionManagerV2.resolveDeepPlanBinding")(
         function* (input: {
           readonly thread: OrchestrationV2AppThread;
           readonly modelSelection: ModelSelection;
           readonly interactionMode: ProviderInteractionMode;
+          readonly runId?: RunId;
         }) {
-          if (input.thread.deepPlanExecution !== undefined) return input.thread.deepPlanExecution;
-          if (input.interactionMode === "chat") return undefined;
+          const { thread, modelSelection, interactionMode, runId } = input;
           if (
-            input.thread.deepPlan == null &&
-            input.thread.lineage.relationshipToParent === "subagent"
-          )
+            interactionMode === "chat" ||
+            (thread.deepPlan == null && thread.deepPlanExecution === undefined)
+          ) {
             return undefined;
-          const owner =
-            input.thread.deepPlan ??
-            (yield* projectionStore.getShellSnapshot({
-              projectId: input.thread.projectId,
-            })).threads.find(
-              (candidate) =>
-                candidate.deepPlan?.approval?.implementationThreadId === input.thread.id,
-            )?.deepPlan;
-          return deepPlanProviderContext(
-            owner,
-            input.thread.id,
-            input.modelSelection,
-            input.interactionMode,
-          );
+          }
+          const live = yield* resolveLiveDeepPlan({
+            threadId: thread.id,
+            modelSelection,
+            interactionMode,
+            ...(runId === undefined ? {} : { turnId: runId }),
+          }).pipe(Effect.provideService(ProjectionStore.ProjectionStoreV2, projectionStore));
+          return live?.grant;
         },
       );
       const listsDeepPlanToolsUpfront = Effect.fn(
@@ -562,6 +556,8 @@ export const layerWithOptions = (
                         interactionMode: thread.interactionMode,
                       }).pipe(Effect.orDie);
                 if (deepPlan !== undefined) capabilities.add("deep-plan");
+                const explorer = thread?.fetchWorker?.deepPlanRunId !== undefined;
+                if (explorer) capabilities.add("deep-plan-chat-read");
                 if (
                   thread !== null &&
                   !subagent &&
@@ -597,6 +593,7 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     resolved.capabilities.has("coordination") === coordination &&
+                    resolved.capabilities.has("deep-plan-chat-read") === explorer &&
                     resolved.capabilities.has("deep-plan-tools") ===
                       capabilities.has("deep-plan-tools") &&
                     // A credential issued while the lineage read failed is replaced once it works.
@@ -1873,9 +1870,9 @@ export const layerWithOptions = (
               thread: input.appThread,
               modelSelection: input.modelSelection,
               interactionMode: input.runtimePolicy.interactionMode,
+              runId: input.runId,
             });
-            // The orchestrator already validated delegated grants against their parent's plan.
-            if (binding !== undefined && input.appThread.deepPlanExecution === undefined) {
+            if (binding !== undefined) {
               const adapter = yield* registry.get(runtime.instanceId);
               if ((yield* adapter.getCapabilities()).deepPlan?.supported !== true)
                 return yield* new DeepPlanProviderBindingError({
@@ -1885,7 +1882,7 @@ export const layerWithOptions = (
               if (binding.modelSelection.instanceId !== runtime.instanceId)
                 return yield* new DeepPlanProviderBindingError({
                   threadId: input.threadId,
-                  reason: "implementation-provider-mismatch",
+                  reason: "provider-mismatch",
                 });
             }
             const workspaceWriteEnabled = mcpWorkspaceWriteEnabled(input.runtimePolicy, binding);

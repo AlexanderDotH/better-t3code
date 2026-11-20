@@ -42,6 +42,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "./environment.ts";
+import { DEEP_PLAN_VERSION_QUERY_PARAM } from "./deepPlanning.ts";
 import {
   DpopFailureReason,
   AuthSessionId,
@@ -653,12 +654,18 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const DeepPlanWireQuery = {
+  [DEEP_PLAN_VERSION_QUERY_PARAM]: Schema.optionalKey(Schema.String),
+};
+
 const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+  ...DeepPlanWireQuery,
   omitIdleSubagents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+  ...DeepPlanWireQuery,
   deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
@@ -693,6 +700,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
+      query: Schema.Struct(DeepPlanWireQuery),
       success: OrchestrationV2ThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

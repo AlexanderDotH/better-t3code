@@ -5,6 +5,7 @@ import {
   MAX_PROJECT_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_PROJECT_THREAD_PREVIEW_COUNT,
+  ReplyPresentation,
   type BetterT3FeatureControlStateV1,
   type BetterT3FeatureId,
   type CavemanMode,
@@ -33,6 +34,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode } from "react";
 import { ChatVisualModeSyncNotice } from "./ChatVisualModeSyncNotice";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -53,8 +55,10 @@ const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "agent.autoReasoningModel",
   "knowledge.projectIndexingDecisionModel",
   "agent.parallelPlanReviewer",
+  "agent.deepPlanReviewModel",
   "agent.cavemanMode",
   "chat.presentation",
+  "chat.replyPresentation",
   "chat.contextWindowSelector",
   "chat.previewCount",
   "chat.sorting",
@@ -215,11 +219,12 @@ function BetterT3ModelSelectionControl(props: {
     props.selection ?? props.fallbackSelection,
     props.purpose,
   );
-  const isFetchModel = props.featureId === "agent.fetchModel";
-  const displayedSelection = isFetchModel ? props.selection : resolvedSelection;
+  const showStoredSelection =
+    props.featureId === "agent.fetchModel" || props.featureId === "agent.deepPlanReviewModel";
+  const displayedSelection = showStoredSelection ? props.selection : resolvedSelection;
   const activeInstanceId = displayedSelection?.instanceId ?? resolvedSelection?.instanceId;
-  const unavailableFetchModel =
-    isFetchModel &&
+  const unavailableModel =
+    showStoredSelection &&
     displayedSelection !== null &&
     !entries.some(
       (entry) =>
@@ -230,7 +235,7 @@ function BetterT3ModelSelectionControl(props: {
             supportsModelSelectionPurpose(model, props.purpose),
         ),
     );
-  if (!isFetchModel && !resolvedSelection) {
+  if (!showStoredSelection && !resolvedSelection) {
     return (
       <span className="text-xs text-muted-foreground">
         {props.translate("settings.betterT3.value.unavailable")}
@@ -272,11 +277,11 @@ function BetterT3ModelSelectionControl(props: {
           triggerVariant="outline"
           triggerClassName="min-w-0 max-w-56 shrink-0 text-foreground/90 hover:text-foreground"
           triggerAriaLabel={props.translate(`betterT3.${props.featureId}.label`)}
-          {...(isFetchModel
+          {...(showStoredSelection
             ? {
                 fallbackToFirstModel: false,
                 placeholder: props.translate("settings.betterT3.value.chooseModel"),
-                ...(unavailableFetchModel
+                ...(unavailableModel
                   ? {
                       triggerLabel: `${displayedSelection.model} · ${props.translate("settings.betterT3.value.unavailable")}`,
                     }
@@ -285,7 +290,7 @@ function BetterT3ModelSelectionControl(props: {
             : {})}
           onInstanceModelChange={(instanceId, model) =>
             props.onChange(
-              isFetchModel &&
+              showStoredSelection &&
                 props.selection?.instanceId === instanceId &&
                 props.selection.model === model
                 ? props.selection
@@ -338,6 +343,24 @@ function BetterT3SelectControl<Value extends string>(props: {
     </Select>
   );
 }
+
+export function BetterT3ReplyPresentationControl({ translate }: { readonly translate: Translate }) {
+  const replyPresentation = useClientSettings((settings) => settings.replyPresentation);
+
+  return (
+    <BetterT3SelectControl<ReplyPresentation>
+      value={replyPresentation}
+      options={ReplyPresentation.literals.map((value) => ({
+        value,
+        label: translate(`settings.betterT3.replyPresentation.${value}`),
+      }))}
+      ariaLabel={translate("betterT3.chat.replyPresentation.label")}
+      disabled={false}
+      onChange={(replyPresentation) => updateClientSettings({ replyPresentation })}
+    />
+  );
+}
+
 function ChatSortingControl(props: {
   readonly projectOrder: SidebarProjectSortOrder;
   readonly threadOrder: SidebarThreadSortOrder;
@@ -570,6 +593,25 @@ export function useBetterT3PreparedControls(input: {
         }}
       />
     ),
+    "agent.deepPlanReviewModel": (
+      <BetterT3ModelSelectionControl
+        environmentId={input.environmentId}
+        featureId="agent.deepPlanReviewModel"
+        settings={input.settings}
+        providers={input.providers}
+        selection={input.settings.deepPlanReviewModelSelection ?? null}
+        fallbackSelection={null}
+        allowAutomatic
+        automaticLabel={input.translate("settings.betterT3.deepPlanReviewModel.default")}
+        purpose="agent"
+        disabled={scalarControlDisabled("agent.deepPlanReviewModel")}
+        predicate={acceptsAnyProvider}
+        translate={input.translate}
+        onChange={(deepPlanReviewModelSelection) =>
+          input.updateSettings({ deepPlanReviewModelSelection })
+        }
+      />
+    ),
     "agent.cavemanMode": (
       <BetterT3SelectControl<CavemanMode>
         value={input.settings.agentEnhancement.cavemanMode}
@@ -599,6 +641,7 @@ export function useBetterT3PreparedControls(input: {
         <ChatVisualModeSyncNotice translate={input.translate} />
       </div>
     ),
+    "chat.replyPresentation": <BetterT3ReplyPresentationControl translate={input.translate} />,
     "chat.contextWindowSelector": (
       <BetterT3SelectControl<ContextWindowSelector>
         value={input.settings.contextWindowSelector}

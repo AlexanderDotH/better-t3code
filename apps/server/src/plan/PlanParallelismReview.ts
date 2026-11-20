@@ -69,7 +69,8 @@ export const make = Effect.gen(function* () {
     if (input.deepPlan) {
       const run = thread.deepPlan;
       if (
-        !run?.plan ||
+        run?.schemaVersion !== 2 ||
+        !run.plan ||
         thread.id !== input.threadId ||
         run.threadId !== input.threadId ||
         run.id !== input.deepPlan.runId
@@ -231,7 +232,8 @@ export const make = Effect.gen(function* () {
         );
       const run = current?.deepPlan;
       if (
-        !run?.plan ||
+        run?.schemaVersion !== 2 ||
+        !run.plan ||
         current?.id !== input.threadId ||
         run.threadId !== input.threadId ||
         run.id !== input.deepPlan.runId ||

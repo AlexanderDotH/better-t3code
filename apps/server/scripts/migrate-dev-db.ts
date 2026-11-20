@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { EventId, OrchestrationV2AppThreadJson } from "@t3tools/contracts";
+import { EventId, isDeepPlanRun, OrchestrationV2AppThreadJson } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as DateTime from "effect/DateTime";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -515,13 +515,15 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       const activeDeepPlans = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_v2_projection_threads
         WHERE json_type(payload_json, '$.deepPlan') = 'object'
-          AND json_extract(payload_json, '$.deepPlan.phase') NOT IN ('paused', 'completed')
+          AND json_extract(payload_json, '$.deepPlan.phase') IN
+            ('planning', 'awaitingApproval', 'implementing', 'finalReview')
       `;
       for (const row of activeDeepPlans) {
         const thread = yield* decodeStoredThread(row.payload_json);
         const run = thread.deepPlan;
-        if (!run) continue;
+        if (!isDeepPlanRun(run) || run.threadId !== thread.id) continue;
         const now = yield* DateTime.now;
+        const at = DateTime.formatIso(now);
         const eventId = yield* randomUuidV4;
         yield* eventSink.write({
           events: [
@@ -536,11 +538,9 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
                 deepPlan: {
                   ...run,
                   phase: "paused",
-                  pauseReason: "Paused in this development copy.",
-                  finalValidation:
-                    run.finalValidation.status === "inProgress"
-                      ? { ...run.finalValidation, status: "pending", requestId: null, turnId: null }
-                      : run.finalValidation,
+                  revision: run.revision + 1,
+                  pause: { kind: "user", reason: "Paused in this development copy.", at },
+                  updatedAt: at,
                 },
               },
             },

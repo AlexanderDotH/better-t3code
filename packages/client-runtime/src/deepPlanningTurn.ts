@@ -1,377 +1,80 @@
 import {
-  CommandId,
-  DeepPlanRunId,
-  MessageId,
-  type OrchestrationV2Command,
-  type DeepPlanGetRunInput,
-  type DeepPlanRun,
+  DEEP_PLAN_MAX_CHATS,
+  DEEP_PLAN_MAX_PARALLELISM,
+  isDeepPlanRun,
   type DeepPlanSourceRef,
-  type EnvironmentId,
-  type ModelSelection,
-  type RuntimeMode,
-  type ServerProvider,
-  type ProjectId,
-  type ThreadId,
+  type OrchestrationV2Command,
+  type StoredDeepPlanRun,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 
-import {
-  buildDeepPlanContinuationPrompt,
-  selectDeepPlanProgress,
-  shouldAutoContinueDeepPlan,
-} from "./deepPlanningRun.ts";
+import { getDeepPlanApprovalBlockReason } from "./deepPlanningRun.ts";
 
-import {
-  awaitDeepPlanSourceOperation,
-  deepPlanSourceRefKey,
-  transferDeepPlanSources,
-  type DeepPlanningSourceApi,
-  type DeepPlanSourceTransferProgress,
-} from "./deepPlanningSources.ts";
+type StartCommand = Extract<OrchestrationV2Command, { readonly type: "thread.deep-plan.start" }>;
+type UpdateCommand = Extract<OrchestrationV2Command, { readonly type: "thread.deep-plan.update" }>;
+type Approval = Extract<UpdateCommand["mutation"], { readonly type: "approve" }>;
 
-export interface DeepPlanningApi extends DeepPlanningSourceApi {
-  readonly getRun: (input: DeepPlanGetRunInput) => Promise<DeepPlanRun | null>;
-  readonly dispatchCommand: (command: OrchestrationV2Command) => Promise<unknown>;
+export function deepPlanSourceRefKey(ref: DeepPlanSourceRef): string {
+  return JSON.stringify([ref.environmentId, ref.projectId, ref.threadId]);
 }
 
-function importsComplete(run: DeepPlanRun): boolean {
-  return run.sources.every((source) =>
-    run.sourceCoverage.some(
-      (coverage) =>
-        coverage.sourceId === source.sourceId &&
-        (coverage.status === "ready" || coverage.status === "summarized") &&
-        coverage.importedRecordCount === source.recordCount,
-    ),
-  );
-}
-
-interface DeepPlanSourceScope {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly includeProjectChats: boolean;
-}
-
-function chosenSourceKeys(
-  scope: DeepPlanSourceScope,
+export function uniqueDeepPlanSourceRefs(
   refs: ReadonlyArray<DeepPlanSourceRef>,
-): ReadonlyArray<string> {
-  const implied = (ref: DeepPlanSourceRef) =>
-    scope.includeProjectChats &&
-    ref.environmentId === scope.environmentId &&
-    ref.projectId === scope.projectId;
-  return [...new Set(refs.filter((ref) => !implied(ref)).map(deepPlanSourceRefKey))].sort();
+): ReadonlyArray<DeepPlanSourceRef> {
+  return [...new Map(refs.map((ref) => [deepPlanSourceRefKey(ref), ref])).values()];
 }
 
-function sameSourceSelection(
-  run: DeepPlanRun,
-  scope: DeepPlanSourceScope,
-  refs: ReadonlyArray<DeepPlanSourceRef>,
-): boolean {
-  return (
-    (run.includeProjectChats !== false) === scope.includeProjectChats &&
-    JSON.stringify(
-      chosenSourceKeys(
-        scope,
-        run.sources.map((source) => source.origin),
-      ),
-    ) === JSON.stringify(chosenSourceKeys(scope, refs))
-  );
-}
-
-async function pauseRun(input: {
-  readonly api: DeepPlanningApi;
-  readonly run: DeepPlanRun;
-  readonly reason: string;
-  readonly createId: () => string;
-  readonly now: () => string;
-}): Promise<void> {
-  if (input.run.phase === "paused" || input.run.phase === "completed") return;
-  await input.api.dispatchCommand({
-    type: "thread.deep-plan.update",
-    commandId: CommandId.make(input.createId()),
-    threadId: input.run.threadId,
-    runId: input.run.id,
-    expectedRevision: input.run.revision,
-    operationId: input.createId(),
-    createdAt: input.now(),
-    mutation: { type: "pause", reason: input.reason },
-  });
-}
-
-async function prepareDeepPlan(input: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly threadId: ThreadId;
-  readonly additionalSourceRefs?: ReadonlyArray<DeepPlanSourceRef> | undefined;
-  readonly includeProjectChats?: boolean | undefined;
-  readonly existingRun?: DeepPlanRun | null | undefined;
-  readonly runId?: DeepPlanRunId | undefined;
-  readonly createId: () => string;
-  readonly now?: () => string;
-  readonly apiForEnvironment: (
-    environmentId: EnvironmentId,
-  ) => DeepPlanningApi | null | Promise<DeepPlanningApi | null>;
-  readonly signal?: AbortSignal;
-  readonly onProgress?: (progress: DeepPlanSourceTransferProgress) => void;
-}): Promise<DeepPlanRun> {
-  if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
-  const api = await input.apiForEnvironment(input.environmentId);
-  if (!api) throw new Error("Connect to this environment before starting DeepPlan.");
-  const now = input.now ?? (() => DateTime.formatIso(DateTime.nowUnsafe()));
-  const current = await api.getRun({
-    threadId: input.existingRun?.threadId ?? input.threadId,
-    ...(input.existingRun ? { runId: input.existingRun.id } : {}),
-  });
-  if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
-  const additionalSourceRefs = input.additionalSourceRefs ?? [];
-  const includeProjectChats = input.includeProjectChats !== false;
-  if (
-    current &&
-    !current.approval &&
-    (current.phase === "planning" || current.phase === "awaitingApproval") &&
-    importsComplete(current) &&
-    sameSourceSelection(
-      current,
-      { environmentId: input.environmentId, projectId: input.projectId, includeProjectChats },
-      additionalSourceRefs,
-    )
-  )
-    return current;
-  if (current?.approval && current.phase !== "completed") {
-    throw new Error(
-      "The approved DeepPlan is still active. Finish it before starting another DeepPlan.",
-    );
+export function buildDeepPlanStartCommand(
+  input: Pick<StartCommand, "commandId" | "threadId" | "createdAt"> &
+    Partial<Pick<StartCommand, "chats" | "includeProjectChats">>,
+): StartCommand {
+  const chats = uniqueDeepPlanSourceRefs(input.chats ?? []);
+  if (chats.length > DEEP_PLAN_MAX_CHATS) {
+    throw new Error(`Choose up to ${DEEP_PLAN_MAX_CHATS} chats for Deep Plan.`);
   }
-  if (
-    current &&
-    current.phase !== "completed" &&
-    current.phase !== "failed" &&
-    current.phase !== "blocked"
-  ) {
-    await pauseRun({
-      api,
-      run: current,
-      reason: "Starting a new DeepPlan with a complete source snapshot.",
-      createId: input.createId,
-      now,
-    });
-  }
-  const runId =
-    input.runId && input.runId !== current?.id ? input.runId : DeepPlanRunId.make(input.createId());
-  await api.dispatchCommand({
+  return {
     type: "thread.deep-plan.start",
-    commandId: CommandId.make(input.createId()),
+    commandId: input.commandId,
     threadId: input.threadId,
-    runId,
-    createdAt: now(),
-  });
-  try {
-    const transferred = await transferDeepPlanSources({
-      environmentId: input.environmentId,
-      projectId: input.projectId,
-      threadId: input.threadId,
-      runId,
-      additionalSourceRefs,
-      includeProjectChats,
-      apiForEnvironment: (environmentId) =>
-        environmentId === input.environmentId ? api : input.apiForEnvironment(environmentId),
-      ...(input.signal ? { signal: input.signal } : {}),
-      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
-    });
-    const prepared = await api.getRun({ threadId: input.threadId, runId });
-    if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
-    if (
-      !prepared ||
-      prepared.id !== runId ||
-      !importsComplete(prepared) ||
-      prepared.sources.length !== transferred.sources.length ||
-      !transferred.sources.every((source) =>
-        prepared.sources.some(
-          (persisted) =>
-            persisted.sourceId === source.sourceId &&
-            persisted.contentHash === source.contentHash &&
-            persisted.contentVersion === source.contentVersion &&
-            persisted.recordCount === source.recordCount,
-        ),
-      ) ||
-      (prepared.phase !== "planning" && prepared.phase !== "awaitingApproval")
-    ) {
-      throw new Error(
-        "DeepPlan source collection has not been confirmed. Retry before starting the agent.",
-      );
-    }
-    return prepared;
-  } catch (error) {
-    if (!input.signal?.aborted) throw error;
-    try {
-      const failed = await api.getRun({ threadId: input.threadId, runId });
-      if (failed)
-        await pauseRun({
-          api,
-          run: failed,
-          reason: error instanceof Error ? error.message : "DeepPlan source collection failed.",
-          createId: input.createId,
-          now,
-        });
-    } catch {
-      // A disconnected target still rejects execution while its sources are incomplete.
-    }
-    throw error;
-  }
-}
-
-function preparationKey(environmentId: EnvironmentId, threadId: ThreadId): string {
-  return JSON.stringify([environmentId, threadId]);
-}
-
-const preparations = new Map<
-  string,
-  { readonly selectionKey: string; readonly result: Promise<DeepPlanRun> }
->();
-
-export async function prepareDeepPlanForTurn(
-  input: Parameters<typeof prepareDeepPlan>[0],
-): Promise<DeepPlanRun> {
-  if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
-  const key = preparationKey(input.environmentId, input.threadId);
-  const scope = {
-    environmentId: input.environmentId,
-    projectId: input.projectId,
-    includeProjectChats: input.includeProjectChats !== false,
+    createdAt: input.createdAt,
+    chats,
+    includeProjectChats: input.includeProjectChats === true,
   };
-  const selectionKey = JSON.stringify([
-    input.projectId,
-    scope.includeProjectChats,
-    chosenSourceKeys(scope, input.additionalSourceRefs ?? []),
-  ]);
-  const active = preparations.get(key);
-  if (active) {
-    if (active.selectionKey !== selectionKey)
-      throw new Error("Wait for source collection to finish before changing the selected chats.");
-    return awaitDeepPlanSourceOperation(active.result, input.signal);
-  }
-  const preparation = { selectionKey, result: prepareDeepPlan(input) };
-  preparations.set(key, preparation);
-  const finish = () => {
-    if (preparations.get(key) === preparation) preparations.delete(key);
-  };
-  void preparation.result.then(finish, finish);
-  return preparation.result;
 }
 
-async function continueDeepPlan(input: {
-  readonly run: DeepPlanRun;
-  readonly automatic?: boolean;
-  readonly threadId?: ThreadId;
-  readonly idleGuard?: Extract<OrchestrationV2Command, { type: "message.dispatch" }>["idleGuard"];
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly fallbackModelSelection: ModelSelection;
-  readonly runtimeMode: RuntimeMode;
-  readonly providers?: ReadonlyArray<ServerProvider>;
-  readonly apiForEnvironment: Parameters<typeof prepareDeepPlanForTurn>[0]["apiForEnvironment"];
-  readonly createId: () => string;
-  readonly now?: () => string;
-}): Promise<DeepPlanRun> {
-  const api = await input.apiForEnvironment(input.environmentId);
-  if (!api) throw new Error("Connect to this environment before continuing Deep Plan.");
-  const now = input.now ?? (() => DateTime.formatIso(DateTime.nowUnsafe()));
-  let run = await api.getRun({ threadId: input.run.threadId, runId: input.run.id });
-  if (!run || run.id !== input.run.id || run.phase === "completed")
-    throw new Error("This Deep Plan is no longer waiting to continue.");
-  if (input.automatic && !shouldAutoContinueDeepPlan(run, input.threadId ?? input.run.threadId))
-    return run;
-  const preparation = preparations.get(preparationKey(input.environmentId, run.threadId));
-  // The original sender owns starting the turn once this collection finishes.
-  if (preparation) return preparation.result;
-  if (!run.approval && (run.phase === "collecting" || !importsComplete(run))) {
-    run = await prepareDeepPlanForTurn({
-      environmentId: input.environmentId,
-      projectId: input.projectId,
-      threadId: run.threadId,
-      additionalSourceRefs: run.sources.map((source) => source.origin),
-      includeProjectChats: run.includeProjectChats !== false,
-      existingRun: run,
-      apiForEnvironment: input.apiForEnvironment,
-      createId: input.createId,
-      now,
-    });
-  } else if (["paused", "failed", "blocked"].includes(run.phase)) {
-    await api.dispatchCommand({
-      type: "thread.deep-plan.update",
-      commandId: CommandId.make(input.createId()),
-      threadId: run.threadId,
-      runId: run.id,
-      expectedRevision: run.revision,
-      operationId: input.createId(),
-      createdAt: now(),
-      mutation: { type: "resume" },
-    });
-    const resumed = await api.getRun({ threadId: run.threadId, runId: run.id });
-    if (
-      !resumed ||
-      resumed.id !== run.id ||
-      ["paused", "failed", "blocked"].includes(resumed.phase)
-    )
-      throw new Error("Deep Plan resumption was not confirmed. Refresh before continuing.");
-    run = resumed;
+export function buildDeepPlanApproveCommand(
+  input: Pick<UpdateCommand, "commandId" | "operationId" | "createdAt"> &
+    Pick<Approval, "implementation" | "implementationThread" | "parallelism" | "reviewer"> & {
+      readonly run: StoredDeepPlanRun;
+    },
+): UpdateCommand {
+  const { run, parallelism, reviewer } = input;
+  const reason = getDeepPlanApprovalBlockReason(run);
+  if (reason || !isDeepPlanRun(run) || !run.plan || !run.approvalKey) {
+    throw new Error(reason ?? "Refresh Deep Plan before approving it.");
   }
-  // Pending validation belongs to the durable reactor; an interrupted attempt can continue.
   if (
-    run.approval &&
-    selectDeepPlanProgress(run).allStepsVerified &&
-    run.finalValidation.status !== "inProgress"
-  )
-    return run;
-  if (run.phase === "awaitingApproval") return run;
-  const selection = run.approval?.implementation ?? input.fallbackModelSelection;
-  const modelSelection: ModelSelection = {
-    instanceId: selection.instanceId,
-    model: selection.model,
-    ...(selection.options === undefined ? {} : { options: selection.options }),
-  };
-  const text =
-    run.phase === "validating" && run.finalValidation.requestId
-      ? `Continue the final overall validation for Deep Plan ${run.id}, request ${run.finalValidation.requestId}. Read deep_plan_state and the saved evidence, finish every required check, then record the result with deep_plan_validation and the same requestId. Preserve completed checks and fix failures within the approved scope.`
-      : run.approval
-        ? buildDeepPlanContinuationPrompt(run)
-        : `Resume Deep Plan run ${run.id} owned by thread ${run.threadId}. Read its durable state with deep_plan_state, continue reading and summarizing every frozen source, and publish the complete structured plan with deep_plan_publish. Do not omit unavailable sources or begin implementation before approval.`;
-  const commandId = CommandId.make(input.createId());
-  await api.dispatchCommand({
-    type: "message.dispatch",
-    createdBy: "agent",
-    creationSource: "web",
-    commandId,
-    threadId: run.approval?.implementationThreadId ?? run.threadId,
-    messageId: MessageId.make(commandId + ":message"),
-    text,
-    attachments: [],
-    deepPlanRunId: run.id,
-    deepPlanContinuation: true,
-    modelSelection,
-    runtimeMode: input.runtimeMode,
-    ...(input.automatic
-      ? {}
-      : { interactionMode: run.approval ? ("default" as const) : ("plan" as const) }),
-    idleGuard: input.automatic ? (input.idleGuard ?? {}) : {},
-    dispatchMode: { type: "start_immediately" },
-  });
-  return run;
-}
-
-const continuations = new Map<string, Promise<DeepPlanRun>>();
-
-export async function continueDeepPlanForTurn(
-  input: Parameters<typeof continueDeepPlan>[0],
-): Promise<DeepPlanRun> {
-  const key = JSON.stringify([input.environmentId, input.run.threadId, input.run.id]);
-  const active = continuations.get(key);
-  if (active) return active;
-  const result = continueDeepPlan(input);
-  continuations.set(key, result);
-  try {
-    return await result;
-  } finally {
-    if (continuations.get(key) === result) continuations.delete(key);
+    !Number.isInteger(parallelism) ||
+    parallelism < 1 ||
+    parallelism > DEEP_PLAN_MAX_PARALLELISM
+  ) {
+    throw new Error(`Choose between 1 and ${DEEP_PLAN_MAX_PARALLELISM} Deep Plan lanes.`);
   }
+  return {
+    type: "thread.deep-plan.update",
+    commandId: input.commandId,
+    threadId: run.threadId,
+    runId: run.id,
+    expectedRevision: run.revision,
+    operationId: input.operationId,
+    createdAt: input.createdAt,
+    mutation: {
+      type: "approve",
+      planVersion: run.plan.version,
+      approvalKey: run.approvalKey,
+      implementation: input.implementation,
+      implementationThread: input.implementationThread,
+      parallelism,
+      ...(reviewer === undefined ? {} : { reviewer }),
+    },
+  };
 }

@@ -24,8 +24,9 @@ modes, branch or worktree, archive and settlement state, snoozes, pins, and link
 User and assistant messages retain their text, timestamps, supported attachments, and reply
 references. Large histories can appear in stages while transcripts load.
 
-Better T3 also retains compatible Deep Plan state and source snapshots, harness synchronization
-links, and subagent and reply conversations. Environment and project settings remain available.
+Better T3 also retains harness synchronization links and subagent and reply conversations.
+Environment and project settings remain available. Older Deep Plans appear as read-only summaries.
+To continue the work, start a new Deep Plan and select any chats you want it to read.
 An old provider session is not recreated as a running V2 session.
 
 Old run records, checkpoints and diffs, tool activity, approval history, and proposed plan history

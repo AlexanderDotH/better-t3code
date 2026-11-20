@@ -60,6 +60,7 @@ export function resolvePlanImplementationReviewPresentation(
 export function buildPlanImplementationActionPresentation(input: {
   readonly compact: boolean;
   readonly suggestion: PlanImplementationSuggestion | null;
+  readonly deepPlan?: boolean;
   readonly translate?: Translate;
 }): PlanImplementationActionPresentation {
   const translate = input.translate ?? englishTranslate;
@@ -81,12 +82,19 @@ export function buildPlanImplementationActionPresentation(input: {
   }
 
   const suggestedCount = suggestion.strategy.count;
-  const fullPrimaryLabel = translate("chat.composer.implementWithSubagents", {
-    count: suggestedCount,
-  });
+  const implementationLabel = input.deepPlan
+    ? "chat.deepPlan.implementWithLanes"
+    : "chat.composer.implementWithSubagents";
+  const newThreadLabel = input.deepPlan
+    ? "chat.deepPlan.implementWithLanesNewThread"
+    : "chat.composer.implementWithSubagentsNewThread";
+  const fullPrimaryLabel = translate(implementationLabel, { count: suggestedCount });
+  const newThreadCounts = input.deepPlan ? suggestion.supportedCounts : [suggestedCount];
   return {
     primaryLabel: input.compact
-      ? translate("chat.composer.subagentCount", { count: suggestedCount })
+      ? translate(input.deepPlan ? "chat.deepPlan.laneCount" : "chat.composer.subagentCount", {
+          count: suggestedCount,
+        })
       : fullPrimaryLabel,
     primaryAriaLabel: fullPrimaryLabel,
     menuActions: [
@@ -104,18 +112,16 @@ export function buildPlanImplementationActionPresentation(input: {
         strategy: STANDARD_IMPLEMENTATION_STRATEGY,
         suggested: false,
       },
-      {
-        id: `subagents:${suggestedCount}:new-thread`,
-        label: translate("chat.composer.implementWithSubagentsNewThread", {
-          count: suggestedCount,
-        }),
+      ...newThreadCounts.map((count): PlanImplementationMenuAction => ({
+        id: `subagents:${count}:new-thread`,
+        label: translate(newThreadLabel, { count }),
         target: "new-thread",
-        strategy: suggestion.strategy,
-        suggested: true,
-      },
+        strategy: { kind: "subagents", count },
+        suggested: count === suggestedCount,
+      })),
       ...suggestion.supportedCounts.map((count): PlanImplementationMenuAction => ({
         id: `subagents:${count}:same-thread`,
-        label: translate("chat.composer.implementWithSubagents", { count }),
+        label: translate(implementationLabel, { count }),
         target: "same-thread",
         strategy: { kind: "subagents", count },
         suggested: count === suggestedCount,

@@ -528,7 +528,7 @@ export function useThreadComposerState() {
       !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
     )
       return null;
-    if (!selectedThreadShell) {
+    if (!selectedThreadShell || selectedThreadShell.deepPlanExecution?.phase === "review") {
       return null;
     }
     // Before thread creation succeeds, follow-ups could become orphaned and be dropped by the drain.
@@ -735,9 +735,7 @@ export function useThreadComposerState() {
       }),
       interactionMode: resolveProviderInteractionMode(
         provider,
-        getProviderInteractionMode(
-          resolveComposerMode(draft.composerMode, draft.interactionMode ?? thread.interactionMode),
-        ),
+        getProviderInteractionMode(sendComposerMode),
       ),
       ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
       createdAt: metadata.createdAt,

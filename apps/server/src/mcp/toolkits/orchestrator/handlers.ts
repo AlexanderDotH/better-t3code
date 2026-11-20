@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
+import { assertDeepPlanChatRead } from "../../../deepPlanning/DeepPlanChatReferences.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -152,12 +153,17 @@ const handlers = {
       return yield* service.listThreads(scope, input);
     }),
   ),
-  t3_thread_read: McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.readThread(scope, input);
-    }),
+  t3_thread_read: McpToolAccess.readsChecked(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.readThread(scope, input);
+      }),
+    (input) =>
+      McpInvocationContext.McpInvocationContext.pipe(
+        Effect.flatMap((scope) => assertDeepPlanChatRead(scope, input)),
+      ),
   ),
   t3_thread_update: McpToolAccess.writesThreads(
     (input) => [input.threadId],

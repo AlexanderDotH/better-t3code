@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DeviceId,
   DeviceOperationError,
+  DeepPlanRunId,
   EnvironmentId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
@@ -14,6 +15,7 @@ import {
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -553,6 +555,46 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
     }).pipe(Effect.provide(layerRecordingTools(calls)));
   },
 );
+
+it.effect("denies a Deep Plan reviewer access to another thread's transcript", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const denied = yield* server
+      .callTool({
+        name: "t3_thread_read",
+        arguments: { threadId: "implementation-thread" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          capabilities: new Set(["orchestration", "deep-plan"] as const),
+          deepPlan: {
+            phase: "review",
+            readOnly: true,
+            runId: DeepPlanRunId.make("review-plan"),
+            runThreadId: ThreadId.make("plan-owner"),
+            turnId: RunId.make("review-turn"),
+            approvedPlanVersion: 1,
+            modelSelection: {
+              instanceId: invocation.thread.providerInstanceId,
+              model: "review-model",
+            },
+            review: { target: { kind: "step", stepId: "parser" }, round: 1 },
+          },
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(denied.isError).toBe(true);
+    expect(denied.content).toEqual([
+      {
+        type: "text",
+        text: "Deep Plan reviewers can only inspect their workspace and assigned review.",
+      },
+    ]);
+    expect(calls).toEqual([]);
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
 
 it("keeps cross-tool routing out of the delegate_task description", () => {
   const description = OrchestratorToolkit.tools.delegate_task.description ?? "";

@@ -49,6 +49,7 @@ function makeProjection(): ProjectionCheckpointContext {
 
 function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
+  readonly endProjection?: ProjectionCheckpointContext;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
 }) {
@@ -56,7 +57,10 @@ function layerFor(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getCheckpointContext: () => input.projection,
+          getCheckpointContext: (id) =>
+            id !== threadId && input.endProjection
+              ? Effect.succeed(input.endProjection)
+              : input.projection,
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
@@ -67,6 +71,126 @@ function layerFor(input: {
     Layer.provideMerge(NodeCrypto.layer),
   );
 }
+
+it.effect(
+  "compares the final review against the last lane checkpoint even at a lower ordinal",
+  () => {
+    const primary = makeProjectionAfterStoppedRun(true);
+    const laneThreadId = ThreadId.make("thread:checkpoint-diff-later-lane");
+    const laneScopeId = CheckpointScopeId.make("scope:checkpoint-diff-later-lane");
+    const laneRef = CheckpointRef.make("refs/t3/test/later-lane");
+    const endProjection: ProjectionCheckpointContext = {
+      runs: [{ id: secondRunId, ordinal: 1, status: "completed" }],
+      checkpointScopes: [{ id: laneScopeId, runId: secondRunId, kind: "root_run", cwd: "/repo" }],
+      checkpoints: [
+        {
+          scopeId: laneScopeId,
+          runId: secondRunId,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          status: "ready",
+          ref: laneRef,
+        },
+      ],
+    };
+    const diffCheckpoints = (input: CheckpointStore.DiffCheckpointsInput) => {
+      assert.equal(input.fromCheckpointRef, "refs/t3/test/ordinal/3");
+      assert.equal(input.toCheckpointRef, laneRef);
+      return Effect.succeed(
+        input.format === "numstat"
+          ? "1\t0\tprimary.ts\x002\t1\tlater-lane.ts\0"
+          : "primary and later-lane patch",
+      );
+    };
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const diff = yield* query.getReviewDiff({
+        threadId,
+        fromTurnCount: 3,
+        toTurnCount: 1,
+        toThreadId: laneThreadId,
+      });
+      assert.deepEqual(diff, {
+        files: [
+          { path: "later-lane.ts", additions: 2, deletions: 1 },
+          { path: "primary.ts", additions: 1, deletions: 0 },
+        ],
+        patch: "primary and later-lane patch",
+      });
+    }).pipe(
+      Effect.provide(
+        layerFor({ projection: Effect.succeed(primary), endProjection, diffCheckpoints }),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "scopes a lane review to its submitted paths and falls back to the whole diff without a match",
+  () => {
+    const numstatPaths: Array<ReadonlyArray<string> | undefined> = [];
+    const diffCheckpoints = (input: CheckpointStore.DiffCheckpointsInput) => {
+      if (input.format !== "numstat")
+        return Effect.succeed(`patch:${input.filePaths?.join(",") ?? "all"}`);
+      numstatPaths.push(input.filePaths);
+      return Effect.succeed(
+        "1\t0\tsrc/own.ts\x001\t0\tlib/nested/a.ts\x001\t0\tother-lane.ts\x009\t0\tvendor/imported.ts\0",
+      );
+    };
+    const range = { threadId, fromTurnCount: 0, toTurnCount: 1 };
+    const own = { path: "src/own.ts", additions: 1, deletions: 0 };
+    const nested = { path: "lib/nested/a.ts", additions: 1, deletions: 0 };
+    const other = { path: "other-lane.ts", additions: 1, deletions: 0 };
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      assert.deepEqual(
+        yield* query.getReviewDiff(range, ["./src/own.ts", "/repo/lib/", "/elsewhere/x.ts"]),
+        { files: [nested, own], patch: "patch:lib/nested/a.ts,src/own.ts" },
+      );
+      assert.deepEqual(numstatPaths, [["src/own.ts", "lib"]]);
+      assert.deepEqual(yield* query.getReviewDiff(range, ["unrelated.ts"]), {
+        files: [nested, other, own],
+        patch: "patch:lib/nested/a.ts,other-lane.ts,src/own.ts",
+      });
+      assert.equal(yield* query.getReviewDiff({ ...range, toTurnCount: 999 }), null);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          projection: Effect.succeed(makeProjectionAfterStoppedRun(true)),
+          diffCheckpoints,
+          authoredPaths: new Set([own.path, nested.path, other.path]),
+        }),
+      ),
+    );
+  },
+);
+
+it.effect("caps the review file list and says how many files it left out", () => {
+  const paths = Array.from(
+    { length: 205 },
+    (_, index) => `src/file-${String(index).padStart(3, "0")}.ts`,
+  );
+  const diffCheckpoints = (input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(
+      input.format === "numstat"
+        ? paths.map((path) => `1\t0\t${path}\0`).join("")
+        : `patch for ${input.filePaths?.length ?? "all"} files`,
+    );
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const diff = yield* query.getReviewDiff({ threadId, fromTurnCount: 0, toTurnCount: 1 });
+    assert.equal(diff?.files.length, 200);
+    assert.equal(diff?.files.at(-1)?.path, "src/file-199.ts");
+    assert.equal(diff?.patch, "patch for 200 files\n\n[5 more changed files are not listed]");
+  }).pipe(
+    Effect.provide(
+      layerFor({
+        projection: Effect.succeed(makeProjectionAfterStoppedRun(true)),
+        diffCheckpoints,
+      }),
+    ),
+  );
+});
 
 it.effect("excludes ready checkpoints from rolled-back runs", () => {
   const projection = makeProjection();

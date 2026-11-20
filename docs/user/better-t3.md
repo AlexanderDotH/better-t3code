@@ -94,15 +94,25 @@ On web, desktop, and mobile, choose **Reply** on your own message or an assistan
 or swipe your message left or an assistant message right. You can start anywhere in the message,
 including its text. With a mouse or pen, use a quick, straight drag to reply; slower movement,
 holding before dragging, or moving across lines keeps text selection. On touchscreens, hold to
-select text. Type and send your follow-up after selecting the message. Changing or removing the reply target keeps your draft.
+select text. The composer shows a quote from the selected message. Changing or removing the
+reply target keeps your draft.
 
-Replies appear in the conversation as a separate topic, so you can follow up while the main
-agent keeps working. Reply to a message in that topic to continue it. Each topic uses the main
-conversation’s provider, model, and workspace; file changes are shared. Stop or retry a reply
-from its topic. Checkpoint restore is unavailable while the main agent or any reply topic is active.
+Choose where this device displays reply topics under **Settings → Better T3 → Chat → Show replies**.
+
+- **In chat** (default) shows replies in the conversation as they arrive.
+- **In side chat** opens the topic after you send. On web and desktop it opens in the right
+  panel. On mobile it opens as a separate chat screen.
+
+To reopen a topic, use **Open side chat** below the quoted message on web or desktop, or tap
+the linked topic on mobile. Reply to a message in the topic to continue it. You can send or
+follow a reply while the main agent works. Reply topics use the same provider, model, and
+workspace as the main conversation. Stop or retry a reply from its topic. Checkpoint restore
+is unavailable while the main agent or any reply topic is active.
 
 Replies are enabled by default on supported environments. Turn them off for this device under
-**Settings → Better T3 → Chat → Reply to chat messages**. Saved reply topics remain in the conversation.
+**Settings → Better T3 → Chat → Reply to chat messages**. Changing the display or turning off
+the reply action keeps your reply history. Older environments may show replies in the side
+chat until they support the in-chat display. Your device keeps its saved choice.
 
 ## Composer controls
 

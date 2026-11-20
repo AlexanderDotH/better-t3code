@@ -33,6 +33,7 @@ describe("orchestration protocol compatibility", () => {
     );
     expect(socketUrl.searchParams.get("wsTicket")).toBe("secret");
     expect(socketUrl.searchParams.get("connectionMethod")).toBe("relay");
+    expect(socketUrl.searchParams.get("deepPlanVersion")).toBe("2");
   });
 
   it("treats missing metadata as protocol 1", () => {

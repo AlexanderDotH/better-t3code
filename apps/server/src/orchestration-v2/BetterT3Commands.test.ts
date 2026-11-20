@@ -16,8 +16,6 @@ import {
   GeneralSubagentCoordinator,
   GeneralSubagentCoordinatorLive,
 } from "../subagents/GeneralSubagentCoordinator.ts";
-import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
-import { deepPlanApprovalKey } from "../deepPlanning/deepPlanDecision.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as AutoReasoningPreparation from "./AutoReasoningPreparation.ts";
@@ -34,24 +32,17 @@ import { contextPrefixFingerprint } from "../contextCompaction/contextCompaction
 import * as EffectWorker from "./EffectWorker.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DeepPlanWorkflowLive } from "../deepPlanning/DeepPlanWorkflow.ts";
-import { DeepPlanSources } from "../deepPlanning/DeepPlanSources.ts";
-import {
-  DeepPlanValidationReactor,
-  DeepPlanValidationDispatcher,
-  DeepPlanValidationReactorLive,
-} from "../deepPlanning/DeepPlanValidationReactor.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
   CommandId,
-  type DeepPlanDocument,
+  type DeepPlanPlanDraft,
   type DeepPlanMutation,
-  type DeepPlanRun,
-  DeepPlanRunId,
+  deriveDeepPlanImplementationThreadId,
+  deriveDeepPlanRunId,
+  isDeepPlanRun,
   EventId,
   MessageId,
   NodeId,
@@ -68,6 +59,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -76,8 +68,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentProjection";
-import { deepPlanContinuationCommand } from "../deepPlanning/DeepPlanContinuation.ts";
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
 const adapter = {
@@ -89,6 +79,24 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const alternateInstanceId = ProviderInstanceId.make("codex-alt");
 const alternateAdapter = { ...adapter, instanceId: alternateInstanceId };
+const noApprovalInstanceId = ProviderInstanceId.make("no-approvals");
+const noApprovalAdapter = {
+  ...adapter,
+  instanceId: noApprovalInstanceId,
+  getCapabilities: () =>
+    Effect.succeed({
+      ...CodexProviderCapabilitiesV2,
+      approvals: {
+        ...CodexProviderCapabilitiesV2.approvals,
+        supportsCommandApproval: false,
+        supportsFileChangeApproval: false,
+      },
+    }),
+};
+const reviewCases = [
+  { instanceId, mode: "default" },
+  { instanceId: noApprovalInstanceId, mode: "plan" },
+] as const;
 const compactionAdapters = ["opencode", "grok"].map((driver) => ({
   ...adapter,
   driver: ProviderDriverKind.make(driver),
@@ -103,7 +111,12 @@ const layerFor = (settings?: Parameters<typeof ServerSettings.layerTest>[0]) =>
     EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
     ProviderReplayHarness.layerWithRegistry(
       { name: "control-reads" },
-      ProviderAdapterRegistry.layerFromAdapters([adapter, alternateAdapter, ...compactionAdapters]),
+      ProviderAdapterRegistry.layerFromAdapters([
+        adapter,
+        alternateAdapter,
+        noApprovalAdapter,
+        ...compactionAdapters,
+      ]),
       {
         databaseLayer: layerDatabase,
         runEffectWorker: false,
@@ -225,252 +238,661 @@ it.effect("queues native compaction through registered OpenCode and ACP provider
   ),
 );
 
-it.effect("persists DeepPlan revisions and command receipts in V2 without a provider run", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threadId = ThreadId.make("deep-plan-owner");
-    yield* createThread(threadId);
-    const runId = DeepPlanRunId.make("deep-plan-durable");
-    const createdAt = DateTime.formatIso(yield* DateTime.now);
-    yield* orchestrator.dispatch({
-      type: "thread.deep-plan.start",
-      commandId: CommandId.make("plan-start"),
-      threadId,
-      runId,
-      createdAt,
-    });
-    const pause = {
-      type: "thread.deep-plan.update" as const,
-      commandId: CommandId.make("plan-pause"),
-      threadId,
-      runId,
-      expectedRevision: 0,
-      operationId: "pause",
-      mutation: { type: "pause" as const, reason: "User stopped work" },
-      createdAt,
-    };
-    const accepted = yield* orchestrator.dispatch(pause);
-    const replay = yield* orchestrator.dispatch(pause);
-    assert.equal(replay.sequence, accepted.sequence);
-    assert.equal(replay.replayed, true);
-    const shell = yield* orchestrator.getThreadShell(threadId);
-    assert.equal(shell?.deepPlan?.revision, 1);
-    assert.equal(shell?.deepPlan?.phase, "paused");
-    assert.equal(shell?.activeRunId, null);
-    const otherId = ThreadId.make("other-plan-owner");
-    yield* createThread(otherId);
-    const duplicateOwner = yield* orchestrator
-      .dispatch({
-        type: "thread.deep-plan.start",
-        commandId: CommandId.make("duplicate-owner"),
-        threadId: otherId,
-        runId,
-        createdAt,
-      })
-      .pipe(Effect.flip);
-    assert.equal(duplicateOwner._tag, "OrchestratorDispatchError");
-    const rejected = yield* orchestrator
-      .dispatch({ ...pause, commandId: CommandId.make("stale-pause"), operationId: "other" })
-      .pipe(Effect.flip);
-    assert.equal(rejected._tag, "OrchestratorDispatchError");
-  }).pipe(Effect.provide(layerTest)),
-);
-it.effect("records each published Deep Plan version as the run's proposed plan", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threadId = ThreadId.make("deep-plan-proposal-owner");
-    const implementationThreadId = ThreadId.make("deep-plan-proposal-implementer");
-    yield* createThread(threadId);
-    yield* createThread(implementationThreadId);
-    yield* orchestrator.dispatch({
-      type: "thread.interaction-mode.set",
-      commandId: CommandId.make("proposal:implementation-plan-mode"),
-      threadId: implementationThreadId,
-      interactionMode: "plan",
-    });
-    const runId = DeepPlanRunId.make("deep-plan-proposal");
-    const createdAt = DateTime.formatIso(yield* DateTime.now);
-    const planDocument = (version: number): DeepPlanDocument => ({
-      schemaVersion: 1,
-      version,
-      goal: `Plan goal ${version}`,
-      scope: ["Scope"],
-      decisions: [],
-      affectedAreas: ["Area"],
-      steps: [
-        {
-          id: "step",
-          title: "Step",
-          description: "Do the step",
-          dependencies: [],
-          acceptanceCriteria: [{ id: "works", description: "It works", checkMethod: "Run it" }],
-        },
+const planDocument = {
+  goal: "Persist the requested change",
+  scope: ["Durable storage"],
+  nonGoals: [],
+  decisions: [],
+  affectedAreas: ["Thread history"],
+  steps: [
+    {
+      id: "persist",
+      title: "Persist work",
+      description: "Save the work",
+      dependencies: [],
+      acceptanceCriteria: [
+        { id: "works", description: "Work is saved", checkMethod: "Restore it" },
       ],
-      finalValidation: { description: "All works", checkMethod: "Run all" },
-    });
-    const update = (operationId: string, expectedRevision: number, mutation: DeepPlanMutation) =>
+    },
+  ],
+  finalValidation: {
+    description: "Restore the whole workflow",
+    checkMethod: "Run reconnect tests",
+  },
+} satisfies DeepPlanPlanDraft;
+
+const beginDeepPlan = Effect.fn("BetterT3Commands.beginDeepPlan")(function* (threadId: ThreadId) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const commandId = CommandId.make(`start:${threadId}`);
+  const createdAt = DateTime.formatIso(yield* DateTime.now);
+  yield* orchestrator.dispatch({
+    type: "thread.deep-plan.start",
+    commandId,
+    threadId,
+    chats: [],
+    includeProjectChats: false,
+    createdAt,
+  });
+  return { runId: deriveDeepPlanRunId(commandId), createdAt };
+});
+
+it.effect(
+  "persists Deep Plan revisions and replays a duplicate operation without writing events",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("deep-plan-owner");
+      yield* createThread(threadId);
+      const { runId, createdAt } = yield* beginDeepPlan(threadId);
+      const cancel = {
+        type: "thread.deep-plan.update" as const,
+        commandId: CommandId.make("plan-cancel"),
+        threadId,
+        runId,
+        expectedRevision: 0,
+        operationId: "cancel",
+        mutation: { type: "cancel" as const },
+        createdAt,
+      };
+      const accepted = yield* orchestrator.dispatch(cancel);
+      const replay = yield* orchestrator.dispatch(cancel);
+      assert.equal(replay.sequence, accepted.sequence);
+      assert.equal(replay.replayed, true);
+      const duplicate = yield* orchestrator.dispatch({
+        ...cancel,
+        commandId: CommandId.make("plan-cancel-duplicate"),
+      });
+      assert.lengthOf(duplicate.storedEvents, 0);
+      const shell = yield* orchestrator.getThreadShell(threadId);
+      assert.isTrue(isDeepPlanRun(shell?.deepPlan));
+      if (!isDeepPlanRun(shell?.deepPlan)) return;
+      assert.equal(shell.deepPlan.revision, 1);
+      assert.equal(shell.deepPlan.phase, "cancelled");
+      assert.equal(shell?.activeRunId, null);
+      const rejected = yield* orchestrator
+        .dispatch({ ...cancel, commandId: CommandId.make("stale-cancel"), operationId: "other" })
+        .pipe(Effect.flip);
+      assert.equal(rejected._tag, "OrchestratorDispatchError");
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "publishes a server-bound planning turn and atomically creates its approved implementation thread",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("deep-plan-proposal-owner");
+      yield* createThread(threadId);
+      const { runId, createdAt } = yield* beginDeepPlan(threadId);
+      const update = (
+        operationId: string,
+        expectedRevision: number,
+        mutation: DeepPlanMutation,
+        byThreadId?: ThreadId,
+      ) =>
+        orchestrator.dispatch({
+          type: "thread.deep-plan.update",
+          commandId: CommandId.make(`proposal:${operationId}`),
+          threadId,
+          runId,
+          expectedRevision,
+          operationId,
+          mutation,
+          ...(byThreadId === undefined ? {} : { byThreadId }),
+          createdAt,
+        });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("proposal:request"),
+        threadId,
+        messageId: MessageId.make("proposal-request"),
+        text: "Plan it",
+        interactionMode: "plan",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const planning = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      assert.equal(planning.deepPlanRunId, runId);
+      const proposal = Effect.fn("BetterT3Commands.proposal")(function* (planVersion: number) {
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        return {
+          plan: projection.plans.find((plan) => plan.deepPlan?.planVersion === planVersion),
+          item: projection.visibleTurnItems.find(
+            ({ item }) =>
+              item.type === "proposed_plan" && item.deepPlan?.planVersion === planVersion,
+          )?.item,
+        };
+      });
+
+      yield* update("publish-1", 0, { type: "publish-plan", plan: planDocument }, threadId);
+      const first = yield* proposal(1);
+      assert.deepEqual(first.plan?.deepPlan, { runId, planVersion: 1 });
+      assert.equal(first.plan?.status, "active");
+      assert.equal(first.plan?.runId, planning.id);
+      assert.equal(first.item?.runId, planning.id);
+
+      const pausedPlanning = yield* update("pause-before-replan", 1, { type: "pause" }).pipe(
+        Effect.flip,
+      );
+      if (pausedPlanning._tag !== "OrchestratorDispatchError")
+        return assert.fail(pausedPlanning.message);
+      assert.nestedPropertyVal(pausedPlanning.cause, "context.deepPlanCode", "invalid-transition");
+      yield* update("block-before-replan", 1, { type: "block", reason: "Need input" }, threadId);
+      const explore = yield* orchestrator
+        .dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make("proposal:stale-explorer"),
+          parentThreadId: threadId,
+          parentRunId: planning.id,
+          parentNodeId: planning.rootNodeId!,
+          task: "Inspect persistence.",
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "plan",
+          fetchWorker: { commandExecutionPolicy: "deny", deepPlanRunId: runId },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      if (Result.isFailure(explore))
+        return assert.fail("A blocked planner must still be able to explore while replanning");
+
+      yield* update(
+        "publish-2",
+        2,
+        { type: "publish-plan", plan: { ...planDocument, goal: "Restore the work" } },
+        threadId,
+      );
+      assert.equal((yield* proposal(1)).plan?.status, "superseded");
+      const second = yield* proposal(2);
+      assert.equal(second.plan?.status, "active");
+      assert.isDefined(second.item);
+
+      const published = (yield* orchestrator.getThreadShell(threadId))?.deepPlan;
+      if (!isDeepPlanRun(published)) return assert.fail("Expected the published Deep Plan");
+      const requestedModel = { ...modelSelection, model: "implementation-model" };
+      const approved = yield* update("approve", 3, {
+        type: "approve",
+        planVersion: 2,
+        approvalKey: published.approvalKey!,
+        implementation: requestedModel,
+        implementationThread: "new",
+        parallelism: 1,
+      });
+      const implementationThreadId = deriveDeepPlanImplementationThreadId(runId, 2);
+      assert.isTrue(
+        approved.storedEvents.some(
+          ({ event }) =>
+            event.type === "thread.created" && event.threadId === implementationThreadId,
+        ),
+      );
+      assert.isTrue(
+        approved.storedEvents.some(
+          ({ event }) => event.type === "thread.deep-plan-updated" && event.threadId === threadId,
+        ),
+      );
+      const owner = yield* orchestrator.getThreadProjection(threadId);
+      const implementation = yield* orchestrator.getThreadProjection(implementationThreadId);
+      if (!isDeepPlanRun(owner.thread.deepPlan))
+        return assert.fail("Expected the approved Deep Plan");
+      assert.deepEqual(owner.thread.deepPlan.approval?.reviewer, requestedModel);
+      assert.equal(implementation.thread.projectId, owner.thread.projectId);
+      assert.equal(implementation.thread.branch, owner.thread.branch);
+      assert.equal(implementation.thread.worktreePath, owner.thread.worktreePath);
+      assert.equal(implementation.thread.interactionMode, "default");
+      assert.deepEqual(implementation.thread.modelSelection, requestedModel);
+      assert.equal((yield* proposal(2)).plan?.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(reviewCases)("advances a lane and rejects self-review ($mode review)", (review) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const events = yield* EventSinkV2;
+    const threadId = ThreadId.make("deep-plan-advance-owner");
+    yield* createThread(threadId);
+    const { runId, createdAt } = yield* beginDeepPlan(threadId);
+    const update = (
+      operationId: string,
+      expectedRevision: number,
+      mutation: DeepPlanMutation,
+      byThreadId?: ThreadId,
+      byTurnCommandId?: CommandId,
+    ) =>
       orchestrator.dispatch({
         type: "thread.deep-plan.update",
-        commandId: CommandId.make(`proposal:${operationId}`),
+        commandId: CommandId.make(`advance-update:${operationId}`),
         threadId,
         runId,
         expectedRevision,
         operationId,
         mutation,
+        ...(byThreadId === undefined ? {} : { byThreadId }),
+        ...(byTurnCommandId === undefined ? {} : { byTurnCommandId }),
         createdAt,
       });
-    yield* orchestrator.dispatch({
-      type: "thread.deep-plan.start",
-      commandId: CommandId.make("proposal:start"),
+    yield* update("publish", 0, { type: "publish-plan", plan: planDocument }, threadId);
+    const published = (yield* orchestrator.getThreadShell(threadId))?.deepPlan;
+    if (!isDeepPlanRun(published)) return assert.fail("Expected the published Deep Plan");
+    const reviewer = { instanceId: review.instanceId, model: "separate-reviewer" };
+    yield* update("approve", 1, {
+      type: "approve",
+      planVersion: 1,
+      approvalKey: published.approvalKey!,
+      implementation: modelSelection,
+      reviewer,
+      implementationThread: "current",
+      parallelism: 2,
+    });
+    const approved = (yield* orchestrator.getThreadShell(threadId))?.deepPlan;
+    if (!isDeepPlanRun(approved)) return assert.fail("Expected the approved Deep Plan");
+    const lane = approved.approval!.lanes[1]!;
+    const implementation = {
+      type: "thread.deep-plan.advance",
+      commandId: CommandId.make("advance:implement"),
       threadId,
       runId,
+      expectedRevision: 2,
       createdAt,
-    });
-    yield* update("sources", 0, { type: "sources-set", sources: [] });
-    yield* orchestrator.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("proposal:request"),
-      threadId,
-      messageId: MessageId.make("proposal-request"),
-      text: "Plan it",
-      attachments: [],
-      createdBy: "user",
-      creationSource: "web",
-      deepPlanRunId: runId,
-      dispatchMode: { type: "start_immediately" },
-    });
-    const agentRunId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
-    const proposal = Effect.fn("BetterT3Commands.proposal")(function* (planVersion: number) {
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      return {
-        plan: projection.plans.find((plan) => plan.deepPlan?.planVersion === planVersion),
-        item: projection.visibleTurnItems.find(
-          ({ item }) => item.type === "proposed_plan" && item.deepPlan?.planVersion === planVersion,
-        )?.item,
-      };
-    });
-
-    yield* update("publish-1", 1, { type: "publish-plan", plan: planDocument(1) });
-    const first = yield* proposal(1);
-    assert.deepEqual(first.plan?.deepPlan, { runId, planVersion: 1 });
-    assert.equal(first.plan?.status, "active");
-    assert.equal(first.plan?.runId, agentRunId);
-    assert.equal(first.item?.runId, agentRunId);
-    assert.equal(first.item?.type === "proposed_plan" ? first.item.planId : null, first.plan?.id);
-    assert.include(
-      first.plan?.kind === "proposed_plan" ? first.plan.markdown : "",
-      "# Plan goal 1",
-    );
-    assert.isTrue((yield* orchestrator.getThreadShell(threadId))?.hasActionableProposedPlan);
-
-    yield* update("publish-2", 2, { type: "publish-plan", plan: planDocument(2) });
-    assert.equal((yield* proposal(1)).plan?.status, "superseded");
-    const second = yield* proposal(2);
-    assert.equal(second.plan?.status, "active");
-    assert.isDefined(second.item);
-
-    yield* update("approve", 3, {
-      type: "approve",
-      planVersion: 2,
-      approvalKey: deepPlanApprovalKey(planDocument(2)),
-      implementation: modelSelection,
-      implementationThreadId,
-      implementerId: `thread:${implementationThreadId}`,
-    });
-    assert.equal((yield* proposal(2)).plan?.status, "completed");
-    assert.isFalse((yield* orchestrator.getThreadShell(threadId))?.hasActionableProposedPlan);
-
-    const implement = (targetThreadId: ThreadId, id: string) =>
-      orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`proposal:implement:${id}`),
-        threadId: targetThreadId,
-        messageId: MessageId.make(`proposal-implement-${id}`),
-        text: "Implement it",
-        interactionMode: "default",
-        attachments: [],
-        createdBy: "user",
-        creationSource: "web",
-        deepPlanRunId: runId,
-        sourcePlanRef: {
-          threadId,
-          planId: second.plan!.id,
-          deepPlan: { runId, planVersion: 2 },
+      transition: {
+        type: "start-turn",
+        turn: {
+          kind: "implement",
+          threadId: lane.threadId,
+          stepId: "persist",
+          laneId: lane.laneId,
+          round: 1,
+          attempt: 0,
         },
-        dispatchMode: { type: "start_immediately" },
-      });
-    const rejected = yield* implement(threadId, "wrong-thread").pipe(Effect.flip);
-    assert.equal(rejected._tag, "OrchestratorDispatchError");
-    yield* implement(implementationThreadId, "approved");
-    const implementation = yield* orchestrator.getThreadProjection(implementationThreadId);
-    assert.lengthOf(implementation.runs, 1);
-    assert.equal(implementation.thread.interactionMode, "default");
+        latestRunId: null,
+        prompt: "Implement persistence.",
+        baseTurnCount: 0,
+      },
+    } as const;
+    const applied = yield* orchestrator.dispatch(implementation);
+    const replay = yield* orchestrator.dispatch(implementation);
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.sequence, applied.sequence);
+    const started = yield* orchestrator.getThreadProjection(lane.threadId);
+    assert.equal(started.thread.lineage.parentThreadId, threadId);
+    assert.equal(started.thread.lineage.relationshipToParent, "subagent");
+    assert.lengthOf(started.runs, 1);
+    assert.equal(started.runs[0]?.userMessageId, `${implementation.commandId}:message`);
+    assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).subagents, 0);
+
+    const target = { kind: "step", stepId: "persist" } as const;
+    yield* update(
+      "submit",
+      3,
+      { type: "submit", target, summary: "Saved work", changedFiles: ["state.ts"] },
+      lane.threadId,
+      implementation.commandId,
+    );
+    const now = yield* DateTime.now;
+    const providerRun = started.runs[0]!;
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make("advance:implementation-completed"),
+          type: "run.updated",
+          threadId: lane.threadId,
+          runId: providerRun.id,
+          occurredAt: now,
+          payload: { ...providerRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      ...implementation,
+      commandId: CommandId.make("advance:settle-implementation"),
+      expectedRevision: 4,
+      transition: { type: "settle-turn", turnCommandId: implementation.commandId },
+    });
+    const reviewThreadId = IdAllocator.derive.deepPlanReviewThread({
+      runId,
+      planVersion: 1,
+      target,
+      round: 1,
+    });
+    const reviewCommandId = CommandId.make("advance:review");
+    yield* orchestrator.dispatch({
+      ...implementation,
+      commandId: reviewCommandId,
+      expectedRevision: 5,
+      transition: {
+        type: "start-turn",
+        turn: {
+          kind: "review",
+          threadId: reviewThreadId,
+          stepId: "persist",
+          laneId: lane.laneId,
+          round: 1,
+          attempt: 0,
+        },
+        latestRunId: null,
+        prompt: "Review persistence.",
+        diff: null,
+      },
+    });
+    const reviewed = yield* orchestrator.getThreadProjection(reviewThreadId);
+    assert.equal(reviewed.thread.lineage.parentThreadId, threadId);
+    assert.equal(reviewed.thread.runtimeMode, "approval-required");
+    assert.equal(reviewed.thread.interactionMode, review.mode);
+    assert.equal(reviewed.thread.deepPlanExecution?.phase, "review");
+    assert.equal(reviewed.thread.deepPlanExecution?.readOnly, true);
+    assert.deepEqual(reviewed.runs[0]?.modelSelection, reviewer);
+    const verdict = {
+      type: "review-verdict",
+      target,
+      round: 1,
+      verdict: "approved",
+      summary: "Persistence verified",
+      findings: [],
+    } as const;
+    const rejected = yield* update("self-review", 6, verdict, lane.threadId, reviewCommandId).pipe(
+      Effect.flip,
+    );
+    if (rejected._tag !== "OrchestratorDispatchError") return assert.fail(rejected.message);
+    assert.nestedPropertyVal(rejected.cause, "context.deepPlanCode", "actor-mismatch");
+    yield* update("independent-review", 6, verdict, reviewThreadId, reviewCommandId);
+    const settled = (yield* orchestrator.getThreadShell(threadId))?.deepPlan;
+    if (!isDeepPlanRun(settled)) return assert.fail("Expected the reviewed Deep Plan");
+    assert.equal(settled.steps[0]?.status, "verified");
+
+    yield* update("pause-for-replan", 7, { type: "pause" });
+    const republish = {
+      type: "publish-plan",
+      plan: { ...planDocument, goal: "Replan persistence" },
+    } as const;
+    const busy = yield* update("replan", 8, republish, threadId).pipe(Effect.flip);
+    if (busy._tag !== "OrchestratorDispatchError") return assert.fail(busy.message);
+    assert.nestedPropertyVal(busy.cause, "context.deepPlanCode", "target-busy");
+
+    const reviewRun = reviewed.runs[0]!;
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make("advance:review-completed"),
+          type: "run.updated",
+          threadId: reviewThreadId,
+          runId: reviewRun.id,
+          occurredAt: now,
+          payload: { ...reviewRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    yield* update("replan", 8, republish, threadId);
+    const replanned = (yield* orchestrator.getThreadShell(threadId))?.deepPlan;
+    if (!isDeepPlanRun(replanned)) return assert.fail("Expected a new plan version");
+    assert.equal(replanned.plan?.version, 2);
+    assert.isEmpty(replanned.activeTurns);
   }).pipe(Effect.provide(layerTest)),
 );
-it.effect("ignores a Deep Plan continuation that loses the idle check without changing modes", () =>
+
+it.effect("pages equal-time reply messages across topics without including other threads", () =>
   Effect.gen(function* () {
+    const events = yield* EventSinkV2;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("deep-plan-competing-continuation");
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("inline-parent");
     yield* createThread(threadId);
+    const messageId = yield* seedMessage(threadId);
+    const parent = (yield* orchestrator.getThreadProjection(threadId)).thread;
+    const now = yield* DateTime.now;
+    const expected: TurnItemId[] = [];
+    for (const name of ["first", "second", "deleted", "different-project", "unrelated"]) {
+      const childId = ThreadId.make(`inline:${name}`);
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`create:${childId}`),
+            type: "thread.created",
+            threadId: childId,
+            occurredAt: now,
+            payload: {
+              ...parent,
+              id: childId,
+              projectId:
+                name === "different-project"
+                  ? ProjectId.make("different-project")
+                  : parent.projectId,
+              deletedAt: name === "deleted" ? now : null,
+              ...(name === "unrelated"
+                ? {}
+                : {
+                    messageReply: {
+                      sourceThreadId: threadId,
+                      replyTopicId: SubagentId.make(`topic:${name}`),
+                      messageId,
+                    },
+                  }),
+            },
+          },
+        ],
+      });
+      yield* events.write({
+        events: Array.from({ length: name === "first" || name === "second" ? 33 : 1 }, (_, i) => {
+          const itemId = TurnItemId.make(`item:${childId}:${i}`);
+          if (name === "first" || name === "second") expected.push(itemId);
+          return {
+            id: EventId.make(`event:${itemId}`),
+            type: "turn-item.updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: {
+              id: itemId,
+              threadId: childId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: i + 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId: MessageId.make(`message:${itemId}`),
+              text: "Reply answer",
+              streaming: false,
+            },
+          };
+        }),
+      });
+    }
+    const latest = yield* projections.getInlineReplyPage({ threadId });
+    if (latest.nextCursor === null) return assert.fail("Expected another reply page");
+    assert.isBelow(latest.rows.length, expected.length);
+    const collected = [...latest.rows];
+    const older = yield* projections.getInlineReplyPage({ threadId, before: latest.nextCursor });
+    collected.unshift(...older.rows);
+    assert.isNull(older.nextCursor);
+    assert.deepEqual(
+      collected.map((row) => row.row.sourceItemId),
+      expected,
+    );
+    assert.isTrue(collected.every(({ threadId, row }) => row.sourceThreadId === threadId));
+
+    const newest = latest.rows.at(-1);
+    if (newest === undefined) return assert.fail("Expected a projected reply");
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make("oversized-inline-reply"),
+          type: "turn-item.updated",
+          threadId: newest.threadId,
+          occurredAt: now,
+          payload: { ...newest.row.item, text: "\n".repeat(500_000) },
+        },
+      ],
+    });
+    const bounded = yield* projections.getInlineReplyPage({ threadId });
+    assert.isBelow(Buffer.byteLength(JSON.stringify(bounded)), 1_048_576);
+    assert.equal(bounded.rows.at(-1)?.row.sourceItemId, newest.row.sourceItemId);
+    assert.isNotNull(bounded.nextCursor);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("streams a reply committed after the snapshot and refreshes after reconnect", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const events = yield* EventSinkV2;
+    const threadId = ThreadId.make("inline-stream-parent");
+    const childId = ThreadId.make("inline-stream-child");
+    yield* createThread(threadId);
+    const sourceId = yield* seedMessage(threadId);
+    const stream = threads.subscribeInlineReplies({ threadId });
+    const pull = yield* Stream.toPull(stream.pipe(Stream.rechunk(1)));
+    const [snapshot] = yield* pull;
+    assert.equal(snapshot.kind, "snapshot");
+    if (snapshot.kind === "snapshot") assert.isEmpty(snapshot.page.rows);
+
     yield* orchestrator.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("competing:start"),
+      type: "message.reply.start",
+      commandId: CommandId.make("start-after-inline-snapshot"),
       threadId,
-      messageId: MessageId.make("competing:message"),
-      text: "Implement the approved plan",
+      targetThreadId: childId,
+      replyTopicId: SubagentId.make("late-topic"),
+      messageId: MessageId.make("late-message"),
+      text: "Late reply",
+      replyTo: { messageId: sourceId, role: "user", text: "Original requirement" },
       attachments: [],
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
       createdBy: "user",
       creationSource: "web",
-      dispatchMode: { type: "start_immediately" },
     });
-    const before = yield* orchestrator.getThreadProjection(threadId);
+    const [upsert] = yield* pull;
+    assert.equal(upsert.kind, "upsert");
+    if (upsert.kind !== "upsert") return assert.fail("Expected a live upsert");
+    assert.deepEqual(
+      upsert.rows.map(({ threadId, row }) => [threadId, row.item.text]),
+      [[childId, "Late reply"]],
+    );
+    const first = upsert.rows[0];
+    if (first === undefined) return assert.fail("Expected the reply");
     const now = yield* DateTime.now;
-    yield* store.apply({
-      id: EventId.make("competing:pending-edit"),
-      type: "thread.metadata-updated",
-      threadId,
+    const answer = {
+      ...first.row.item,
+      id: TurnItemId.make("inline-stream-answer"),
+      messageId: MessageId.make("inline-stream-answer"),
+      type: "assistant_message",
+      ordinal: first.row.position + 1,
+      startedAt: now,
+      updatedAt: now,
+      text: "A partial reply",
+      status: "running",
+      streaming: true,
+    } as const;
+    const answerEvent = {
+      id: EventId.make("inline-stream-answer-started"),
+      threadId: childId,
       occurredAt: now,
-      payload: { ...before.thread, pendingHistoryEdit: CommandId.make("competing:edit") },
+      type: "turn-item.updated",
+      payload: answer,
+    } as const;
+    yield* events.write({
+      events: [
+        answerEvent,
+        {
+          id: EventId.make("inline-stream-user-update"),
+          type: "turn-item.updated",
+          threadId: childId,
+          occurredAt: now,
+          payload: first.row.item,
+        },
+      ],
     });
-    const command = {
-      type: "message.dispatch" as const,
-      commandId: CommandId.make("competing:continue"),
-      threadId,
-      messageId: MessageId.make("competing:continue-message"),
-      text: "Continue Deep Plan",
-      attachments: [],
-      createdBy: "agent" as const,
-      creationSource: "server" as const,
-      deepPlanRunId: DeepPlanRunId.make("competing:plan"),
-      deepPlanContinuation: true as const,
-      runtimeMode: "approval-required" as const,
-      interactionMode: "plan" as const,
-      idleGuard: {},
-      dispatchMode: { type: "start_immediately" as const },
-    };
-    const result = yield* orchestrator.dispatch(command);
-    assert.lengthOf(result.storedEvents, 0);
-    const after = yield* orchestrator.getThreadProjection(threadId);
-    assert.deepEqual(after.runs, before.runs);
-    assert.equal(after.thread.runtimeMode, "full-access");
-    assert.equal(after.thread.interactionMode, "default");
-    assert.equal(after.thread.pendingHistoryEdit, "competing:edit");
-    assert.isTrue((yield* orchestrator.dispatch(command)).replayed);
-    const rejected = yield* orchestrator
-      .dispatch({ ...command, commandId: CommandId.make("competing:strict"), createdBy: "user" })
-      .pipe(Effect.flip);
-    assert.equal(rejected._tag, "OrchestratorDispatchError");
-    const validation = yield* orchestrator
-      .dispatch({
-        ...command,
-        commandId: CommandId.make("competing:validation"),
-        deepPlanContinuation: undefined,
-      })
-      .pipe(Effect.flip);
-    assert.equal(validation._tag, "OrchestratorDispatchError");
-  }).pipe(Effect.provide(layerTest)),
+    const [partial] = yield* pull;
+    if (partial.kind !== "upsert") return assert.fail("Expected the streaming answer");
+    const partialRow = partial.rows[0];
+    assert.equal(partialRow?.row.item.text, answer.text);
+    const [userUpdate] = yield* pull;
+    if (userUpdate.kind !== "upsert") return assert.fail("Expected the user message update");
+    assert.equal(userUpdate.rows[0]?.row.item.messageId, first.row.item.messageId);
+    const completedAt = yield* DateTime.now;
+    yield* events.write({
+      events: [
+        {
+          ...answerEvent,
+          id: EventId.make("inline-stream-answer-completed"),
+          occurredAt: completedAt,
+          payload: {
+            ...answer,
+            status: "completed",
+            text: "The complete reply",
+            streaming: false,
+            completedAt,
+            updatedAt: completedAt,
+          },
+        },
+      ],
+    });
+    const [complete] = yield* pull;
+    if (complete.kind !== "upsert") return assert.fail("Expected the completed answer");
+    assert.equal(complete.rows[0]?.row.item.text, "The complete reply");
+    assert.equal(complete.rows[0]?.createdAt, partialRow?.createdAt);
+    const reconnect = yield* stream.pipe(Stream.runHead);
+    assert.deepInclude(reconnect, {
+      value: { kind: "snapshot", page: yield* threads.getInlineReplyPage({ threadId }) },
+    });
+    const child = (yield* orchestrator.getThreadProjection(childId)).thread;
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make("delete-inline-stream-child"),
+          type: "thread.deleted",
+          threadId: childId,
+          occurredAt: completedAt,
+          payload: { ...child, deletedAt: completedAt, updatedAt: completedAt },
+        },
+      ],
+    });
+    const [removed] = yield* pull;
+    assert.include(removed, { kind: "remove", threadId: childId });
+    if (removed.kind === "remove") {
+      assert.sameMembers([...removed.messageIds], [first.row.item.messageId, answer.messageId]);
+    }
+    const parent = (yield* orchestrator.getThreadProjection(threadId)).thread;
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make("adopt-inline-reply-parent"),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: completedAt,
+          payload: { ...parent, projectId: ProjectId.make("adopted-project") },
+        },
+      ],
+    });
+    const [adopted] = yield* pull;
+    assert.deepEqual(adopted, {
+      kind: "snapshot",
+      page: yield* threads.getInlineReplyPage({ threadId }),
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ThreadManagement.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            layerTest,
+            ServerSettings.layerTest(),
+            CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase)),
+          ),
+        ),
+      ),
+    ),
+  ),
 );
+
 it.effect(
   "starts parallel replies as independently stoppable V2 children and edits messages with CAS",
   () =>
@@ -521,6 +943,19 @@ it.effect(
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 0);
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
+      const stoppedThreadId = ThreadId.make("reply-child:2");
+      const stoppedRun = (yield* orchestrator.getThreadProjection(stoppedThreadId)).runs[0]!;
+      yield* projections.apply({
+        id: EventId.make("stop-unanswered-reply"),
+        type: "run.updated",
+        threadId: stoppedThreadId,
+        occurredAt: now,
+        payload: { ...stoppedRun, status: "interrupted", completedAt: now },
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadShell(stoppedThreadId))?.replyRetryMessageId,
+        MessageId.make("reply-message:2"),
+      );
       const topicThreadId = ThreadId.make("reply-child:1");
       const topicAnswerId = MessageId.make("topic-answer");
       yield* projections.apply({
@@ -890,307 +1325,6 @@ it.effect("forks an inherited proposed plan at its exact history boundary", () =
 );
 
 it.effect(
-  "continues a durable plan through V2 and a restart, and pauses it after a provider failure",
-  () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const events = yield* EventSinkV2;
-      const threadId = ThreadId.make("continuation-owner");
-      yield* createThread(threadId);
-      yield* orchestrator.dispatch({
-        type: "thread.interaction-mode.set",
-        commandId: CommandId.make("continuation-mode"),
-        threadId,
-        interactionMode: "plan",
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("continuation-earlier-run"),
-        threadId,
-        messageId: MessageId.make("continuation-earlier-message"),
-        text: "Earlier request",
-        attachments: [],
-        createdBy: "user",
-        creationSource: "web",
-        dispatchMode: { type: "start_immediately" },
-      });
-      const earlierRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      const failedAt = yield* DateTime.now;
-      yield* events.write({
-        events: [
-          {
-            id: EventId.make("continuation-earlier-failed"),
-            type: "run.updated",
-            threadId,
-            runId: earlierRun.id,
-            occurredAt: failedAt,
-            payload: { ...earlierRun, status: "failed", completedAt: failedAt },
-          },
-        ],
-      });
-      const runId = DeepPlanRunId.make("continuation-plan");
-      const createdAt = DateTime.formatIso(yield* DateTime.now);
-      yield* orchestrator.dispatch({
-        type: "thread.deep-plan.start",
-        commandId: CommandId.make("continuation-start"),
-        threadId,
-        runId,
-        createdAt,
-      });
-      const feature = DeepPlanValidationReactorLive.pipe(
-        Layer.provideMerge(
-          DeepPlanWorkflowLive.pipe(
-            Layer.provide(Layer.mock(DeepPlanSources)({})),
-            Layer.provide(ProviderAdapterRegistry.layerFromAdapters([adapter])),
-          ),
-        ),
-        Layer.provide(
-          Layer.succeed(DeepPlanValidationDispatcher, {
-            dispatch: () => Effect.die("Final validation is not ready"),
-          }),
-        ),
-        Layer.provide(NodeServices.layer),
-      );
-      const recovery = ProviderRuntimeRecovery.make.pipe(
-        Effect.provide(
-          Layer.merge(
-            IdAllocator.layer,
-            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
-          ),
-        ),
-      );
-      yield* Effect.gen(function* () {
-        const reactor = yield* DeepPlanValidationReactor;
-        yield* reactor.start();
-        const planning = yield* orchestrator.dispatch({
-          type: "thread.deep-plan.update",
-          commandId: CommandId.make("continuation-sources"),
-          threadId,
-          runId,
-          expectedRevision: 0,
-          operationId: "sources",
-          mutation: { type: "sources-set", sources: [] },
-          createdAt,
-        });
-        yield* reactor.drainThrough(planning.sequence);
-        const beforeRequest = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(beforeRequest.thread.deepPlan?.phase, "planning");
-        assert.equal(beforeRequest.runs.length, 1);
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("continuation-request"),
-          threadId,
-          messageId: MessageId.make("continuation-request-message"),
-          text: "Plan the change.",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-          deepPlanRunId: runId,
-          dispatchMode: { type: "start_immediately" },
-        });
-        const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(projection.thread.deepPlan?.phase, "planning");
-        assert.equal(projection.runs.length, 2);
-        assert.equal(projection.runs[1]?.deepPlanRunId, runId);
-        const shutdown = yield* recovery;
-        yield* shutdown.prepareForShutdown;
-        yield* shutdown.reconcile("shutdown");
-        yield* reactor.drainThrough(yield* events.latestSequence());
-        const stopped = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(stopped.runs[1]?.status, "cancelled");
-        assert.equal(stopped.thread.deepPlan?.phase, "planning");
-      }).pipe(Effect.provide(feature));
-      yield* Effect.gen(function* () {
-        const reactor = yield* DeepPlanValidationReactor;
-        yield* reactor.start();
-        yield* reactor.drainThrough(yield* events.latestSequence());
-        const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(projection.thread.deepPlan?.phase, "planning");
-        assert.equal(projection.runs.length, 3);
-        const providerRun = projection.runs[2]!;
-        assert.equal(providerRun.deepPlanRunId, runId);
-        assert.notInclude(
-          projection.messages.map((message) => message.text).join("\n"),
-          "Continue where you left off",
-        );
-        const now = yield* DateTime.now;
-        const failure = yield* events.write({
-          events: [
-            {
-              id: EventId.make("continuation-provider-failed"),
-              type: "run.updated",
-              threadId,
-              runId: providerRun.id,
-              occurredAt: now,
-              payload: { ...providerRun, status: "failed", completedAt: now },
-            },
-          ],
-        });
-        yield* reactor.drainThrough(failure.at(-1)!.sequence);
-        const paused = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(paused.thread.deepPlan?.phase, "paused");
-        assert.equal(paused.runs.length, 3);
-      }).pipe(Effect.provide(feature));
-    }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect.each([false, true])(
-  "does not continue a completed plan from a stale subagent copy, separate implementer=%s",
-  (separateImplementer) =>
-    Effect.gen(function* () {
-      const engine = yield* Orchestrator.OrchestratorV2;
-      const events = yield* EventSinkV2;
-      const ownerId = ThreadId.make("completed-plan-owner");
-      const childId = ThreadId.make("completed-plan-legacy-child");
-      const implementerId = separateImplementer
-        ? ThreadId.make("completed-plan-implementer")
-        : ownerId;
-      yield* createThread(ownerId);
-      if (separateImplementer) yield* createThread(implementerId);
-      const owner = (yield* engine.getThreadProjection(ownerId)).thread;
-      const now = yield* DateTime.now;
-      const createdAt = DateTime.formatIso(now);
-      const plan: DeepPlanDocument = {
-        schemaVersion: 1,
-        version: 1,
-        goal: "Finish once",
-        scope: ["Deep Plan continuation"],
-        decisions: [],
-        affectedAreas: [],
-        steps: [
-          {
-            id: "step",
-            title: "Finish",
-            description: "Complete the work",
-            dependencies: [],
-            acceptanceCriteria: [
-              { id: "works", description: "It works", checkMethod: "Run the checks" },
-            ],
-          },
-        ],
-        finalValidation: {
-          description: "Validate the whole result",
-          checkMethod: "Run the checks",
-        },
-      };
-      const evidence = [{ kind: "test" as const, summary: "Checks passed", createdAt }];
-      const finished: DeepPlanRun = {
-        id: DeepPlanRunId.make("completed-plan"),
-        threadId: ownerId,
-        revision: 39,
-        phase: "completed",
-        plan,
-        approvalKey: deepPlanApprovalKey(plan),
-        approval: {
-          planVersion: 1,
-          approvalKey: deepPlanApprovalKey(plan),
-          approvedAt: createdAt,
-          approvedBy: "user",
-          implementation: modelSelection,
-          implementationThreadId: implementerId,
-          implementerId: `thread:${implementerId}`,
-        },
-        sources: [],
-        sourceCoverage: [],
-        stepStates: [{ stepId: "step", status: "verified", evidence, updatedAt: createdAt }],
-        finalValidation: {
-          status: "passed",
-          evidence,
-          attempt: 0,
-          requestId: "validation",
-          turnId: null,
-          updatedAt: createdAt,
-        },
-        procedureAdjustments: [],
-        operations: [],
-        createdAt,
-        updatedAt: createdAt,
-        pauseReason: null,
-      };
-      const stale: DeepPlanRun = {
-        ...finished,
-        revision: 13,
-        phase: "implementing",
-        stepStates: [{ stepId: "step", status: "pending", evidence: [], updatedAt: createdAt }],
-        finalValidation: {
-          ...finished.finalValidation,
-          status: "pending",
-          evidence: [],
-          requestId: null,
-        },
-      };
-      const child = makeSubagentChildThread({
-        parentThread: { ...owner, deepPlan: stale },
-        childThreadId: childId,
-        parentNodeId: NodeId.make("completed-plan-child"),
-        activeProviderThreadId: null,
-        providerInstanceId: instanceId,
-        modelSelection,
-        title: "Legacy child",
-        now,
-        createdBy: "agent",
-        creationSource: "provider",
-      });
-      assert.isNull(child.deepPlan);
-      yield* events.write({
-        events: [
-          {
-            id: EventId.make("completed-plan-child-created"),
-            type: "thread.created",
-            threadId: childId,
-            occurredAt: now,
-            payload: { ...child, deepPlan: stale },
-          },
-          {
-            id: EventId.make("completed-plan-finished"),
-            type: "thread.deep-plan-updated",
-            threadId: ownerId,
-            occurredAt: now,
-            payload: { ...owner, deepPlan: finished },
-          },
-        ],
-      });
-      const feature = DeepPlanValidationReactorLive.pipe(
-        Layer.provideMerge(
-          DeepPlanWorkflowLive.pipe(
-            Layer.provide(Layer.mock(DeepPlanSources)({})),
-            Layer.provide(ProviderAdapterRegistry.layerFromAdapters([adapter])),
-          ),
-        ),
-        Layer.provide(
-          Layer.succeed(DeepPlanValidationDispatcher, {
-            dispatch: () => Effect.die("Completed plans need no validation"),
-          }),
-        ),
-        Layer.provide(NodeServices.layer),
-      );
-      yield* Effect.gen(function* () {
-        const workflow = yield* DeepPlanWorkflow;
-        const reactor = yield* DeepPlanValidationReactor;
-        assert.equal(
-          (yield* workflow.getRun({ threadId: childId, runId: finished.id }))?.revision,
-          39,
-        );
-        assert.equal((yield* workflow.getRun({ threadId: implementerId }))?.phase, "completed");
-        yield* reactor.start();
-        yield* reactor.drainThrough(yield* events.latestSequence());
-        assert.lengthOf((yield* engine.getThreadProjection(implementerId)).runs, 0);
-        const target = (yield* engine.getThreadShell(implementerId))!;
-        const continuation = yield* engine.dispatch(
-          deepPlanContinuationCommand({
-            run: stale,
-            target,
-            commandId: CommandId.make("completed-plan-late-continuation"),
-            createdAt,
-          }),
-        );
-        assert.lengthOf(continuation.storedEvents, 0);
-        assert.lengthOf((yield* engine.getThreadProjection(implementerId)).runs, 0);
-      }).pipe(Effect.provide(feature));
-    }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect(
   "waits for repository exploration outside the provider worker and releases it with saved findings",
   () =>
     Effect.gen(function* () {
@@ -1506,7 +1640,6 @@ it.effect(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
-            Layer.mock(DeepPlanWorkflow)({}),
             Layer.mock(ThreadManagement.ThreadManagementService)({
               dispatch: orchestrator.dispatch,
             }),
@@ -1558,28 +1691,6 @@ it.effect(
           })
           .pipe(Effect.flip);
         assert.equal(nested.reason, "nested-spawn-disabled");
-        const deepPlanRunId = DeepPlanRunId.make("general-parent-plan");
-        yield* orchestrator.dispatch({
-          type: "thread.deep-plan.start",
-          commandId: CommandId.make("general-parent-plan-start"),
-          threadId,
-          runId: deepPlanRunId,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
-        });
-        const planWorker = yield* agents.spawn({
-          parentThreadId: threadId,
-          callerProviderInstanceId: instanceId,
-          task: "Summarize a frozen source",
-          deepPlanExecution: {
-            runId: deepPlanRunId,
-            runThreadId: threadId,
-            approvedPlanVersion: null,
-            phase: "planning",
-            readOnly: true,
-            modelSelection: { instanceId, model: "deep-plan-model" },
-          },
-        });
-        assert.equal(planWorker.model, "deep-plan-model");
         yield* configuration.updateSettings({
           betterT3Environment: { flags: { "agent.generalSubagents": false } },
         });

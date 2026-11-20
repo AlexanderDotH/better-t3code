@@ -6,6 +6,8 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  DeepPlanRunId,
+  type DeepPlanExecutionContext,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -59,6 +61,90 @@ const modelSelection = {
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+it.effect.each(["execution", "review", "explorer"] as const)(
+  "preserves the Deep Plan %s context on queried, snapshot, and updated shells",
+  (role) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`deep-plan-${role}`);
+      const runThreadId = ThreadId.make("deep-plan-owner");
+      const base = {
+        runId: DeepPlanRunId.make("deep-plan"),
+        runThreadId,
+        approvedPlanVersion: 1,
+        modelSelection,
+      };
+      const grant: DeepPlanExecutionContext | undefined =
+        role === "execution"
+          ? { ...base, phase: role, laneId: "v1:2" }
+          : role === "review"
+            ? {
+                ...base,
+                phase: role,
+                readOnly: true,
+                review: { target: { kind: "final" }, round: 1 },
+              }
+            : undefined;
+      const fetchWorker =
+        role === "explorer"
+          ? { commandExecutionPolicy: "deny" as const, deepPlanRunId: base.runId }
+          : undefined;
+
+      yield* store.apply({
+        id: EventId.make(`created-${threadId}`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: threadId,
+          projectId: ProjectId.make("deep-plan-project"),
+          title: "Deep Plan step",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: role === "explorer" ? "plan" : "default",
+          lineage: {
+            parentThreadId: runThreadId,
+            rootThreadId: runThreadId,
+            relationshipToParent: "subagent",
+          },
+          activeProviderThreadId: null,
+          branch: null,
+          worktreePath: null,
+          forkedFrom: null,
+          createdBy: "agent",
+          creationSource: "server",
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          deletedAt: null,
+          lastVisitedAt: null,
+          settledAt: null,
+          settledOverride: null,
+          ...(grant === undefined ? {} : { deepPlanExecution: grant }),
+          ...(fetchWorker === undefined ? {} : { fetchWorker }),
+        },
+      });
+
+      const detail = yield* store.getThreadProjection(threadId);
+      const queried = yield* store.getThreadShell(threadId);
+      const snapshot = (yield* store.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      for (const [label, thread] of [
+        ["Persisted thread", detail.thread],
+        ["Queried shell used by providers", queried],
+        ["Snapshot shell", snapshot],
+        ["Updated shell", ProjectionStore.threadShellFromProjection(detail)],
+      ] as const) {
+        assert.isOk(thread, label);
+        assert.deepEqual(thread?.deepPlanExecution, grant, label);
+        assert.deepEqual(thread?.fetchWorker, fetchWorker, label);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
 
 const traceSqlStatements = () => {
   const statements: Array<string> = [];

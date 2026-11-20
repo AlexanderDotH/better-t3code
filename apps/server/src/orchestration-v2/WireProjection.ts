@@ -1,11 +1,15 @@
 import type {
   CheckpointId,
+  InlineReplyRow,
   MessageId,
   NodeId,
+  OrchestrationV2AppThread,
   OrchestrationV2Checkpoint,
   OrchestrationV2DomainEvent,
   OrchestrationV2ContextHandoff,
   OrchestrationV2Subagent,
+  OrchestrationV2ShellStreamItem,
+  OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
@@ -20,6 +24,61 @@ import {
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "@t3tools/shared/toolOutput";
+
+// Older clients use closed schemas for both fields and otherwise reject the whole thread.
+function withoutDeepPlan<T extends OrchestrationV2AppThread | OrchestrationV2ThreadShell>(
+  thread: T,
+): T {
+  if (thread.deepPlan == null && thread.deepPlanExecution === undefined) return thread;
+  return { ...thread, deepPlan: null, deepPlanExecution: undefined };
+}
+
+export function withoutDeepPlanFromShellRows<
+  T extends {
+    readonly threads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly archivedThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+  },
+>(value: T): T {
+  return {
+    ...value,
+    ...(value.threads === undefined ? {} : { threads: value.threads.map(withoutDeepPlan) }),
+    ...(value.archivedThreads === undefined
+      ? {}
+      : { archivedThreads: value.archivedThreads.map(withoutDeepPlan) }),
+  };
+}
+
+export function withoutDeepPlanFromProjection(projection: OrchestrationV2ThreadProjection) {
+  return { ...projection, thread: withoutDeepPlan(projection.thread) };
+}
+
+export function withoutDeepPlanFromShellStream(
+  item: OrchestrationV2ShellStreamItem,
+): OrchestrationV2ShellStreamItem {
+  if (item.kind === "snapshot")
+    return { ...item, snapshot: withoutDeepPlanFromShellRows(item.snapshot) };
+  if (item.kind === "thread.updated") return { ...item, thread: withoutDeepPlan(item.thread) };
+  return item;
+}
+
+function hasDeepPlanThreadPayload(
+  event: OrchestrationV2DomainEvent,
+): event is Extract<OrchestrationV2DomainEvent, { payload: OrchestrationV2AppThread }> {
+  return "deepPlan" in event.payload || "deepPlanExecution" in event.payload;
+}
+
+export function withoutDeepPlanFromThreadStream(
+  item: OrchestrationV2ThreadStreamItem,
+): OrchestrationV2ThreadStreamItem {
+  if (item.kind === "snapshot")
+    return { ...item, projection: withoutDeepPlanFromProjection(item.projection) };
+  if (item.kind !== "event") return item;
+  const { event } = item;
+  if (hasDeepPlanThreadPayload(event)) {
+    return { ...item, event: { ...event, payload: withoutDeepPlan(event.payload) } };
+  }
+  return item;
+}
 
 // A checkpoint over vendored or generated trees can list 15k+ files; the card needs a prefix.
 const MAX_WIRE_CHECKPOINT_FILES = 200;
@@ -47,6 +106,40 @@ function truncateDetail(
     .toString("utf8")
     .replace(/\uFFFD$/u, "");
   return `${prefix}${TRUNCATION_MARKER}`;
+}
+
+export function capInlineReplyRowForWire(row: InlineReplyRow, maxBytes: number): InlineReplyRow {
+  const { item } = row.row;
+  const compact = {
+    ...item,
+    text: truncateDetail(item.text) ?? "",
+    ...(item.replyTo === undefined
+      ? {}
+      : { replyTo: { ...item.replyTo, text: truncateDetail(item.replyTo.text) ?? "" } }),
+  };
+  const abbreviated = { ...row, row: { ...row.row, item: compact } };
+  if (Buffer.byteLength(JSON.stringify(abbreviated), "utf8") <= maxBytes) return abbreviated;
+
+  const attachments = compact.attachments?.map((attachment) => {
+    if (!("source" in attachment)) return attachment;
+    const { source: _source, ...reference } = attachment;
+    return reference;
+  });
+  return {
+    ...row,
+    row: {
+      ...row.row,
+      item:
+        compact.type === "user_message"
+          ? {
+              ...compact,
+              context: undefined,
+              workflowScript: undefined,
+              attachments: attachments ?? [],
+            }
+          : { ...compact, ...(attachments === undefined ? {} : { attachments }) },
+    },
+  };
 }
 
 /** Bound stored diffs to the client wire limit to avoid retaining invisible data in SQLite and heap. */

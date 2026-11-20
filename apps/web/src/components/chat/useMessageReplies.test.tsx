@@ -7,6 +7,7 @@ import {
   ThreadId,
   ProviderInstanceId,
   ProviderDriverKind,
+  type ClientSettings,
   type ComposerMode,
   type OrchestrationV2MessageReply,
 } from "@t3tools/contracts";
@@ -40,10 +41,14 @@ const runtime = vi.hoisted(() => ({
   startTurn: vi.fn(),
   startReplyCommand: { kind: "startReply" },
   startTurnCommand: { kind: "startTurn" },
+  inlineReplyAtom: { kind: "inlineReply" },
+  inlineRows: [] as Array<{ replyTopicId: SubagentId; threadId: ThreadId }>,
   readShell: vi.fn(),
   readShells: vi.fn(),
+  openSideChat: vi.fn(),
   capabilities: {
     messageReplies: true,
+    inlineMessageReplies: true,
     attachmentUploads: true,
     fileAttachments: { maxUploadBytes: 1024 },
   },
@@ -60,15 +65,22 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 vi.mock("../../state/threads", () => ({
   threadEnvironment: { startReply: runtime.startReplyCommand, startTurn: runtime.startTurnCommand },
+  inlineReplyTimeline: { stateAtom: () => runtime.inlineReplyAtom },
 }));
 vi.mock("../../state/entities", () => ({
   readThreadShell: runtime.readShell,
   readThreadShells: runtime.readShells,
 }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../../rightPanelStore", () => ({
+  useRightPanelStore: { getState: () => ({ openSideChat: runtime.openSideChat }) },
+}));
 vi.mock("../../rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: () => new Map([["local", { environment: { capabilities: runtime.capabilities } }]]),
+    get: (atom: unknown) =>
+      atom === runtime.inlineReplyAtom
+        ? { rows: runtime.inlineRows }
+        : new Map([["local", { environment: { capabilities: runtime.capabilities } }]]),
   },
 }));
 vi.mock("../../hooks/useInterfaceTranslator", () => ({
@@ -103,11 +115,13 @@ function setup({
   messageReply,
   enabled = true,
   composerMode = "default",
+  replyPresentation = "inline",
 }: {
   currentThread?: typeof thread;
   messageReply?: OrchestrationV2MessageReply;
   enabled?: boolean;
   composerMode?: ComposerMode;
+  replyPresentation?: ClientSettings["replyPresentation"];
 } = {}) {
   let modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test-model" };
   let controller: ReturnType<typeof useMessageReplies>;
@@ -154,6 +168,7 @@ function setup({
       ...(messageReply ? { messageReply } : {}),
       composerRef,
       enabled,
+      replyPresentation,
       runtimeMode: "full-access",
       blocked: false,
       onSent,
@@ -166,10 +181,12 @@ function setup({
 
   vi.clearAllMocks();
   runtime.capabilities.messageReplies = true;
+  runtime.capabilities.inlineMessageReplies = true;
   runtime.startReply.mockResolvedValue({ _tag: "Success", value: undefined });
   runtime.startTurn.mockResolvedValue({ _tag: "Success", value: undefined });
   runtime.readShell.mockReturnValue(undefined);
   runtime.readShells.mockReturnValue([]);
+  runtime.inlineRows = [];
   runtime.awaitUploads.mockResolvedValue(undefined);
   useComposerDraftStore.setState({
     draftsByThreadKey: {},
@@ -192,7 +209,7 @@ function setup({
 }
 
 describe("message reply dispatch", () => {
-  it.each(["parent", "child"] as const)(
+  it.each(["parent", "child", "inline-before-shell"] as const)(
     "selects a source and continues its existing topic from the %s view",
     async (surface) => {
       const child = scopeThreadRef(thread.environmentId, ThreadId.make("existing-reply-child"));
@@ -210,11 +227,13 @@ describe("message reply dispatch", () => {
         runtime.readShells.mockReturnValue([
           { id: child.threadId, environmentId: child.environmentId, messageReply: metadata },
         ]);
+      if (surface === "inline-before-shell")
+        runtime.inlineRows = [{ threadId: child.threadId, replyTopicId: reply.replyTopicId }];
       await using _screen = await mountHook(element);
       await act(() =>
         current().onReply({
           id: MessageId.make("topic-answer"),
-          ...(surface === "parent" ? { replyTopicId: reply.replyTopicId } : {}),
+          ...(surface === "child" ? {} : { replyTopicId: reply.replyTopicId }),
           role: "assistant",
           text: "The earlier topic answer",
           createdAt: "2026-10-01T00:00:00.000Z",
@@ -264,7 +283,23 @@ describe("message reply dispatch", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(thread)).toBeNull();
     expect(resetCursorState).toHaveBeenCalledTimes(1);
     expect(onSent).toHaveBeenCalledTimes(1);
+    expect(runtime.openSideChat).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["side-chat", true],
+    ["inline", false],
+  ] as const)(
+    "opens the saved reply with %s presentation and inline support %s",
+    async (mode, supported) => {
+      const { element, current } = setup({ replyPresentation: mode });
+      runtime.capabilities.inlineMessageReplies = supported;
+      await using _screen = await mountHook(element);
+      await act(async () => current().sendReply());
+      const { targetThreadId } = runtime.startReply.mock.calls[0]![0].input;
+      expect(runtime.openSideChat).toHaveBeenCalledExactlyOnceWith(thread, targetThreadId);
+    },
+  );
 
   it("preserves the prompt and source on dispatch failure", async () => {
     const { element, current, resetCursorState } = setup();
@@ -276,6 +311,7 @@ describe("message reply dispatch", () => {
     expect(draft?.replyTarget).toEqual(reply);
     expect(screen.text()).toBe("Server disconnected");
     expect(resetCursorState).not.toHaveBeenCalled();
+    expect(runtime.openSideChat).not.toHaveBeenCalled();
   });
 
   it("preserves a newer prompt written while dispatch is pending", async () => {

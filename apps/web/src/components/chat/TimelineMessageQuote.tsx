@@ -12,9 +12,8 @@ export function TimelineMessageQuote({ replyTo }: { replyTo: MessageReplyReferen
     <MessageReplyQuote
       replyTo={replyTo}
       onJumpToSource={(source) => {
-        if (ctx.onJumpToReplySource?.(source.messageId)) return;
-        if (ctx.replySourceThreadId) ctx.onOpenThread(ctx.replySourceThreadId);
-        else toastManager.add({ type: "info", title: translate("chat.reply.sourceUnavailable") });
+        if (ctx.onJumpToReplySource?.(source)) return;
+        toastManager.add({ type: "info", title: translate("chat.reply.sourceUnavailable") });
       }}
     />
   );

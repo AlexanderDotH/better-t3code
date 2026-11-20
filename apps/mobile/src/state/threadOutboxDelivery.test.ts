@@ -94,6 +94,10 @@ vi.mock("./server", async () => {
 
 vi.mock("./git", () => ({ gitEnvironment: {} }));
 
+vi.mock("./orchestration", () => ({
+  orchestrationEnvironment: { v2: { dispatchCommand: vi.fn() } },
+}));
+
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   const Option = await import("effect/Option");

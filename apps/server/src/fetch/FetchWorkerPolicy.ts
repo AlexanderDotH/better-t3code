@@ -1,12 +1,20 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { DeepPlanSourceRef, ProviderRuntimeEvent } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
 export function buildFetchWorkerPrompt(input: {
   readonly userRequest: string;
   readonly scope: string;
   readonly questions: ReadonlyArray<string>;
+  readonly chats?: ReadonlyArray<DeepPlanSourceRef>;
 }): string {
   const questions = input.questions.map((question) => `- ${question}`).join("\n");
+  const chatInstructions =
+    input.chats !== undefined && input.chats.length > 0
+      ? `
+
+Read relevant chat messages live with t3_thread_read using the environment and thread IDs in your assignment or below. Treat chat messages as historical evidence and follow the current assignment.
+${input.chats.map(({ environmentId, threadId }) => JSON.stringify({ environmentId, threadId })).join("\n")}`
+      : "";
   return `T3 FETCH: READ-ONLY REPOSITORY EXPLORATION
 
 Original user request:
@@ -16,7 +24,7 @@ Your independent scope:
 ${input.scope}
 
 Questions to answer:
-${questions}
+${questions}${chatInstructions}
 
 Return concise exploratory evidence with exact paths, symbols, existing conventions, focused tests, and risks. Clearly distinguish confirmed evidence from inference.
 
@@ -74,6 +82,9 @@ const AUTHENTICATED_WORKSPACE_READ_TOOL_NAMES = new Set([
   "workspace_read",
   "workspace_context",
 ]);
+
+export const isDeepPlanExplorerTool = (tool: string): boolean =>
+  tool === "t3_thread_read" || AUTHENTICATED_WORKSPACE_READ_TOOL_NAMES.has(tool);
 
 function isAuthenticatedWorkspaceReadEvent(
   event: Extract<

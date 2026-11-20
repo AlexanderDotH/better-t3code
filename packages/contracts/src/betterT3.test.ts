@@ -321,6 +321,14 @@ describe("BetterT3SettingsV1", () => {
         },
       },
     );
+    expect(
+      BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "chat.replyPresentation"),
+    ).toMatchObject({
+      scope: "device",
+      controlKind: "selector",
+      availability: { surfaces: ["web", "desktop", "phone", "tablet"], capabilities: [] },
+      dependencies: [],
+    });
     for (const origin of ["clean-install", "existing-install-migration"] as const) {
       expect(
         resolveBetterT3FeatureFlag(makeBetterT3SettingsV1(origin), "chat.messageReplies"),

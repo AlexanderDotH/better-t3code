@@ -887,6 +887,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect(
+    "persists and clears the Deep Plan reviewer model independently of text generation",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const before = yield* settings.getSettings;
+        assert.isNull(before.deepPlanReviewModelSelection);
+
+        const reviewer = createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-haiku-5-5",
+        );
+        const configured = yield* settings.updateSettings({
+          deepPlanReviewModelSelection: reviewer,
+        });
+        assert.deepEqual(configured.deepPlanReviewModelSelection, reviewer);
+        assert.deepEqual(
+          configured.textGenerationModelSelection,
+          before.textGenerationModelSelection,
+        );
+        const saved = yield* fileSystem.readFileString(config.settingsPath);
+        const persisted = yield* decodeServerSettingsJson(saved);
+        assert.deepEqual(persisted.deepPlanReviewModelSelection, reviewer);
+
+        yield* settings.updateSettings({ deepPlanReviewModelSelection: null });
+        assert.isNull((yield* settings.getSettings).deepPlanReviewModelSelection);
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
     "preserves the source control writer selection when its provider instance is disabled",
     () =>
       Effect.gen(function* () {

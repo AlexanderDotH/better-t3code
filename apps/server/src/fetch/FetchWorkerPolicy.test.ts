@@ -1,4 +1,11 @@
-import { EventId, ThreadId, SubagentId, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  EventId,
+  ProjectId,
+  ThreadId,
+  SubagentId,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -92,6 +99,20 @@ describe("Fetch worker event policy", () => {
     expect(prompt).toContain("verify relevant original code with workspace_read");
     expect(prompt).toContain("Do not execute shell or terminal commands");
     expect(prompt).toContain("Do not start or delegate to nested agents");
+    const request = { userRequest: "Plan SKU lookup", scope: "server", questions: ["Where?"] };
+    expect(buildFetchWorkerPrompt({ ...request, chats: [] })).not.toContain("t3_thread_read");
+    expect(
+      buildFetchWorkerPrompt({
+        ...request,
+        chats: [
+          {
+            environmentId: EnvironmentId.make("acme-env"),
+            projectId: ProjectId.make("acme-app"),
+            threadId: ThreadId.make("notes"),
+          },
+        ],
+      }),
+    ).toContain("t3_thread_read");
   });
 
   it("rejects nested provider agents before their work is ingested", () => {

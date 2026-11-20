@@ -1,4 +1,8 @@
-import { EnvironmentHttpCommonError } from "@t3tools/contracts";
+import {
+  DEEP_PLAN_VERSION_QUERY_PARAM,
+  DEEP_PLAN_VERSION_TEXT,
+  EnvironmentHttpCommonError,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -38,6 +42,7 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
 }) {
   const endpoint = {
     query: {
+      [DEEP_PLAN_VERSION_QUERY_PARAM]: DEEP_PLAN_VERSION_TEXT,
       ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
       ...(input.omitOlderSettled === true ? { omitOlderSettled: "1" } : {}),
     },

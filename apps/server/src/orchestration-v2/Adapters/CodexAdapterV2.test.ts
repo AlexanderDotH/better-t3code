@@ -267,6 +267,19 @@ describe("CodexAdapterV2 runtime policy", () => {
           enabled_tools: CodexAdapterV2.CODEX_FETCH_WORKER_T3_TOOLS,
         },
       });
+      const explorerConfig = CodexAdapterV2.codexThreadRuntimeParams({
+        threadId: ThreadId.make("thread-fetch"),
+        mcpSession: { ...mcpSession, capabilities: new Set(["deep-plan-chat-read"]) },
+        runtimePolicy: fetchWorkerPolicy,
+      }).config;
+      assert.deepEqual(explorerConfig["mcp_servers"], {
+        "t3-code": {
+          url: "http://127.0.0.1:43123/mcp",
+          tool_timeout_sec: 3_900,
+          http_headers: { Authorization: "Bearer fetch-token" },
+          enabled_tools: [...CodexAdapterV2.CODEX_FETCH_WORKER_T3_TOOLS, "t3_thread_read"],
+        },
+      });
       const rootConfig = CodexAdapterV2.codexThreadRuntimeParams({
         threadId: ThreadId.make("thread-root"),
         mcpSession,
