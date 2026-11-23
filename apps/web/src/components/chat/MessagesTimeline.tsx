@@ -1752,9 +1752,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 id={item.id}
                 className={cn(
                   "min-w-0",
-                  item.kind === "message" &&
-                    item.inlineReplyThreadId !== undefined &&
-                    "border-s border-border ps-3",
+                  item.kind === "message" && item.inlineReplyThreadId !== undefined && "ps-3",
                 )}
               >
                 <TimelineRowContent row={item} />

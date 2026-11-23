@@ -85,7 +85,6 @@ export function HeaderWorkingStatus(props: {
       className="flex shrink-0 items-center gap-2.5 text-xs [-webkit-app-region:no-drag]"
       data-chat-header-working-status
     >
-      <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/50" />
       <ComposerActivityLabel status={{ kind: "working", startedAt: props.startedAt }} />
       {props.tokenUsage ? (
         <span className="flex items-center gap-2.5 @max-[38rem]/chat-column:hidden">
