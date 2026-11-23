@@ -883,29 +883,12 @@ html[data-theme-id=""]
   background: transparent;
 }
 
-.better-chat-work-output,
-.better-chat-reasoning-output {
+.better-chat-work-output {
   position: relative;
   margin: 0 0 8px 20px;
   padding: 8px 8px 8px 22px;
   background: transparent;
   border-radius: 0;
-}
-
-.better-chat-reasoning-details {
-  position: relative;
-  display: flow-root;
-}
-
-.better-chat-reasoning-rail {
-  position: absolute;
-  inset-block: 0 8px;
-  inset-inline-start: 20px;
-  width: 14px;
-  border-inline-start: 1px solid var(--input);
-  border-block-end: 1px solid var(--input);
-  border-end-start-radius: 12px;
-  pointer-events: none;
 }
 
 .better-chat-work-output::before {

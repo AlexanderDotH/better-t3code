@@ -250,7 +250,7 @@ describe("reasoning presentation", () => {
       );
       expect(liveThoughts).toHaveLength(display === "none" ? 0 : 1);
       expect(live.some((row) => row.kind === "thinking")).toBe(
-        display === "none" && chatVisualMode !== "classic",
+        chatVisualMode === "better-t3" || (chatVisualMode === "current" && display === "none"),
       );
     },
   );
@@ -2712,8 +2712,23 @@ describe("deriveMessagesTimelineRows", () => {
     expect(declinedRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);
   });
 
-  it("keeps the Better T3 thinking pill beside tool rows until assistant text streams", () => {
+  it("keeps the Better T3 thinking pill below reasoning and tools until assistant text streams", () => {
     const runId = RunId.make("better-thinking");
+    const reasoning = (createdAt: string): TimelineEntry => ({
+      id: "better-reasoning-entry",
+      kind: "work",
+      createdAt,
+      entry: {
+        id: "better-reasoning",
+        createdAt,
+        runId,
+        label: "Thinking",
+        detail: "**Checking the implementation**\n\nRead the chat timeline.",
+        itemType: "reasoning",
+        tone: "thinking",
+        toolLifecycleStatus: "inProgress",
+      },
+    });
     const tool = (toolLifecycleStatus: "inProgress" | "completed"): TimelineEntry => ({
       id: "better-command-entry",
       kind: "work",
@@ -2759,14 +2774,26 @@ describe("deriveMessagesTimelineRows", () => {
         supportsConversationRollback: false,
       });
     const thinking = { kind: "thinking", id: "thinking-indicator-row" };
+    const firstThought = reasoning("2026-01-01T00:00:03Z");
 
     for (const status of ["inProgress", "completed"] as const) {
-      const rows = deriveRows([tool(status)]);
+      const rows = deriveRows([firstThought, tool(status)]);
       expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
         active: status === "inProgress",
       });
       expect(rows.filter((row) => row.kind === "thinking")).toMatchObject([thinking]);
+      expect(rows.slice(-3).map((row) => row.kind)).toEqual([
+        "activity-group",
+        "work-live",
+        "thinking",
+      ]);
       expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+    }
+    for (const entries of [
+      [firstThought],
+      [tool("completed"), reasoning("2026-01-01T00:00:06Z")],
+    ]) {
+      expect(deriveRows(entries).slice(-2)).toMatchObject([{ kind: "activity-group" }, thinking]);
     }
     expect(
       deriveRows([tool("completed"), reply("", true)]).filter((row) => row.kind === "thinking"),

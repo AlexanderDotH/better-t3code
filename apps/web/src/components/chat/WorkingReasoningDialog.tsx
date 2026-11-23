@@ -168,7 +168,7 @@ function remarkReasoningTitle(fallback: string) {
 }
 
 /** Parse only the title line, so streamed body appends do not reparse the log label. */
-const ReasoningTitle = memo(function ReasoningTitle({
+export const ReasoningTitle = memo(function ReasoningTitle({
   title,
   fallback,
 }: {

@@ -1,15 +1,20 @@
+import { reasoningTitleMarkdown } from "@t3tools/client-runtime/work-log/reasoning";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
-import { useId, type ComponentProps } from "react";
+import { useId, useState, type ComponentProps } from "react";
 import ChatMarkdown from "../ChatMarkdown";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import type { WorkingReasoningTrace } from "./WorkingReasoningDialog";
+import { ReasoningTitle, type WorkingReasoningTrace } from "./WorkingReasoningDialog";
 import { ChatDetailPanel } from "./ChatDetailPanel";
 import { useChatWidthMotion } from "./ChatSizeMotion";
-import { ChatThinkingIndicator } from "./ChatThinkingIndicator";
 import { cn } from "../../lib/utils";
 import { formatReasoningDuration, reasoningDurationMs } from "./reasoningDuration";
+
+type ReasoningMarkdownProps = Omit<ComponentProps<typeof ChatMarkdown>, "text">;
+
+const titleRowClassName = "better-chat-pill-row max-w-full text-start text-message-foreground";
+const disclosureClassName = `${titleRowClassName} cursor-pointer focus-visible:outline-2 focus-visible:outline-ring`;
 
 export function ChatReasoningDisclosure({
   traces,
@@ -22,7 +27,7 @@ export function ChatReasoningDisclosure({
   motion: boolean;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
-  markdown: Omit<ComponentProps<typeof ChatMarkdown>, "text">;
+  markdown: ReasoningMarkdownProps;
 }) {
   const translator = useInterfaceTranslator();
   const active = traces.some((trace) => trace.streaming);
@@ -51,18 +56,12 @@ export function ChatReasoningDisclosure({
           aria-expanded={expanded}
           aria-controls={panelId}
           onClick={() => onExpandedChange(!expanded)}
-          className="better-chat-pill-row max-w-full cursor-pointer text-left text-message-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          className={disclosureClassName}
         >
-          {active ? (
-            <ChatThinkingIndicator motion={motion} />
-          ) : (
-            <>
-              <span className="flex size-6 shrink-0 items-center justify-center">
-                <BrainIcon aria-hidden className="size-4 shrink-0" />
-              </span>
-              <span className="min-w-0 truncate">{label}</span>
-            </>
-          )}
+          <span className="flex size-6 shrink-0 items-center justify-center">
+            <BrainIcon aria-hidden className="size-4 shrink-0" />
+          </span>
+          <span className="min-w-0 truncate">{label}</span>
           {traces.length > 1 ? (
             <span className="text-muted-foreground tabular-nums">{traces.length}</span>
           ) : null}
@@ -80,22 +79,76 @@ export function ChatReasoningDisclosure({
         </button>
       </div>
       <ChatDetailPanel expanded={expanded} motion={motion} id={panelId}>
-        <div className="better-chat-reasoning-details">
-          <span aria-hidden className="better-chat-reasoning-rail" />
-          <div className="better-chat-reasoning-output max-h-96 space-y-4 overflow-auto text-xs">
-            {traces.map((trace) => (
-              <ChatMarkdown
-                {...markdown}
-                key={trace.id}
-                text={trace.detail}
-                streamId={`${markdown.streamId}:${trace.id}`}
-                isStreaming={trace.streaming}
-                animateInitialStreamChunk={false}
-                streamingBlockMotionEnabled={false}
-                lineBreaks
-              />
-            ))}
-          </div>
+        <div className="better-chat-work-group-details">
+          {traces.map((trace) => (
+            <ReasoningTraceRow
+              key={trace.id}
+              trace={trace}
+              fallback={label}
+              motion={motion}
+              markdown={markdown}
+            />
+          ))}
+        </div>
+      </ChatDetailPanel>
+    </div>
+  );
+}
+
+function ReasoningTraceRow({
+  trace,
+  fallback,
+  motion,
+  markdown,
+}: {
+  trace: WorkingReasoningTrace;
+  fallback: string;
+  motion: boolean;
+  markdown: ReasoningMarkdownProps;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
+  const text = trace.detail.trimStart();
+  const title = reasoningTitleMarkdown(text, "");
+  const description = text.slice(title.length).replace(/^[ \t]*(?:\r\n?|\n)/, "");
+  const titleContent = <ReasoningTitle title={title || fallback} fallback={fallback} />;
+  if (!description.trim()) {
+    return (
+      <div className={cn("better-chat-work select-text wrap-anywhere", titleRowClassName)}>
+        {titleContent}
+      </div>
+    );
+  }
+  const detail = /^(?:#{1,6}[ \t]+\S|\*\*.+\*\*$|__.+__$)/.test(title) ? description : trace.detail;
+  return (
+    <div className="better-chat-work">
+      <button
+        data-presentation-status
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={() => setExpanded(!expanded)}
+        className={disclosureClassName}
+      >
+        <span className="min-w-0 truncate">{titleContent}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={cn("better-chat-chevron size-3 shrink-0", expanded && "rotate-90")}
+        />
+      </button>
+      <ChatDetailPanel expanded={expanded} motion={motion} id={panelId}>
+        <div className="better-chat-work-output select-text">
+          <ChatMarkdown
+            {...markdown}
+            text={detail}
+            streamId={
+              markdown.streamId === undefined ? undefined : `${markdown.streamId}:${trace.id}`
+            }
+            isStreaming={trace.streaming}
+            animateInitialStreamChunk={false}
+            streamingBlockMotionEnabled={false}
+            lineBreaks
+          />
         </div>
       </ChatDetailPanel>
     </div>

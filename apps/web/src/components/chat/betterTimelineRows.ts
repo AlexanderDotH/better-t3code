@@ -205,6 +205,7 @@ export function presentBetterTimelineRows(
   expandedGroupIds: ReadonlySet<string> | undefined,
   collapsedFoldMemberIds: ReadonlySet<string>,
 ): MessagesTimelineRow[] {
+  const better = options.chatVisualMode === "better-t3";
   const scopeFor = createChatReasoningScope();
   const scopeByEntry = new Map<string, string>();
   const assistantByScope = new Map<string, string>();
@@ -222,12 +223,13 @@ export function presentBetterTimelineRows(
       !collapsedScopes.has(scopeByEntry.get(group.entries[0]?.id ?? "") ?? ""),
   );
   const tail = entries.at(-1);
-  const activeReasoning =
+  const replaceThinkingRow =
+    !better &&
     tail?.kind === "work" &&
     workEntryIsProviderReasoning(tail.entry) &&
     tail.entry.toolLifecycleStatus === "inProgress" &&
     groups.some((group) => group.active && group.entries.at(-1)?.id === tail.id);
-  const result = activeReasoning ? rows.filter((row) => row.kind !== "thinking") : [...rows];
+  const result = replaceThinkingRow ? rows.filter((row) => row.kind !== "thinking") : [...rows];
   for (const group of groups) {
     const scope = scopeByEntry.get(group.entries[0]?.id ?? "");
     const assistantId = scope === undefined ? undefined : assistantByScope.get(scope);
@@ -243,11 +245,11 @@ export function presentBetterTimelineRows(
     }
 
     const nextIndex = result.findIndex(
-      (row) => row.createdAt !== null && row.createdAt > group.createdAt,
+      (row) =>
+        (better && row.kind === "thinking") ||
+        (row.createdAt !== null && row.createdAt > group.createdAt),
     );
     result.splice(nextIndex < 0 ? result.length : nextIndex, 0, group);
   }
-  return options.chatVisualMode === "better-t3"
-    ? combineToolRows(result, expandedGroupIds)
-    : result;
+  return better ? combineToolRows(result, expandedGroupIds) : result;
 }
