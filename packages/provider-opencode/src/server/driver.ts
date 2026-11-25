@@ -300,14 +300,21 @@ export const OpenCodeDriver: ProviderDriver<
       probed.pipe(
         Effect.map((result) => result.generation),
         Effect.option,
-        Effect.flatMap((generation) =>
-          Option.isNone(generation)
-            ? Effect.succeed(noUpdate)
-            : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
-                binaryPath: effectiveConfig.binaryPath,
+        Effect.flatMap((generation) => {
+          if (Option.isNone(generation)) return Effect.succeed(noUpdate);
+          const binaryPath =
+            effectiveConfig.serverUrl.trim().length > 0
+              ? Effect.succeed(effectiveConfig.binaryPath)
+              : OpenCodeRuntime.resolveOpenCodeBinaryPath(effectiveConfig.binaryPath, processEnv);
+          return binaryPath.pipe(
+            Effect.flatMap((path) =>
+              resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
+                binaryPath: path,
                 env: processEnv,
               }),
-        ),
+            ),
+          );
+        }),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, pathService),

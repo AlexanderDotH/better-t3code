@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
@@ -38,7 +39,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
@@ -412,6 +413,24 @@ function ensureRuntimeError(
     : new OpenCodeRuntimeError({ operation, detail, cause });
 }
 
+export const resolveOpenCodeBinaryPath = Effect.fn("OpenCodeRuntime.resolveOpenCodeBinaryPath")(
+  function* (binaryPath: string, environment: NodeJS.ProcessEnv | undefined) {
+    const platform = yield* HostProcess.Platform;
+    if (binaryPath !== "opencode" || platform === "win32") return binaryPath;
+
+    const env = environment ?? (yield* HostProcess.Environment);
+    const resolveExecutable = yield* SpawnExecutableResolution;
+    const nativePath = expandHomePath("~/.opencode/bin/opencode", yield* HostProcess.HomeDirectory);
+    if (
+      resolveExecutable(nativePath, platform, env) &&
+      !resolveExecutable(binaryPath, platform, env)
+    ) {
+      return nativePath;
+    }
+    return binaryPath;
+  },
+);
+
 const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
@@ -426,7 +445,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     "OpenCodeRuntime.runOpenCodeCommand",
   )(
     function* (input) {
-      const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
+      const binaryPath = yield* resolveOpenCodeBinaryPath(input.binaryPath, input.environment);
+      const spawnCommand = yield* resolveCommand(binaryPath, input.args, input.environment);
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           detached: hostPlatform !== "win32",
@@ -508,8 +528,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       ));
     const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
     const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
+    const binaryPath = yield* resolveOpenCodeBinaryPath(input.binaryPath, input.environment);
     const launch = yield* agentScope.wrap({
-      command: input.binaryPath,
+      command: binaryPath,
       args,
       name: "opencode",
       env: input.environment,
