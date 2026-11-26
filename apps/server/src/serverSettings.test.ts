@@ -3689,6 +3689,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.isTrue(initial.providerInstances[instanceId]?.enabled);
         assert.deepEqual(initial.providerInstances[instanceId]?.config, {
           baseUrl: "http://127.0.0.1:1234/v1",
+          protocol: "chat-completions",
           defaultModel: "",
           customModels: [],
         });
@@ -3711,6 +3712,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.isTrue(Option.isNone(yield* secrets.get(secretName)));
         assert.deepEqual((yield* settings.getSettings).providerInstances[instanceId]?.config, {
           baseUrl: "https://example.test/proxy/v1",
+          protocol: "chat-completions",
           defaultModel: "",
           customModels: [],
         });
@@ -3732,6 +3734,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         }
         assert.deepEqual((yield* settings.getSettings).providerInstances[instanceId]?.config, {
           baseUrl: "http://127.0.0.1:1234/v1",
+          protocol: "chat-completions",
           defaultModel: "",
           customModels: [],
         });
