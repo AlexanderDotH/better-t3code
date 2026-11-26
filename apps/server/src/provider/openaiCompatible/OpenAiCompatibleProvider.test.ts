@@ -17,6 +17,7 @@ import {
 
 const SETTINGS = {
   enabled: true,
+  protocol: "chat-completions",
   baseUrl: "http://localhost:1234/v1",
   defaultModel: "local/Model-Q4_K_M",
   customModels: [],

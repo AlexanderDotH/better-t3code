@@ -961,12 +961,12 @@ export const OpenRouterSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("chat-completions" as const)),
       Schema.annotateKey({
         title: "Protocol",
-        description: "Chat Completions is stable. OpenResponses is beta.",
+        description: "Chat Completions is stable. Open Responses is beta.",
         providerSettingsForm: {
           control: "select",
           options: [
             { value: "chat-completions", label: "Chat Completions" },
-            { value: "responses", label: "OpenResponses (Beta)" },
+            { value: "responses", label: "Open Responses (Beta)" },
           ],
         },
       }),
@@ -975,7 +975,7 @@ export const OpenRouterSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Default model",
-        description: "Required before OpenRouter can start turns or background workers.",
+        description: "Optional. Used when no OpenRouter model is selected.",
         providerSettingsForm: {
           control: "select",
           options: { source: "models" },

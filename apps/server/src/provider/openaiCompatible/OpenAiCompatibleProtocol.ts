@@ -3,6 +3,14 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Sse from "effect/encoding/Sse";
 
+import {
+  buildOpenResponsesRequest,
+  decodeOpenResponsesSse,
+  isOpenResponsesProtocolError,
+  type OpenResponsesEvent,
+  type OpenResponsesItem,
+} from "../openResponses/OpenResponses.ts";
+
 export type OpenAiCompatibleHistoryItem =
   | { readonly type: "user"; readonly content: string }
   | {
@@ -14,6 +22,8 @@ export type OpenAiCompatibleHistoryItem =
         readonly name: string;
         readonly arguments: string;
       }>;
+      /** Present only after an Open Responses round; Chat Completions ignores it. */
+      readonly outputItems?: ReadonlyArray<OpenResponsesItem>;
     }
   | {
       readonly type: "tool";
@@ -344,4 +354,78 @@ export const decodeOpenAiCompatibleChatCompletionSse = <E, R>(
       consumeFrame,
     ),
     Stream.takeUntil((event) => event.type === "completed"),
+  );
+
+export const buildOpenAiCompatibleResponsesRequest = (request: OpenAiCompatibleRoundRequest) =>
+  buildOpenResponsesRequest({
+    model: request.model,
+    instructions: request.instructions,
+    history: request.history,
+    tools: request.tools,
+  });
+
+const toResponsesRoundEvent = (
+  event: OpenResponsesEvent,
+  model: string,
+): OpenAiCompatibleRoundEvent => {
+  if (event.type !== "completed") return event;
+  const { assistantText, reasoningText, outputItems, usage } = event;
+  const toolCalls = event.toolCalls.map((call) => ({
+    sourceId: call.callId,
+    name: call.name,
+    arguments: call.arguments,
+  }));
+  return {
+    type: "completed",
+    ...(assistantText ? { assistantText } : {}),
+    ...(reasoningText ? { reasoningText } : {}),
+    model: event.model ?? model,
+    stopReason: event.status,
+    ...(usage === undefined
+      ? {}
+      : {
+          usage: {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            totalTokens: usage.totalTokens,
+            ...(usage.cachedInputTokens === undefined
+              ? {}
+              : { cachedInputTokens: usage.cachedInputTokens }),
+            ...(usage.reasoningTokens === undefined
+              ? {}
+              : { reasoningTokens: usage.reasoningTokens }),
+          },
+        }),
+    toolCalls,
+    historyItems: [
+      {
+        type: "assistant",
+        content: assistantText,
+        ...(reasoningText ? { reasoning: reasoningText } : {}),
+        ...(toolCalls.length === 0
+          ? {}
+          : {
+              toolCalls: toolCalls.map((call) => ({
+                id: call.sourceId,
+                name: call.name,
+                arguments: call.arguments,
+              })),
+            }),
+        ...(outputItems.length === 0 ? {} : { outputItems }),
+      },
+    ],
+  };
+};
+
+export const decodeOpenAiCompatibleResponsesSse = <E, R>(
+  bytes: Stream.Stream<Uint8Array, E, R>,
+  model = "unknown",
+): Stream.Stream<OpenAiCompatibleRoundEvent, E | OpenAiCompatibleProtocolError, R> =>
+  decodeOpenResponsesSse(bytes, { label: "The endpoint's Open Responses" }).pipe(
+    Stream.map((event) => toResponsesRoundEvent(event, model)),
+    Stream.mapError((error) =>
+      isOpenResponsesProtocolError(error)
+        ? new OpenAiCompatibleProtocolError({ message: `${error.message}.` })
+        : error,
+    ),
   );

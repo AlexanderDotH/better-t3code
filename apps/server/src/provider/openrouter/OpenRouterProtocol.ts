@@ -1,8 +1,7 @@
-import type * as Generated from "@effect/ai-openrouter/Generated";
 import type { OpenRouterSettings } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 
-export type OpenRouterReasoningDetail = typeof Generated.ReasoningDetailUnion.Encoded;
+export type OpenRouterReasoningDetail = Readonly<Record<string, Schema.Json>>;
 export type OpenRouterResponseOutputItem = Readonly<Record<string, Schema.Json>>;
 
 export interface OpenRouterToolCall {

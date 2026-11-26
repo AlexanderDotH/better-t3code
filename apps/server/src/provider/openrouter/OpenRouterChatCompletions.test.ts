@@ -185,7 +185,7 @@ describe("OpenRouter Chat Completions", () => {
   it.effect("decodes fragmented text, reasoning, parallel tool calls, usage, and cost", () => {
     const sse =
       [
-        'data: {"id":"gen-1","model":"anthropic/claude-sonnet-4","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"reasoning":"why","reasoning_details":[{"type":"reasoning.encrypted","data":"opaque","id":"r1"}],"content":"hel","tool_calls":[{"index":0,"id":"call-a","type":"function","function":{"name":"read_","arguments":"{\\\"pa"}},{"index":1,"id":"call-b","type":"function","function":{"name":"list_files","arguments":"{}"}}]}}]}',
+        'data: {"id":"gen-1","model":"anthropic/claude-sonnet-4","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"reasoning":"why","reasoning_details":[{"type":"reasoning.encrypted","data":"opaque","id":"r1","format":"google-vertex-meta-responses-v1"}],"content":"hel","tool_calls":[{"index":0,"id":"call-a","type":"function","function":{"name":"read_","arguments":"{\\\"pa"}},{"index":1,"id":"call-b","type":"function","function":{"name":"list_files","arguments":"{}"}}]}}]}',
         'data: {"id":"gen-1","model":"anthropic/claude-sonnet-4","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"content":"lo","tool_calls":[{"index":0,"function":{"name":"file","arguments":"th\\\":\\\"a\\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cost":0.001}}',
         "data: [DONE]",
       ].join("\n\n") + "\n\n";
@@ -216,7 +216,14 @@ describe("OpenRouter Chat Completions", () => {
               ],
               opaque: {
                 protocol: "chat-completions",
-                reasoningDetails: [{ type: "reasoning.encrypted", data: "opaque", id: "r1" }],
+                reasoningDetails: [
+                  {
+                    type: "reasoning.encrypted",
+                    data: "opaque",
+                    id: "r1",
+                    format: "google-vertex-meta-responses-v1",
+                  },
+                ],
               },
             },
           ],

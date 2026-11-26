@@ -14,9 +14,23 @@ import {
 import { buildOpenRouterRequestPolicy } from "./OpenRouterRouting.ts";
 import { decodeOpenRouterSseData, OpenRouterProtocolError } from "./OpenRouterSse.ts";
 
-const decodeChatStreamChunk = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Generated.ChatStreamChunk),
-);
+// Reasoning details are opaque replay tokens. Upstream endpoints add `format` values the
+// generated enum lacks (Google Vertex sends "google-vertex-meta-responses-v1"), so keep them as JSON.
+const ChatStreamChunk = Schema.Struct({
+  ...Generated.ChatStreamChunk.fields,
+  choices: Schema.Array(
+    Schema.Struct({
+      ...Generated.ChatStreamChoice.fields,
+      delta: Schema.Struct({
+        ...Generated.ChatStreamDelta.fields,
+        reasoning_details: Schema.optionalKey(
+          Schema.Array(Schema.Record(Schema.String, Schema.Json)),
+        ),
+      }),
+    }),
+  ),
+});
+const decodeChatStreamChunk = Schema.decodeUnknownEffect(Schema.fromJsonString(ChatStreamChunk));
 const END_OF_STREAM = "\u0000t3-openrouter-chat-eof";
 
 interface ToolCallAccumulator {

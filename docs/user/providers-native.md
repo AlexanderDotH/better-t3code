@@ -31,9 +31,10 @@ Use the **OpenRouter** provider for a direct connection. Add an API key or follo
 sign-in flow. `OPENROUTER_API_KEY` in the instance's environment variables is also supported;
 a saved account key takes precedence.
 
-After authentication, choose **Default model** in the provider configuration. You can browse the
-available catalog while this choice is missing, but the provider is not ready for a turn until a
-default is configured. Refresh provider status after changing credentials or model access.
+After authentication, pick a model in the model picker. **Default model** in the provider
+configuration is optional and only applies when a turn does not choose a model. **Protocol** selects
+Chat Completions or the beta [Open Responses](https://www.openresponses.org) API. Refresh provider
+status after changing credentials or model access.
 
 In the OpenRouter model picker on web and desktop, narrow the catalog by agent readiness,
 capabilities, author, minimum context size, or favorites, and choose its sort order. Text search
@@ -65,8 +66,10 @@ Replace or remove a key in the same account controls. Changing the Base URL does
 key to the new address; save a key for the new address if needed. Saved conversations resume with
 their original instance and URL; start a new thread for a different endpoint.
 
-This native provider supports text conversations and T3 tool execution through Chat Completions.
-Choose an endpoint and model that support streamed tool calls. The connection runs on the selected
+This native provider supports text conversations and T3 tool execution. **Protocol** defaults to
+Chat Completions; choose **Open Responses** when the endpoint implements the
+[Open Responses](https://www.openresponses.org) standard at `/responses`. If it does not, the turn
+reports that and you can switch back. Choose an endpoint and model that support streamed tool calls. The connection runs on the selected
 T3 server, so the Base URL must be reachable from that machine. Image and audio attachments are
 not supported. Plan mode keeps the workspace read-only; approval settings apply to tool execution.
 

@@ -229,7 +229,7 @@ describe("OpenRouterProvider", () => {
     }),
   );
 
-  it.effect("warns and blocks readiness until an explicit valid default model is selected", () =>
+  it.effect("is ready without a default model but warns about a stale one", () =>
     Effect.gen(function* () {
       const missing = yield* checkOpenRouterProviderStatus(
         { ...SETTINGS, defaultModel: "" },
@@ -240,10 +240,12 @@ describe("OpenRouterProvider", () => {
         dependencies({ credential: storedCredential }),
       );
 
-      expect(missing).toMatchObject({ status: "warning", models: expect.any(Array) });
-      expect(missing.message).toContain("default model");
-      expect(missing.nativeSubagents).toBeUndefined();
-      expect(missing.fetchWorkers).toBeUndefined();
+      expect(missing).toMatchObject({
+        status: "ready",
+        nativeSubagents: { toolName: "spawn_agent" },
+        fetchWorkers: { maxRecommendedWorkers: 8 },
+      });
+      expect(missing.models.some((model) => model.isDefault)).toBe(false);
       expect(invalid).toMatchObject({ status: "warning", models: expect.any(Array) });
       expect(invalid.message).toContain("no longer available");
       expect(invalid.nativeSubagents).toBeUndefined();

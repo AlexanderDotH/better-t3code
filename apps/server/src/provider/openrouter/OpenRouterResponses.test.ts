@@ -165,6 +165,15 @@ describe("OpenRouter Responses beta", () => {
   it.effect("streams text, reasoning, tool calls, opaque output items, usage, and cost", () => {
     const frames = [
       {
+        type: "response.created",
+        sequence_number: 0,
+        response: {
+          ...responseEnvelope({ status: "completed" }),
+          status: "in_progress",
+          usage: null,
+        },
+      },
+      {
         type: "response.reasoning_summary_text.delta",
         delta: "plan",
         item_id: "reasoning-1",
@@ -204,6 +213,7 @@ describe("OpenRouter Responses beta", () => {
               type: "reasoning",
               id: "reasoning-1",
               encrypted_content: "opaque-response-reasoning",
+              format: "google-vertex-meta-responses-v1",
               summary: [{ type: "summary_text", text: "plan" }],
               status: "completed",
             },
@@ -266,7 +276,7 @@ describe("OpenRouter Responses beta", () => {
               toolCalls: [{ id: "call-1", name: "status", arguments: "{}" }],
               opaque: {
                 protocol: "responses",
-                outputItems: frames[3]!.response?.output,
+                outputItems: frames[4]!.response?.output,
               },
             },
           ],
@@ -322,7 +332,7 @@ describe("OpenRouter Responses beta", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(error._tag).toBe("OpenRouterProtocolError");
-        expect(error.message).toBe("OpenRouter Responses SSE frame is malformed or unsupported");
+        expect(error.message).toBe("OpenRouter Responses SSE frame is malformed");
         expect(JSON.stringify(error)).not.toContain("body-value");
       }),
     ),

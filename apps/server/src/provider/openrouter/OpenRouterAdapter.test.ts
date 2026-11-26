@@ -70,15 +70,23 @@ describe("OpenRouter adapter boundary", () => {
     expect(plan).not.toContain("workspace_edit");
   });
 
-  it("gates disabled, missing-default, stale-default, and unknown requested models", () => {
+  it("gates disabled, unselected, stale-default, and unknown requested models", () => {
     expect(resolveOpenRouterModel({ ...SETTINGS, enabled: false }, [MODEL])).toEqual({
       ok: false,
       issue: "OpenRouter is disabled in this provider instance.",
     });
     expect(resolveOpenRouterModel({ ...SETTINGS, defaultModel: "" }, [MODEL])).toEqual({
       ok: false,
-      issue: "Select an explicit OpenRouter default model before starting a turn.",
+      issue: "Select an OpenRouter model before starting a turn.",
     });
+    expect(resolveOpenRouterModel({ ...SETTINGS, defaultModel: "" }, [MODEL], MODEL.id)).toEqual({
+      ok: true,
+      model: MODEL.id,
+      catalogModel: MODEL,
+    });
+    expect(
+      resolveOpenRouterModel({ ...SETTINGS, defaultModel: "removed/model" }, [MODEL], MODEL.id),
+    ).toEqual({ ok: true, model: MODEL.id, catalogModel: MODEL });
     expect(resolveOpenRouterModel({ ...SETTINGS, defaultModel: "removed/model" }, [MODEL])).toEqual(
       {
         ok: false,
@@ -204,7 +212,13 @@ describe("OpenRouter adapter boundary", () => {
             content: "Hi",
             opaque: {
               protocol: "chat-completions",
-              reasoningDetails: [{ type: "reasoning.encrypted", data: "opaque-chat" }],
+              reasoningDetails: [
+                {
+                  type: "reasoning.encrypted",
+                  data: "opaque-chat",
+                  format: "google-vertex-meta-responses-v1",
+                },
+              ],
             },
           } as const,
           {

@@ -22,6 +22,7 @@ import {
 const INSTANCE = ProviderInstanceId.make("compatible-test");
 const SETTINGS = {
   enabled: true,
+  protocol: "chat-completions",
   baseUrl: "http://localhost:1234/v1",
   defaultModel: "local/custom-coder",
   customModels: [],
@@ -97,6 +98,7 @@ it.layer(nativeProviderTestLayer)("Compatible V2 adapters", (it) => {
           instanceId: INSTANCE,
           transport: {
             baseUrl: SETTINGS.baseUrl,
+            protocol: SETTINGS.protocol,
             listModels: Effect.fail(
               new OpenAiCompatibleProtocolError({ message: "Catalog unavailable" }),
             ),

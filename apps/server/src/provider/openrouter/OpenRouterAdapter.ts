@@ -1,4 +1,3 @@
-import * as Generated from "@effect/ai-openrouter/Generated";
 import {
   type CanonicalRequestType,
   type McpServerDefinition,
@@ -63,7 +62,7 @@ const HistoryToolCall = Schema.Struct({
 const HistoryOpaque = Schema.Union([
   Schema.Struct({
     protocol: Schema.Literal("chat-completions"),
-    reasoningDetails: Schema.Array(Generated.ReasoningDetailUnion),
+    reasoningDetails: Schema.Array(JsonObject),
   }),
   Schema.Struct({
     protocol: Schema.Literal("responses"),
@@ -199,38 +198,23 @@ export function resolveOpenRouterModel(
   if (!settings.enabled) {
     return { ok: false, issue: "OpenRouter is disabled in this provider instance." };
   }
-  const defaultModel = settings.defaultModel.trim();
-  if (!defaultModel) {
-    return {
-      ok: false,
-      issue: "Select an explicit OpenRouter default model before starting a turn.",
-    };
+  const requested = requestedModel?.trim();
+  const model = requested || settings.defaultModel.trim();
+  if (!model) {
+    return { ok: false, issue: "Select an OpenRouter model before starting a turn." };
   }
-  if (!catalog.some((candidate) => candidate.id === defaultModel)) {
-    return {
-      ok: false,
-      issue: `Default model '${defaultModel}' is not in the authenticated OpenRouter catalog.`,
-    };
-  }
-  const defaultCatalogModel = catalog.find((candidate) => candidate.id === defaultModel);
-  if (defaultCatalogModel?.incompatibilityReason) {
-    return {
-      ok: false,
-      issue: `Default model '${defaultModel}' is not compatible with T3 Code: ${defaultCatalogModel.incompatibilityReason}`,
-    };
-  }
-  const model = requestedModel?.trim() || defaultModel;
+  const label = requested ? "Model" : "Default model";
   const catalogModel = catalog.find((candidate) => candidate.id === model);
   if (catalogModel === undefined) {
     return {
       ok: false,
-      issue: `Model '${model}' is not in the authenticated OpenRouter catalog.`,
+      issue: `${label} '${model}' is not in the authenticated OpenRouter catalog.`,
     };
   }
   if (catalogModel.incompatibilityReason) {
     return {
       ok: false,
-      issue: `Model '${model}' is not compatible with T3 Code: ${catalogModel.incompatibilityReason}`,
+      issue: `${label} '${model}' is not compatible with T3 Code: ${catalogModel.incompatibilityReason}`,
     };
   }
   return { ok: true, model, catalogModel };

@@ -58,6 +58,7 @@ const HistoryItem = Schema.Union([
         Schema.Struct({ id: Schema.String, name: Schema.String, arguments: Schema.String }),
       ),
     ),
+    outputItems: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Json))),
   }),
   Schema.Struct({
     type: Schema.Literal("tool"),
@@ -304,7 +305,7 @@ export const makeOpenAiCompatibleAdapter = Effect.fn("makeOpenAiCompatibleAdapte
         state: undefined,
         configured: {
           harness: "t3-code",
-          protocol: "chat-completions",
+          protocol: options.transport.protocol,
           model: resolution.model,
           stateless: true,
         },
@@ -372,7 +373,11 @@ export const makeOpenAiCompatibleAdapter = Effect.fn("makeOpenAiCompatibleAdapte
         .pipe(
           Stream.map(normalizeRoundEvent),
           Stream.mapError((cause) =>
-            requestError("chat-completions/stream", nativeProviderErrorDetail(cause), cause),
+            requestError(
+              `${options.transport.protocol}/stream`,
+              nativeProviderErrorDetail(cause),
+              cause,
+            ),
           ),
         ),
     toolHarness: {
