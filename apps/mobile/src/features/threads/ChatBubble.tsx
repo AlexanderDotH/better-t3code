@@ -9,6 +9,12 @@ import { flattenThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
 
 export type ChatBubbleTone = "neutral" | "info" | "success" | "warning" | "error";
 const ChatBubbleToneContext = createContext<ChatBubbleTone>("neutral");
+// A compact status bubble hugs its content, and Yoga gives a `flex: 1` child no width there.
+const ChatStatusBubbleHugContext = createContext(false);
+
+export function useChatStatusBubbleHugsContent() {
+  return use(ChatStatusBubbleHugContext);
+}
 
 export function useChatBubblePalette(tone?: ChatBubbleTone) {
   const inheritedTone = use(ChatBubbleToneContext);
@@ -129,7 +135,7 @@ export function ChatStatusBubble({
             "--color-foreground-secondary": palette.foreground,
           }}
         >
-          {children}
+          <ChatStatusBubbleHugContext value={compact}>{children}</ChatStatusBubbleHugContext>
         </ScopedVariables>
       </Animated.View>
     </ChatBubbleToneContext>

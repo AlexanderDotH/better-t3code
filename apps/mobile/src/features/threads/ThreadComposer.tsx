@@ -85,7 +85,15 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { I18nManager, Keyboard, Platform, ScrollView, View, type ViewStyle } from "react-native";
+import {
+  I18nManager,
+  Keyboard,
+  Platform,
+  ScrollView,
+  useWindowDimensions,
+  View,
+  type ViewStyle,
+} from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -195,6 +203,8 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
 
 const NO_MACHINES: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
+// Composer gutters (2 x 12) plus the expanded editor's side offsets (2 x 14) and text padding.
+const COMPOSER_EDITOR_SIDE_CHROME = 68;
 // iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
 // descender (0.31em) + half x-height (0.504em) above the line bottom.
 const LOWERCASE_MIDLINE_EM = 0.562;
@@ -208,8 +218,25 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-function useCompactComposerEditor(text: ScaledTextRole, value: string) {
-  const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+// Until the native editor reports its size, a saved draft would open one line tall and clipped.
+function estimatedDraftContentHeight(text: ScaledTextRole, value: string, editorWidth: number) {
+  if (value.length === 0) return 0;
+  const charactersPerLine = Math.max(8, Math.floor(editorWidth / (text.fontSize * 0.5)));
+  const lines = value
+    .split("\n")
+    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+  return Math.min(4, lines) * text.lineHeight;
+}
+
+function useCompactComposerEditor(
+  text: ScaledTextRole,
+  value: string,
+  estimatedEditorWidth: number,
+) {
+  const [contentSize, setContentSize] = useState(() => ({
+    width: 0,
+    height: estimatedDraftContentHeight(text, value, estimatedEditorWidth),
+  }));
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
@@ -691,6 +718,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onNotice: (title, error) => Dialog.alert(title, error.message),
   });
   const queuedEdit = props.queuedEdit ?? null;
+  const draftLibraryOffered = !queuedEdit && !draft.messageReply;
+  const [draftLibraryOpen, setDraftLibraryOpen] = useState(false);
   const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
   const canImprovePrompt = useAtomValue(
     serverEnvironment.improvePrompt.permissionAtom(props.environmentId),
@@ -982,7 +1011,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const { width: windowWidth } = useWindowDimensions();
+  const compactEditor = useCompactComposerEditor(
+    bodyText,
+    draftMessage,
+    Math.min(windowWidth, props.contentMaxWidth ?? windowWidth) - COMPOSER_EDITOR_SIDE_CHROME,
+  );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -1441,15 +1475,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             </View>
           </View>
         ) : null}
-        {!queuedEdit && !draft.messageReply ? (
-          <View className="items-end px-2">
-            <ComposerDraftLibrary
-              draftKey={composerDraftKey}
-              environmentId={props.environmentId}
-              disabled={isSubmissionLocked}
-              messages={projection?.messages ?? []}
-            />
-          </View>
+        {draftLibraryOpen && draftLibraryOffered ? (
+          <ComposerDraftLibrary
+            draftKey={composerDraftKey}
+            environmentId={props.environmentId}
+            disabled={isSubmissionLocked}
+            messages={projection?.messages ?? []}
+            onClose={() => setDraftLibraryOpen(false)}
+          />
         ) : null}
         {contextSnapshot &&
         (!AsyncResult.isSuccess(preferencesResult) ||
@@ -1625,6 +1658,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 supportsFiles={props.serverConfig !== null}
                 onPickMedia={props.onPickDraftMedia}
                 onPickFiles={props.onPickDraftFiles}
+                onOpenDrafts={
+                  draftLibraryOffered
+                    ? () => {
+                        Keyboard.dismiss();
+                        setDraftLibraryOpen(true);
+                      }
+                    : undefined
+                }
               />
               <Animated.View
                 className="min-w-0 flex-1"
@@ -1810,6 +1851,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   <ScrollView
                     horizontal
                     className="min-w-0 flex-1"
+                    // Android fades the edge that has more controls to scroll to.
+                    fadingEdgeLength={24}
                     keyboardShouldPersistTaps="always"
                     showsHorizontalScrollIndicator={false}
                   >

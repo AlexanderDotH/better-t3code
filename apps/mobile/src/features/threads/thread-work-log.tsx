@@ -92,12 +92,12 @@ import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText"
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
+import { useChatStatusBubbleHugsContent } from "./ChatBubble";
 import Animated, {
   FadeIn,
   FadeOut,
   LinearTransition,
   ReduceMotion,
-  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -271,6 +271,7 @@ export function ShimmeringWorkContent(props: {
   readonly themeAppearance?: "light" | "dark";
   readonly toolIcon?: ToolActivityIcon;
 }) {
+  const hugsContent = useChatStatusBubbleHugsContent();
   const [availableWidth, setAvailableWidth] = useState(0);
   const [textWidth, setTextWidth] = useState(0);
   const appIsActive = useAppActive();
@@ -318,7 +319,10 @@ export function ShimmeringWorkContent(props: {
 
   return (
     <View
-      className={cn("min-w-0 flex-1 overflow-hidden", props.className)}
+      className={cn(
+        hugsContent ? "min-w-0 shrink overflow-hidden" : "min-w-0 flex-1 overflow-hidden",
+        props.className,
+      )}
       onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
     >
       <ShimmerWorkContent
@@ -581,14 +585,28 @@ export function ThreadReasoningGroup(props: {
   readonly fullHeight?: boolean;
   readonly followLive?: boolean;
 }) {
+  if (props.fullHeight) return <ScrollingReasoningGroup {...props} />;
+  // In the feed the thought shows whole; a capped box of its own cut it off mid-sentence.
+  return (
+    <View className="ml-7 py-1">
+      {props.activities.map((row) => (
+        <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+      ))}
+    </View>
+  );
+}
+
+function ScrollingReasoningGroup(props: {
+  readonly activities: ReadonlyArray<ThreadFeedActivity>;
+  readonly edgeFadeColor: string;
+  readonly renderReasoning: (text: string) => ReactNode;
+  readonly followLive?: boolean;
+}) {
   const scrollView = useRef<ComponentRef<typeof Animated.ScrollView>>(null);
   const followsEnd = useRef(true);
   const scrollOffset = useSharedValue(0);
   const contentHeight = useSharedValue(0);
   const viewportHeight = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler((event) => {
-    scrollOffset.set(event.contentOffset.y);
-  });
   const bottomFadeStyle = useAnimatedStyle(() => ({
     opacity: Math.min(
       1,
@@ -598,30 +616,26 @@ export function ThreadReasoningGroup(props: {
   }));
 
   return (
-    <View className={props.fullHeight ? "flex-1" : "ml-7"}>
+    <View className="flex-1">
       <Animated.ScrollView
         ref={scrollView}
         nestedScrollEnabled
-        className={props.fullHeight ? "flex-1" : "max-h-96"}
+        className="flex-1"
         contentContainerClassName="py-1"
         scrollEventThrottle={16}
-        onScroll={
-          props.fullHeight
-            ? (event) => {
-                const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-                scrollOffset.set(contentOffset.y);
-                followsEnd.current =
-                  contentSize.height - layoutMeasurement.height - contentOffset.y <=
-                  REASONING_FOLLOW_THRESHOLD;
-              }
-            : onScroll
-        }
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          scrollOffset.set(contentOffset.y);
+          followsEnd.current =
+            contentSize.height - layoutMeasurement.height - contentOffset.y <=
+            REASONING_FOLLOW_THRESHOLD;
+        }}
         onLayout={(event) => {
           viewportHeight.set(event.nativeEvent.layout.height);
         }}
         onContentSizeChange={(_width, height) => {
           contentHeight.set(height);
-          if (props.fullHeight && props.followLive && followsEnd.current) {
+          if (props.followLive && followsEnd.current) {
             scrollView.current?.scrollToEnd({ animated: false });
           }
         }}
@@ -681,7 +695,11 @@ function ThreadWorkGroupList(props: {
       Math.max(0, props.activities.length - measuredContent.rowCount) *
         (props.rowSizing.estimatedRowHeight + WORK_ROW_GAP),
   );
-  const height = Math.min(contentHeight, WORK_GROUP_MAX_HEIGHT);
+  // An opened row shows its detail whole; the cap only keeps a long run of closed rows compact.
+  const maxHeight = props.activities.some((row) => props.expandedRows[row.id])
+    ? Number.POSITIVE_INFINITY
+    : WORK_GROUP_MAX_HEIGHT;
+  const height = Math.min(contentHeight, maxHeight);
   const scrollOffset = useSharedValue(initialPosition?.scrollOffset ?? 0);
   const sharedValues = { scrollOffset };
 
@@ -729,7 +747,7 @@ function ThreadWorkGroupList(props: {
         rows: props.activities,
         previousContentHeight: previous.height,
         contentHeight: nextHeight,
-        viewportHeight: Math.min(previous.height, WORK_GROUP_MAX_HEIGHT),
+        viewportHeight: Math.min(previous.height, maxHeight),
         scrollOffset: scrollOffset.value,
         detailsChanged,
         userScrolling: userScrollingRef.current,
@@ -745,11 +763,11 @@ function ThreadWorkGroupList(props: {
         : { height: nextHeight, rowCount: props.activities.length },
     );
     if (followAppend) {
-      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
+      pendingAppendHeightRef.current = Math.min(nextHeight, maxHeight);
     } else if (detailsChanged || userScrollingRef.current || previous.rows !== props.activities) {
       pendingAppendHeightRef.current = null;
     } else if (pendingAppendHeightRef.current !== null) {
-      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
+      pendingAppendHeightRef.current = Math.min(nextHeight, maxHeight);
     }
     finishPendingAppend();
     rememberPosition();
@@ -1297,7 +1315,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             nestedScrollEnabled
             directionalLockEnabled
             showsVerticalScrollIndicator
-            className="max-h-60"
+            // A thought is prose to read through, so it shows whole; tool detail stays in a capped box.
+            className={reasoning ? undefined : "max-h-60"}
             contentContainerStyle={{ paddingRight: 8 }}
           >
             {reasoning ? (
@@ -1390,6 +1409,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
+  const hugsContent = useChatStatusBubbleHugsContent();
   const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
   const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
   const icon =
@@ -1414,14 +1434,17 @@ export function ThreadWorkGroupToggle(props: {
             selectable={false}
             numberOfLines={4}
             ellipsizeMode="tail"
-            className="min-w-0 flex-1 py-0.5 text-sm text-foreground-muted"
+            className={cn(
+              hugsContent ? "min-w-0 shrink" : "min-w-0 flex-1",
+              "py-0.5 text-sm text-foreground-muted",
+            )}
           >
             {props.thought}
           </Text>
         </Pressable>
       ) : null}
       <View className="flex-row items-center">
-        <View className="min-w-0 flex-1">
+        <View className={hugsContent ? "min-w-0 shrink" : "min-w-0 flex-1"}>
           <WorkLogPressable
             accessibilityRole="button"
             accessibilityState={{ expanded: props.expanded }}

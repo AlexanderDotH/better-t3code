@@ -7,22 +7,27 @@ import { Menu } from "../../components/ui/Menu";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
 
-const ATTACHMENT_MENU_ACTIONS: MenuAction[] = [
-  {
-    id: "photos",
-    get title() {
-      return currentInterfaceTranslator().message("mobile.ui.photoLibrary");
-    },
-    image: "photo",
+const PHOTOS_ACTION: MenuAction = {
+  id: "photos",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.ui.photoLibrary");
   },
-  {
-    id: "files",
-    get title() {
-      return currentInterfaceTranslator().message("mobile.ui.chooseFiles");
-    },
-    image: "folder",
+  image: "photo",
+};
+const FILES_ACTION: MenuAction = {
+  id: "files",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.ui.chooseFiles");
   },
-];
+  image: "folder",
+};
+const DRAFTS_ACTION: MenuAction = {
+  id: "drafts",
+  get title() {
+    return currentInterfaceTranslator().message("mobile.composer.draftsAndHistory");
+  },
+  image: "clock.arrow.circlepath",
+};
 
 export function ComposerAttachmentButton(props: {
   readonly disabled?: boolean;
@@ -30,9 +35,16 @@ export function ComposerAttachmentButton(props: {
   readonly supportsFiles: boolean;
   readonly onPickMedia: () => Promise<void>;
   readonly onPickFiles: () => Promise<void>;
+  readonly onOpenDrafts?: (() => void) | undefined;
 }) {
   const translator = useMobileInterfaceTranslator();
   const { scale } = useAndroidControlSizing();
+  const actions = [
+    PHOTOS_ACTION,
+    ...(props.supportsFiles ? [FILES_ACTION] : []),
+    ...(props.onOpenDrafts ? [DRAFTS_ACTION] : []),
+  ];
+  const opensMenu = actions.length > 1;
   const button = (
     <Pressable
       accessibilityLabel={translator.message("mobile.thread.addAttachment")}
@@ -40,7 +52,7 @@ export function ComposerAttachmentButton(props: {
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
       disabled={props.disabled}
-      onPress={props.supportsFiles ? undefined : () => void props.onPickMedia()}
+      onPress={opensMenu ? undefined : () => void props.onPickMedia()}
     >
       <SymbolView
         name="plus"
@@ -52,7 +64,7 @@ export function ComposerAttachmentButton(props: {
     </Pressable>
   );
 
-  if (props.disabled || !props.supportsFiles) {
+  if (props.disabled || !opensMenu) {
     return button;
   }
 
@@ -61,12 +73,14 @@ export function ComposerAttachmentButton(props: {
       accessible
       accessibilityLabel={translator.message("mobile.thread.addAttachment")}
       accessibilityRole="button"
-      actions={ATTACHMENT_MENU_ACTIONS}
+      actions={actions}
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event === "photos") {
           void props.onPickMedia();
         } else if (nativeEvent.event === "files") {
           void props.onPickFiles();
+        } else if (nativeEvent.event === "drafts") {
+          props.onOpenDrafts?.();
         }
       }}
     >

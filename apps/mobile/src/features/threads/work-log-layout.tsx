@@ -3,6 +3,7 @@ import { cn } from "../../lib/cn";
 import type { ComponentProps, ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
+import { useChatStatusBubbleHugsContent } from "./ChatBubble";
 
 export function WorkLogBlock({
   children,
@@ -55,13 +56,15 @@ export function WorkLogLabel({
   children: ReactNode;
   tone?: "default" | "danger" | "warning";
 }) {
+  const hugsContent = useChatStatusBubbleHugsContent();
   return (
     <Text
       selectable={false}
       numberOfLines={1}
       ellipsizeMode="tail"
       className={cn(
-        "min-w-0 flex-1 text-sm text-foreground-muted",
+        hugsContent ? "min-w-0 shrink" : "min-w-0 flex-1",
+        "text-sm text-foreground-muted",
         tone === "danger" && "font-t3-medium text-adaptive-rose-600-400",
         tone === "warning" && "font-t3-medium text-warning-foreground",
       )}
