@@ -671,6 +671,91 @@ layer("ProviderEventIngestorV2", (it) => {
       }),
   );
 
+  it.effect("supersedes an earlier run's proposed plan when a newer one arrives", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const revision = (ordinal: number) => ({
+        runId: RunId.make(`run:plan-revision:${ordinal}`),
+        nodeId: NodeId.make(`node:plan-revision:${ordinal}`),
+        planId: PlanId.make(`plan:plan-revision:${ordinal}`),
+        ordinal,
+      });
+      const first = revision(1);
+      const second = revision(2);
+      const runCreated = (input: ReturnType<typeof revision>) =>
+        Effect.gen(function* () {
+          return {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.created" as const,
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: input.runId,
+              threadId,
+              ordinal: input.ordinal,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`message:plan-revision:${input.ordinal}`),
+              rootNodeId: input.nodeId,
+              activeAttemptId: null,
+              status: "running" as const,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          };
+        });
+      const proposePlan = (input: ReturnType<typeof revision>, markdown: string) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          runId: input.runId,
+          event: {
+            type: "plan.updated",
+            driver: CODEX_DRIVER,
+            plan: {
+              id: input.planId,
+              threadId,
+              runId: input.runId,
+              nodeId: input.nodeId,
+              kind: "proposed_plan",
+              status: "active",
+              markdown,
+            },
+          },
+        });
+
+      yield* eventSink.write({ events: [threadEvent, yield* runCreated(first)] });
+      yield* proposePlan(first, "# Plan");
+      yield* eventSink.write({ events: [yield* runCreated(second)] });
+      yield* proposePlan(second, "# Revised");
+      yield* proposePlan(second, "# Revised plan");
+
+      const { plans } = yield* projectionStore.getThreadRecords(threadId, ["plans"]);
+      assert.deepEqual(
+        plans.map((plan) => [plan.id, plan.status]).toSorted(),
+        [
+          [first.planId, "superseded"],
+          [second.planId, "active"],
+        ].toSorted(),
+      );
+    }),
+  );
+
   it.effect("rolls back runs a provider rewound off its active branch", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

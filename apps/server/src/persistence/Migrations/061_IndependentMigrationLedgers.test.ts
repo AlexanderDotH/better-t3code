@@ -323,7 +323,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 69 }],
+          [{ id: 70 }],
         );
       }).pipe(
         Effect.provide(
@@ -362,6 +362,7 @@ it.effect.each([64, 65, 66, 67, 68])(
             [67, "DeepPlanSources"],
             [68, "LegacyV1RecoveryArchive"],
             [69, "DropDeepPlanSources"],
+            [70, "SupersedeStaleProposedPlans"],
           ] as const
         ).filter(([id]) => id > latestForkId),
       );

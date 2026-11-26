@@ -619,10 +619,7 @@ export const layer: Layer.Layer<
                 (yield* isInDeepPlanRun(plan.threadId, plan.runId))
               )
                 return [];
-              const previous =
-                plan.kind === "todo_list"
-                  ? yield* projections.getPlan(plan.threadId, plan.id)
-                  : undefined;
+              const previous = yield* projections.getPlan(plan.threadId, plan.id);
               const payload =
                 plan.kind === "todo_list"
                   ? withPlanStepDurations(
@@ -631,7 +628,28 @@ export const layer: Layer.Layer<
                       occurredAt,
                     )
                   : plan;
+              // Only the newest proposal stays implementable; adapters cannot be trusted to
+              // supersede across sessions, and Codex never does.
+              const replaced =
+                plan.kind === "proposed_plan" && plan.status === "active" && previous === undefined
+                  ? (yield* projections.getThreadRecords(plan.threadId, ["plans"])).plans.filter(
+                      (candidate) =>
+                        candidate.kind === "proposed_plan" &&
+                        candidate.status === "active" &&
+                        candidate.deepPlan === undefined,
+                    )
+                  : [];
               return [
+                ...(yield* Effect.forEach(replaced, (candidate) =>
+                  makeDomainEvent(input, {
+                    type: "plan.updated",
+                    threadId: candidate.threadId,
+                    payload: { ...candidate, status: "superseded" },
+                    runId: candidate.runId,
+                    nodeId: candidate.nodeId,
+                    occurredAt,
+                  }),
+                )),
                 yield* makeDomainEvent(input, {
                   type: "plan.updated",
                   threadId: plan.threadId,
