@@ -935,11 +935,12 @@ describe("MessagesTimeline messages", () => {
   });
 
   it("settles when equally long messages have very different rendered heights", async () => {
+    setup();
     const props = baseProps();
-    const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");
+    const tall = message("a\n\n".repeat(100), { role: "assistant" }, "tall");
     const earlier = Array.from({ length: 80 }, (_, index) =>
       message(
-        `<details><summary>Reply ${index}</summary>${"compact ".repeat(2250)}</details>`,
+        `<details><summary>Reply ${index}</summary>${"compact ".repeat(32)}</details>`,
         { role: "assistant" },
         `earlier-${index}`,
       ),
@@ -952,6 +953,8 @@ describe("MessagesTimeline messages", () => {
     };
     const timeline = (entries: Entry[]) => (
       <Profiler id="timeline" onRender={onRender}>
+        {/* Preserve the height disparity without building thousands of Markdown paragraphs. */}
+        <style>{'[data-message-id="tall"] p { min-height: 1100px; }'}</style>
         <MessagesTimeline {...props} timelineEntries={entries} />
       </Profiler>
     );
@@ -974,7 +977,9 @@ describe("MessagesTimeline messages", () => {
         viewport.dispatchEvent(new Event("scroll"));
       });
       expect(screen.text().includes("Reply 0")).toBe(true);
-      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBeGreaterThan(0);
+      const compactHeight = props.listRef.current!.getState().sizeAtIndex(0);
+      expect(compactHeight).toBeGreaterThan(0);
+      expect(compactHeight).toBeLessThan(1000);
     });
     expect(maxNestedCommits).toBeLessThan(20);
   });
