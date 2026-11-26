@@ -376,6 +376,77 @@ describe("MessagesTimeline work rows", () => {
     });
   });
 
+  it("stays at the end when a finished turn folds its work as the composer shrinks", async () => {
+    setup();
+    const props = baseProps();
+    const runId = RunId.make("folding-run");
+    const entries = (streaming: boolean) => [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      message("Do the work", { runId }, "prompt"),
+      ...Array.from({ length: 15 }, (_, index) => [
+        message(
+          `Checking step ${index}\n\n`.repeat(4),
+          { role: "assistant", runId },
+          `commentary-${index}`,
+        ),
+        work(`tool-${index}`, {
+          tone: "tool",
+          label: "Run command",
+          command: `printf step-${index}`,
+          toolCallId: `tool-${index}`,
+          itemType: "command_execution",
+          toolLifecycleStatus: "completed",
+          runId,
+        }),
+      ]).flat(),
+      message("All done", { role: "assistant", runId, streaming }, "final"),
+    ];
+    const container = document.createElement("div");
+    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(
+      <MessagesTimeline
+        {...props}
+        isWorking
+        runningRunId={runId}
+        latestRun={{ runId, status: "running", startedAt: CREATED_AT, completedAt: null }}
+        timelineEntries={entries(true)}
+        contentInsetEndAdjustment={160}
+      />,
+      { container },
+    );
+    await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
+    const list = props.listRef.current!;
+    const viewport = list.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight * 2);
+      expect(distanceFromEnd()).toBeLessThan(2);
+    });
+    let lowest = viewport.scrollTop;
+    viewport.addEventListener("scroll", () => {
+      lowest = Math.min(lowest, viewport.scrollTop);
+    });
+
+    // The working status leaves the composer in the same commit that folds the turn.
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        latestRun={{ runId, status: "completed", startedAt: CREATED_AT, completedAt: CREATED_AT }}
+        timelineEntries={entries(false)}
+        contentInsetEndAdjustment={120}
+      />,
+    );
+    await expect.element(screen.getByRole("button", { name: /^Worked for/ })).toBeVisible();
+    await vi.waitFor(() => {
+      expect(list.getState().scroll).toBeCloseTo(viewport.scrollTop, 0);
+      expect(distanceFromEnd()).toBeLessThan(2);
+    });
+    expect(lowest).toBeGreaterThan(viewport.scrollHeight - viewport.clientHeight - 50);
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
