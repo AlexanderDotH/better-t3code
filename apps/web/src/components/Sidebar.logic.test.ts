@@ -237,7 +237,12 @@ describe("resolveSidebarThreadStatus", () => {
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
+  const idle = {
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    runtime: null,
+    latestRun: null,
+  };
 
   it("prioritizes awaiting input over a running runtime, below approval", () => {
     expect(
@@ -297,11 +302,29 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe(false);
   });
 
-  it("reports failed only while the latest run failed", () => {
+  it("clears Failed when the run is seen and shows it again for a later failure", () => {
+    const failed = {
+      ...idle,
+      latestRun: { ...makeLatestRun(), status: "failed" as const },
+      runtime: {
+        ...runtime,
+        status: "failed" as const,
+        lastError: "boom",
+        updatedAt: "2026-03-09T10:07:00.000Z",
+      },
+      lastVisitedAt: "2026-03-09T10:04:00.000Z",
+    };
+    expect(resolveSidebarThreadStatus(failed)).toBe("failed");
+    const seen = { ...failed, lastVisitedAt: failed.latestRun.completedAt };
+    expect(resolveSidebarThreadStatus(seen)).toBe("ready");
     expect(
       resolveSidebarThreadStatus({
-        ...idle,
-        runtime: { ...runtime, status: "failed" as const, lastError: "boom" },
+        ...seen,
+        latestRun: {
+          ...seen.latestRun,
+          runId: RunId.make("next-failed-run"),
+          completedAt: "2026-03-09T10:07:00.000Z",
+        },
       }),
     ).toBe("failed");
     expect(

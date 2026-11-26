@@ -746,6 +746,7 @@ function useSidebarThreads(input: {
     threads,
     threadSortOrder,
     workingShelfEnabled,
+    pinnedThreads,
     activeThreads,
     olderThreads,
     visibleOlderThreads,

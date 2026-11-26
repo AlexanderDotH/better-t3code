@@ -49,10 +49,11 @@ it("lists settled chats inside their project folder behind its toggle and offers
 
   const toggle = screen.getByRole("treeitem", { name: "Show settled chats" });
   await expect.element(toggle).toBeVisible();
-  // A favorite leads its own project's folder rather than a shelf above every folder.
+  const favoriteRow = screen.getByTestId("sidebar-row-folder").filter({ hasText: favorite.title });
+  await expect.element(favoriteRow).toBeVisible();
   await expect
-    .element(screen.getByTestId("sidebar-row-folder").filter({ hasText: "Thread favorite" }))
-    .toBeVisible();
+    .element(screen.getByTestId("sidebar-row-card").filter({ hasText: favorite.title }))
+    .not.toBeInTheDocument();
   expect(document.querySelector('[data-testid="sidebar-row-folder"]')?.textContent).toContain(
     "Thread favorite",
   );

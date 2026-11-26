@@ -450,15 +450,16 @@ describe("grouped thread list", () => {
 
 describe("folder attention", () => {
   it("prioritizes requests, failures, unread completion, then work, leaving waiting quiet", () => {
+    const latestRun = {
+      runId: RunId.make("run"),
+      status: "completed" as const,
+      requestedAt: "2026-11-11T10:00:00.000Z",
+      assistantMessageId: null,
+      startedAt: "2026-11-11T10:00:00.000Z",
+      completedAt: "2026-11-11T11:00:00.000Z",
+    };
     const ready = makeThreadShellFixture({
-      latestRun: {
-        runId: RunId.make("run"),
-        status: "completed",
-        requestedAt: "2026-11-11T10:00:00.000Z",
-        assistantMessageId: null,
-        startedAt: "2026-11-11T10:00:00.000Z",
-        completedAt: "2026-11-11T11:00:00.000Z",
-      },
+      latestRun,
       lastVisitedAt: "2026-11-11T09:00:00.000Z",
     });
     const working = {
@@ -472,7 +473,11 @@ describe("folder attention", () => {
         updatedAt: ready.updatedAt,
       },
     };
-    const failed = { ...working, runtime: { ...working.runtime, status: "failed" as const } };
+    const failed = {
+      ...working,
+      latestRun: { ...latestRun, status: "failed" as const },
+      runtime: { ...working.runtime, status: "failed" as const },
+    };
     const waiting = { ...working, runtime: { ...working.runtime, status: "idle" as const } };
     expect(resolveProjectFolderAttention([working, ready])).toBe("unread");
     expect(resolveProjectFolderAttention([ready, failed])).toBe("failed");

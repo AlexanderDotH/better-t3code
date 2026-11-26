@@ -10,7 +10,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadListStatus,
+  resolveThreadProviderStack,
+} from "@t3tools/client-runtime/state/models";
 import {
   threadSearchMatchKey,
   threadSearchSubject,
@@ -61,15 +64,10 @@ export function resolveThreadListV2ProviderDrivers(
   return currentDriver === undefined ? [] : drivers;
 }
 
-export type ThreadListV2Status =
-  | "approval"
-  | "input"
-  | "request"
-  | "working"
-  | "waiting"
-  | "failed"
-  | "limited"
-  | "ready";
+export {
+  resolveThreadListStatus as resolveThreadListV2Status,
+  type ThreadListStatus as ThreadListV2Status,
+} from "@t3tools/client-runtime/state/models";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 /**
@@ -217,45 +215,6 @@ export function resolveThreadListV2WokeAt(
   return !Number.isNaN(wokeAtMs) && (Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs)
     ? wokeAt
     : null;
-}
-
-export function resolveThreadListV2Status(
-  thread: Pick<
-    EnvironmentThreadShell,
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "pendingSubagentRequest"
-    | "pendingGuestMessageCount"
-    | "runtime"
-    | "blockedOnThreadWait"
-  >,
-): ThreadListV2Status {
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
-    return "approval";
-  }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return "input";
-  }
-  // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
-    return "request";
-  }
-  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
-    return "waiting";
-  }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
-    return "working";
-  }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
-  }
-  if (thread.runtime?.status === "failed") {
-    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
-  }
-  return "ready";
 }
 
 function parseTimestampMs(isoDate: string): number {
@@ -516,7 +475,7 @@ function resolveThreadListV2ItemTimeLabel(
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" ||
+    (resolveThreadListStatus(thread) !== "ready" ||
       item.wokeAt !== null ||
       threadHasUnseenCompletion(thread))
   )

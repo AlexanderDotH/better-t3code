@@ -374,6 +374,73 @@ export function scopeThreadShell(
   return presentThreadShell(environmentId, thread);
 }
 
+export type ThreadListStatus =
+  | "approval"
+  | "input"
+  | "request"
+  | "working"
+  | "waiting"
+  | "failed"
+  | "limited"
+  | "ready";
+
+type ThreadStatusInput = Pick<
+  EnvironmentThreadShell,
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "pendingSubagentRequest"
+  | "pendingGuestMessageCount"
+  | "runtime"
+> & { readonly blockedOnThreadWait?: boolean | undefined };
+
+type ThreadFailureState = Pick<EnvironmentThreadShell, "latestRun" | "runtime"> & {
+  readonly lastVisitedAt?: string | null | undefined;
+};
+
+export function hasSeenThreadFailure(thread: ThreadFailureState): boolean {
+  if (!thread.lastVisitedAt) return false;
+  const failedRun = thread.latestRun?.status === "failed" ? thread.latestRun : null;
+  if (failedRun === null && thread.runtime?.status !== "failed") return false;
+  // Run completion stays fixed when thread metadata changes.
+  const failedAt = failedRun?.completedAt ?? thread.runtime?.updatedAt;
+  return failedAt != null && Date.parse(thread.lastVisitedAt) >= Date.parse(failedAt);
+}
+
+export function resolveThreadStatus(thread: ThreadStatusInput): ThreadListStatus {
+  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
+    return "approval";
+  }
+  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+    return "input";
+  }
+  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
+    return "request";
+  }
+  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
+    return "waiting";
+  }
+  if (
+    thread.runtime !== null &&
+    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
+  ) {
+    return "working";
+  }
+  if (thread.runtime?.status === "idle") {
+    return "waiting";
+  }
+  if (thread.runtime?.status === "failed") {
+    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  }
+  return "ready";
+}
+
+export function resolveThreadListStatus(
+  thread: ThreadStatusInput & ThreadFailureState,
+): ThreadListStatus {
+  const status = resolveThreadStatus(thread);
+  return status === "failed" && hasSeenThreadFailure(thread) ? "ready" : status;
+}
+
 const THREAD_PROVIDER_STACK_LIMIT = 3;
 
 export function resolveThreadProviderStack(

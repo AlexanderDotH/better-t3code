@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/thread-notifications";
 import {
   presentThreadShell,
+  resolveThreadStatus,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
@@ -23,7 +24,7 @@ import { mobilePreferencesAtom } from "../../state/preferences";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { MOBILE_CLIENT_PREFERENCE_DEFAULTS } from "../../persistence/mobile-preferences";
 import { currentInterfaceTranslator } from "../../localization/currentInterfaceTranslator";
-import { resolveThreadListV2Status, threadHasUnseenCompletion } from "../threads/threadListV2";
+import { threadHasUnseenCompletion } from "../threads/threadListV2";
 import { getAgentAwarenessRegistrationStatus } from "./remoteRegistration";
 import {
   mobileNotificationBadgeCount,
@@ -229,7 +230,7 @@ export function installLocalThreadNotifications(navigate: (path: string) => void
           thread.archivedAt !== null ||
           hidden.has(key) ||
           isShownUnderParent({ environmentId, threadId: raw.id }, raw.lineage, delegated);
-        const status = resolveThreadListV2Status(thread);
+        const status = resolveThreadStatus(thread);
         const failed =
           status === "failed" ||
           status === "limited" ||
