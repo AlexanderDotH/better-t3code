@@ -81,6 +81,12 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Ajouter {{provider}}",
   ],
   "mobile.settings.endpoint.baseUrl": ["Base URL", "Basis-URL", "URL de base"],
+  "mobile.settings.endpoint.protocol": ["Protocol", "Protokoll", "Protocole"],
+  "mobile.settings.endpoint.protocolHint": [
+    "Use Open Responses when the endpoint implements the /responses standard.",
+    "Nutze Open Responses, wenn der Endpunkt den /responses-Standard umsetzt.",
+    "Utilisez Open Responses si le point de terminaison implémente la norme /responses.",
+  ],
   "mobile.settings.endpoint.serverAddressHint": [
     "Use an address reachable from this T3 environment. Localhost refers to the T3 server.",
     "Verwende eine von dieser T3-Umgebung erreichbare Adresse. Localhost bezeichnet den T3-Server.",

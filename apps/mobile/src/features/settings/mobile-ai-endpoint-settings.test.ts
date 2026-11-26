@@ -48,15 +48,23 @@ describe("mobile AI endpoint setup", () => {
       draft: {
         ...mobileAiEndpointDraft("openaiCompatible"),
         baseUrl: " https://models.example:443/ ",
+        protocol: "responses",
         apiKey: "secret-key",
       },
     });
-    expect(patch.providerInstances?.[instanceId]).toEqual({
+    const saved = patch.providerInstances?.[instanceId];
+    expect(saved).toEqual({
       driver: "openaiCompatible",
       enabled: true,
       displayName: "OpenAI Compatible",
-      config: { baseUrl: "https://models.example/v1", defaultModel: "", customModels: [] },
+      config: {
+        baseUrl: "https://models.example/v1",
+        protocol: "responses",
+        defaultModel: "",
+        customModels: [],
+      },
     });
+    expect(mobileAiEndpointDraft("openaiCompatible", saved).protocol).toBe("responses");
     expect(JSON.stringify(patch)).not.toContain("secret-key");
   });
 
@@ -93,6 +101,7 @@ describe("mobile AI endpoint setup", () => {
       config: {
         futureOption: true,
         baseUrl: "https://models.example/proxy/api",
+        protocol: "chat-completions",
         defaultModel: "manual/coder",
         customModels: ["manual/vision", "manual/coder"],
       },

@@ -19,6 +19,7 @@ import { makeOpenAiCompatibleTextGeneration } from "./OpenAiCompatibleTextGenera
 const INSTANCE = ProviderInstanceId.make("compatible-text-test");
 const SETTINGS = {
   enabled: true,
+  protocol: "chat-completions",
   baseUrl: "http://localhost:1234/v1",
   defaultModel: "configured-coder",
   customModels: [],
@@ -46,6 +47,7 @@ function makeTransport(
 ): OpenAiCompatibleTransport {
   return {
     baseUrl: SETTINGS.baseUrl,
+    protocol: SETTINGS.protocol,
     listModels: Effect.fail(
       new OpenAiCompatibleHttpError({
         operation: "models",

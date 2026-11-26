@@ -59,6 +59,7 @@ describe("AI endpoint configuration", () => {
   it("keeps endpoints disabled by default and supports manual model IDs in instance config", () => {
     expect(decodeOpenAiCompatibleSettings({})).toEqual({
       enabled: false,
+      protocol: "chat-completions",
       baseUrl: "",
       defaultModel: "",
       customModels: [],

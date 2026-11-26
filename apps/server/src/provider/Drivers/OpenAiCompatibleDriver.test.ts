@@ -48,7 +48,13 @@ describe("OpenAI-compatible endpoint drivers", () => {
     ] as const) {
       expect(driver.driverKind).toBe(kind);
       expect(driver.metadata).toEqual({ displayName, supportsMultipleInstances: true });
-      const defaults = { enabled: false, baseUrl, defaultModel: "", customModels: [] };
+      const defaults = {
+        enabled: false,
+        protocol: "chat-completions",
+        baseUrl,
+        defaultModel: "",
+        customModels: [],
+      };
       const decodeSettings =
         driver === LmStudioDriver ? decodeStudioSettings : decodeCompatibleSettings;
       expect(driver.defaultConfig()).toEqual(defaults);

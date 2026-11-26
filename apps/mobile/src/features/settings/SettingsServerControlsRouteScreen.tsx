@@ -666,7 +666,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     ))}
                   </SettingsSection>
                   <BranchNamingSettings
-                    key={targetsKey}
+                    key={`branch-naming:${targetsKey}`}
                     mode={uniform("branchNamingMode")}
                     prefix={uniform("branchNamePrefix")}
                     instructions={uniform("branchNameInstructions")}
@@ -678,7 +678,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onChange={write}
                   />
                   <WorktreeCleanupSettings
-                    key={targetsKey}
+                    key={`worktree-cleanup:${targetsKey}`}
                     targets={displayTargets}
                     projectSelected={projectSelected}
                     disabledFor={disabledFor}

@@ -279,30 +279,23 @@ export const checkOpenRouterProviderStatus = Effect.fn("checkOpenRouterProviderS
       message: "OpenRouter returned no models compatible with T3 Code agent turns.",
     });
   }
-  if (!settings.defaultModel.trim()) {
-    return build({
-      status: "warning",
-      auth,
-      models,
-      message: "Select an explicit OpenRouter default model before starting turns.",
-    });
-  }
-  const configuredDefault = models.find((model) => model.slug === settings.defaultModel.trim());
-  if (!configuredDefault) {
+  const defaultModel = settings.defaultModel.trim();
+  const configuredDefault = models.find((model) => model.slug === defaultModel);
+  if (defaultModel && !configuredDefault) {
     return build({
       status: "warning",
       auth,
       models,
       message:
-        "The configured OpenRouter default model is no longer available. Select another model before starting turns.",
+        "The configured OpenRouter default model is no longer available. Choose another default model or clear it.",
     });
   }
-  if (configuredDefault.isSelectable === false) {
+  if (configuredDefault?.isSelectable === false) {
     return build({
       status: "warning",
       auth,
       models,
-      message: `The configured OpenRouter default model is not compatible with T3 Code. ${configuredDefault.unavailableReason ?? "Select another model before starting turns."}`,
+      message: `The configured OpenRouter default model is not compatible with T3 Code. ${configuredDefault.unavailableReason ?? "Choose another default model or clear it."}`,
     });
   }
   return build({

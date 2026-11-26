@@ -90,6 +90,71 @@ describe("OpenAI-compatible transport", () => {
     }),
   );
 
+  it.effect("streams Open Responses rounds and explains endpoints without /responses", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ url: string; body: unknown }> = [];
+      const frames = [
+        { type: "response.output_text.delta", delta: "first" },
+        {
+          type: "response.completed",
+          response: {
+            model: "served/model",
+            status: "completed",
+            output: [
+              { type: "reasoning", id: "r1", summary: [], encrypted_content: "opaque" },
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "first" }],
+              },
+            ],
+            usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+          },
+        },
+      ];
+      const transport = yield* makeOpenAiCompatibleTransport({
+        baseUrl: BASE_URL,
+        protocol: "responses",
+        resolveApiKey: Effect.succeedNone,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const body = request.body._tag === "Uint8Array" ? request.body.body : undefined;
+            requests.push({
+              url: request.url,
+              body: body && JSON.parse(new TextDecoder().decode(body)),
+            });
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                requests.length === 1
+                  ? new Response(frames.map((frame) => `data: ${encodeJson(frame)}\n\n`).join(""))
+                  : new Response("404 page not found", { status: 404 }),
+              ),
+            );
+          }),
+        ),
+      );
+      const tools = [{ name: "status", parameters: { type: "object" } }];
+      const events = yield* transport.streamRound({ ...round, tools }).pipe(Stream.runCollect);
+      const missing = yield* transport.streamRound(round).pipe(Stream.runCollect, Effect.flip);
+
+      expect(requests[0]).toMatchObject({
+        url: `${BASE_URL}/responses`,
+        body: { stream: true, store: false, tools: [{ type: "function", strict: false }] },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "completed",
+        model: "served/model",
+        assistantText: "first",
+        usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 },
+        historyItems: [{ type: "assistant", outputItems: frames[1]!.response!.output }],
+      });
+      expect(missing).toMatchObject({ operation: "responses", category: "protocol-not-supported" });
+    }),
+  );
+
   it.effect(
     "distinguishes rejected keys, models, tools and HTTP failures without returning upstream secrets",
     () =>

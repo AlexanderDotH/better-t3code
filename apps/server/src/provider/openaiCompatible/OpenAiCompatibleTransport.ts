@@ -1,4 +1,4 @@
-import { normalizeAiEndpointBaseUrl } from "@t3tools/contracts";
+import { type AiEndpointProtocol, normalizeAiEndpointBaseUrl } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -14,7 +14,9 @@ import {
 } from "./OpenAiCompatibleModelCatalog.ts";
 import {
   buildOpenAiCompatibleChatCompletionRequest,
+  buildOpenAiCompatibleResponsesRequest,
   decodeOpenAiCompatibleChatCompletionSse,
+  decodeOpenAiCompatibleResponsesSse,
   OpenAiCompatibleProtocolError,
   type OpenAiCompatibleRoundEvent,
   type OpenAiCompatibleRoundRequest,
@@ -51,9 +53,10 @@ export class OpenAiCompatibleAuthenticationError extends Schema.TaggedError<Open
 export class OpenAiCompatibleHttpError extends Schema.TaggedError<OpenAiCompatibleHttpError>()(
   "OpenAiCompatibleHttpError",
   {
-    operation: Schema.Literals(["models", "chat-completions"]),
+    operation: Schema.Literals(["models", "chat-completions", "responses"]),
     category: Schema.Literals([
       "catalog-not-found",
+      "protocol-not-supported",
       "model-not-found",
       "tools-not-supported",
       "timeout",
@@ -78,6 +81,7 @@ export type OpenAiCompatibleTransportError =
 
 export interface OpenAiCompatibleTransport {
   readonly baseUrl: string;
+  readonly protocol: AiEndpointProtocol;
   readonly listModels: Effect.Effect<
     ReadonlyArray<OpenAiCompatibleCatalogModel>,
     OpenAiCompatibleTransportError
@@ -117,7 +121,7 @@ const requireSuccess = Effect.fn("OpenAiCompatibleTransport.requireSuccess")(fun
     });
   }
   const details =
-    operation === "chat-completions" && [400, 404, 422].includes(status)
+    operation !== "models" && [400, 404, 422].includes(status)
       ? yield* decodeErrorBody(response).pipe(
           Effect.map(({ error }) =>
             typeof error === "string" ? error : [error.code, error.param, error.message].join(" "),
@@ -137,19 +141,23 @@ const requireSuccess = Effect.fn("OpenAiCompatibleTransport.requireSuccess")(fun
               details,
             )
           ? "tools-not-supported"
-          : status === 404 && operation === "chat-completions"
-            ? "model-not-found"
-            : status === 408 || status === 504
-              ? "timeout"
-              : status === 429
-                ? "rate-limit"
-                : status === 400 || status === 413 || status === 422
-                  ? "invalid-request"
-                  : status >= 500
-                    ? "service-unavailable"
-                    : "http";
+          : status === 404 && operation === "responses" && !details
+            ? "protocol-not-supported"
+            : status === 404 && operation !== "models"
+              ? "model-not-found"
+              : status === 408 || status === 504
+                ? "timeout"
+                : status === 429
+                  ? "rate-limit"
+                  : status === 400 || status === 413 || status === 422
+                    ? "invalid-request"
+                    : status >= 500
+                      ? "service-unavailable"
+                      : "http";
   const messages: Record<OpenAiCompatibleHttpError["category"], string> = {
     "catalog-not-found": "The endpoint does not expose a model catalog. Enter a model ID manually.",
+    "protocol-not-supported":
+      "The endpoint does not implement Open Responses. Switch its protocol to Chat Completions.",
     "model-not-found": "The endpoint could not find or load the selected model.",
     "tools-not-supported":
       "The endpoint or selected model does not support function tools required by T3 Code.",
@@ -189,6 +197,7 @@ const abortSignalEffect = (signal: AbortSignal): Effect.Effect<void> =>
 export const makeOpenAiCompatibleTransport = Effect.fn("makeOpenAiCompatibleTransport")(
   function* (input: {
     readonly baseUrl: string;
+    readonly protocol?: AiEndpointProtocol;
     readonly resolveApiKey: Effect.Effect<
       Option.Option<Redacted.Redacted<string>>,
       OpenAiCompatibleAuthenticationError
@@ -206,6 +215,7 @@ export const makeOpenAiCompatibleTransport = Effect.fn("makeOpenAiCompatibleTran
         }),
     });
     const httpClient = yield* HttpClient.HttpClient;
+    const protocol = input.protocol ?? "chat-completions";
     const execute = Effect.fn("OpenAiCompatibleTransport.execute")(
       function* (
         operation: OpenAiCompatibleHttpError["operation"],
@@ -220,7 +230,9 @@ export const makeOpenAiCompatibleTransport = Effect.fn("makeOpenAiCompatibleTran
         let request =
           operation === "models"
             ? HttpClientRequest.get(`${baseUrl}/models`)
-            : HttpClientRequest.post(`${baseUrl}/chat/completions`);
+            : HttpClientRequest.post(
+                `${baseUrl}/${operation === "responses" ? "responses" : "chat/completions"}`,
+              );
         request = request.pipe(
           HttpClientRequest.setHeader(
             "accept",
@@ -287,34 +299,40 @@ export const makeOpenAiCompatibleTransport = Effect.fn("makeOpenAiCompatibleTran
     const streamRound: OpenAiCompatibleTransport["streamRound"] = (round) =>
       Stream.suspend(() => {
         if (round.signal?.aborted) return Stream.empty;
+        const responses = protocol === "responses";
         const stream = Stream.unwrap(
-          execute("chat-completions", buildOpenAiCompatibleChatCompletionRequest(round)).pipe(
-            Effect.map((response) =>
-              decodeOpenAiCompatibleChatCompletionSse(
-                response.stream.pipe(
-                  Stream.mapError(
-                    () =>
-                      new OpenAiCompatibleHttpError({
-                        operation: "chat-completions",
-                        category: "network",
-                        message: "The endpoint response stream failed.",
-                      }),
-                  ),
-                  Stream.timeoutOrElse({
-                    duration: STREAM_IDLE_TIMEOUT,
-                    orElse: () => Stream.fail(timeoutError("chat-completions")),
-                  }),
+          execute(
+            protocol,
+            responses
+              ? buildOpenAiCompatibleResponsesRequest(round)
+              : buildOpenAiCompatibleChatCompletionRequest(round),
+          ).pipe(
+            Effect.map((response) => {
+              const bytes = response.stream.pipe(
+                Stream.mapError(
+                  () =>
+                    new OpenAiCompatibleHttpError({
+                      operation: protocol,
+                      category: "network",
+                      message: "The endpoint response stream failed.",
+                    }),
                 ),
-                round.model,
-              ),
-            ),
+                Stream.timeoutOrElse({
+                  duration: STREAM_IDLE_TIMEOUT,
+                  orElse: () => Stream.fail(timeoutError(protocol)),
+                }),
+              );
+              return responses
+                ? decodeOpenAiCompatibleResponsesSse(bytes, round.model)
+                : decodeOpenAiCompatibleChatCompletionSse(bytes, round.model);
+            }),
           ),
         );
         return round.signal === undefined
           ? stream
           : stream.pipe(Stream.interruptWhen(abortSignalEffect(round.signal)));
       });
-    return { baseUrl, listModels, streamRound };
+    return { baseUrl, protocol, listModels, streamRound };
   },
 );
 

@@ -76,6 +76,7 @@ function makeOpenAiCompatibleDriver(input: {
         });
         const transport = yield* makeOpenAiCompatibleTransport({
           baseUrl: credentialStore.baseUrl,
+          protocol: config.protocol,
           resolveApiKey: credentialStore.readStored.pipe(
             Effect.mapError(
               () =>

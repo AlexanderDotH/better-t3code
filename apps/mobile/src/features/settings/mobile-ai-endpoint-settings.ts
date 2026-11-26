@@ -3,6 +3,7 @@ import {
   normalizeAiEndpointBaseUrl,
   ProviderDriverKind,
   type AiEndpointCandidate,
+  type AiEndpointProtocol,
   type ExecutionEnvironmentCapabilities,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
@@ -21,6 +22,11 @@ export const MOBILE_AI_ENDPOINT_LABELS = {
 
 export type MobileAiEndpointKind = keyof typeof MOBILE_AI_ENDPOINT_LABELS;
 
+export const MOBILE_AI_ENDPOINT_PROTOCOL_LABELS = {
+  "chat-completions": "Chat Completions",
+  responses: "Open Responses",
+} as const satisfies Record<AiEndpointProtocol, string>;
+
 export function isMobileAiEndpointKind(driver: string): driver is MobileAiEndpointKind {
   return driver === "openaiCompatible" || driver === "lmstudio";
 }
@@ -29,6 +35,7 @@ export interface MobileAiEndpointDraft {
   readonly driver: MobileAiEndpointKind;
   readonly displayName: string;
   readonly baseUrl: string;
+  readonly protocol: AiEndpointProtocol;
   readonly apiKey: string;
   readonly defaultModel: string;
   readonly customModels: ReadonlyArray<string>;
@@ -46,6 +53,10 @@ export function mobileAiEndpointDraft(
       "baseUrl",
       driver === "lmstudio" ? LM_STUDIO_BASE_URL : "",
     ),
+    protocol:
+      readProviderConfigString(instance?.config, "protocol") === "responses"
+        ? "responses"
+        : "chat-completions",
     apiKey: "",
     defaultModel: readProviderConfigString(instance?.config, "defaultModel"),
     customModels: readProviderConfigStringArray(instance?.config, "customModels"),
@@ -75,6 +86,7 @@ export function mobileAiEndpointSettingsPatch(input: {
             ? existing.config
             : {}),
           baseUrl,
+          protocol: input.draft.protocol,
           defaultModel,
           customModels: [
             ...new Set(input.draft.customModels.map((model) => model.trim()).filter(Boolean)),

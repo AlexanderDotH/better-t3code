@@ -262,6 +262,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 } as const satisfies MaintainScrollAtEndOptions;
 
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
+const END_OPENING_SCROLL_SENTINEL = Object.freeze({});
 
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
@@ -1026,7 +1027,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     () => reportContentOverflow(rows.length, composerOverflowInset ?? contentInsetEndAdjustment),
     [reportContentOverflow, rows.length, composerOverflowInset, contentInsetEndAdjustment],
   );
+  const opensAtEnd = !findActive && citationRequest === null && rememberedPosition?.atEnd !== false;
   const handleListLoad = () => {
+    // Our follow owns the end from here. LegendList keeps the opening's end target and replays that
+    // scroll when the footer and rows change later, so a finished turn jumped to the top. Any
+    // imperative scroll ends the target, a missing item without moving; anchors and restores scroll.
+    if (opensAtEnd && anchorMessageId === null && !restoringThreadPosition) {
+      void listRef.current?.scrollToItem({ item: END_OPENING_SCROLL_SENTINEL, animated: false });
+    }
     reportContentOverflow();
     onCitationListLoad();
     setFindListReady(true);
@@ -1867,9 +1875,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 getItemType={getItemType}
                 renderItem={renderItem}
                 estimatedItemSize={90}
-                initialScrollAtEnd={
-                  !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-                }
+                initialScrollAtEnd={opensAtEnd}
                 // Legend needs a data refresh to mount new pins without a scroll event.
                 dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
                 {...(alwaysRender ? { alwaysRender } : {})}

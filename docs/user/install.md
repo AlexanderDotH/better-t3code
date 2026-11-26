@@ -175,7 +175,7 @@ computer.
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
 | ChatGPT     | Use the ChatGPT provider's sign-in action; Codex CLI is required for that login.                                                                          |
 | OpenAI      | Add an OpenAI API key in the provider's account settings.                                                                                                 |
-| OpenRouter  | Add an OpenRouter API key or use its sign-in action, then choose a default model.                                                                         |
+| OpenRouter  | Add an OpenRouter API key or use its sign-in action.                                                                                                      |
 | Gemini      | Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in the provider instance's environment variables.                                                                |
 | Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
 | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |

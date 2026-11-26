@@ -28,6 +28,7 @@ import {
   adoptMobileAiEndpointDraft,
   isMobileAiEndpointConfigured,
   MOBILE_AI_ENDPOINT_LABELS,
+  MOBILE_AI_ENDPOINT_PROTOCOL_LABELS,
   mobileAiEndpointDraft,
   mobileAiEndpointDraftWithBaseUrl,
   mobileAiEndpointSettingsPatch,
@@ -381,6 +382,36 @@ export function MobileAiEndpointSetup(props: {
             </Text>
             <Text className="text-sm text-foreground-muted">
               {translator.message("mobile.settings.endpoint.urlChangeClearsKey")}
+            </Text>
+          </View>
+          <View className="gap-2">
+            <Text className="text-sm font-t3-medium text-foreground">
+              {translator.message("mobile.settings.endpoint.protocol")}
+            </Text>
+            <View accessibilityRole="radiogroup" className="flex-row gap-2">
+              {(["chat-completions", "responses"] as const).map((protocol) => (
+                <Pressable
+                  key={protocol}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: draft.protocol === protocol }}
+                  disabled={props.readOnly || saving}
+                  onPress={() => setDraft((current) => ({ ...current, protocol }))}
+                  className={`flex-1 items-center rounded-2xl px-3 py-3 ${
+                    draft.protocol === protocol ? "bg-foreground" : "bg-subtle"
+                  }`}
+                >
+                  <Text
+                    className={`font-t3-medium ${
+                      draft.protocol === protocol ? "text-screen" : "text-foreground"
+                    }`}
+                  >
+                    {MOBILE_AI_ENDPOINT_PROTOCOL_LABELS[protocol]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text className="text-sm text-foreground-muted">
+              {translator.message("mobile.settings.endpoint.protocolHint")}
             </Text>
           </View>
           <View className="gap-2">

@@ -56,7 +56,12 @@ describe("mobile provider settings", () => {
         allowCustomValue: true,
         disabled: false,
       });
-      expect(fields.map((field) => field.key)).toEqual(["baseUrl", "defaultModel", "customModels"]);
+      expect(fields.map((field) => field.key)).toEqual([
+        "baseUrl",
+        "protocol",
+        "defaultModel",
+        "customModels",
+      ]);
     }
   });
 

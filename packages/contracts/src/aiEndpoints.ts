@@ -40,10 +40,27 @@ const AiEndpointBaseUrl = TrimmedString.check(
   }),
 );
 
+export const AiEndpointProtocol = Schema.Literals(["chat-completions", "responses"]);
+export type AiEndpointProtocol = typeof AiEndpointProtocol.Type;
+
 const endpointSettingsFields = {
   enabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  protocol: AiEndpointProtocol.pipe(
+    Schema.withDecodingDefault(Effect.succeed("chat-completions" as const)),
+    Schema.annotateKey({
+      title: "Protocol",
+      description: "Use Open Responses when the endpoint implements the /responses standard.",
+      providerSettingsForm: {
+        control: "select",
+        options: [
+          { value: "chat-completions", label: "Chat Completions" },
+          { value: "responses", label: "Open Responses" },
+        ],
+      },
+    }),
   ),
   defaultModel: TrimmedString.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
@@ -84,13 +101,13 @@ const baseUrlSetting = (defaultValue: string) =>
 
 export const OpenAiCompatibleSettings = makeProviderSettingsSchema(
   { ...endpointSettingsFields, baseUrl: baseUrlSetting("") },
-  { order: ["baseUrl", "defaultModel", "customModels"] },
+  { order: ["baseUrl", "protocol", "defaultModel", "customModels"] },
 );
 export type OpenAiCompatibleSettings = typeof OpenAiCompatibleSettings.Type;
 
 export const LmStudioSettings = makeProviderSettingsSchema(
   { ...endpointSettingsFields, baseUrl: baseUrlSetting(LM_STUDIO_BASE_URL) },
-  { order: ["baseUrl", "defaultModel", "customModels"] },
+  { order: ["baseUrl", "protocol", "defaultModel", "customModels"] },
 );
 export type LmStudioSettings = typeof LmStudioSettings.Type;
 

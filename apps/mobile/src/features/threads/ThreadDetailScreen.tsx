@@ -1704,7 +1704,8 @@ function ThreadDetailBody(
                     }}
                   />
                   <ComposerPanels
-                    className="w-full"
+                    // Android's composer is opaque; the panels match it so no feed row shows between them.
+                    className={Platform.OS === "android" ? "w-full bg-thread-canvas" : "w-full"}
                     style={Platform.OS === "android" ? composerPanelsHeightStyle : undefined}
                     keyboardShouldPersistTaps="handled"
                     nestedScrollEnabled
